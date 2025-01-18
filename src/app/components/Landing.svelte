@@ -1,11 +1,12 @@
 <script lang="ts">
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
+  import Link from "@lib/components/Link.svelte"
   import Dialog from "@lib/components/Dialog.svelte"
   import CardButton from "@lib/components/CardButton.svelte"
   import LogIn from "@app/components/LogIn.svelte"
   import SignUp from "@app/components/SignUp.svelte"
-  import {PLATFORM_NAME} from "@app/state"
+  import {PLATFORM_TERMS, PLATFORM_PRIVACY, PLATFORM_NAME} from "@app/state"
   import {pushModal} from "@app/modal"
 
   const logIn = () => pushModal(LogIn)
@@ -33,5 +34,10 @@
         <div slot="info">Just a few questions and you'll be on your way.</div>
       </CardButton>
     </Button>
+    <p class="text-center text-xs opacity-75">
+      By using {PLATFORM_NAME}, you consent to our
+      <Link external class="link" href={PLATFORM_TERMS}>Terms of Service</Link> and
+      <Link external class="link" href={PLATFORM_PRIVACY}>Privacy Policy</Link>.
+    </p>
   </div>
 </Dialog>

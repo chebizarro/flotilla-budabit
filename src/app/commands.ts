@@ -2,6 +2,7 @@ import {get} from "svelte/store"
 import {ctx, sample, uniq, sleep, chunk, equals} from "@welshman/lib"
 import {
   DELETE,
+  REPORT,
   PROFILE,
   INBOX_RELAYS,
   RELAYS,
@@ -45,7 +46,7 @@ import {
   loadFollows,
   loadMutes,
   tagEvent,
-  tagReactionTo,
+  tagEventForReaction,
   getRelayUrls,
   userRelaySelections,
   userInboxRelaySelections,
@@ -54,6 +55,7 @@ import {
   addSession,
   clearStorage,
   dropSession,
+  tagEventForComment,
 } from "@welshman/app"
 import type {Thunk} from "@welshman/app"
 import {
@@ -376,7 +378,6 @@ export const checkRelayAuth = async (url: string, timeout = 3000) => {
 
 export const attemptRelayAccess = async (url: string, claim = "") => {
   const checks = [
-    () => checkRelayProfile(url),
     () => checkRelayConnection(url),
     () => checkRelayAccess(url, claim),
     () => checkRelayAuth(url),
@@ -430,13 +431,36 @@ export const makeDelete = ({event}: {event: TrustedEvent}) => {
 export const publishDelete = ({relays, event}: {relays: string[]; event: TrustedEvent}) =>
   publishThunk({event: makeDelete({event}), relays})
 
+export type ReportParams = {
+  event: TrustedEvent
+  content: string
+  reason: string
+}
+
+export const makeReport = ({event, reason, content}: ReportParams) => {
+  const tags = [
+    ["p", event.pubkey],
+    ["e", event.id, reason],
+  ]
+
+  return createEvent(REPORT, {content, tags})
+}
+
+export const publishReport = ({
+  relays,
+  event,
+  reason,
+  content,
+}: ReportParams & {relays: string[]}) =>
+  publishThunk({event: makeReport({event, reason, content}), relays})
+
 export type ReactionParams = {
   event: TrustedEvent
   content: string
 }
 
 export const makeReaction = ({event, content}: ReactionParams) => {
-  const tags = [["k", String(event.kind)], ...tagReactionTo(event)]
+  const tags = tagEventForReaction(event)
   const groupTag = getTag("h", event.tags)
 
   if (groupTag) {
@@ -450,37 +474,14 @@ export const makeReaction = ({event, content}: ReactionParams) => {
 export const publishReaction = ({relays, ...params}: ReactionParams & {relays: string[]}) =>
   publishThunk({event: makeReaction(params), relays})
 
-export type ReplyParams = {
+export type CommentParams = {
   event: TrustedEvent
   content: string
   tags?: string[][]
 }
 
-export const makeComment = ({event, content, tags = []}: ReplyParams) => {
-  const seenRoots = new Set<string>()
+export const makeComment = ({event, content, tags = []}: CommentParams) =>
+  createEvent(COMMENT, {content, tags: [...tags, ...tagEventForComment(event)]})
 
-  for (const [raw, ...tag] of event.tags.filter(t => t[0].match(/^(k|e|a|i)$/i))) {
-    const T = raw.toUpperCase()
-    const t = raw.toLowerCase()
-
-    if (seenRoots.has(T)) {
-      tags.push([t, ...tag])
-    } else {
-      tags.push([T, ...tag])
-      seenRoots.add(T)
-    }
-  }
-
-  if (seenRoots.size === 0) {
-    tags.push(["K", String(event.kind)])
-    tags.push(["E", event.id])
-  }
-
-  tags.push(["k", String(event.kind)])
-  tags.push(["e", event.id])
-
-  return createEvent(COMMENT, {content, tags})
-}
-
-export const publishComment = ({relays, ...params}: ReplyParams & {relays: string[]}) =>
+export const publishComment = ({relays, ...params}: CommentParams & {relays: string[]}) =>
   publishThunk({event: makeComment(params), relays})
