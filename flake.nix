@@ -2,38 +2,39 @@
 description = ''A flake that creates a devShell containing the following:
 			- Nixvim (based on nixos-unstable)
             - NodeJS
-            - PNPM
-            - Turbo
             - Just (project maintenance/cleanup scripts)
 		'';
 
 inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nixvim.url = "github:Pleb5/neovim-flake/master";
+    # nixvim.url = "github:nix-community/nixvim";
+    nvim.url = "github:Pleb5/neovim-flake/master";
 };
 
-outputs = { self, nixpkgs, flake-utils, nixvim, ... }:
+outputs = { nixpkgs, flake-utils, nvim, ... }:
 
     flake-utils.lib.eachDefaultSystem (system:
         let
             pkgs = nixpkgs.legacyPackages.${system};
-            nvim = nixvim.packages.${system}.nvim;
+            lib = nixpkgs.lib; 
+            flotilla_nvim = nvim.packages.${system}.nvim.extend {
+                opts = {
+                    tabstop = lib.mkForce 2;  # Project-specific settings
+                    shiftwidth = lib.mkForce 2;
+                };
+            };
+            
         in {
             devShell = pkgs.mkShell {
                 buildInputs = [ 
-                    nvim
+                    flotilla_nvim
                     pkgs.ripgrep
-                    pkgs.nodejs_20 
-                    pkgs.nodePackages.pnpm 
-                    pkgs.turbo 
+                    pkgs.nodejs_22
                     pkgs.just
-                    pkgs.cargo
-                    pkgs.pkg-config
-                    pkgs.openssl
+                    pkgs.prettierd
                 ];
                 shellHook = ''
-                    export PATH="$HOME/.cargo/bin:$PATH"
                 '';
             };
         }
