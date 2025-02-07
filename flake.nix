@@ -35,6 +35,7 @@ outputs = { nixpkgs, flake-utils, nvim, ... }:
                     pkgs.prettierd
                 ];
                 shellHook = ''
+                    export PATH="$HOME/.cargo/bin:$PATH";
                 '';
             };
         }
