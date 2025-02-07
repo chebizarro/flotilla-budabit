@@ -2,6 +2,7 @@
   import {onMount, onDestroy} from "svelte"
   import {Nip46Broker, getPubkey, makeSecret} from "@welshman/signer"
   import {addSession} from "@welshman/app"
+  import {preventDefault} from "@lib/html"
   import {slideAndFade} from "@lib/transition"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
@@ -26,7 +27,7 @@
   const back = () => history.back()
 
   const onSubmit = async () => {
-    const {signerPubkey, connectSecret, relays} = broker.parseBunkerUrl(input)
+    const {signerPubkey, connectSecret, relays} = Nip46Broker.parseBunkerUrl(bunker)
 
     if (loading) {
       return
@@ -59,18 +60,18 @@
     clearModals()
   }
 
-  let url = ""
-  let input = ""
-  let loading = false
+  let url = $state("")
+  let bunker = $state("")
+  let loading = $state(false)
 
-  $: {
+  $effect(() => {
     // For testing and for play store reviewers
-    if (input === "reviewkey") {
+    if (bunker === "reviewkey") {
       const secret = makeSecret()
 
       addSession({method: "nip01", secret, pubkey: getPubkey(secret)})
     }
-  }
+  })
 
   onMount(async () => {
     url = await broker.makeNostrconnectUrl({
@@ -121,35 +122,43 @@
   })
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={onSubmit}>
+<form class="column gap-4" onsubmit={preventDefault(onSubmit)}>
   <ModalHeader>
-    <div slot="title">Log In</div>
-    <div slot="info">
-      Connect your signer by scanning the QR code below or pasting a bunker link.
-    </div>
+    {#snippet title()}
+      <div>Log In</div>
+    {/snippet}
+    {#snippet info()}
+      <div>Connect your signer by scanning the QR code below or pasting a bunker link.</div>
+    {/snippet}
   </ModalHeader>
   {#if !loading && url}
-    <div class="w-xs m-auto" out:slideAndFade>
+    <div class="flex justify-center" out:slideAndFade>
       <QRCode code={url} />
     </div>
   {/if}
   <Field>
-    <p slot="label">Bunker Link*</p>
-    <label class="input input-bordered flex w-full items-center gap-2" slot="input">
-      <Icon icon="cpu" />
-      <input disabled={loading} bind:value={input} class="grow" placeholder="bunker://" />
-    </label>
-    <p slot="info">
-      A login link provided by a nostr signing app.
-      <Button class="link" on:click={() => pushModal(InfoBunker)}>What is a bunker link?</Button>
-    </p>
+    {#snippet label()}
+      <p>Bunker Link*</p>
+    {/snippet}
+    {#snippet input()}
+      <label class="input input-bordered flex w-full items-center gap-2">
+        <Icon icon="cpu" />
+        <input disabled={loading} bind:value={bunker} class="grow" placeholder="bunker://" />
+      </label>
+    {/snippet}
+    {#snippet info()}
+      <p>
+        A login link provided by a nostr signing app.
+        <Button class="link" onclick={() => pushModal(InfoBunker)}>What is a bunker link?</Button>
+      </p>
+    {/snippet}
   </Field>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back} disabled={loading}>
+    <Button class="btn btn-link" onclick={back} disabled={loading}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>
-    <Button type="submit" class="btn btn-primary" disabled={loading || !input}>
+    <Button type="submit" class="btn btn-primary" disabled={loading || !bunker}>
       <Spinner {loading}>Next</Spinner>
       <Icon icon="alt-arrow-right" />
     </Button>

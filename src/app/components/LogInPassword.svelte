@@ -4,6 +4,7 @@
   import {Nip46Broker, makeSecret} from "@welshman/signer"
   import {normalizeRelayUrl} from "@welshman/util"
   import {addSession} from "@welshman/app"
+  import {preventDefault} from "@lib/html"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
   import FieldInline from "@lib/components/FieldInline.svelte"
@@ -17,7 +18,11 @@
   import {pushToast} from "@app/toast"
   import {NIP46_PERMS, BURROW_URL, PLATFORM_URL, PLATFORM_NAME, PLATFORM_LOGO} from "@app/state"
 
-  export let email = ""
+  interface Props {
+    email?: string
+  }
+
+  let {email = $bindable("")}: Props = $props()
 
   const clientSecret = makeSecret()
 
@@ -50,8 +55,8 @@
   }
 
   let url = ""
-  let password = ""
-  let loading = false
+  let password = $state("")
+  let loading = $state(false)
 
   onMount(async () => {
     url = await broker.makeNostrconnectUrl({
@@ -100,32 +105,44 @@
   })
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={onSubmit}>
+<form class="column gap-4" onsubmit={preventDefault(onSubmit)}>
   <ModalHeader>
-    <div slot="title">Log In</div>
-    <div slot="info">Log in using your email and password</div>
+    {#snippet title()}
+      <div>Log In</div>
+    {/snippet}
+    {#snippet info()}
+      <div>Log in using your email and password</div>
+    {/snippet}
   </ModalHeader>
   <FieldInline>
-    <p slot="label">Email</p>
-    <label class="input input-bordered flex w-full items-center gap-2" slot="input">
-      <Icon icon="user-rounded" />
-      <input bind:value={email} />
-    </label>
+    {#snippet label()}
+      <p>Email</p>
+    {/snippet}
+    {#snippet input()}
+      <label class="input input-bordered flex w-full items-center gap-2">
+        <Icon icon="user-rounded" />
+        <input bind:value={email} />
+      </label>
+    {/snippet}
   </FieldInline>
   <FieldInline>
-    <p slot="label">Password</p>
-    <label class="input input-bordered flex w-full items-center gap-2" slot="input">
-      <Icon icon="key" />
-      <input bind:value={password} type="password" />
-    </label>
+    {#snippet label()}
+      <p>Password</p>
+    {/snippet}
+    {#snippet input()}
+      <label class="input input-bordered flex w-full items-center gap-2">
+        <Icon icon="key" />
+        <input bind:value={password} type="password" />
+      </label>
+    {/snippet}
   </FieldInline>
   <p class="text-sm">
     Your email and password only work to log in to {PLATFORM_NAME}. To use your key on other nostr
-    applications, visit your settings page. <Button class="link" on:click={startReset}
+    applications, visit your settings page. <Button class="link" onclick={startReset}
       >Forgot your password?</Button>
   </p>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back} disabled={loading}>
+    <Button class="btn btn-link" onclick={back} disabled={loading}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

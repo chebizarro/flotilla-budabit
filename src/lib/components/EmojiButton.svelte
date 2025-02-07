@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {onDestroy} from "svelte"
   import {type Instance} from "tippy.js"
   import type {NativeEmoji} from "emoji-picker-element/shared"
   import {between, throttle} from "@welshman/lib"
@@ -6,13 +7,13 @@
   import Tippy from "@lib/components/Tippy.svelte"
   import EmojiPicker from "@lib/components/EmojiPicker.svelte"
 
-  export let onEmoji
+  const {...props} = $props()
 
-  const open = () => popover.show()
+  const open = () => popover?.show()
 
   const onClick = (emoji: NativeEmoji) => {
-    onEmoji(emoji)
-    popover.hide()
+    props.onEmoji(emoji)
+    popover?.hide()
   }
 
   const onMouseMove = throttle(300, ({clientX, clientY}: any) => {
@@ -25,17 +26,21 @@
     }
   })
 
-  let popover: Instance
+  let popover: Instance | undefined = $state()
+
+  onDestroy(() => {
+    popover = undefined
+  })
 </script>
 
-<svelte:document on:mousemove={onMouseMove} />
+<svelte:document onmousemove={onMouseMove} />
 
 <Tippy
   bind:popover
   component={EmojiPicker}
   props={{onClick}}
   params={{trigger: "manual", interactive: true}}>
-  <Button on:click={open} class={$$props.class}>
-    <slot />
+  <Button onclick={open} class={props.class}>
+    {@render props.children?.()}
   </Button>
 </Tippy>

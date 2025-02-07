@@ -22,11 +22,17 @@
     <Divider />
   {/if}
   {#if !PLATFORM_RELAY}
-    <Button on:click={addSpace}>
+    <Button onclick={addSpace}>
       <CardButton>
-        <div slot="icon"><Icon icon="login-2" size={7} /></div>
-        <div slot="title">Add a space</div>
-        <div slot="info">Join or create a new space</div>
+        {#snippet icon()}
+          <div><Icon icon="login-2" size={7} /></div>
+        {/snippet}
+        {#snippet title()}
+          <div>Add a space</div>
+        {/snippet}
+        {#snippet info()}
+          <div>Join or create a new space</div>
+        {/snippet}
       </CardButton>
     </Button>
   {/if}

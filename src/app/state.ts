@@ -40,14 +40,7 @@ import {
   asDecryptedEvent,
   normalizeRelayUrl,
 } from "@welshman/util"
-import type {
-  TrustedEvent,
-  Repository,
-  SignedEvent,
-  PublishedList,
-  List,
-  Filter,
-} from "@welshman/util"
+import type {TrustedEvent, SignedEvent, PublishedList, List, Filter} from "@welshman/util"
 import {Nip59} from "@welshman/signer"
 import {
   pubkey,
@@ -79,10 +72,6 @@ export const ROOM = "h"
 export const GENERAL = "_"
 
 export const PROTECTED = ["-"]
-
-export const LEGACY_MESSAGE = 209
-
-export const LEGACY_THREAD = 309
 
 export const INDEXER_RELAYS = [
   "wss://purplepag.es/",
@@ -117,13 +106,6 @@ export const DUFFLEPUD_URL = "https://dufflepud.onrender.com"
 export const IMGPROXY_URL = "https://imgproxy.coracle.social"
 
 export const REACTION_KINDS = [REACTION, ZAP_RESPONSE]
-
-export const THREAD_FILTER: Filter = {kinds: [THREAD, LEGACY_THREAD]}
-
-export const COMMENT_FILTER: Filter = {
-  kinds: [COMMENT],
-  "#K": [String(THREAD), String(LEGACY_THREAD)],
-}
 
 export const NIP46_PERMS =
   "nip04_encrypt,nip04_decrypt,nip44_encrypt,nip44_decrypt," +
@@ -272,7 +254,7 @@ export const getUrlsForEvent = derived([trackerStore, thunks], ([$tracker, $thun
   }
 })
 
-export const getEventsForUrl = (repository: Repository, url: string, filters: Filter[]) => {
+export const getEventsForUrl = (url: string, filters: Filter[]) => {
   const $getUrlsForEvent = get(getUrlsForEvent)
   const $events = repository.query(filters)
 
@@ -463,24 +445,9 @@ export const chatSearch = derived(chats, $chats =>
 
 // Messages
 
-// TODO: remove support for legacy messages
-export const adaptLegacyMessage = (event: TrustedEvent) => {
-  if (event.kind === LEGACY_MESSAGE) {
-    let room = event.tags.find(nthEq(0, "~"))?.[1] || GENERAL
-
-    if (room === "general") {
-      room = GENERAL
-    }
-
-    return {...event, kind: MESSAGE, tags: [...event.tags, tagRoom(room, "")]}
-  }
-
-  return event
-}
-
 export const messages = derived(
-  deriveEvents(repository, {filters: [{kinds: [MESSAGE, LEGACY_MESSAGE]}]}),
-  $events => $events.map(adaptLegacyMessage),
+  deriveEvents(repository, {filters: [{kinds: [MESSAGE]}]}),
+  $events => $events,
 )
 
 // Nip29

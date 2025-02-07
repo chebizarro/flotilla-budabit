@@ -15,6 +15,11 @@
   import {chatSearch} from "@app/state"
   import {pullConservatively} from "@app/requests"
   import {pushModal} from "@app/modal"
+  interface Props {
+    children?: import("svelte").Snippet
+  }
+
+  const {children}: Props = $props()
 
   const startChat = () => pushModal(ChatStart)
 
@@ -23,16 +28,16 @@
     relays: ctx.app.router.UserInbox().getUrls(),
   })
 
-  let term = ""
+  let term = $state("")
 
-  $: chats = $chatSearch.searchOptions(term)
+  const chats = $derived($chatSearch.searchOptions(term))
 </script>
 
 <SecondaryNav>
   <SecondaryNavSection>
     <SecondaryNavHeader>
       Chats
-      <Button on:click={startChat}>
+      <Button onclick={startChat}>
         <Icon icon="add-circle" />
       </Button>
     </SecondaryNavHeader>
@@ -54,6 +59,6 @@
 </SecondaryNav>
 <Page>
   {#key $page.url.pathname}
-    <slot />
+    {@render children?.()}
   {/key}
 </Page>

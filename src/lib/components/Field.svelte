@@ -1,13 +1,26 @@
-<div class="flex flex-col gap-2 {$$props.class}">
-  {#if $$slots.label}
+<script lang="ts">
+  import type {Snippet} from "svelte"
+
+  interface Props {
+    label?: Snippet
+    input?: Snippet
+    info?: Snippet
+    [key: string]: any
+  }
+
+  const {label, input, info, ...props}: Props = $props()
+</script>
+
+<div class="flex flex-col gap-2 {props.class}">
+  {#if label}
     <label class="flex items-center gap-2 font-bold">
-      <slot name="label" />
+      {@render label()}
     </label>
   {/if}
-  <slot name="input" />
-  {#if $$slots.info}
+  {@render input?.()}
+  {#if info}
     <p class="text-sm">
-      <slot name="info" />
+      {@render info()}
     </p>
   {/if}
 </div>

@@ -1,9 +1,30 @@
-import {get} from "svelte/store"
-import {partition, assoc, now} from "@welshman/lib"
-import {MESSAGE, THREAD, COMMENT} from "@welshman/util"
+import {get, writable} from "svelte/store"
+import {partition, int, YEAR, MONTH, insert, sortBy, assoc, now} from "@welshman/lib"
+import {
+  MESSAGE,
+  DELETE,
+  THREAD,
+  EVENT_TIME,
+  COMMENT,
+  matchFilters,
+  getTagValues,
+  getTagValue,
+} from "@welshman/util"
+import type {TrustedEvent, Filter} from "@welshman/util"
+import {feedFromFilters, makeRelayFeed, makeIntersectionFeed} from "@welshman/feeds"
 import type {Subscription} from "@welshman/net"
-import type {AppSyncOpts} from "@welshman/app"
-import {subscribe, load, repository, pull, hasNegentropy} from "@welshman/app"
+import type {AppSyncOpts, Thunk} from "@welshman/app"
+import {
+  subscribe,
+  load,
+  repository,
+  pull,
+  hasNegentropy,
+  thunkWorker,
+  createFeedController,
+} from "@welshman/app"
+import {createScroller} from "@lib/html"
+import {daysBetween} from "@lib/util"
 import {userRoomsByUrl, getUrlsForEvent} from "@app/state"
 
 // Utils
@@ -27,6 +48,221 @@ export const pullConservatively = ({relays, filters}: AppSyncOpts) => {
   }
 
   return Promise.all(promises)
+}
+
+export const makeFeed = ({
+  relays,
+  feedFilters,
+  subscriptionFilters,
+  element,
+  onExhausted,
+  initialEvents = [],
+}: {
+  relays: string[]
+  feedFilters: Filter[]
+  subscriptionFilters: Filter[]
+  element: HTMLElement
+  onExhausted?: () => void
+  initialEvents?: TrustedEvent[]
+}) => {
+  const buffer = writable<TrustedEvent[]>([])
+  const events = writable(initialEvents)
+
+  const insertEvent = (event: TrustedEvent) => {
+    buffer.update($buffer => {
+      for (let i = 0; i < $buffer.length; i++) {
+        if ($buffer[i].id === event.id) return $buffer
+        if ($buffer[i].created_at < event.created_at) return insert(i, event, $buffer)
+      }
+
+      return [...$buffer, event]
+    })
+  }
+
+  const removeEvents = (ids: string[]) => {
+    buffer.update($buffer => $buffer.filter(e => !ids.includes(e.id)))
+    events.update($events => $events.filter(e => !ids.includes(e.id)))
+  }
+
+  const handleDelete = (e: TrustedEvent) => removeEvents(getTagValues(["e", "a"], e.tags))
+
+  const onThunk = (thunk: Thunk) => {
+    if (matchFilters(feedFilters, thunk.event)) {
+      insertEvent(thunk.event)
+
+      thunk.controller.signal.addEventListener("abort", () => {
+        removeEvents([thunk.event.id])
+      })
+    } else if (thunk.event.kind === DELETE) {
+      handleDelete(thunk.event)
+    }
+  }
+
+  const ctrl = createFeedController({
+    useWindowing: true,
+    feed: makeIntersectionFeed(makeRelayFeed(...relays), feedFromFilters(feedFilters)),
+    onEvent: insertEvent,
+    onExhausted,
+  })
+
+  const sub = subscribe({
+    relays,
+    filters: subscriptionFilters,
+    onEvent: (e: TrustedEvent) => {
+      if (matchFilters(feedFilters, e)) insertEvent(e)
+      if (e.kind === DELETE) handleDelete(e)
+    },
+  })
+
+  const scroller = createScroller({
+    element,
+    delay: 300,
+    threshold: 10_000,
+    onScroll: async () => {
+      const $buffer = get(buffer)
+
+      events.update($events => sortBy(e => -e.created_at, [...$events, ...$buffer.splice(0, 100)]))
+
+      if ($buffer.length < 100) {
+        ctrl.load(100)
+      }
+    },
+  })
+
+  thunkWorker.addGlobalHandler(onThunk)
+
+  return {
+    events,
+    cleanup: () => {
+      sub.close()
+      scroller.stop()
+      thunkWorker.removeGlobalHandler(onThunk)
+    },
+  }
+}
+
+export const makeCalendarFeed = ({
+  relays,
+  feedFilters,
+  subscriptionFilters,
+  element,
+  onExhausted,
+  initialEvents = [],
+}: {
+  relays: string[]
+  feedFilters: Filter[]
+  subscriptionFilters: Filter[]
+  element: HTMLElement
+  onExhausted?: () => void
+  initialEvents?: TrustedEvent[]
+}) => {
+  let exhaustedScrollers = 0
+  let backwardWindow = [now() - MONTH, now()]
+  let forwardWindow = [now(), now() + MONTH]
+
+  const getStart = (event: TrustedEvent) => parseInt(getTagValue("start", event.tags) || "")
+
+  const getEnd = (event: TrustedEvent) => parseInt(getTagValue("end", event.tags) || "")
+
+  const events = writable(sortBy(getStart, initialEvents))
+
+  const insertEvent = (event: TrustedEvent) => {
+    const start = getStart(event)
+
+    if (isNaN(start) || isNaN(getEnd(event))) return
+
+    events.update($events => {
+      for (let i = 0; i < $events.length; i++) {
+        if ($events[i].id === event.id) return $events
+        if (getStart($events[i]) > start) return insert(i, event, $events)
+      }
+
+      return [...$events, event]
+    })
+  }
+
+  const removeEvents = (ids: string[]) => {
+    events.update($events => $events.filter(e => !ids.includes(e.id)))
+  }
+
+  const onThunk = (thunk: Thunk) => {
+    if (matchFilters(feedFilters, thunk.event)) {
+      insertEvent(thunk.event)
+
+      thunk.controller.signal.addEventListener("abort", () => {
+        removeEvents([thunk.event.id])
+      })
+    }
+  }
+
+  const sub = subscribe({
+    relays,
+    filters: subscriptionFilters,
+    onEvent: (e: TrustedEvent) => {
+      if (matchFilters(feedFilters, e)) insertEvent(e)
+    },
+  })
+
+  const loadTimeframe = (since: number, until: number) => {
+    const hashes = daysBetween(since, until).map(String)
+
+    load({
+      relays,
+      filters: [{kinds: [EVENT_TIME], "#D": hashes}],
+      onEvent: insertEvent,
+    })
+  }
+
+  const maybeExhausted = () => {
+    if (++exhaustedScrollers === 2) {
+      onExhausted?.()
+    }
+  }
+
+  const backwardScroller = createScroller({
+    element,
+    reverse: true,
+    onScroll: () => {
+      const [since, until] = backwardWindow
+
+      backwardWindow = [since - MONTH, since]
+
+      if (until > now() - int(2, YEAR)) {
+        loadTimeframe(since, until)
+      } else {
+        backwardScroller.stop()
+        maybeExhausted()
+      }
+    },
+  })
+
+  const forwardScroller = createScroller({
+    element,
+    onScroll: () => {
+      const [since, until] = forwardWindow
+
+      forwardWindow = [until, until + MONTH]
+
+      if (until < now() + int(2, YEAR)) {
+        loadTimeframe(since, until)
+      } else {
+        forwardScroller.stop()
+        maybeExhausted()
+      }
+    },
+  })
+
+  thunkWorker.addGlobalHandler(onThunk)
+
+  return {
+    events,
+    cleanup: () => {
+      thunkWorker.removeGlobalHandler(onThunk)
+      backwardScroller.stop()
+      forwardScroller.stop()
+      sub.close()
+    },
+  }
 }
 
 // Application requests

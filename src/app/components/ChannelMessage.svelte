@@ -1,12 +1,14 @@
 <script lang="ts">
   import {hash} from "@welshman/lib"
+  import {now} from "@welshman/lib"
   import type {TrustedEvent} from "@welshman/util"
   import {
     thunks,
+    pubkey,
     deriveProfile,
     deriveProfileDisplay,
+    formatTimestampAsDate,
     formatTimestampAsTime,
-    pubkey,
   } from "@welshman/app"
   import {isMobile} from "@lib/html"
   import LongPress from "@lib/components/LongPress.svelte"
@@ -24,20 +26,26 @@
   import {publishDelete, publishReaction} from "@app/commands"
   import {pushModal} from "@app/modal"
 
-  export let url, room
-  export let event: TrustedEvent
-  export let replyTo: any = undefined
-  export let showPubkey = false
-  export let inert = false
+  interface Props {
+    url: any
+    room: any
+    event: TrustedEvent
+    replyTo?: any
+    showPubkey?: boolean
+    inert?: boolean
+  }
+
+  const {url, room, event, replyTo = undefined, showPubkey = false, inert = false}: Props = $props()
 
   const thunk = $thunks[event.id]
+  const today = formatTimestampAsDate(now())
   const profile = deriveProfile(event.pubkey)
   const profileDisplay = deriveProfileDisplay(event.pubkey)
   const [_, colorValue] = colors[parseInt(hash(event.pubkey)) % colors.length]
 
   const reply = () => replyTo(event)
 
-  const onLongPress = () => pushModal(ChannelMessageMenuMobile, {url, event})
+  const onLongPress = () => pushModal(ChannelMessageMenuMobile, {url, event, reply})
 
   const openProfile = () => pushModal(ProfileDetail, {pubkey: event.pubkey})
 
@@ -58,19 +66,26 @@
   class="group relative flex w-full cursor-default flex-col p-2 pb-3 text-left">
   <div class="flex w-full gap-3 overflow-auto">
     {#if showPubkey}
-      <Button on:click={openProfile} class="flex items-start">
+      <Button onclick={openProfile} class="flex items-start">
         <Avatar src={$profile?.picture} class="border border-solid border-base-content" size={8} />
       </Button>
     {:else}
-      <div class="w-8 min-w-8 max-w-8" />
+      <div class="w-8 min-w-8 max-w-8"></div>
     {/if}
     <div class="min-w-0 flex-grow pr-1">
       {#if showPubkey}
         <div class="flex items-center gap-2">
-          <Button on:click={openProfile} class="text-sm font-bold" style="color: {colorValue}">
+          <Button onclick={openProfile} class="text-sm font-bold" style="color: {colorValue}">
             {$profileDisplay}
           </Button>
-          <span class="text-xs opacity-50">{formatTimestampAsTime(event.created_at)}</span>
+          <span class="text-xs opacity-50">
+            {#if formatTimestampAsDate(event.created_at) === today}
+              Today
+            {:else}
+              {formatTimestampAsDate(event.created_at)}
+            {/if}
+            at {formatTimestampAsTime(event.created_at)}
+          </span>
         </div>
       {/if}
       <div class="text-sm">
@@ -86,11 +101,10 @@
   </div>
   <button
     class="join absolute right-1 top-1 border border-solid border-neutral text-xs opacity-0 transition-all"
-    class:group-hover:opacity-100={!isMobile}
-    on:click|stopPropagation>
+    class:group-hover:opacity-100={!isMobile}>
     <ChannelMessageEmojiButton {url} {room} {event} />
     {#if replyTo}
-      <Button class="btn join-item btn-xs" on:click={reply}>
+      <Button class="btn join-item btn-xs" onclick={reply}>
         <Icon icon="reply" size={4} />
       </Button>
     {/if}

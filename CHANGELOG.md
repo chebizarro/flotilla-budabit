@@ -1,5 +1,38 @@
 # Changelog
 
+# 0.2.7
+
+* Add calendar events
+* Migrate to svelte 5 (fixes some bugs, probably introduces others)
+* Migrate to new welshman editor
+* Make reply indicator nicer
+* Make share indicator nicer
+* Improve feed loading
+* Show marker for last activity in chat
+
+# 0.2.6
+
+* Add reply to long-press menu
+* Fix @-mentions
+* Replace nsec.app signup with njump.me
+* Add new messages button in rooms
+* Add media server settings
+* Add build hash to about page
+
+# 0.2.5
+
+* Improve room and data loading
+* Use @welshman/editor
+* Drop support for legacy event kinds
+* Add support for back button navigation on android
+* Remove note to self page (still available via chat)
+* Improve chat conversation search
+* Change how reply UI works
+
+# 0.2.4
+
+* Update icons
+
 # 0.2.3
 
 * Add NIP 56 reports for messages and threads

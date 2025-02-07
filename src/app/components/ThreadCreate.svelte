@@ -1,19 +1,19 @@
 <script lang="ts">
-  import {onMount} from "svelte"
   import {writable} from "svelte/store"
   import {createEvent, THREAD} from "@welshman/util"
   import {publishThunk} from "@welshman/app"
-  import {isMobile} from "@lib/html"
+  import {isMobile, preventDefault} from "@lib/html"
   import Icon from "@lib/components/Icon.svelte"
   import Field from "@lib/components/Field.svelte"
   import Button from "@lib/components/Button.svelte"
   import ModalHeader from "@lib/components/ModalHeader.svelte"
   import ModalFooter from "@lib/components/ModalFooter.svelte"
+  import EditorContent from "@app/editor/EditorContent.svelte"
   import {pushToast} from "@app/toast"
   import {GENERAL, tagRoom, PROTECTED} from "@app/state"
-  import {getEditor} from "@app/editor"
+  import {makeEditor} from "@app/editor"
 
-  export let url
+  const {url} = $props()
 
   const uploading = writable(false)
 
@@ -29,7 +29,7 @@
       })
     }
 
-    const content = $editor.getText({blockSeparator: "\n"}).trim()
+    const content = editor.getText({blockSeparator: "\n"}).trim()
 
     if (!content.trim()) {
       return pushToast({
@@ -39,7 +39,7 @@
     }
 
     const tags = [
-      ...$editor.storage.nostr.getEditorTags(),
+      ...editor.storage.nostr.getEditorTags(),
       tagRoom(GENERAL, url),
       ["title", title],
       PROTECTED,
@@ -53,43 +53,51 @@
     history.back()
   }
 
-  let title: string
-  let element: HTMLElement
-  let editor: ReturnType<typeof getEditor>
+  const editor = makeEditor({submit, uploading, placeholder: "What's on your mind?"})
 
-  onMount(() => {
-    editor = getEditor({submit, element, uploading, placeholder: "What's on your mind?"})
-  })
+  let title: string = $state("")
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={submit}>
+<form class="column gap-4" onsubmit={preventDefault(submit)}>
   <ModalHeader>
-    <div slot="title">Create a Thread</div>
-    <div slot="info">Share a link, or start a discussion.</div>
+    {#snippet title()}
+      <div>Create a Thread</div>
+    {/snippet}
+    {#snippet info()}
+      <div>Share a link, or start a discussion.</div>
+    {/snippet}
   </ModalHeader>
   <div class="col-8 relative">
     <Field>
-      <p slot="label">Title*</p>
-      <label class="input input-bordered flex w-full items-center gap-2" slot="input">
-        <!-- svelte-ignore a11y-autofocus -->
-        <input
-          autofocus={!isMobile}
-          bind:value={title}
-          class="grow"
-          type="text"
-          placeholder="What is this thread about?" />
-      </label>
+      {#snippet label()}
+        <p>Title*</p>
+      {/snippet}
+      {#snippet input()}
+        <label class="input input-bordered flex w-full items-center gap-2">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            autofocus={!isMobile}
+            bind:value={title}
+            class="grow"
+            type="text"
+            placeholder="What is this thread about?" />
+        </label>
+      {/snippet}
     </Field>
     <Field>
-      <p slot="label">Message*</p>
-      <div slot="input" class="note-editor flex-grow overflow-hidden">
-        <div bind:this={element} />
-      </div>
+      {#snippet label()}
+        <p>Message*</p>
+      {/snippet}
+      {#snippet input()}
+        <div class="note-editor flex-grow overflow-hidden">
+          <EditorContent {editor} />
+        </div>
+      {/snippet}
     </Field>
     <Button
       data-tip="Add an image"
       class="tooltip tooltip-left absolute bottom-1 right-2"
-      on:click={$editor.commands.selectFiles}>
+      onclick={editor.commands.selectFiles}>
       {#if $uploading}
         <span class="loading loading-spinner loading-xs"></span>
       {:else}
@@ -98,7 +106,7 @@
     </Button>
   </div>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back}>
+    <Button class="btn btn-link" onclick={back}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

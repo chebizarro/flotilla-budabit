@@ -2,6 +2,7 @@
   import {goto} from "$app/navigation"
   import {ctx, tryCatch} from "@welshman/lib"
   import {isRelayUrl, normalizeRelayUrl} from "@welshman/util"
+  import {preventDefault} from "@lib/html"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
   import Field from "@lib/components/Field.svelte"
@@ -59,30 +60,42 @@
     }
   }
 
-  let url = ""
-  let loading = false
+  let url = $state("")
+  let loading = $state(false)
 
-  $: linkIsValid = Boolean(tryCatch(() => isRelayUrl(normalizeRelayUrl(url.split("|")[0]))))
+  const linkIsValid = $derived(
+    Boolean(tryCatch(() => isRelayUrl(normalizeRelayUrl(url.split("|")[0])))),
+  )
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={join}>
+<form class="column gap-4" onsubmit={preventDefault(join)}>
   <ModalHeader>
-    <div slot="title">Join a Space</div>
-    <div slot="info">Enter an invite code below to join an existing space.</div>
+    {#snippet title()}
+      <div>Join a Space</div>
+    {/snippet}
+    {#snippet info()}
+      <div>Enter an invite code below to join an existing space.</div>
+    {/snippet}
   </ModalHeader>
   <Field>
-    <p slot="label">Invite code*</p>
-    <label class="input input-bordered flex w-full items-center gap-2" slot="input">
-      <Icon icon="link-round" />
-      <input bind:value={url} class="grow" type="text" />
-    </label>
-    <p slot="info">
-      You can also directly join any relay by entering its URL here.
-      <Button class="link" on:click={() => pushModal(InfoRelay)}>What is a relay?</Button>
-    </p>
+    {#snippet label()}
+      <p>Invite code*</p>
+    {/snippet}
+    {#snippet input()}
+      <label class="input input-bordered flex w-full items-center gap-2">
+        <Icon icon="link-round" />
+        <input bind:value={url} class="grow" type="text" />
+      </label>
+    {/snippet}
+    {#snippet info()}
+      <p>
+        You can also directly join any relay by entering its URL here.
+        <Button class="link" onclick={() => pushModal(InfoRelay)}>What is a relay?</Button>
+      </p>
+    {/snippet}
   </Field>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back}>
+    <Button class="btn btn-link" onclick={back}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

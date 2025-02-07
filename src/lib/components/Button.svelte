@@ -1,15 +1,37 @@
 <script lang="ts">
-  export let type: "button" | "submit" = "button"
+  import type {Snippet} from "svelte"
 
-  $: className = `text-left ${$$props.class}`
+  const {
+    children,
+    onclick,
+    type = "button",
+    ...restProps
+  }: {
+    children: Snippet
+    onclick?: (event: Event) => any
+    type?: "button" | "submit"
+    class?: string
+    style?: string
+    disabled?: boolean
+    "data-tip"?: string
+  } = $props()
+
+  const className = $derived(`text-left ${restProps.class}`)
+
+  const onClick = (e: Event) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    onclick?.(e)
+  }
 </script>
 
 {#if type === "submit"}
-  <button {...$$props} {type} class={className}>
-    <slot />
+  <button {...restProps} {type} class={className}>
+    {@render children?.()}
   </button>
 {:else}
-  <button on:click|stopPropagation|preventDefault {...$$props} {type} class={className}>
-    <slot />
+  <button {...restProps} onclick={onClick} type={type as "button" | "submit"} class={className}>
+    {@render children?.()}
   </button>
 {/if}

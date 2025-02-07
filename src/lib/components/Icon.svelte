@@ -6,7 +6,6 @@
 </style>
 
 <script lang="ts">
-  import cx from "classnames"
   import {switcher} from "@welshman/lib"
   import AddSquare from "@assets/icons/Add Square.svg?dataurl"
   import ArrowsALogout2 from "@assets/icons/Arrows ALogout 2.svg?dataurl"
@@ -84,8 +83,15 @@
   import WidgetAdd from "@assets/icons/Widget Add.svg?dataurl"
   import WiFiRouterRound from "@assets/icons/Wi-Fi Router Round.svg?dataurl"
 
-  export let icon
-  export let size = 5
+  const {
+    icon,
+    size = 5,
+    ...restProps
+  }: {
+    icon: string
+    size?: number
+    class?: string
+  } = $props()
 
   const px = size * 4
 
@@ -173,5 +179,6 @@
 </script>
 
 <div
-  class={cx("inline-block", $$props.class)}
-  style="mask-image: url({data}); width: {px}px; height: {px}px; min-width: {px}px; min-height: {px}px; background-color: currentcolor;" />
+  class="inline-block {restProps.class}"
+  style="mask-image: url({data}); width: {px}px; height: {px}px; min-width: {px}px; min-height: {px}px; background-color: currentcolor;">
+</div>

@@ -2,6 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fonts */
+
 @font-face {
   font-family: "Satoshis";
   font-style: normal;
@@ -38,6 +40,8 @@
     url("/fonts/Italic.ttf") format("truetype");
 }
 
+/* root */
+
 :root {
   font-family: Lato;
   --base-100: oklch(var(--b1));
@@ -49,6 +53,60 @@
   --secondary: oklch(var(--s));
   --secondary-content: oklch(var(--sc));
 }
+
+:root,
+body,
+html {
+  @apply bg-base-300;
+}
+
+/* ios */
+
+.sait {
+  padding-top: env(safe-area-inset-top);
+}
+
+.sair {
+  padding-right: env(safe-area-inset-right);
+}
+
+.saib {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sail {
+  padding-left: env(safe-area-inset-left);
+}
+
+.saix {
+  @apply sail sair;
+}
+
+.saiy {
+  @apply sait saib;
+}
+
+.sai {
+  @apply saiy saix;
+}
+
+.top-sai {
+  top: env(safe-area-inset-top);
+}
+
+.right-sai {
+  right: env(safe-area-inset-right);
+}
+
+.bottom-sai {
+  bottom: env(safe-area-inset-bottom);
+}
+
+.left-sai {
+  left: env(safe-area-inset-left);
+}
+
+/* utilities */
 
 .bg-alt,
 .bg-alt .bg-alt .bg-alt,
@@ -185,54 +243,71 @@
   @apply -m-1 min-h-12 p-1;
 }
 
-.tiptap[contenteditable="true"] {
+.tiptap {
+  --tiptap-object-bg: var(--base-100);
+  --tiptap-object-fg: var(--base-content);
+  --tiptap-active-bg: var(--primary);
+  --tiptap-active-fg: var(--primary-content);
+}
+
+.tiptap-suggestions {
+  --tiptap-object-bg: var(--base-100);
+  --tiptap-object-fg: var(--base-content);
+  --tiptap-active-bg: var(--base-300);
+  --tiptap-active-fg: var(--base-content);
+}
+
+.tiptap {
   @apply max-h-[350px] overflow-y-auto p-2 px-4;
 }
 
-.chat-editor .tiptap[contenteditable="true"] {
-  @apply rounded-box bg-base-300;
+.tiptap p.is-editor-empty:first-child::before {
+  opacity: 40%;
 }
 
-.input-editor .tiptap[contenteditable="true"] {
-  @apply input input-bordered h-auto p-[.65rem];
+.chat-editor .tiptap {
+  @apply rounded-box bg-base-300 pr-12;
 }
 
-.note-editor .tiptap[contenteditable="true"] {
+.note-editor .tiptap {
+  --tiptap-object-bg: var(--base-200);
   @apply input input-bordered h-auto min-h-32 rounded-box p-[.65rem] pb-6;
 }
 
-.tiptap pre code {
-  @apply link-content block w-full;
+.input-editor .tiptap {
+  --tiptap-object-bg: var(--base-200);
+  @apply input input-bordered h-auto p-[.65rem];
 }
 
-.tiptap p code {
-  @apply link-content;
-}
+/* link-content, based on tiptap */
 
-.link-content,
-.tiptap [tag] {
-  @apply max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded bg-neutral px-1 text-neutral-content no-underline;
-}
-
-.link-content.link-content-selected {
-  @apply bg-primary text-primary-content;
-}
-
-.tiptap p.is-editor-empty:first-child::before {
-  content: attr(data-placeholder);
-  float: left;
-  height: 0;
-  pointer-events: none;
-  opacity: 50%;
+.link-content {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 3px;
+  padding: 0 0.25rem;
+  background-color: var(--base-100);
+  color: var(--base-content);
 }
 
 /* date input */
 
-.date-time-field {
-  @apply input input-bordered rounded px-0;
+.picker {
+  --date-picker-foreground: var(--base-content);
+  --date-picker-background: var(--base-300);
+  --date-picker-highlight-border: var(--primary);
+  --date-picker-selected-color: var(--primary-content);
+  --date-picker-selected-background: var(--primary);
 }
+
+.date-time-field {
+  @apply input input-bordered rounded-lg px-0;
+}
+
 .date-time-field input {
-  @apply !h-full !w-full !border-none !bg-inherit !text-inherit;
+  @apply !h-full !w-full !rounded-lg !border-none !bg-inherit !px-4 !text-inherit;
 }
 
 /* emoji picker */
@@ -247,20 +322,4 @@ emoji-picker {
   --input-border-color: var(--base-100);
   --input-font-color: var(--base-content);
   --outline-color: var(--base-100);
-}
-
-/* tiptap */
-
-.tiptap {
-  --tiptap-object-bg: var(--base-100);
-  --tiptap-object-fg: var(--base-content);
-  --tiptap-active-bg: var(--primary);
-  --tiptap-active-fg: var(--primary-content);
-}
-
-.tiptap-suggestions {
-  --tiptap-object-bg: var(--base-100);
-  --tiptap-object-fg: var(--base-content);
-  --tiptap-active-bg: var(--base-300);
-  --tiptap-active-fg: var(--base-content);
 }

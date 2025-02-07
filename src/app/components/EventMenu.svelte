@@ -1,17 +1,26 @@
 <script lang="ts">
+  import type {TrustedEvent} from "@welshman/util"
   import {COMMENT} from "@welshman/util"
   import {pubkey} from "@welshman/app"
   import Button from "@lib/components/Button.svelte"
   import Icon from "@lib/components/Icon.svelte"
   import EventInfo from "@app/components/EventInfo.svelte"
   import EventReport from "@app/components/EventReport.svelte"
-  import ThreadShare from "@app/components/ThreadShare.svelte"
+  import EventShare from "@app/components/EventShare.svelte"
   import ConfirmDelete from "@app/components/ConfirmDelete.svelte"
   import {pushModal} from "@app/modal"
 
-  export let url
-  export let event
-  export let onClick
+  const {
+    url,
+    noun,
+    event,
+    onClick,
+  }: {
+    url: string
+    noun: string
+    event: TrustedEvent
+    onClick: () => void
+  } = $props()
 
   const isRoot = event.kind !== COMMENT
 
@@ -27,7 +36,7 @@
 
   const share = () => {
     onClick()
-    pushModal(ThreadShare, {url, event})
+    pushModal(EventShare, {url, event})
   }
 
   const showDelete = () => {
@@ -39,28 +48,28 @@
 <ul class="menu whitespace-nowrap rounded-box bg-base-100 p-2 shadow-xl">
   {#if isRoot}
     <li>
-      <Button on:click={share}>
+      <Button onclick={share}>
         <Icon size={4} icon="share-circle" />
         Share to Chat
       </Button>
     </li>
   {/if}
   <li>
-    <Button on:click={showInfo}>
+    <Button onclick={showInfo}>
       <Icon size={4} icon="code-2" />
-      Message Details
+      {noun} Details
     </Button>
   </li>
   {#if event.pubkey === $pubkey}
     <li>
-      <Button on:click={showDelete} class="text-error">
+      <Button onclick={showDelete} class="text-error">
         <Icon size={4} icon="trash-bin-2" />
-        Delete Message
+        Delete {noun}
       </Button>
     </li>
   {:else}
     <li>
-      <Button class="text-error" on:click={report}>
+      <Button class="text-error" onclick={report}>
         <Icon size={4} icon="danger" />
         Report Content
       </Button>

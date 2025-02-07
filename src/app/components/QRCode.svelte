@@ -4,29 +4,34 @@
   import Button from "@lib/components/Button.svelte"
   import {clip} from "@app/toast"
 
-  export let code
+  const {code} = $props()
 
-  let canvas: Element
-  let wrapper: Element
-  let scale = 0.1
-  let height: number
+  let canvas: Element | undefined = $state()
+  let wrapper: Element | undefined = $state()
+  let scale = $state(0.1)
+  let height = $state(0)
+
+  const copy = () => clip(code)
 
   onMount(() => {
-    QRCode.toCanvas(canvas, code)
+    if (canvas && wrapper) {
+      QRCode.toCanvas(canvas, code)
 
-    const wrapperRect = wrapper.getBoundingClientRect()
-    const canvasRect = canvas.getBoundingClientRect()
+      const wrapperRect = wrapper.getBoundingClientRect()
+      const canvasRect = canvas.getBoundingClientRect()
 
-    scale = wrapperRect.width / (canvasRect.width * 10)
-    height = canvasRect.width * 10 * scale
+      scale = wrapperRect.width / (canvasRect.width * 10)
+      height = canvasRect.width * 10 * scale
+    }
   })
 </script>
 
-<Button on:click={() => clip(code)}>
+<Button class="max-w-full" onclick={copy}>
   <div bind:this={wrapper} style={`height: ${height}px`}>
     <canvas
       class="rounded-box"
       bind:this={canvas}
-      style={`transform-origin: top left; transform: scale(${scale}, ${scale})`} />
+      style={`transform-origin: top left; transform: scale(${scale}, ${scale})`}>
+    </canvas>
   </div>
 </Button>

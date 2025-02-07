@@ -1,106 +1,166 @@
 <script lang="ts">
-  import {onMount, onDestroy} from "svelte"
+  import {onMount} from "svelte"
+  import type {Readable} from "svelte/store"
+  import {readable} from "svelte/store"
   import {page} from "$app/stores"
-  import {sortBy, last, ago} from "@welshman/lib"
+  import {now, last} from "@welshman/lib"
   import type {TrustedEvent} from "@welshman/util"
-  import {EVENT_DATE, EVENT_TIME} from "@welshman/util"
-  import {subscribe, formatTimestampAsDate} from "@welshman/app"
+  import {REACTION, DELETE, EVENT_TIME, getTagValue} from "@welshman/util"
+  import {formatTimestampAsDate} from "@welshman/app"
+  import {fly} from "@lib/transition"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
   import Divider from "@lib/components/Divider.svelte"
   import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
-  import EventItem from "@app/components/EventItem.svelte"
-  import EventCreate from "@app/components/EventCreate.svelte"
+  import CalendarEventItem from "@app/components/CalendarEventItem.svelte"
+  import CalendarEventCreate from "@app/components/CalendarEventCreate.svelte"
   import {pushModal} from "@app/modal"
-  import {deriveEventsForUrl, decodeRelay} from "@app/state"
-  import {pullConservatively} from "@app/requests"
+  import {GENERAL, getEventsForUrl, decodeRelay} from "@app/state"
+  import {makeCalendarFeed} from "@app/requests"
   import {setChecked} from "@app/notifications"
 
   const url = decodeRelay($page.params.relay)
-  const kinds = [EVENT_DATE, EVENT_TIME]
-  const events = deriveEventsForUrl(url, [{kinds}])
 
-  const createEvent = () => pushModal(EventCreate, {url})
+  const createEvent = () => pushModal(CalendarEventCreate, {url})
 
-  const getEnd = (event: TrustedEvent) => parseInt(event.tags.find(t => t[0] === "end")?.[1] || "")
+  const getStart = (event: TrustedEvent) => parseInt(getTagValue("start", event.tags) || "")
 
-  const getStart = (event: TrustedEvent) =>
-    parseInt(event.tags.find(t => t[0] === "start")?.[1] || "")
-
-  const limit = 5
-  let loading = true
+  let element: HTMLElement
+  let loading = $state(true)
+  let cleanup: () => void
+  let events: Readable<TrustedEvent[]> = $state(readable([]))
 
   type Item = {
     event: TrustedEvent
     dateDisplay?: string
+    isFirstFutureEvent?: boolean
   }
 
-  $: items = sortBy(e => -getStart(e), $events)
-    .reduce<Item[]>((r, event) => {
-      const end = getEnd(event)
-      const start = getStart(event)
+  const items = $derived.by(() => {
+    const todayDateDisplay = formatTimestampAsDate(now())
 
-      if (isNaN(start) || isNaN(end)) return r
+    let haveISeenTheFuture = false
+    let prevDateDisplay: string
 
-      const prevDateDisplay =
-        r.length > 0 ? formatTimestampAsDate(getStart(last(r).event)) : undefined
-      const newDateDisplay = formatTimestampAsDate(start)
+    return $events.map<Item>(event => {
+      const newDateDisplay = formatTimestampAsDate(getStart(event))
       const dateDisplay = prevDateDisplay === newDateDisplay ? undefined : newDateDisplay
+      const isFuture = todayDateDisplay === newDateDisplay || event.created_at > now()
+      const isFirstFutureEvent = !haveISeenTheFuture && isFuture
 
-      return [...r, {event, dateDisplay}]
-    }, [])
-    .slice(0, limit)
+      prevDateDisplay = newDateDisplay
+      haveISeenTheFuture = isFuture
+
+      return {event, dateDisplay, isFirstFutureEvent}
+    })
+  })
+
+  let previousScrollHeight = 0
+  let prevFirstEventId = ""
+  let initialScrollDone = false
+
+  $effect(() => {
+    if (items.length === 0) {
+      return
+    }
+
+    if (initialScrollDone) {
+      // If new events are prepended, adjust the scroll position so that the viewport content remains anchored
+      if (prevFirstEventId && items[0].event.id !== prevFirstEventId) {
+        const newScrollHeight = element.scrollHeight
+        const delta = newScrollHeight - previousScrollHeight
+
+        if (delta > 0) {
+          element.scrollTop += delta
+        }
+      }
+    } else {
+      const {event} = items.find(({event}) => getStart(event) >= now()) || last(items)
+      const {offsetTop, clientHeight} = document.querySelector(
+        ".calendar-event-" + event.id,
+      ) as HTMLElement
+
+      // On initial load, center the scroll container on today's date (or the next available event)
+      element.scrollTop = offsetTop - element.clientHeight / 2 + clientHeight / 2
+      initialScrollDone = true
+    }
+
+    previousScrollHeight = element.scrollHeight
+    prevFirstEventId = items[0].event.id
+  })
 
   onMount(() => {
-    const sub = subscribe({filters: [{kinds, since: ago(30)}]})
+    const feedFilters = [{kinds: [EVENT_TIME], "#h": [GENERAL]}]
+    const subscriptionFilters = [
+      {kinds: [DELETE, REACTION, EVENT_TIME], "#h": [GENERAL], since: now()},
+    ]
 
-    pullConservatively({filters: [{kinds}], relays: [url]})
+    ;({events, cleanup} = makeCalendarFeed({
+      element,
+      relays: [url],
+      feedFilters,
+      subscriptionFilters,
+      initialEvents: getEventsForUrl(url, feedFilters),
+      onExhausted: () => {
+        loading = false
+      },
+    }))
 
-    return () => sub.close()
+    return () => {
+      setChecked($page.url.pathname)
+      cleanup()
+    }
   })
-
-  onDestroy(() => {
-    setChecked($page.url.pathname)
-  })
-
-  setTimeout(() => {
-    loading = false
-  }, 5000)
 </script>
 
 <div class="relative flex h-screen flex-col">
   <PageBar>
-    <div slot="icon" class="center">
-      <Icon icon="calendar-minimalistic" />
-    </div>
-    <strong slot="title">Calendar</strong>
-    <div slot="action" class="md:hidden">
-      <MenuSpaceButton {url} />
-    </div>
+    {#snippet icon()}
+      <div class="center">
+        <Icon icon="calendar-minimalistic" />
+      </div>
+    {/snippet}
+    {#snippet title()}
+      <strong>Calendar</strong>
+    {/snippet}
+    {#snippet action()}
+      <div class="md:hidden">
+        <MenuSpaceButton {url} />
+      </div>
+    {/snippet}
   </PageBar>
-  <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
-    {#each items as { event, dateDisplay }, i (event.id)}
-      {#if dateDisplay}
-        <Divider>{dateDisplay}</Divider>
-      {/if}
-      <EventItem {event} />
-    {/each}
-    <p class="flex h-10 items-center justify-center py-20">
-      <Spinner {loading}>
-        {#if loading}
-          Looking for events...
-        {:else if items.length === 0}
-          No events found.
+  <div class="scroll-container flex flex-grow flex-col gap-2 overflow-auto p-2" bind:this={element}>
+    {#each items as { event, dateDisplay, isFirstFutureEvent }, i (event.id)}
+      <div class={"calendar-event-" + event.id}>
+        {#if isFirstFutureEvent}
+          <div class="flex items-center gap-2 p-2">
+            <div class="h-px flex-grow bg-primary"></div>
+            <p class="text-xs uppercase text-primary">Today</p>
+            <div class="h-px flex-grow bg-primary"></div>
+          </div>
         {/if}
-      </Spinner>
-    </p>
+        {#if dateDisplay}
+          <Divider>{dateDisplay}</Divider>
+        {/if}
+        <CalendarEventItem {url} {event} />
+      </div>
+    {/each}
+    {#if loading}
+      <p class="flex h-10 items-center justify-center py-20" transition:fly>
+        <Spinner {loading}>Looking for events...</Spinner>
+      </p>
+    {:else if items.length === 0}
+      <p class="flex h-10 items-center justify-center py-20" transition:fly>No events found.</p>
+    {:else}
+      <p class="flex h-10 items-center justify-center py-20" transition:fly>That's all!</p>
+    {/if}
   </div>
   <Button
     class="tooltip tooltip-left fixed bottom-16 right-2 z-feature p-1 md:bottom-4 md:right-4"
     data-tip="Create an Event"
-    on:click={createEvent}>
+    onclick={createEvent}>
     <div class="btn btn-circle btn-primary flex h-12 w-12 items-center justify-center">
       <Icon icon="calendar-add" />
     </div>

@@ -3,6 +3,7 @@
   import {randomId} from "@welshman/lib"
   import {displayRelayUrl} from "@welshman/util"
   import {deriveRelay} from "@welshman/app"
+  import {preventDefault} from "@lib/html"
   import Field from "@lib/components/Field.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
@@ -14,7 +15,7 @@
   import {makeSpacePath} from "@app/routes"
   import {pushToast} from "@app/toast"
 
-  export let url
+  const {url} = $props()
 
   const room = randomId()
   const relay = deriveRelay(url)
@@ -56,26 +57,34 @@
     }
   }
 
-  let name = ""
-  let loading = false
+  let name = $state("")
+  let loading = $state(false)
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={create}>
+<form class="column gap-4" onsubmit={preventDefault(create)}>
   <ModalHeader>
-    <div slot="title">Create a Room</div>
-    <div slot="info">
-      On <span class="text-primary">{displayRelayUrl(url)}</span>
-    </div>
+    {#snippet title()}
+      <div>Create a Room</div>
+    {/snippet}
+    {#snippet info()}
+      <div>
+        On <span class="text-primary">{displayRelayUrl(url)}</span>
+      </div>
+    {/snippet}
   </ModalHeader>
   <Field>
-    <p slot="label">Room Name</p>
-    <label class="input input-bordered flex w-full items-center gap-2" slot="input">
-      <Icon icon="hashtag" />
-      <input bind:value={name} class="grow" type="text" />
-    </label>
+    {#snippet label()}
+      <p>Room Name</p>
+    {/snippet}
+    {#snippet input()}
+      <label class="input input-bordered flex w-full items-center gap-2">
+        <Icon icon="hashtag" />
+        <input bind:value={name} class="grow" type="text" />
+      </label>
+    {/snippet}
   </Field>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back}>
+    <Button class="btn btn-link" onclick={back}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

@@ -8,8 +8,7 @@
   import Profile from "@app/components/Profile.svelte"
   import {publishDelete} from "@app/commands"
 
-  export let url
-  export let event
+  const {url, event} = $props()
 
   const reports = deriveEvents(repository, {
     filters: [{kinds: [REPORT], "#e": [event.id]}],
@@ -30,8 +29,12 @@
 
 <div class="column gap-4">
   <ModalHeader>
-    <div slot="title">Report Details</div>
-    <div slot="info">All reports for this event are shown below.</div>
+    {#snippet title()}
+      <div>Report Details</div>
+    {/snippet}
+    {#snippet info()}
+      <div>All reports for this event are shown below.</div>
+    {/snippet}
   </ModalHeader>
   {#each $reports as report (report.id)}
     {@const reason = getReason(report.tags)}
@@ -43,7 +46,7 @@
           <span>Reported this event as "{reason}"</span>
         </div>
         {#if report.pubkey === $pubkey}
-          <Button class="btn-default btn" on:click={remove}>Delete Report</Button>
+          <Button class="btn-default btn" onclick={remove}>Delete Report</Button>
         {/if}
       </div>
       {#if report.content}
@@ -51,5 +54,5 @@
       {/if}
     </div>
   {/each}
-  <Button class="btn btn-primary" on:click={back}>Got it</Button>
+  <Button class="btn btn-primary" onclick={back}>Got it</Button>
 </div>

@@ -1,16 +1,21 @@
 <script lang="ts">
+  import {preventDefault} from "@lib/html"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import ModalHeader from "@lib/components/ModalHeader.svelte"
   import ModalFooter from "@lib/components/ModalFooter.svelte"
 
-  export let title = "Are you sure?"
-  export let subtitle = ""
-  export let message
-  export let confirm
+  interface Props {
+    title?: string
+    subtitle?: string
+    message: any
+    confirm: any
+  }
 
-  let loading = false
+  const {subtitle = "", message, confirm, ...restProps}: Props = $props()
+
+  let loading = $state(false)
 
   const tryConfirm = async () => {
     loading = true
@@ -25,14 +30,18 @@
   const back = () => history.back()
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={tryConfirm}>
+<form class="column gap-4" onsubmit={preventDefault(tryConfirm)}>
   <ModalHeader>
-    <div slot="title">{title}</div>
-    <div slot="info">{subtitle}</div>
+    {#snippet title()}
+      <div>{restProps.title || "Are you sure?"}</div>
+    {/snippet}
+    {#snippet info()}
+      <div>{subtitle}</div>
+    {/snippet}
   </ModalHeader>
   <p>{message}</p>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back}>
+    <Button class="btn btn-link" onclick={back}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

@@ -1,8 +1,8 @@
 <script lang="ts">
   import {onMount} from "svelte"
   import {page} from "$app/stores"
-  import {sortBy, nthEq, sleep} from "@welshman/lib"
-  import {COMMENT} from "@welshman/util"
+  import {sortBy, sleep} from "@welshman/lib"
+  import {COMMENT, getTagValue} from "@welshman/util"
   import {repository, subscribe} from "@welshman/app"
   import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
@@ -13,7 +13,7 @@
   import NoteCard from "@app/components/NoteCard.svelte"
   import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
   import ThreadActions from "@app/components/ThreadActions.svelte"
-  import ThreadReply from "@app/components/ThreadReply.svelte"
+  import EventReply from "@app/components/EventReply.svelte"
   import {deriveEvent, decodeRelay} from "@app/state"
   import {setChecked} from "@app/notifications"
 
@@ -37,10 +37,8 @@
     showAll = true
   }
 
-  let showAll = false
-  let showReply = false
-
-  $: title = $event?.tags.find(nthEq(0, "title"))?.[1] || ""
+  let showAll = $state(false)
+  let showReply = $state(false)
 
   onMount(() => {
     const sub = subscribe({relays: [url], filters})
@@ -53,11 +51,11 @@
 </script>
 
 <div class="relative flex flex-col-reverse gap-3 px-2">
-  <div class="absolute left-[51px] top-32 h-[calc(100%-248px)] w-[2px] bg-neutral" />
+  <div class="absolute left-[51px] top-32 h-[calc(100%-248px)] w-[2px] bg-neutral"></div>
   {#if $event}
     {#if !showReply}
       <div class="flex justify-end px-2 pb-2">
-        <Button class="btn btn-primary" on:click={openReply}>
+        <Button class="btn btn-primary" onclick={openReply}>
           <Icon icon="reply" />
           Reply to thread
         </Button>
@@ -73,7 +71,7 @@
     {/each}
     {#if !showAll && $replies.length > 4}
       <div class="flex justify-center">
-        <Button class="btn btn-link" on:click={expand}>
+        <Button class="btn btn-link" onclick={expand}>
           <Icon icon="sort-vertical" />
           Show all {$replies.length} replies
         </Button>
@@ -93,18 +91,24 @@
     {/await}
   {/if}
   <PageBar class="mx-0">
-    <div slot="icon">
-      <Button class="btn btn-neutral btn-sm" on:click={back}>
-        <Icon icon="alt-arrow-left" />
-        Go back
-      </Button>
-    </div>
-    <h1 slot="title" class="text-xl">{title}</h1>
-    <div slot="action">
-      <MenuSpaceButton {url} />
-    </div>
+    {#snippet icon()}
+      <div>
+        <Button class="btn btn-neutral btn-sm" onclick={back}>
+          <Icon icon="alt-arrow-left" />
+          Go back
+        </Button>
+      </div>
+    {/snippet}
+    {#snippet title()}
+      <h1 class="text-xl">{getTagValue("title", $event?.tags || []) || ""}</h1>
+    {/snippet}
+    {#snippet action()}
+      <div>
+        <MenuSpaceButton {url} />
+      </div>
+    {/snippet}
   </PageBar>
 </div>
 {#if showReply}
-  <ThreadReply {url} event={$event} onClose={closeReply} onSubmit={closeReply} />
+  <EventReply {url} event={$event} onClose={closeReply} onSubmit={closeReply} />
 {/if}

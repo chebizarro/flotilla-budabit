@@ -1,6 +1,7 @@
 <script lang="ts">
   import {goto} from "$app/navigation"
   import {pubkey} from "@welshman/app"
+  import {preventDefault} from "@lib/html"
   import Field from "@lib/components/Field.svelte"
   import Button from "@lib/components/Button.svelte"
   import Icon from "@lib/components/Icon.svelte"
@@ -13,21 +14,25 @@
 
   const onSubmit = () => goto(makeChatPath([...pubkeys, $pubkey!]))
 
-  let pubkeys: string[] = []
+  let pubkeys: string[] = $state([])
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={onSubmit}>
+<form class="column gap-4" onsubmit={preventDefault(onSubmit)}>
   <ModalHeader>
-    <div slot="title">Start a Chat</div>
-    <div slot="info">Create an encrypted chat room for private conversations.</div>
+    {#snippet title()}
+      <div>Start a Chat</div>
+    {/snippet}
+    {#snippet info()}
+      <div>Create an encrypted chat room for private conversations.</div>
+    {/snippet}
   </ModalHeader>
   <Field>
-    <div slot="input">
+    {#snippet input()}
       <ProfileMultiSelect autofocus bind:value={pubkeys} />
-    </div>
+    {/snippet}
   </Field>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back}>
+    <Button class="btn btn-link" onclick={back}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

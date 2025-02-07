@@ -1,22 +1,35 @@
 <script lang="ts">
   import {onMount} from "svelte"
+  import type {Snippet} from "svelte"
   import {groupBy, uniq, uniqBy, batch} from "@welshman/lib"
   import {REACTION, getTag, REPORT, DELETE} from "@welshman/util"
   import type {TrustedEvent} from "@welshman/util"
   import {deriveEvents} from "@welshman/store"
   import {pubkey, repository, load, displayProfileByPubkey} from "@welshman/app"
   import {displayList} from "@lib/util"
-  import {isMobile} from "@lib/html"
+  import {isMobile, preventDefault, stopPropagation} from "@lib/html"
   import Icon from "@lib/components/Icon.svelte"
   import EventReportDetails from "@app/components/EventReportDetails.svelte"
   import {displayReaction} from "@app/state"
   import {pushModal} from "@app/modal"
 
-  export let event
-  export let onReactionClick
-  export let url = ""
-  export let reactionClass = ""
-  export let noTooltip = false
+  interface Props {
+    event: any
+    onReactionClick: any
+    url?: string
+    reactionClass?: string
+    noTooltip?: boolean
+    children?: Snippet
+  }
+
+  const {
+    event,
+    onReactionClick,
+    url = "",
+    reactionClass = "",
+    noTooltip = false,
+    children,
+  }: Props = $props()
 
   const reports = deriveEvents(repository, {
     filters: [{kinds: [REPORT], "#e": [event.id]}],
@@ -28,11 +41,13 @@
 
   const onReportClick = () => pushModal(EventReportDetails, {url, event})
 
-  $: reportReasons = uniq($reports.map(e => getTag("e", e.tags)?.[2]))
+  const reportReasons = $derived(uniq($reports.map(e => getTag("e", e.tags)?.[2])))
 
-  $: groupedReactions = groupBy(
-    e => e.content,
-    uniqBy(e => e.pubkey + e.content, $reactions),
+  const groupedReactions = $derived(
+    groupBy(
+      e => e.content,
+      uniqBy(e => e.pubkey + e.content, $reactions),
+    ),
   )
 
   onMount(() => {
@@ -59,7 +74,7 @@
         data-tip="{`This content has been reported as "${displayList(reportReasons)}".`}}"
         class="btn btn-error btn-xs tooltip-right flex items-center gap-1 rounded-full"
         class:tooltip={!noTooltip && !isMobile}
-        on:click|preventDefault|stopPropagation={onReportClick}>
+        onclick={stopPropagation(preventDefault(onReportClick))}>
         <Icon icon="danger" />
         <span>{$reports.length}</span>
       </button>
@@ -78,13 +93,13 @@
         class:border={isOwn}
         class:border-solid={isOwn}
         class:border-primary={isOwn}
-        on:click|preventDefault|stopPropagation={onClick}>
+        onclick={stopPropagation(preventDefault(onClick))}>
         <span>{displayReaction(content)}</span>
         {#if events.length > 1}
           <span>{events.length}</span>
         {/if}
       </button>
     {/each}
-    <slot />
+    {@render children?.()}
   </div>
 {/if}

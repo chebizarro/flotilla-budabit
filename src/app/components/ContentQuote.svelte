@@ -3,18 +3,14 @@
   import {goto} from "$app/navigation"
   import {ctx, nthEq} from "@welshman/lib"
   import {tracker, repository} from "@welshman/app"
-  import {Address, DIRECT_MESSAGE, MESSAGE, THREAD} from "@welshman/util"
+  import {Address, DIRECT_MESSAGE, MESSAGE, THREAD, EVENT_TIME} from "@welshman/util"
   import Button from "@lib/components/Button.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import NoteCard from "@app/components/NoteCard.svelte"
   import {deriveEvent, entityLink, ROOM} from "@app/state"
-  import {makeThreadPath, makeRoomPath} from "@app/routes"
+  import {makeThreadPath, makeCalendarPath, makeRoomPath} from "@app/routes"
 
-  export let value
-  export let event
-  export let depth = 0
-  export let relays: string[] = []
-  export let minimal = false
+  const {value, event, noteContent, relays = [], minimal = false} = $props()
 
   const {id, identifier, kind, pubkey, relays: relayHints = []} = value
   const idOrAddress = id || new Address(kind, pubkey, identifier).toString()
@@ -60,7 +56,7 @@
     return Boolean(event)
   }
 
-  const onClick = (e: Event) => {
+  const onclick = () => {
     if ($quote) {
       if ($quote.kind === DIRECT_MESSAGE) {
         return scrollToEvent($quote.id)
@@ -72,6 +68,10 @@
       if (url && room) {
         if ($quote.kind === THREAD) {
           return goto(makeThreadPath(url, $quote.id))
+        }
+
+        if ($quote.kind === EVENT_TIME) {
+          return goto(makeCalendarPath(url, $quote.id))
         }
 
         if ($quote.kind === MESSAGE) {
@@ -86,6 +86,10 @@
             return goto(makeThreadPath(url, id))
           }
 
+          if (parseInt(kind) === EVENT_TIME) {
+            return goto(makeCalendarPath(url, id))
+          }
+
           if (parseInt(kind) === MESSAGE) {
             return scrollToEvent(id) || openMessage(url, room, id)
           }
@@ -97,10 +101,10 @@
   }
 </script>
 
-<Button class="my-2 block max-w-full text-left" on:click={onClick}>
+<Button class="my-2 block max-w-full text-left" {onclick}>
   {#if $quote}
     <NoteCard {minimal} event={$quote} class="bg-alt rounded-box p-4">
-      <slot name="note-content" event={$quote} {depth} />
+      {@render noteContent({event: $quote, minimal})}
     </NoteCard>
   {:else}
     <div class="rounded-box p-4">

@@ -16,7 +16,9 @@
 
 <div class="column gap-4">
   <ModalHeader>
-    <div slot="title">What is a private key?</div>
+    {#snippet title()}
+      <div>What is a private key?</div>
+    {/snippet}
   </ModalHeader>
   <p>
     Most online services keep track of users by giving them a username and password. This gives the
@@ -36,16 +38,16 @@
     </p>
     <p>If you'd like to switch to self-custody, please click below to get started.</p>
     <ModalFooter>
-      <Button class="btn btn-link" on:click={back}>
+      <Button class="btn btn-link" onclick={back}>
         <Icon icon="alt-arrow-left" />
         Go back
       </Button>
-      <Button class="btn btn-primary" on:click={startEject}>
+      <Button class="btn btn-primary" onclick={startEject}>
         <Icon icon="check-circle" />
         I want to hold my own keys
       </Button>
     </ModalFooter>
   {:else}
-    <Button class="btn btn-primary" on:click={back}>Got it</Button>
+    <Button class="btn btn-primary" onclick={back}>Got it</Button>
   {/if}
 </div>

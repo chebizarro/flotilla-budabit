@@ -7,7 +7,9 @@
 
 <div class="column gap-4">
   <ModalHeader>
-    <div slot="title">What is a bunker link?</div>
+    {#snippet title()}
+      <div>What is a bunker link?</div>
+    {/snippet}
   </ModalHeader>
   <p>
     <Link external class="link" href="https://nostr.com/">Nostr</Link> uses "keys" instead of passwords
@@ -33,5 +35,5 @@
       href="https://nostrapps.com#signers">nostrapps.com</Link
     >.
   </p>
-  <Button class="btn btn-primary" on:click={() => history.back()}>Got it</Button>
+  <Button class="btn btn-primary" onclick={() => history.back()}>Got it</Button>
 </div>

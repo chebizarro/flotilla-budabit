@@ -18,18 +18,6 @@
 
   const signUp = () => pushModal(SignUp)
 
-  const withLoading =
-    (s: string, cb: (...args: any[]) => any) =>
-    async (...args: any[]) => {
-      loading = s
-
-      try {
-        await cb(...args)
-      } finally {
-        loading = undefined
-      }
-    }
-
   const onSuccess = async (session: Session, relays: string[] = []) => {
     await loadUserData(session.pubkey, {relays})
 
@@ -39,41 +27,53 @@
     clearModals()
   }
 
-  const loginWithNip07 = withLoading("nip07", async () => {
-    const pubkey = await getNip07()?.getPublicKey()
+  const loginWithNip07 = async () => {
+    loading = "nip07"
 
-    if (pubkey) {
-      await onSuccess({method: "nip07", pubkey})
-    } else {
-      pushToast({
-        theme: "error",
-        message: "Something went wrong! Please try again.",
-      })
+    try {
+      const pubkey = await getNip07()?.getPublicKey()
+
+      if (pubkey) {
+        await onSuccess({method: "nip07", pubkey})
+      } else {
+        pushToast({
+          theme: "error",
+          message: "Something went wrong! Please try again.",
+        })
+      }
+    } finally {
+      loading = undefined
     }
-  })
+  }
 
-  const loginWithNip55 = withLoading("nip55", async (app: any) => {
-    const signer = new Nip55Signer(app.packageName)
-    const pubkey = await signer.getPubkey()
+  const loginWithNip55 = async (app: any) => {
+    loading = "nip55"
 
-    if (pubkey) {
-      await onSuccess({method: "nip55", pubkey, signer: app.packageName})
-    } else {
-      pushToast({
-        theme: "error",
-        message: "Something went wrong! Please try again.",
-      })
+    try {
+      const signer = new Nip55Signer(app.packageName)
+      const pubkey = await signer.getPubkey()
+
+      if (pubkey) {
+        await onSuccess({method: "nip55", pubkey, signer: app.packageName})
+      } else {
+        pushToast({
+          theme: "error",
+          message: "Something went wrong! Please try again.",
+        })
+      }
+    } finally {
+      loading = undefined
     }
-  })
+  }
 
   const loginWithPassword = () => pushModal(LogInPassword)
 
   const loginWithBunker = () => pushModal(LogInBunker)
 
-  let signers: any[] = []
-  let loading: string | undefined
+  let signers: any[] = $state([])
+  let loading: string | undefined = $state()
 
-  $: hasSigner = getNip07() || signers.length > 0
+  const hasSigner = $derived(getNip07() || signers.length > 0)
 
   onMount(async () => {
     if (Capacitor.isNativePlatform()) {
@@ -86,13 +86,13 @@
   <h1 class="heading">Log in with Nostr</h1>
   <p class="m-auto max-w-sm text-center">
     {PLATFORM_NAME} is built using the
-    <Button class="link" on:click={() => pushModal(InfoNostr)}>nostr protocol</Button>, which allows
+    <Button class="link" onclick={() => pushModal(InfoNostr)}>nostr protocol</Button>, which allows
     you to own your social identity.
   </p>
   {#if getNip07()}
-    <Button disabled={loading} on:click={loginWithNip07} class="btn btn-primary">
+    <Button disabled={Boolean(loading)} onclick={loginWithNip07} class="btn btn-primary">
       {#if loading === "nip07"}
-        <span class="loading loading-spinner mr-3" />
+        <span class="loading loading-spinner mr-3"></span>
       {:else}
         <Icon icon="widget" />
       {/if}
@@ -100,9 +100,9 @@
     </Button>
   {/if}
   {#each signers as app}
-    <Button disabled={loading} class="btn btn-primary" on:click={() => loginWithNip55(app)}>
+    <Button disabled={Boolean(loading)} class="btn btn-primary" onclick={() => loginWithNip55(app)}>
       {#if loading === "nip55"}
-        <span class="loading loading-spinner mr-3" />
+        <span class="loading loading-spinner mr-3"></span>
       {:else}
         <img src={app.iconUrl} alt={app.name} width="20" height="20" />
       {/if}
@@ -110,9 +110,9 @@
     </Button>
   {/each}
   {#if BURROW_URL && !hasSigner}
-    <Button disabled={loading} on:click={loginWithPassword} class="btn btn-primary">
+    <Button disabled={Boolean(loading)} onclick={loginWithPassword} class="btn btn-primary">
       {#if loading === "password"}
-        <span class="loading loading-spinner mr-3" />
+        <span class="loading loading-spinner mr-3"></span>
       {:else}
         <Icon icon="key" />
       {/if}
@@ -120,16 +120,16 @@
     </Button>
   {/if}
   <Button
-    disabled={loading}
-    on:click={loginWithBunker}
+    onclick={loginWithBunker}
+    disabled={Boolean(loading)}
     class="btn {hasSigner || BURROW_URL ? 'btn-neutral' : 'btn-primary'}">
     <Icon icon="cpu" />
     Log in with Remote Signer
   </Button>
   {#if BURROW_URL && hasSigner}
-    <Button disabled={loading} on:click={loginWithPassword} class="btn">
+    <Button disabled={Boolean(loading)} onclick={loginWithPassword} class="btn">
       {#if loading === "password"}
-        <span class="loading loading-spinner mr-3" />
+        <span class="loading loading-spinner mr-3"></span>
       {:else}
         <Icon icon="key" />
       {/if}
@@ -139,7 +139,7 @@
   {#if !hasSigner || !BURROW_URL}
     <Link
       external
-      disabled={loading}
+      disabled={Boolean(loading)}
       href="https://nostrapps.com#signers"
       class="btn {hasSigner || BURROW_URL ? '' : 'btn-neutral'}">
       <Icon icon="compass" />
@@ -148,6 +148,6 @@
   {/if}
   <div class="text-sm">
     Need an account?
-    <Button class="link" on:click={signUp}>Register instead</Button>
+    <Button class="link" onclick={signUp}>Register instead</Button>
   </div>
 </div>

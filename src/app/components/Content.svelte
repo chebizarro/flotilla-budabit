@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type {TrustedEvent} from "@welshman/util"
   import {fromNostrURI} from "@welshman/util"
   import {nthEq} from "@welshman/lib"
   import {
@@ -17,9 +18,11 @@
     isAddress,
     isNewline,
   } from "@welshman/content"
+  import {preventDefault, stopPropagation} from "@lib/html"
   import Link from "@lib/components/Link.svelte"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
+  import Content from "@app/components/Content.svelte"
   import ContentToken from "@app/components/ContentToken.svelte"
   import ContentCode from "@app/components/ContentCode.svelte"
   import ContentLinkInline from "@app/components/ContentLinkInline.svelte"
@@ -30,14 +33,27 @@
   import ContentMention from "@app/components/ContentMention.svelte"
   import {entityLink, userSettingValues} from "@app/state"
 
-  export let event
-  export let minLength = 500
-  export let maxLength = 700
-  export let showEntire = false
-  export let hideMedia = false
-  export let expandMode = "block"
-  export let quoteProps: Record<string, any> = {}
-  export let depth = 0
+  interface Props {
+    event: any
+    minLength?: number
+    maxLength?: number
+    showEntire?: boolean
+    hideMedia?: boolean
+    expandMode?: string
+    quoteProps?: Record<string, any>
+    depth?: number
+  }
+
+  let {
+    event,
+    minLength = 500,
+    maxLength = 700,
+    showEntire = $bindable(false),
+    hideMedia = false,
+    expandMode = "block",
+    quoteProps = {},
+    depth = 0,
+  }: Props = $props()
 
   const fullContent = parse(event)
 
@@ -82,20 +98,23 @@
     warning = null
   }
 
-  let warning =
-    $userSettingValues.hide_sensitive && event.tags.find(nthEq(0, "content-warning"))?.[1]
+  let warning = $state(
+    $userSettingValues.hide_sensitive && event.tags.find(nthEq(0, "content-warning"))?.[1],
+  )
 
-  $: shortContent = showEntire
-    ? fullContent
-    : truncate(fullContent, {
-        minLength,
-        maxLength,
-        mediaLength: hideMedia ? 20 : 200,
-      })
+  const shortContent = $derived(
+    showEntire
+      ? fullContent
+      : truncate(fullContent, {
+          minLength,
+          maxLength,
+          mediaLength: hideMedia ? 20 : 200,
+        }),
+  )
 
-  $: hasEllipsis = shortContent.find(isEllipsis)
-  $: expandInline = hasEllipsis && expandMode === "inline"
-  $: expandBlock = hasEllipsis && expandMode === "block"
+  const hasEllipsis = $derived(shortContent.some(isEllipsis))
+  const expandInline = $derived(hasEllipsis && expandMode === "inline")
+  const expandBlock = $derived(hasEllipsis && expandMode === "block")
 </script>
 
 <div class="relative">
@@ -104,7 +123,7 @@
       <Icon icon="danger" />
       <p>
         This note has been flagged by the author as "{warning}".<br />
-        <Button class="link" on:click={ignoreWarning}>Show anyway</Button>
+        <Button class="link" onclick={ignoreWarning}>Show anyway</Button>
       </p>
     </div>
   {:else}
@@ -112,8 +131,8 @@
       class="overflow-hidden text-ellipsis break-words"
       style={expandBlock ? "mask-image: linear-gradient(0deg, transparent 0px, black 100px)" : ""}>
       {#each shortContent as parsed, i}
-        {#if isNewline(parsed)}
-          <ContentNewline value={parsed.value.slice(isBlock(i - 1) ? 1 : 0)} />
+        {#if isNewline(parsed) && !isBlock(i - 1)}
+          <ContentNewline value={parsed.value} />
         {:else if isTopic(parsed)}
           <ContentTopic value={parsed.value} />
         {:else if isCode(parsed)}
@@ -132,10 +151,10 @@
           <ContentMention value={parsed.value} />
         {:else if isEvent(parsed) || isAddress(parsed)}
           {#if isBlock(i)}
-            <ContentQuote {...quoteProps} value={parsed.value} {depth} {event}>
-              <div slot="note-content" let:event>
-                <svelte:self {quoteProps} {hideMedia} {event} depth={depth + 1} />
-              </div>
+            <ContentQuote {...quoteProps} value={parsed.value} {event}>
+              {#snippet noteContent({event, minimal}: {event: TrustedEvent; minimal: boolean})}
+                <Content {quoteProps} hideMedia={minimal || hideMedia} {event} depth={depth + 1} />
+              {/snippet}
             </ContentQuote>
           {:else}
             <Link
@@ -158,7 +177,7 @@
         <button
           type="button"
           class="btn btn-neutral"
-          on:click|stopPropagation|preventDefault={expand}>
+          onclick={stopPropagation(preventDefault(expand))}>
           See more
         </button>
       </div>

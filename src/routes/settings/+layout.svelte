@@ -7,6 +7,11 @@
   import SecondaryNavSection from "@lib/components/SecondaryNavSection.svelte"
   import LogOut from "@app/components/LogOut.svelte"
   import {pushModal} from "@app/modal"
+  interface Props {
+    children?: import("svelte").Snippet
+  }
+
+  const {children}: Props = $props()
 
   const logout = () => pushModal(LogOut)
 </script>
@@ -34,7 +39,7 @@
       </SecondaryNavItem>
     </div>
     <div in:fly|local={{delay: 200}}>
-      <SecondaryNavItem class="text-error hover:text-error" on:click={logout}>
+      <SecondaryNavItem class="text-error hover:text-error" onclick={logout}>
         <Icon icon="exit" /> Log Out
       </SecondaryNavItem>
     </div>
@@ -42,5 +47,5 @@
 </SecondaryNav>
 
 <Page>
-  <slot />
+  {@render children?.()}
 </Page>

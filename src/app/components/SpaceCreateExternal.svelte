@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {preventDefault} from "@lib/html"
   import Button from "@lib/components/Button.svelte"
   import Link from "@lib/components/Link.svelte"
   import Icon from "@lib/components/Icon.svelte"
@@ -17,10 +18,14 @@
   }
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={next}>
+<form class="column gap-4" onsubmit={preventDefault(next)}>
   <ModalHeader>
-    <div slot="title">Create a Space</div>
-    <div slot="info">Host your own space, for your community.</div>
+    {#snippet title()}
+      <div>Create a Space</div>
+    {/snippet}
+    {#snippet info()}
+      <div>Host your own space, for your community.</div>
+    {/snippet}
   </ModalHeader>
   <p>
     <Link class="text-primary" external href="https://relay.tools">relay.tools</Link> is a third-party
@@ -31,7 +36,7 @@
     Once you've created a relay of your own, come back here to link {PLATFORM_NAME} with your new relay.
   </p>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back}>
+    <Button class="btn btn-link" onclick={back}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

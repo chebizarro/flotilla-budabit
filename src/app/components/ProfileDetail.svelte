@@ -22,7 +22,7 @@
   import {pushModal} from "@app/modal"
   import {makeChatPath} from "@app/routes"
 
-  export let pubkey
+  const {pubkey} = $props()
 
   const profile = deriveProfile(pubkey)
   const profileDisplay = deriveProfileDisplay(pubkey)
@@ -35,8 +35,9 @@
 
   const openChat = () => ($canDecrypt ? goto(chatPath) : pushModal(ChatEnable, {next: chatPath}))
 
-  $: following =
-    pubkey === $session!.pubkey || getPubkeyTagValues(getListTags($userFollows)).includes(pubkey)
+  const following = $derived(
+    pubkey === $session!.pubkey || getPubkeyTagValues(getListTags($userFollows)).includes(pubkey),
+  )
 </script>
 
 <div class="column gap-4">
@@ -58,7 +59,7 @@
   </div>
   <ProfileInfo {pubkey} />
   <ModalFooter>
-    <Button on:click={back} class="btn btn-link">
+    <Button onclick={back} class="btn btn-link">
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>
@@ -67,7 +68,7 @@
         <Icon icon="user-circle" />
         See Complete Profile
       </Link>
-      <Button on:click={openChat} class="btn btn-primary">
+      <Button onclick={openChat} class="btn btn-primary">
         <Icon icon="letter" />
         Open Chat
       </Button>

@@ -25,10 +25,14 @@
   import {makeDelete, makeReaction, sendWrapped} from "@app/commands"
   import {pushModal} from "@app/modal"
 
-  export let event: TrustedEvent
-  export let replyTo: any = undefined
-  export let pubkeys: string[]
-  export let showPubkey = false
+  interface Props {
+    event: TrustedEvent
+    replyTo?: any
+    pubkeys: string[]
+    showPubkey?: boolean
+  }
+
+  const {event, replyTo = undefined, pubkeys, showPubkey = false}: Props = $props()
 
   const thunk = $thunks[event.id]
   const isOwn = event.pubkey === $pubkey
@@ -49,14 +53,14 @@
 
   const togglePopover = () => {
     if (popoverIsVisible) {
-      popover.hide()
+      popover?.hide()
     } else {
-      popover.show()
+      popover?.show()
     }
   }
 
-  let popover: Instance
-  let popoverIsVisible = false
+  let popover: Instance | undefined = $state()
+  let popoverIsVisible = $state(false)
 </script>
 
 {#if thunk}
@@ -86,7 +90,7 @@
       type="button"
       class="opacity-0 transition-all"
       class:group-hover:opacity-100={!isMobile}
-      on:click={togglePopover}>
+      onclick={togglePopover}>
       <Icon icon="menu-dots" size={4} />
     </button>
   </Tippy>
@@ -97,16 +101,13 @@
       {#if showPubkey}
         <div class="flex items-center gap-2">
           {#if !isOwn}
-            <Button on:click={openProfile} class="flex items-center gap-1">
+            <Button onclick={openProfile} class="flex items-center gap-1">
               <Avatar
                 src={$profile?.picture}
                 class="border border-solid border-base-content"
                 size={4} />
               <div class="flex items-center gap-2">
-                <Button
-                  on:click={openProfile}
-                  class="text-sm font-bold"
-                  style="color: {colorValue}">
+                <Button onclick={openProfile} class="text-sm font-bold" style="color: {colorValue}">
                   {$profileDisplay}
                 </Button>
               </div>

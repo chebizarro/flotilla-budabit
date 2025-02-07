@@ -25,7 +25,7 @@
     deriveOtherRooms,
     userRoomsByUrl,
   } from "@app/state"
-  import {makeChatPath, makeRoomPath, makeSpacePath} from "@app/routes"
+  import {makeChatPath, makeThreadPath, makeCalendarPath, makeRoomPath} from "@app/routes"
   import {notifications} from "@app/notifications"
   import {pushModal} from "@app/modal"
 
@@ -33,37 +33,44 @@
   const relay = deriveRelay(url)
   const userRooms = deriveUserRooms(url)
   const otherRooms = deriveOtherRooms(url)
-  const threadsPath = makeSpacePath(url, "threads")
+  const threadsPath = makeThreadPath(url)
+  const calendarPath = makeCalendarPath(url)
 
   const joinSpace = () => pushModal(SpaceJoin, {url})
 
   const addRoom = () => pushModal(RoomCreate, {url})
 
-  let relayAdminEvents: TrustedEvent[] = []
+  let relayAdminEvents: TrustedEvent[] = $state([])
 
-  $: pubkey = $relay?.profile?.pubkey
+  const pubkey = $derived($relay?.profile?.pubkey)
 </script>
 
 <div class="relative flex flex-col">
   <PageBar>
-    <div slot="icon" class="center">
-      <Icon icon="home-smile" />
-    </div>
-    <strong slot="title">Home</strong>
-    <div slot="action" class="row-2">
-      {#if !$userRoomsByUrl.has(url)}
-        <Button class="btn btn-primary btn-sm" on:click={joinSpace}>
-          <Icon icon="login-2" />
-          Join Space
-        </Button>
-      {:else if pubkey}
-        <Link class="btn btn-primary btn-sm" href={makeChatPath([pubkey])}>
-          <Icon icon="letter" />
-          Contact Owner
-        </Link>
-      {/if}
-      <MenuSpaceButton {url} />
-    </div>
+    {#snippet icon()}
+      <div class="center">
+        <Icon icon="home-smile" />
+      </div>
+    {/snippet}
+    {#snippet title()}
+      <strong>Home</strong>
+    {/snippet}
+    {#snippet action()}
+      <div class="row-2">
+        {#if !$userRoomsByUrl.has(url)}
+          <Button class="btn btn-primary btn-sm" onclick={joinSpace}>
+            <Icon icon="login-2" />
+            Join Space
+          </Button>
+        {:else if pubkey}
+          <Link class="btn btn-primary btn-sm" href={makeChatPath([pubkey])}>
+            <Icon icon="letter" />
+            Contact Owner
+          </Link>
+        {/if}
+        <MenuSpaceButton {url} />
+      </div>
+    {/snippet}
   </PageBar>
   <div class="col-2 p-2">
     <div class="card2 bg-alt col-4 text-left">
@@ -126,7 +133,20 @@
           {#if $notifications.has(threadsPath)}
             <div
               class="absolute -right-3 -top-1 h-2 w-2 rounded-full bg-primary-content"
-              transition:fade />
+              transition:fade>
+            </div>
+          {/if}
+        </div>
+      </Link>
+      <Link href={calendarPath} class="btn btn-secondary">
+        <div class="relative flex items-center gap-2">
+          <Icon icon="notes-minimalistic" />
+          Calendar
+          {#if $notifications.has(calendarPath)}
+            <div
+              class="absolute -right-3 -top-1 h-2 w-2 rounded-full bg-primary-content"
+              transition:fade>
+            </div>
           {/if}
         </div>
       </Link>
@@ -142,7 +162,8 @@
             <ChannelName {url} {room} />
           </div>
           {#if $notifications.has(roomPath)}
-            <div class="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary" transition:fade />
+            <div class="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary" transition:fade>
+            </div>
           {/if}
         </Link>
       {/each}
@@ -158,7 +179,7 @@
           </div>
         </Link>
       {/each}
-      <Button on:click={addRoom} class="btn btn-neutral whitespace-nowrap">
+      <Button onclick={addRoom} class="btn btn-neutral whitespace-nowrap">
         <Icon icon="add-circle" />
         Create
       </Button>

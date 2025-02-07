@@ -2,8 +2,8 @@
   import {onMount} from "svelte"
   import {derived} from "svelte/store"
   import {page} from "$app/stores"
-  import {sortBy, min, nthEq, sleep} from "@welshman/lib"
-  import {getListTags, getPubkeyTagValues} from "@welshman/util"
+  import {sortBy, min, nthEq} from "@welshman/lib"
+  import {THREAD, COMMENT, getListTags, getPubkeyTagValues} from "@welshman/util"
   import {throttled} from "@welshman/store"
   import {feedFromFilters, makeIntersectionFeed, makeRelayFeed} from "@welshman/feeds"
   import {createFeedController, userMutes} from "@welshman/app"
@@ -16,14 +16,16 @@
   import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
   import ThreadItem from "@app/components/ThreadItem.svelte"
   import ThreadCreate from "@app/components/ThreadCreate.svelte"
-  import {THREAD_FILTER, COMMENT_FILTER, decodeRelay, deriveEventsForUrl} from "@app/state"
+  import {decodeRelay, deriveEventsForUrl} from "@app/state"
   import {setChecked} from "@app/notifications"
   import {pushModal} from "@app/modal"
 
   const url = decodeRelay($page.params.relay)
-  const feed = feedFromFilters([THREAD_FILTER, COMMENT_FILTER])
-  const threads = deriveEventsForUrl(url, [THREAD_FILTER])
-  const comments = deriveEventsForUrl(url, [COMMENT_FILTER])
+  const threadFilter = {kinds: [THREAD]}
+  const commentFilter = {kinds: [COMMENT], "#K": [String(THREAD)]}
+  const feed = feedFromFilters([threadFilter, commentFilter])
+  const threads = deriveEventsForUrl(url, [threadFilter])
+  const comments = deriveEventsForUrl(url, [commentFilter])
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
 
   const events = throttled(
@@ -57,32 +59,25 @@
   })
 
   let limit = 10
-  let loading = true
-  let unmounted = false
-  let element: Element
+  let loading = $state(true)
+  let element: Element | undefined = $state()
   let scroller: Scroller
 
   onMount(() => {
-    // Element is frequently not defined. I don't know why
-    sleep(1000).then(() => {
-      if (!unmounted) {
-        scroller = createScroller({
-          element,
-          delay: 300,
-          threshold: 3000,
-          onScroll: () => {
-            limit += 10
+    scroller = createScroller({
+      element: element!,
+      delay: 300,
+      threshold: 3000,
+      onScroll: () => {
+        limit += 10
 
-            if ($events.length - limit < 10) {
-              ctrl.load(50)
-            }
-          },
-        })
-      }
+        if ($events.length - limit < 10) {
+          ctrl.load(50)
+        }
+      },
     })
 
     return () => {
-      unmounted = true
       scroller?.stop()
       setChecked($page.url.pathname)
     }
@@ -91,17 +86,23 @@
 
 <div class="relative flex h-screen flex-col" bind:this={element}>
   <PageBar>
-    <div slot="icon" class="center">
-      <Icon icon="notes-minimalistic" />
-    </div>
-    <strong slot="title">Threads</strong>
-    <div slot="action" class="row-2">
-      <Button class="btn btn-primary btn-sm" on:click={createThread}>
+    {#snippet icon()}
+      <div class="center">
         <Icon icon="notes-minimalistic" />
-        Create a Thread
-      </Button>
-      <MenuSpaceButton {url} />
-    </div>
+      </div>
+    {/snippet}
+    {#snippet title()}
+      <strong>Threads</strong>
+    {/snippet}
+    {#snippet action()}
+      <div class="row-2">
+        <Button class="btn btn-primary btn-sm" onclick={createThread}>
+          <Icon icon="notes-minimalistic" />
+          Create a Thread
+        </Button>
+        <MenuSpaceButton {url} />
+      </div>
+    {/snippet}
   </PageBar>
   <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
     {#each $events as event (event.id)}

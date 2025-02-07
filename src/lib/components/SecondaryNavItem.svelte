@@ -21,45 +21,35 @@
 </style>
 
 <script lang="ts">
-  import cx from "classnames"
   import {fade} from "@lib/transition"
   import {page} from "$app/stores"
 
-  export let href: string = ""
-  export let notification = false
+  const {children, href = "", notification = false, ...restProps} = $props()
 
-  $: active = $page.url.pathname === href
+  const active = $derived($page.url.pathname === href)
 </script>
 
 {#if href}
   <a
-    {...$$props}
+    {...restProps}
     {href}
-    on:click
-    class={cx(
-      $$props.class,
-      "relative flex items-center gap-3 text-left transition-all hover:bg-base-100 hover:text-base-content",
-    )}
+    class="{restProps.class} relative flex items-center gap-3 text-left transition-all hover:bg-base-100 hover:text-base-content"
     class:text-base-content={active}
     class:bg-base-100={active}>
-    <slot />
+    {@render children?.()}
     {#if !active && notification}
-      <div class="absolute right-2 top-5 h-2 w-2 rounded-full bg-primary" transition:fade />
+      <div class="absolute right-2 top-5 h-2 w-2 rounded-full bg-primary" transition:fade></div>
     {/if}
   </a>
 {:else}
   <button
-    {...$$props}
-    on:click
-    class={cx(
-      $$props.class,
-      "relative flex w-full items-center gap-3 text-left transition-all hover:bg-base-100 hover:text-base-content",
-    )}
+    {...restProps}
+    class="{restProps.class} relative flex w-full items-center gap-3 text-left transition-all hover:bg-base-100 hover:text-base-content"
     class:text-base-content={active}
     class:bg-base-100={active}>
     {#if !active && notification}
-      <div class="absolute right-2 top-5 h-2 w-2 rounded-full bg-primary" transition:fade />
+      <div class="absolute right-2 top-5 h-2 w-2 rounded-full bg-primary" transition:fade></div>
     {/if}
-    <slot />
+    {@render children?.()}
   </button>
 {/if}

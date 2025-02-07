@@ -1,3 +1,12 @@
-<div class="hidden max-h-screen w-60 flex-shrink-0 flex-col gap-1 bg-base-300 md:flex">
-  <slot />
+<script lang="ts">
+  interface Props {
+    children?: import("svelte").Snippet
+  }
+
+  const {children}: Props = $props()
+</script>
+
+<div
+  class="sail sait saib hidden max-h-screen w-60 flex-shrink-0 flex-col gap-1 bg-base-300 md:flex">
+  {@render children?.()}
 </div>
