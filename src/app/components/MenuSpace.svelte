@@ -30,6 +30,7 @@
 
   const threadsPath = makeSpacePath(url, "threads")
   const calendarPath = makeSpacePath(url, "calendar")
+  const jobsPath = makeSpacePath(url, "jobs")
   const userRooms = deriveUserRooms(url)
   const otherRooms = deriveOtherRooms(url)
 
@@ -120,6 +121,9 @@
       </SecondaryNavItem>
       <SecondaryNavItem href={calendarPath} notification={$notifications.has(calendarPath)}>
         <Icon icon="calendar-minimalistic" /> Calendar
+      </SecondaryNavItem>
+      <SecondaryNavItem href={jobsPath} notification={$notifications.has(calendarPath)}>
+        <Icon icon="jobs" /> Jobs
       </SecondaryNavItem>
       <div class="h-2"></div>
       <SecondaryNavHeader>Your Rooms</SecondaryNavHeader>

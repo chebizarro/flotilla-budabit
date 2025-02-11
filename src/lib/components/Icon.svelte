@@ -46,6 +46,7 @@
   import Inbox from "@assets/icons/Inbox.svg?dataurl"
   import InfoCircle from "@assets/icons/Info Circle.svg?dataurl"
   import InfoSquare from "@assets/icons/Info Square.svg?dataurl"
+  import Jobs from "@assets/icons/Jobs.svg?dataurl"
   import Key from "@assets/icons/Key.svg?dataurl"
   import KeyMinimalisticSquare3 from "@assets/icons/Key Minimalistic Square 3.svg?dataurl"
   import Letter from "@assets/icons/Letter.svg?dataurl"
@@ -135,6 +136,7 @@
     inbox: Inbox,
     "info-circle": InfoCircle,
     "info-square": InfoSquare,
+    "jobs": Jobs,
     key: Key,
     "key-minimalistic-square-3": KeyMinimalisticSquare3,
     letter: Letter,

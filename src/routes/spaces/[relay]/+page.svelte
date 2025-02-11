@@ -25,7 +25,13 @@
     deriveOtherRooms,
     userRoomsByUrl,
   } from "@app/state"
-  import {makeChatPath, makeThreadPath, makeCalendarPath, makeRoomPath} from "@app/routes"
+  import {
+    makeChatPath,
+    makeThreadPath,
+    makeCalendarPath,
+    makeJobPath,
+    makeRoomPath
+  } from "@app/routes"
   import {notifications} from "@app/notifications"
   import {pushModal} from "@app/modal"
 
@@ -35,6 +41,7 @@
   const otherRooms = deriveOtherRooms(url)
   const threadsPath = makeThreadPath(url)
   const calendarPath = makeCalendarPath(url)
+  const jobsPath = makeJobPath(url)
 
   const joinSpace = () => pushModal(SpaceJoin, {url})
 
@@ -143,6 +150,18 @@
           <Icon icon="notes-minimalistic" />
           Calendar
           {#if $notifications.has(calendarPath)}
+            <div
+              class="absolute -right-3 -top-1 h-2 w-2 rounded-full bg-primary-content"
+              transition:fade>
+            </div>
+          {/if}
+        </div>
+      </Link>
+      <Link href={calendarPath} class="btn btn-success">
+        <div class="relative flex items-center gap-2">
+          <Icon icon="jobs" />
+          Jobs
+          {#if $notifications.has(jobsPath)}
             <div
               class="absolute -right-3 -top-1 h-2 w-2 rounded-full bg-primary-content"
               transition:fade>
