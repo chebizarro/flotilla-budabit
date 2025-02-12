@@ -1,12 +1,12 @@
 <script lang="ts">
   import {nthEq} from "@welshman/lib"
-  import type {TrustedEvent} from "@welshman/util"
+  import {Address, type TrustedEvent} from "@welshman/util"
   import {formatTimestamp} from "@welshman/app"
   import Link from "@lib/components/Link.svelte"
   import Content from "@app/components/Content.svelte"
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import ThreadActions from "@app/components/ThreadActions.svelte"
-  import {makeJobPath} from "@app/routes"
+  import { jobLink } from "@app/state"
 
   const {
     url,
@@ -19,7 +19,7 @@
   const title = event.tags.find(nthEq(0, "title"))?.[1]
 </script>
 
-<Link class="col-2 card2 bg-alt w-full cursor-pointer" href={makeJobPath(url, event.id)}>
+<Link external class="col-2 card2 bg-alt w-full cursor-pointer" href={jobLink(Address.fromEvent(event).toNaddr())}>
   {#if title}
     <div class="flex w-full items-center justify-between gap-2">
       <p class="text-xl">{title}</p>

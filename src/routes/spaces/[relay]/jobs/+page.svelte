@@ -14,7 +14,7 @@
   import Spinner from "@src/lib/components/Spinner.svelte"
   import { deriveEvents, throttled } from "@welshman/store"
   import { sortBy, min, nthEq} from "@welshman/lib"
-  import { feedFromFilters, makeIntersectionFeed, makeRelayFeed } from "@welshman/feeds"
+  import { feedFromFilters, makeIntersectionFeed, makeRelayFeed, makeWOTFeed } from "@welshman/feeds"
   import { createScroller, type Scroller } from "@src/lib/html"
   import JobItem from "@src/app/components/JobItem.svelte"
   import { fly } from "@src/lib/transition"
@@ -22,12 +22,11 @@
 
   const url = decodeRelay($page.params.relay)
 
-  const jobFilter = {kinds: [FREELANCE_JOB]}
+  const jobFilter = {kinds: [FREELANCE_JOB], "#s": ["0"]}
   const commentFilter = {kinds: [COMMENT], "#K": [String(FREELANCE_JOB)]}
   const feed = feedFromFilters([jobFilter, commentFilter])
 
-  const relays = [...INDEXER_RELAYS]
-  const jobs = deriveEvents(repository, { filters: jobFilter })
+  const jobs = deriveEvents(repository, { filters: [jobFilter] })
 
   const comments = deriveEventsForUrl(url, [commentFilter])
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
@@ -54,13 +53,13 @@
 
   const ctrl = createFeedController({
     useWindowing: true,
-    feed: makeIntersectionFeed(makeRelayFeed(url), feed),
+    feed: makeIntersectionFeed(makeWOTFeed({min: 0.1}), feed),
     onExhausted: () => {
       loading = false
     },
   })
 
-  let limit = 10
+  let limit = 20
   let loading = $state(true)
   let element: Element | undefined = $state()
   let scroller: Scroller
@@ -71,7 +70,7 @@
       delay: 300,
       threshold: 3000,
       onScroll: () => {
-        limit += 10
+        limit += 20
 
         if ($events.length - limit < 10) {
           ctrl.load(50)
@@ -99,13 +98,13 @@
     {/snippet}
     {#snippet action()}
       <div class="row-2">
-        <Link external href="https://satshoot.com/post-job">
-          <Button class="btn btn-primary btn-sm">
+        <Button class="btn btn-primary btn-sm">
+          <Link external href="https://satshoot.com/post-job" class="bg-primary flex items-center gap-x-2">
             <Icon icon="jobs" />
-            Create Job
-          </Button>
-          <MenuSpaceButton {url} />
-        </Link>
+            <span class="">Create Job</span>
+          </Link>
+        </Button>
+        <MenuSpaceButton {url} />
       </div>
     {/snippet}
   </PageBar>

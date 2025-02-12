@@ -100,7 +100,7 @@
           <Icon icon="notes-minimalistic" />
           Create a Thread
         </Button>
-        <MenuSpaceButton {url} />
+        <!-- <MenuSpaceButton {url} /> -->
       </div>
     {/snippet}
   </PageBar>

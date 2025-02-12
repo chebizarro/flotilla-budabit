@@ -157,7 +157,7 @@
           {/if}
         </div>
       </Link>
-      <Link href={calendarPath} class="btn btn-success">
+      <Link href={jobsPath} class="btn btn-success">
         <div class="relative flex items-center gap-2">
           <Icon icon="jobs" />
           Jobs

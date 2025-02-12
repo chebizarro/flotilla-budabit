@@ -122,7 +122,7 @@
       <SecondaryNavItem href={calendarPath} notification={$notifications.has(calendarPath)}>
         <Icon icon="calendar-minimalistic" /> Calendar
       </SecondaryNavItem>
-      <SecondaryNavItem href={jobsPath} notification={$notifications.has(calendarPath)}>
+      <SecondaryNavItem href={jobsPath} notification={$notifications.has(jobsPath)}>
         <Icon icon="jobs" /> Jobs
       </SecondaryNavItem>
       <div class="h-2"></div>
