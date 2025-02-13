@@ -99,7 +99,7 @@
     {#snippet action()}
       <div class="row-2">
         <Button class="btn btn-primary btn-sm">
-          <Link external href="https://satshoot.com/post-job" class="bg-primary flex items-center gap-x-2">
+          <Link external href="https://test.satshoot.com/post-job" class="bg-primary flex items-center gap-x-2">
             <Icon icon="jobs" />
             <span class="">Create Job</span>
           </Link>
@@ -111,7 +111,7 @@
   <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
     {#each $events as event (event.id)}
       <div in:fly>
-        <JobItem {url} {event} />
+        <JobItem {url} {event} external={false} />
       </div>
     {/each}
     {#if loading || $events.length === 0}

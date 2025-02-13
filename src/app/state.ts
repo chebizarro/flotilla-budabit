@@ -158,7 +158,7 @@ export const pubkeyLink = (
   relays = ctx.app.router.FromPubkeys([pubkey]).getUrls(),
 ) => entityLink(nip19.nprofileEncode({pubkey, relays}))
 
-export const jobLink = (naddr: string) => `https://satshoot.com/${naddr}`
+export const jobLink = (naddr: string) => `https://test.satshoot.com/${naddr}`
 
 
 export const tagRoom = (room: string, url: string) => [ROOM, room]
