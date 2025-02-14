@@ -1,30 +1,40 @@
 <script lang="ts">
+  import {ctx} from "@welshman/lib"
   import {onMount} from "svelte"
+  import { GIT_REPO_BOOKMARK_DTAG } from "@src/lib/util"
+  import {page} from "$app/stores"
   import {derived, writable} from "svelte/store"
-  import {Address, type Filter, type TrustedEvent} from "@welshman/util"
+  import {Address, createEvent, NAMED_BOOKMARKS, type Filter} from "@welshman/util"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
   import ModalHeader from "@lib/components/ModalHeader.svelte"
   import ModalFooter from "@lib/components/ModalFooter.svelte"
   import FieldInline from "@src/lib/components/FieldInline.svelte"
-  import {createFeedController, repository} from "@welshman/app"
+  import {
+    createFeedController,
+    publishThunk,
+    repository,
+    tracker
+  } from "@welshman/app"
   import {
     feedFromFilter,
-    feedsFromFilter,
-    makeGlobalFeed,
     makeIntersectionFeed,
-    makeKindFeed,
-    makeRelayFeed,
     makeWOTFeed,
   } from "@welshman/feeds"
   import {fromPairs, sleep} from "@welshman/lib"
   import {createScroller, type Scroller} from "@src/lib/html"
   import {deriveEvents} from "@welshman/store"
   import Divider from "@src/lib/components/Divider.svelte"
-
   // GIT_REPOSITORY is mistakenly defined in welshman as 30403 which
   // is a Draft Classified listing (nip99) kind in reality.
-  const GIT_REPOSITORY_KIND = 30617
+  import { GIT_REPO } from "@src/lib/util"
+  import { preventDefault } from "svelte/legacy"
+  import { decodeRelay } from "../state"
+  import Spinner from "@src/lib/components/Spinner.svelte"
+  import { fly } from "svelte/transition"
+
+
+  const url = decodeRelay($page.params.relay)
 
   let unmounted = false
   let element: HTMLElement
@@ -32,19 +42,22 @@
   let limit = 30
   let loading = true
 
-  const filters: Filter[] = [{kinds: [GIT_REPOSITORY_KIND]}]
+  const filters: Filter[] = [{kinds: [GIT_REPO]}]
   const events = deriveEvents(repository, {filters})
 
   const repositories = derived(events, $events => {
     const $elements = []
 
     for (const event of $events.toReversed()) {
-      const {kind, pubkey} = event
+      const {pubkey} = event
 
       const repoData = fromPairs(event.tags)
+      const relayHints = tracker.getRelays(event.id)
+      const firstHint = relayHints.values().next().value || "";
 
       $elements.push({
-        address: kind.toString() + ":" + pubkey + ":" + repoData.d,
+        relay: firstHint,
+        address: Address.fromEvent(event).toString(),
         name: repoData.name,
         owner: pubkey,
       })
@@ -57,15 +70,11 @@
   const ctrl = createFeedController({
     useWindowing: true,
     feed: makeIntersectionFeed(
-      makeRelayFeed("wss://relay.damus.io/"),
-      feedFromFilter({kinds: [GIT_REPOSITORY_KIND]}),
+      makeWOTFeed({min: 0.1}),
+      feedFromFilter({kinds: [GIT_REPO]}),
     ),
     onExhausted: () => {
       loading = false
-      console.log("did not find any more repos")
-    },
-    onEvent(event) {
-      console.log("new repo event", event)
     },
   })
 
@@ -76,10 +85,18 @@
   const submit = () => {
     if ($uploading) return
 
+    publishThunk({
+      event: createEvent(
+        NAMED_BOOKMARKS,
+        { tags: [ ["d", GIT_REPO_BOOKMARK_DTAG], ...Array.from(selectedRepos.values())] }
+      ),
+      relays: [url, ...ctx.app.router.FromUser().getUrls()],
+    })
+
     history.back()
   }
 
-  const selectedRepos: Set<string> = new Set()
+  const selectedRepos: Map<string, Array<string>> = new Map()
 
   onMount(() => {
     // Element is frequently not defined. I don't know why
@@ -106,38 +123,58 @@
     }
   })
 
-  const onRepoChecked = (address: string, event) => {
-    if (event.target.checked) {
-      selectedRepos.add(address)
+  const onRepoChecked = (relay: string, address: string, event:Event) => {
+    const target = event.target as HTMLInputElement
+    if (target.checked) {
+      selectedRepos.set(address, ['a', address, relay])
     } else {
       selectedRepos.delete(address)
     }
   }
 </script>
 
-<form class="column gap-4" on:submit|preventDefault={submit}>
+<form class="column gap-4" onsubmit={preventDefault(submit)}>
   <ModalHeader>
-    <div slot="title">Follow Git Repos</div>
-    <div slot="info">Select repositories to receive updates in this room</div>
+    {#snippet title()}
+      <div>Follow Git Repos</div>
+    {/snippet}
+    {#snippet info()}
+      <div>Select repositories to receive updates in this room</div>
+    {/snippet}
   </ModalHeader>
   <div
     class="scroll-container -mt-2 flex flex-grow flex-col-reverse overflow-auto py-2"
     bind:this={element}>
-    {#each $repositories as { address, name, owner } (address)}
+    {#each $repositories as { relay, address, name, owner } (address)}
       <Divider>
         <FieldInline>
-          <p slot="label">{name} by {owner}</p>
-          <input
-            slot="input"
-            type="checkbox"
-            class="toggle toggle-primary"
-            on:change={event => onRepoChecked(address, event)} />
+          {#snippet label()}
+            <p>{name} by {owner}</p>
+          {/snippet}
+          {#snippet input()}
+            <input
+              slot="input"
+              type="checkbox"
+              class="toggle toggle-primary"
+              onchange={event => onRepoChecked(relay, address, event)} />
+          {/snippet}
         </FieldInline>
       </Divider>
     {/each}
+    {#if loading || $events.length === 0}
+      <p class="flex h-10 items-center justify-center py-20" out:fly>
+        <Spinner {loading}>
+          {#if loading}
+            Looking for repos...
+          {:else if $events.length === 0}
+            No Repos found.
+          {/if}
+        </Spinner>
+      </p>
+    {/if}
   </div>
   <ModalFooter>
-    <Button class="btn btn-link" on:click={back}>
+    <Button class="btn btn-link" onclick={back}>
       <Icon icon="alt-arrow-left" />
       Go back
     </Button>

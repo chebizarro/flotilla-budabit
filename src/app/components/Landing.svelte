@@ -46,12 +46,14 @@
         {/snippet}
       </CardButton>
     </Button>
-    <p class="text-center text-sm opacity-75">
+    <p class="text-center underline">
       By using {PLATFORM_NAME}, you consent to the rules of the club:
     </p>
-    <ul>
-      <li>No shitcoinery and other scammy/spammy behavior will be tolerated</li>
-      <li>Keep it relevant and focused: Inspire and get inspired. Be a signal rather than noise</li>
+    <ul class="list-decimal p-4 pt-0">
+      <li>No shitcoinery and other scammy/spammy behavior will be tolerated
+      </li>
+      <li>Keep it relevant and focused: Inspire and get inspired. Be a signal rather than noise
+      </li>
     </ul>
   </div>
 </Dialog>

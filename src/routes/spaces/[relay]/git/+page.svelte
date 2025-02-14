@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { decodeRelay, deriveEventsForUrl, INDEXER_RELAYS } from "@src/app/state"
-  import { GIT_REPO } from "@src/lib/util"
-  import { createFeedController, repository, userMutes } from "@welshman/app"
-  import { getPubkeyTagValues, getListTags, COMMENT } from "@welshman/util"
+  import { decodeRelay } from "@src/app/state"
+  import { load } from "@welshman/app"
+  import { GIT_REPO, GIT_REPO_BOOKMARK_DTAG } from "@src/lib/util"
+  import { createFeedController, pubkey, repository, userMutes } from "@welshman/app"
+  import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, Address, getAddressTags } from "@welshman/util"
   import { onMount } from "svelte";
   import {page} from "$app/stores"
   import { derived } from "svelte/store"
@@ -12,45 +13,53 @@
   import MenuSpaceButton from "@src/app/components/MenuSpaceButton.svelte"
   import Button from "@src/lib/components/Button.svelte"
   import Spinner from "@src/lib/components/Spinner.svelte"
-  import { deriveEvents, throttled } from "@welshman/store"
-  import { sortBy, min, nthEq} from "@welshman/lib"
+  import { deriveEvent, deriveEvents, throttled } from "@welshman/store"
+  import { ctx, sortBy } from "@welshman/lib"
   import { feedFromFilters, makeIntersectionFeed, makeRelayFeed, makeUnionFeed, makeWOTFeed } from "@welshman/feeds"
   import { createScroller, type Scroller } from "@src/lib/html"
   import JobItem from "@src/app/components/JobItem.svelte"
   import { fly } from "@src/lib/transition"
-  import Link from "@src/lib/components/Link.svelte"
+  import { pushModal } from "@src/app/modal"
+  import RepoPicker from "@src/app/components/RepoPicker.svelte"
 
   const url = decodeRelay($page.params.relay)
 
-  // Later an additional #a tag list will be added to this filter
-  // defining the particular list of repos the User has followed
+  const bookmarkFilter = {kinds: [NAMED_BOOKMARKS], authors: [pubkey.get()!] }
   const gitFilter = {kinds: [GIT_REPO]}
   const feed = feedFromFilters([gitFilter])
 
   const gitRepos = deriveEvents(repository, { filters: [gitFilter] })
+  const bookmarkedRepos = deriveEvent(
+    repository,
+    `${NAMED_BOOKMARKS}:${pubkey.get()!}:${GIT_REPO_BOOKMARK_DTAG}`
+  )
 
-  const comments = deriveEventsForUrl(url, [commentFilter])
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
 
   const events = throttled(
     800,
-    derived([gitRepos, comments], ([$gitRepos, $comments]) => {
-      const scores = new Map<string, number>()
-
-      for (const comment of $comments) {
-        const id = comment.tags.find(nthEq(0, "E"))?.[1]
-
-        if (id) {
-          scores.set(id, min([scores.get(id), -comment.created_at]))
-        }
-      }
-
+    derived([gitRepos], ([$gitRepos]) => {
       return sortBy(
-        e => min([scores.get(e.id), -e.created_at]),
+        e => -e.created_at,
         $gitRepos.filter(e => !mutedPubkeys.includes(e.pubkey)),
       )
     }),
   )
+
+  const loadBookmarkedRepos = async () => {
+    const bookmark = await load({
+      relays: [url, ...ctx.app.router.FromUser().getUrls()],
+      filters: [ bookmarkFilter ],
+    })
+
+    if (bookmark.length > 0) {
+      const aTags = getAddressTags(bookmark[0].tags)
+
+      await load({
+        filters: [ {} ]
+      })
+    }
+  }
 
   const ctrl = createFeedController({
     useWindowing: true,
@@ -72,6 +81,7 @@
   let scroller: Scroller
 
   onMount(() => {
+    loadBookmarkedRepos()
     scroller = createScroller({
       element: element!,
       delay: 300,
@@ -91,6 +101,10 @@
     }
   });
 
+  const onPickRepo = () => {
+    pushModal(RepoPicker)
+  }
+
 </script>
 
 <div class="relative flex h-screen flex-col" bind:this={element}>
@@ -105,7 +119,7 @@
     {/snippet}
     {#snippet action()}
       <div class="row-2">
-        <Button class="btn btn-primary btn-sm">
+        <Button class="btn btn-primary btn-sm" onclick={onPickRepo}>
           <Icon icon="gitRepos" />
           <span class="">Follow Repos!</span>
         </Button>

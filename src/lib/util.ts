@@ -33,4 +33,4 @@ export const daysBetween = (start: number, end: number) => [...range(start, end,
 
 export const FREELANCE_JOB = 32767
 export const GIT_REPO = 30617
-
+export const GIT_REPO_BOOKMARK_DTAG = 'followed_git_repos'
