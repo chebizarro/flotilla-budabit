@@ -30,6 +30,7 @@
     makeThreadPath,
     makeCalendarPath,
     makeJobPath,
+    makeGitPath,
     makeRoomPath
   } from "@app/routes"
   import {notifications} from "@app/notifications"
@@ -42,6 +43,7 @@
   const threadsPath = makeThreadPath(url)
   const calendarPath = makeCalendarPath(url)
   const jobsPath = makeJobPath(url)
+  const gitPath = makeGitPath(url)
 
   const joinSpace = () => pushModal(SpaceJoin, {url})
 
@@ -162,6 +164,18 @@
           <Icon icon="jobs" />
           Jobs
           {#if $notifications.has(jobsPath)}
+            <div
+              class="absolute -right-3 -top-1 h-2 w-2 rounded-full bg-primary-content"
+              transition:fade>
+            </div>
+          {/if}
+        </div>
+      </Link>
+      <Link href={gitPath} class="btn btn-info">
+        <div class="relative flex items-center gap-2">
+          <Icon icon="git" />
+          Git
+          {#if $notifications.has(gitPath)}
             <div
               class="absolute -right-3 -top-1 h-2 w-2 rounded-full bg-primary-content"
               transition:fade>

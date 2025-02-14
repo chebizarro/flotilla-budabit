@@ -40,6 +40,7 @@
   import FireMinimalistic from "@assets/icons/Fire Minimalistic.svg?dataurl"
   import GallerySend from "@assets/icons/Gallery Send.svg?dataurl"
   import Ghost from "@assets/icons/Ghost.svg?dataurl"
+  import Git from "@assets/icons/Git.svg?dataurl"
   import Hashtag from "@assets/icons/Hashtag.svg?dataurl"
   import HandPills from "@assets/icons/Hand Pills.svg?dataurl"
   import HomeSmile from "@assets/icons/Home Smile.svg?dataurl"
@@ -130,13 +131,14 @@
     "fire-minimalistic": FireMinimalistic,
     "gallery-send": GallerySend,
     ghost: Ghost,
+    git: Git,
     hashtag: Hashtag,
     "hand-pills": HandPills,
     "home-smile": HomeSmile,
     inbox: Inbox,
     "info-circle": InfoCircle,
     "info-square": InfoSquare,
-    "jobs": Jobs,
+    jobs: Jobs,
     key: Key,
     "key-minimalistic-square-3": KeyMinimalisticSquare3,
     letter: Letter,

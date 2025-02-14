@@ -1,6 +1,6 @@
 <script lang="ts">
   import { decodeRelay, deriveEventsForUrl, INDEXER_RELAYS } from "@src/app/state"
-  import { FREELANCE_JOB } from "@src/lib/util"
+  import { GIT_REPO } from "@src/lib/util"
   import { createFeedController, repository, userMutes } from "@welshman/app"
   import { getPubkeyTagValues, getListTags, COMMENT } from "@welshman/util"
   import { onMount } from "svelte";
@@ -22,18 +22,19 @@
 
   const url = decodeRelay($page.params.relay)
 
-  const jobFilter = {kinds: [FREELANCE_JOB], "#s": ["0"]}
-  const commentFilter = {kinds: [COMMENT], "#K": [String(FREELANCE_JOB)]}
-  const feed = feedFromFilters([jobFilter, commentFilter])
+  // Later an additional #a tag list will be added to this filter
+  // defining the particular list of repos the User has followed
+  const gitFilter = {kinds: [GIT_REPO]}
+  const feed = feedFromFilters([gitFilter])
 
-  const jobs = deriveEvents(repository, { filters: [jobFilter] })
+  const gitRepos = deriveEvents(repository, { filters: [gitFilter] })
 
   const comments = deriveEventsForUrl(url, [commentFilter])
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
 
   const events = throttled(
     800,
-    derived([jobs, comments], ([$jobs, $comments]) => {
+    derived([gitRepos, comments], ([$gitRepos, $comments]) => {
       const scores = new Map<string, number>()
 
       for (const comment of $comments) {
@@ -46,7 +47,7 @@
 
       return sortBy(
         e => min([scores.get(e.id), -e.created_at]),
-        $jobs.filter(e => !mutedPubkeys.includes(e.pubkey)),
+        $gitRepos.filter(e => !mutedPubkeys.includes(e.pubkey)),
       )
     }),
   )
@@ -96,7 +97,7 @@
   <PageBar>
     {#snippet icon()}
       <div class="center">
-        <Icon icon="jobs" />
+        <Icon icon="gitRepos" />
       </div>
     {/snippet}
     {#snippet title()}
@@ -105,10 +106,8 @@
     {#snippet action()}
       <div class="row-2">
         <Button class="btn btn-primary btn-sm">
-          <Link external href="https://test.satshoot.com/post-job" class="bg-primary flex items-center gap-x-2">
-            <Icon icon="jobs" />
-            <span class="">Create Job</span>
-          </Link>
+          <Icon icon="gitRepos" />
+          <span class="">Follow Repos!</span>
         </Button>
         <MenuSpaceButton {url} />
       </div>
@@ -124,9 +123,9 @@
       <p class="flex h-10 items-center justify-center py-20" out:fly>
         <Spinner {loading}>
           {#if loading}
-            Looking for jobs...
+            Looking for Git Repos...
           {:else if $events.length === 0}
-            No Jobs found.
+            No Repos found.
           {/if}
         </Spinner>
       </p>

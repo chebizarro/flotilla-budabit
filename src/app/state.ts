@@ -159,6 +159,7 @@ export const pubkeyLink = (
 ) => entityLink(nip19.nprofileEncode({pubkey, relays}))
 
 export const jobLink = (naddr: string) => `https://test.satshoot.com/${naddr}`
+export const gitLink = (naddr: string) => `https://gitworkshop.dev/${naddr}`
 
 
 export const tagRoom = (room: string, url: string) => [ROOM, room]
