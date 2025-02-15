@@ -81,24 +81,24 @@
   let scroller: Scroller
 
   onMount(() => {
-    loadBookmarkedRepos()
-    scroller = createScroller({
-      element: element!,
-      delay: 300,
-      threshold: 3000,
-      onScroll: () => {
-        limit += 20
-
-        if ($events.length - limit < 10) {
-          ctrl.load(50)
-        }
-      },
-    })
-
-    return () => {
-      scroller?.stop()
-      setChecked($page.url.pathname)
-    }
+    // loadBookmarkedRepos()
+    // scroller = createScroller({
+    //   element: element!,
+    //   delay: 300,
+    //   threshold: 3000,
+    //   onScroll: () => {
+    //     limit += 20
+    //
+    //     if ($events.length - limit < 10) {
+    //       ctrl.load(50)
+    //     }
+    //   },
+    // })
+    //
+    // return () => {
+    //   scroller?.stop()
+    //   setChecked($page.url.pathname)
+    // }
   });
 
   const onPickRepo = () => {
@@ -111,38 +111,39 @@
   <PageBar>
     {#snippet icon()}
       <div class="center">
-        <Icon icon="gitRepos" />
+        <Icon icon="git" />
       </div>
     {/snippet}
     {#snippet title()}
-      <strong>Jobs</strong>
+      <strong>Followed Repos</strong>
     {/snippet}
     {#snippet action()}
       <div class="row-2">
-        <Button class="btn btn-primary btn-sm" onclick={onPickRepo}>
-          <Icon icon="gitRepos" />
-          <span class="">Follow Repos!</span>
+        <Button class="btn btn-primary btn-sm" disabled={true} onclick={onPickRepo}>
+          <Icon icon="git" />
+          <span class="">Add Repo</span>
         </Button>
         <MenuSpaceButton {url} />
       </div>
     {/snippet}
   </PageBar>
+  <div class="text-2xl text-center">Coming Soon...</div>
   <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
-    {#each $events as event (event.id)}
-      <div in:fly>
-        <JobItem {url} {event} external={false} />
-      </div>
-    {/each}
-    {#if loading || $events.length === 0}
-      <p class="flex h-10 items-center justify-center py-20" out:fly>
-        <Spinner {loading}>
-          {#if loading}
-            Looking for Git Repos...
-          {:else if $events.length === 0}
-            No Repos found.
-          {/if}
-        </Spinner>
-      </p>
-    {/if}
+    <!-- {#each $events as event (event.id)} -->
+    <!--   <div in:fly> -->
+    <!--     <JobItem {url} {event} external={false} /> -->
+    <!--   </div> -->
+    <!-- {/each} -->
+    <!-- {#if loading || $events.length === 0} -->
+    <!--   <p class="flex h-10 items-center justify-center py-20" out:fly> -->
+    <!--     <Spinner {loading}> -->
+    <!--       {#if loading} -->
+    <!--         Looking for Git Repos... -->
+    <!--       {:else if $events.length === 0} -->
+    <!--         No Repos found. -->
+    <!--       {/if} -->
+    <!--     </Spinner> -->
+    <!--   </p> -->
+    <!-- {/if} -->
   </div>
 </div>
