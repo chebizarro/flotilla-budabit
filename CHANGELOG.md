@@ -1,5 +1,27 @@
 # Changelog
 
+# 0.2.11
+
+* Add in-app signup flow on ios
+* Add profile deletion
+
+# 0.2.10
+
+* Improve space discovery
+
+# 0.2.9
+
+* Add NIP 01 signup flow on mobile
+
+# 0.2.8
+
+* Show spinner when joining a room
+* Reduce self-rate limiting of REQs
+* Fix disabled signers link
+* Prepare for iOS release
+* Improve threads and calendar pages
+* Improve quote rendering and new messages button
+
 # 0.2.7
 
 * Add calendar events

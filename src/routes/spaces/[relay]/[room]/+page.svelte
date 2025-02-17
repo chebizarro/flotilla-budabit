@@ -50,7 +50,11 @@
 
   const joinRoom = async () => {
     if (hasNip29($relay)) {
+      joiningRoom = true
+
       const message = await getThunkError(nip29.joinRoom(url, room))
+
+      joiningRoom = false
 
       if (message && !message.includes("already")) {
         return pushToast({theme: "error", message})
@@ -126,7 +130,8 @@
 
   const scrollToBottom = () => element?.scrollTo({top: 0, behavior: "smooth"})
 
-  let loading = $state(true)
+  let joiningRoom = $state(false)
+  let loadingEvents = $state(true)
   let share = $state(popKey<TrustedEvent | undefined>("share"))
   let parent: TrustedEvent | undefined = $state()
   let element: HTMLElement | undefined = $state()
@@ -147,6 +152,12 @@
     let newMessagesSeen = false
 
     if (events) {
+      const lastUserEvent = $events.find(e => e.pubkey === $pubkey)
+
+      // Adjust last checked to account for messages that came from a different device
+      const adjustedLastChecked =
+        lastChecked && lastUserEvent ? Math.max(lastUserEvent.created_at, lastChecked) : lastChecked
+
       for (const event of $events.toReversed()) {
         if (seen.has(event.id)) {
           continue
@@ -156,9 +167,9 @@
 
         if (
           !newMessagesSeen &&
+          adjustedLastChecked &&
           event.pubkey !== $pubkey &&
-          lastChecked &&
-          event.created_at > lastChecked
+          event.created_at > adjustedLastChecked
         ) {
           elements.push({type: "new-messages", id: "new-messages"})
           newMessagesSeen = true
@@ -196,7 +207,7 @@
       subscriptionFilters: [{kinds: [DELETE, REACTION, MESSAGE], "#h": [room], since: now()}],
       initialEvents: getEventsForUrl(url, [{...filter, limit: 20}]),
       onExhausted: () => {
-        loading = false
+        loadingEvents = false
       },
     }))
   })
@@ -211,7 +222,7 @@
   })
 </script>
 
-<div class="saib relative flex h-full flex-col">
+<div class="relative flex h-full flex-col">
   <PageBar>
     {#snippet icon()}
       <div class="center">
@@ -232,8 +243,12 @@
               Leave Room
             </Button>
           {:else}
-            <Button class="btn btn-neutral btn-sm" onclick={joinRoom}>
-              <Icon icon="login-2" />
+            <Button class="btn btn-neutral btn-sm" disabled={joiningRoom} onclick={joinRoom}>
+              {#if joiningRoom}
+                <span class="loading loading-spinner loading-sm"></span>
+              {:else}
+                <Icon icon="login-2" />
+              {/if}
               Join Room
             </Button>
           {/if}
@@ -265,8 +280,8 @@
       {/if}
     {/each}
     <p class="flex h-10 items-center justify-center py-20">
-      {#if loading}
-        <Spinner loading>Looking for messages...</Spinner>
+      {#if loadingEvents}
+        <Spinner loading={loadingEvents}>Looking for messages...</Spinner>
       {:else}
         <Spinner>End of message history</Spinner>
       {/if}
@@ -281,7 +296,7 @@
       </div>
     </div>
   {/if}
-  <div class="saib">
+  <div>
     {#if parent}
       <ChannelComposeParent event={parent} clear={clearParent} verb="Replying to" />
     {/if}

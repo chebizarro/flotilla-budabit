@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type {TrustedEvent} from "@welshman/util"
   import {fromNostrURI} from "@welshman/util"
   import {nthEq} from "@welshman/lib"
   import {
@@ -22,7 +21,6 @@
   import Link from "@lib/components/Link.svelte"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
-  import Content from "@app/components/Content.svelte"
   import ContentToken from "@app/components/ContentToken.svelte"
   import ContentCode from "@app/components/ContentCode.svelte"
   import ContentLinkInline from "@app/components/ContentLinkInline.svelte"
@@ -38,9 +36,9 @@
     minLength?: number
     maxLength?: number
     showEntire?: boolean
-    hideMedia?: boolean
+    hideMediaAtDepth?: number
     expandMode?: string
-    quoteProps?: Record<string, any>
+    relays?: string[]
     depth?: number
   }
 
@@ -49,9 +47,9 @@
     minLength = 500,
     maxLength = 700,
     showEntire = $bindable(false),
-    hideMedia = false,
+    hideMediaAtDepth = 1,
     expandMode = "block",
-    quoteProps = {},
+    relays = [],
     depth = 0,
   }: Props = $props()
 
@@ -64,13 +62,13 @@
   const isBlock = (i: number) => {
     const parsed = fullContent[i]
 
-    if (!parsed || hideMedia) return false
+    if (!parsed || hideMediaAtDepth <= depth) return false
 
     if (isLink(parsed) && $userSettingValues.show_media && isStartOrEnd(i)) {
       return true
     }
 
-    if ((isEvent(parsed) || isAddress(parsed)) && isStartOrEnd(i) && depth < 1) {
+    if ((isEvent(parsed) || isAddress(parsed)) && isStartOrEnd(i)) {
       return true
     }
 
@@ -108,7 +106,7 @@
       : truncate(fullContent, {
           minLength,
           maxLength,
-          mediaLength: hideMedia ? 20 : 200,
+          mediaLength: hideMediaAtDepth <= depth ? 20 : 200,
         }),
   )
 
@@ -151,11 +149,7 @@
           <ContentMention value={parsed.value} />
         {:else if isEvent(parsed) || isAddress(parsed)}
           {#if isBlock(i)}
-            <ContentQuote {...quoteProps} value={parsed.value} {event}>
-              {#snippet noteContent({event, minimal}: {event: TrustedEvent; minimal: boolean})}
-                <Content {quoteProps} hideMedia={minimal || hideMedia} {event} depth={depth + 1} />
-              {/snippet}
-            </ContentQuote>
+            <ContentQuote {depth} {relays} {hideMediaAtDepth} value={parsed.value} {event} />
           {:else}
             <Link
               external

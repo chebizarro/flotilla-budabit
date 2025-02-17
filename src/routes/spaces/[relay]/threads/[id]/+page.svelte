@@ -79,7 +79,7 @@
     {/if}
     <NoteCard event={$event} class="card2 bg-alt z-feature w-full">
       <div class="col-3 ml-12">
-        <Content showEntire event={$event} quoteProps={{relays: [url]}} />
+        <Content showEntire event={$event} relays={[url]} />
         <ThreadActions event={$event} {url} />
       </div>
     </NoteCard>
@@ -90,12 +90,12 @@
       <p>Failed to load thread.</p>
     {/await}
   {/if}
-  <PageBar class="mx-0">
+  <PageBar class="!mx-0">
     {#snippet icon()}
       <div>
-        <Button class="btn btn-neutral btn-sm" onclick={back}>
+        <Button class="btn btn-neutral btn-sm flex-nowrap whitespace-nowrap" onclick={back}>
           <Icon icon="alt-arrow-left" />
-          Go back
+          <span class="hidden sm:inline">Go back</span>
         </Button>
       </div>
     {/snippet}

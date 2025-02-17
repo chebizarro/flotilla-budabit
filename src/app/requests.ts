@@ -1,5 +1,19 @@
 import {get, writable} from "svelte/store"
-import {partition, int, YEAR, MONTH, insert, sortBy, assoc, now} from "@welshman/lib"
+import {
+  partition,
+  chunk,
+  sample,
+  sleep,
+  shuffle,
+  uniq,
+  int,
+  YEAR,
+  MONTH,
+  insert,
+  sortBy,
+  assoc,
+  now,
+} from "@welshman/lib"
 import {
   MESSAGE,
   DELETE,
@@ -9,10 +23,11 @@ import {
   matchFilters,
   getTagValues,
   getTagValue,
+  isShareableRelayUrl,
 } from "@welshman/util"
-import type {TrustedEvent, Filter} from "@welshman/util"
+import type {TrustedEvent, Filter, List} from "@welshman/util"
 import {feedFromFilters, makeRelayFeed, makeIntersectionFeed} from "@welshman/feeds"
-import type {Subscription} from "@welshman/net"
+import type {Subscription, SubscribeRequestWithHandlers} from "@welshman/net"
 import type {AppSyncOpts, Thunk} from "@welshman/app"
 import {
   subscribe,
@@ -22,10 +37,23 @@ import {
   hasNegentropy,
   thunkWorker,
   createFeedController,
+  loadRelay,
+  loadMutes,
+  loadFollows,
+  loadProfile,
+  loadInboxRelaySelections,
+  getRelayUrls,
 } from "@welshman/app"
 import {createScroller} from "@lib/html"
 import {daysBetween} from "@lib/util"
-import {userRoomsByUrl, getUrlsForEvent} from "@app/state"
+import {
+  INDEXER_RELAYS,
+  getDefaultPubkeys,
+  userRoomsByUrl,
+  getUrlsForEvent,
+  loadMembership,
+  loadSettings,
+} from "@app/state"
 
 // Utils
 
@@ -55,6 +83,7 @@ export const makeFeed = ({
   feedFilters,
   subscriptionFilters,
   element,
+  onEvent,
   onExhausted,
   initialEvents = [],
 }: {
@@ -62,11 +91,20 @@ export const makeFeed = ({
   feedFilters: Filter[]
   subscriptionFilters: Filter[]
   element: HTMLElement
+  onEvent?: (event: TrustedEvent) => void
   onExhausted?: () => void
   initialEvents?: TrustedEvent[]
 }) => {
+  const seen = new Set<string>()
   const buffer = writable<TrustedEvent[]>([])
   const events = writable(initialEvents)
+
+  for (const event of initialEvents) {
+    if (!seen.has(event.id)) {
+      seen.add(event.id)
+      onEvent?.(event)
+    }
+  }
 
   const insertEvent = (event: TrustedEvent) => {
     buffer.update($buffer => {
@@ -77,6 +115,11 @@ export const makeFeed = ({
 
       return [...$buffer, event]
     })
+
+    if (!seen.has(event.id)) {
+      seen.add(event.id)
+      onEvent?.(event)
+    }
   }
 
   const removeEvents = (ids: string[]) => {
@@ -270,13 +313,17 @@ export const makeCalendarFeed = ({
 export const listenForNotifications = () => {
   const subs: Subscription[] = []
 
-  for (const [url, rooms] of userRoomsByUrl.get()) {
+  for (const [url, allRooms] of userRoomsByUrl.get()) {
+    // Limit how many rooms we load at a time, since we have to send a separate filter
+    // for each one due to nip 29 breaking postel's law
+    const rooms = shuffle(Array.from(allRooms)).slice(0, 30)
+
     load({
       relays: [url],
       filters: [
         {kinds: [THREAD], limit: 1},
         {kinds: [COMMENT], "#K": [String(THREAD)], limit: 1},
-        ...Array.from(rooms).map(room => ({kinds: [MESSAGE], "#h": [room], limit: 1})),
+        ...rooms.map(room => ({kinds: [MESSAGE], "#h": [room], limit: 1})),
       ],
     })
 
@@ -286,7 +333,7 @@ export const listenForNotifications = () => {
         filters: [
           {kinds: [THREAD], since: now()},
           {kinds: [COMMENT], "#K": [String(THREAD)], since: now()},
-          ...Array.from(rooms).map(room => ({kinds: [MESSAGE], "#h": [room], since: now()})),
+          ...rooms.map(room => ({kinds: [MESSAGE], "#h": [room], since: now()})),
         ],
       }),
     )
@@ -298,3 +345,42 @@ export const listenForNotifications = () => {
     }
   }
 }
+
+export const loadUserData = (
+  pubkey: string,
+  request: Partial<SubscribeRequestWithHandlers> = {},
+) => {
+  const promise = Promise.race([
+    sleep(3000),
+    Promise.all([
+      loadInboxRelaySelections(pubkey, request),
+      loadMembership(pubkey, request),
+      loadSettings(pubkey, request),
+      loadProfile(pubkey, request),
+      loadFollows(pubkey, request),
+      loadMutes(pubkey, request),
+    ]),
+  ])
+
+  // Load followed profiles slowly in the background without clogging other stuff up. Only use a single
+  // indexer relay to avoid too many redundant validations, which slow things down and eat bandwidth
+  promise.then(async () => {
+    for (const pubkeys of chunk(50, getDefaultPubkeys())) {
+      const relays = sample(1, INDEXER_RELAYS)
+
+      await sleep(1000)
+
+      for (const pubkey of pubkeys) {
+        loadMembership(pubkey, {relays})
+        loadProfile(pubkey, {relays})
+        loadFollows(pubkey, {relays})
+        loadMutes(pubkey, {relays})
+      }
+    }
+  })
+
+  return promise
+}
+
+export const discoverRelays = (lists: List[]) =>
+  Promise.all(uniq(lists.flatMap(getRelayUrls)).filter(isShareableRelayUrl).map(loadRelay))
