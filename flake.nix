@@ -36,6 +36,9 @@ outputs = { nixpkgs, flake-utils, nvim, ... }:
                 ];
                 shellHook = ''
                     export PATH="$HOME/.cargo/bin:$PATH";
+                    # for linking welshman
+                    npm config set prefix=$HOME/.npm-global
+                    export PATH="$HOME/.npm-global/bin:$PATH"
                 '';
             };
         }
