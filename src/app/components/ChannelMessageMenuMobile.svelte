@@ -1,20 +1,27 @@
 <script lang="ts">
   import type {NativeEmoji} from "emoji-picker-element/shared"
+  import type {TrustedEvent} from "@welshman/util"
   import {pubkey} from "@welshman/app"
   import Button from "@lib/components/Button.svelte"
   import Icon from "@lib/components/Icon.svelte"
   import EmojiPicker from "@lib/components/EmojiPicker.svelte"
   import EventInfo from "@app/components/EventInfo.svelte"
-  import ConfirmDelete from "@app/components/ConfirmDelete.svelte"
+  import EventDeleteConfirm from "@app/components/EventDeleteConfirm.svelte"
   import {publishReaction} from "@app/commands"
   import {pushModal} from "@app/modal"
 
-  const {url, event, reply} = $props()
+  type Props = {
+    url: string
+    event: TrustedEvent
+    reply: () => void
+  }
 
-  const onEmoji = (emoji: NativeEmoji) => {
+  const {url, event, reply}: Props = $props()
+
+  const onEmoji = ((event: TrustedEvent, url: string, emoji: NativeEmoji) => {
     history.back()
     publishReaction({event, relays: [url], content: emoji.unicode})
-  }
+  }).bind(undefined, event, url)
 
   const showEmojiPicker = () => pushModal(EmojiPicker, {onClick: onEmoji}, {replaceState: true})
 
@@ -25,7 +32,7 @@
 
   const showInfo = () => pushModal(EventInfo, {event}, {replaceState: true})
 
-  const showDelete = () => pushModal(ConfirmDelete, {url, event})
+  const showDelete = () => pushModal(EventDeleteConfirm, {url, event})
 </script>
 
 <div class="col-2">
