@@ -1,15 +1,14 @@
 <script lang="ts">
   import {nthEq} from "@welshman/lib"
-  import {type TrustedEvent, Address} from "@welshman/util"
+  import {type TrustedEvent} from "@welshman/util"
   import {formatTimestamp} from "@welshman/app"
   import Content from "@app/components/Content.svelte"
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import Link from "@src/lib/components/Link.svelte"
 
-  import {jobLink} from "@app/state"
   import { makeJobPath } from "@app/routes"
   import JobActions from "./JobActions.svelte"
-    import NoteCard from "./NoteCard.svelte"
+  import NoteCard from "./NoteCard.svelte"
 
   const {
     url,
@@ -29,9 +28,6 @@
     {#if title}
       <div class="flex w-full items-center justify-between gap-2">
         <p class="text-xl">{title}</p>
-        <p class="text-sm opacity-75">
-          {formatTimestamp(event.created_at)}
-        </p>
       </div>
     {:else}
       <p class="mb-3 h-0 text-xs opacity-75">

@@ -21,52 +21,49 @@
     makeIntersectionFeed,
     makeWOTFeed,
   } from "@welshman/feeds"
-  import {fromPairs, sleep} from "@welshman/lib"
+  import {sleep} from "@welshman/lib"
   import {createScroller, type Scroller} from "@src/lib/html"
   import {deriveEvents} from "@welshman/store"
-  import Divider from "@src/lib/components/Divider.svelte"
-  // GIT_REPOSITORY is mistakenly defined in welshman as 30403 which
-  // is a Draft Classified listing (nip99) kind in reality.
   import { GIT_REPO } from "@src/lib/util"
   import { preventDefault } from "svelte/legacy"
   import { decodeRelay } from "../state"
   import Spinner from "@src/lib/components/Spinner.svelte"
   import { fly } from "svelte/transition"
+  import GitItem from "./GitItem.svelte"
 
 
   const url = decodeRelay($page.params.relay)
+  // TODO: Use this map as the collection for one of two each blocks(the first)
+  const {selectedRepos}: {selectedRepos: Map<string, Array<string>>} = $props()
 
   let unmounted = false
   let element: HTMLElement
   let scroller: Scroller
   let limit = 30
-  let loading = true
+  let loading = $state(true)
 
   const filters: Filter[] = [{kinds: [GIT_REPO]}]
   const events = deriveEvents(repository, {filters})
 
+  // TODO: Use this with another each block (the second) and only push elements
+  // that are not in selectedRepos map
   const repositories = derived(events, $events => {
-    const $elements = []
+    const elements = []
 
-    for (const event of $events.toReversed()) {
-      const {pubkey} = event
-
-      const repoData = fromPairs(event.tags)
+    for (const event of $events) {
       const relayHints = tracker.getRelays(event.id)
       const firstHint = relayHints.values().next().value || "";
 
-      $elements.push({
+      elements.push({
+        repo: event,
         relay: firstHint,
         address: Address.fromEvent(event).toString(),
-        name: repoData.name,
-        owner: pubkey,
       })
     }
 
-    return $elements.reverse()
+    return elements.reverse()
   })
 
-  // const feed = feedsFromFilter({kinds: [GIT_REPOSITORY]})
   const ctrl = createFeedController({
     useWindowing: true,
     feed: makeIntersectionFeed(
@@ -99,8 +96,6 @@
     history.back()
   }
 
-  const selectedRepos: Map<string, Array<string>> = new Map()
-
   onMount(() => {
     // Element is frequently not defined. I don't know why
     sleep(1000).then(() => {
@@ -110,10 +105,10 @@
           delay: 300,
           threshold: 10_000,
           onScroll: () => {
-            limit += 30
+            limit += 10
 
-            if ($events.length - limit < 100) {
-              ctrl.load(60)
+            if ($events.length - limit < 20) {
+              ctrl.load(20)
             }
           },
         })
@@ -126,6 +121,8 @@
     }
   })
 
+  // TODO: if repo is checked, add it to selectedRepos AND delete from events store
+  // If unchecked, the the opposite
   const onRepoChecked = (relay: string, address: string, event:Event) => {
     const target = event.target as HTMLInputElement
     if (target.checked) {
@@ -142,18 +139,16 @@
       <div>Follow Git Repos</div>
     {/snippet}
     {#snippet info()}
-      <div>Select repositories to receive updates in this room</div>
+      <div>Select repositories to track</div>
     {/snippet}
   </ModalHeader>
   <div
-    class="scroll-container -mt-2 flex flex-grow flex-col-reverse overflow-auto py-2"
+    class="scroll-container -mt-2 h-96 flex flex-grow flex-col overflow-auto py-2"
     bind:this={element}>
-    {#each $repositories as { relay, address, name, owner } (address)}
-      <Divider>
+    {#each $repositories as {repo, relay, address} (repo.id)}
+      <GitItem {url} event={repo} showActivity={false} showActions={false}/>
+      <div class="flex w-full justify-end">
         <FieldInline>
-          {#snippet label()}
-            <p>{name} by {owner}</p>
-          {/snippet}
           {#snippet input()}
             <input
               slot="input"
@@ -162,7 +157,7 @@
               onchange={event => onRepoChecked(relay, address, event)} />
           {/snippet}
         </FieldInline>
-      </Divider>
+      </div>
     {/each}
     {#if loading || $events.length === 0}
       <p class="flex h-10 items-center justify-center py-20" out:fly>

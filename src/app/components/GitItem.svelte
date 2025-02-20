@@ -6,11 +6,14 @@
 
   const {
     url,
-    event
+    event,
+    showActivity = true,
+    showActions = true
   }: {
     url: string
     event: TrustedEvent
     showActivity?: boolean
+    showActions?: boolean
   } = $props()
 
   const name = event.tags.find(nthEq(0, "name"))?.[1]
@@ -36,8 +39,10 @@
       Description missing!
     </p>
   {/if}
-  <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
-    <GitActions showActivity {url} {event} />
-  </div>
+  {#if showActions}
+    <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
+      <GitActions {showActivity} {url} {event} />
+    </div>
+  {/if}
 </NoteCard>
 

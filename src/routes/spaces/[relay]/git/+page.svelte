@@ -1,8 +1,8 @@
 <script lang="ts">
   import { decodeRelay } from "@src/app/state"
   import { load } from "@welshman/app"
-  import { pubkey, repository, userMutes } from "@welshman/app"
-  import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, Address, getAddressTags, type TrustedEvent, type Filter } from "@welshman/util"
+  import { pubkey, userMutes } from "@welshman/app"
+  import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, getAddressTags, type TrustedEvent, type Filter } from "@welshman/util"
   import { onMount } from "svelte";
   import {page} from "$app/stores"
   import {type Writable, writable} from "svelte/store"
@@ -30,7 +30,9 @@
 
   let loading = $state(true)
 
-  let events: Writable<TrustedEvent[]> = writable([]);
+  const events: Writable<TrustedEvent[]> = writable([]);
+
+  const bookmarkedRepos: Map<string, Array<string>> = new Map()
 
   const loadBookmarkedRepos = async () => {
     const bookmark = await load({
@@ -43,6 +45,9 @@
       console.log("atagList", aTagList)
       const dTagValues: Array<string> = []
       const relayHints: Array<string> = []
+
+      // TODO:  populate bookmarkedRepos
+
       aTagList.forEach(([letter, value, relayHint]) => {
         dTagValues.push(value.split(":")[2])
         if (relayHint) relayHints.push(relayHint)
@@ -83,7 +88,7 @@
   })
 
   const onPickRepo = () => {
-    pushModal(RepoPicker)
+    pushModal(RepoPicker, {selectedRepos: bookmarkedRepos})
   }
 
 </script>
@@ -111,7 +116,7 @@
   <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
     {#each $events as event (event.id)}
       <div in:fly>
-        <GitItem {url} {event} showActivity={true}/>
+      <GitItem {url} {event}/>
       </div>
     {/each}
     {#if loading || $events.length === 0}
