@@ -2,7 +2,7 @@
   import {onMount} from "svelte"
   import {page} from "$app/stores"
   import {sortBy, sleep} from "@welshman/lib"
-  import {COMMENT, getTagValue} from "@welshman/util"
+  import {COMMENT} from "@welshman/util"
   import {repository, subscribe} from "@welshman/app"
   import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
