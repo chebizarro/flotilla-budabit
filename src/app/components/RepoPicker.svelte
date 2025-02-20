@@ -88,7 +88,10 @@
     publishThunk({
       event: createEvent(
         NAMED_BOOKMARKS,
-        { tags: [ ["d", GIT_REPO_BOOKMARK_DTAG], ...Array.from(selectedRepos.values())] }
+        { tags: [ 
+          ["d", GIT_REPO_BOOKMARK_DTAG],
+          ...Array.from(selectedRepos.values())
+        ] }
       ),
       relays: [url, ...ctx.app.router.FromUser().getUrls()],
     })
