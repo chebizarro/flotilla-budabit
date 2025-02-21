@@ -20,10 +20,6 @@ static/maskable-icon-512x512.png
 src/assets/icons/*.webp
 manifest.webmanifest
 
-# Mod: ignore all generated stuff from build process too
-ios/
-android/
-
 # Capacitor
 ios/App/public/
 ios/App/Pods/
