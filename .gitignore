@@ -25,7 +25,9 @@ ios/App/public/
 ios/App/Pods/
 ios/App/Podfile.lock
 ios/DerivedData/
+ios/App/App/Assets.xcassets/Splash.imageset/
 android/app/src/main/assets/public/
+android/app/src/main/res/
 
 
 # iOS
