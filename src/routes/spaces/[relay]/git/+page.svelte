@@ -3,7 +3,7 @@
   import { load } from "@welshman/app"
   import { pubkey, userMutes } from "@welshman/app"
   import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, getAddressTags, type TrustedEvent, type Filter, Address } from "@welshman/util"
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {page} from "$app/stores"
   import {derived, type Writable, writable} from "svelte/store"
   import { setChecked } from "@src/app/notifications"
@@ -36,6 +36,8 @@
   const loadedBookmarkedRepos: Writable<Map<string, {event: TrustedEvent, relayHint: string}>> = writable(new Map())
 
   const loadBookmarkedRepos = async () => {
+    loading = true
+    await tick()
     const bookmark = await load({
       relays: [url, ...ctx.app.router.FromUser().getUrls()],
       filters: [ bookmarkFilter ],
@@ -118,7 +120,7 @@
     {/snippet}
     {#snippet action()}
       <div class="row-2">
-        <Button class="btn btn-primary btn-sm" onclick={onAddRepo}>
+        <Button class="btn btn-primary btn-sm" disabled={loading} onclick={onAddRepo}>
           <Icon icon="git" />
           <span class="">Add Repo</span>
         </Button>
