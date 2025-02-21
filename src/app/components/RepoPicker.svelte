@@ -3,8 +3,8 @@
   import {onMount} from "svelte"
   import { GIT_REPO_BOOKMARK_DTAG } from "@src/lib/util"
   import {page} from "$app/stores"
-  import {derived, writable} from "svelte/store"
-  import {Address, createEvent, NAMED_BOOKMARKS, type Filter} from "@welshman/util"
+  import {derived, writable, type Writable} from "svelte/store"
+  import {Address, createEvent, NAMED_BOOKMARKS, type Filter, type TrustedEvent} from "@welshman/util"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
   import ModalHeader from "@lib/components/ModalHeader.svelte"
@@ -26,15 +26,19 @@
   import {deriveEvents} from "@welshman/store"
   import { GIT_REPO } from "@src/lib/util"
   import { preventDefault } from "svelte/legacy"
-  import { decodeRelay } from "../state"
+  import { decodeRelay, shouldReloadRepos } from "../state"
   import Spinner from "@src/lib/components/Spinner.svelte"
   import { fly } from "svelte/transition"
   import GitItem from "./GitItem.svelte"
+  import Divider from "@src/lib/components/Divider.svelte"
+    import { makeGitPath } from "../routes"
+    import { goto } from "$app/navigation"
 
 
   const url = decodeRelay($page.params.relay)
-  // TODO: Use this map as the collection for one of two each blocks(the first)
-  const {selectedRepos}: {selectedRepos: Map<string, Array<string>>} = $props()
+  const {selectedRepos}: {
+    selectedRepos: Writable<Map<string, {event: TrustedEvent, relayHint: string}>>
+  } = $props()
 
   let unmounted = false
   let element: HTMLElement
@@ -45,23 +49,35 @@
   const filters: Filter[] = [{kinds: [GIT_REPO]}]
   const events = deriveEvents(repository, {filters})
 
-  // TODO: Use this with another each block (the second) and only push elements
-  // that are not in selectedRepos map
-  const repositories = derived(events, $events => {
+  const repos = derived([events, selectedRepos], ([$events, $selectedRepos]) => {
     const elements = []
 
-    for (const event of $events) {
-      const relayHints = tracker.getRelays(event.id)
-      const firstHint = relayHints.values().next().value || "";
-
+    for (const [address, value] of $selectedRepos) {
       elements.push({
-        repo: event,
-        relay: firstHint,
-        address: Address.fromEvent(event).toString(),
+        repo: value.event,
+        relay: value.relayHint,
+        address: address,
+        selected: true
       })
     }
 
-    return elements.reverse()
+    for (const event of $events.toReversed()) {
+      const address = Address.fromEvent(event).toString()
+      // Need to keep selected and unselected repos as distinct sets
+      if (!$selectedRepos.has(address)) {
+        const relayHints = tracker.getRelays(event.id)
+        const firstHint = relayHints.values().next().value || "";
+
+        elements.push({
+          repo: event,
+          relay: firstHint,
+          address: address,
+          selected: false
+        })
+      }
+    }
+
+    return elements
   })
 
   const ctrl = createFeedController({
@@ -81,19 +97,31 @@
 
   const submit = () => {
     if ($uploading) return
+    const atagList:string[][] = [];
+
+    for (const [key, value] of $selectedRepos) {
+      atagList.push(['a', key, value.relayHint])
+    }
+
+    const eventToPublish = createEvent(
+      NAMED_BOOKMARKS,
+      { 
+        tags: [ 
+          ["d", GIT_REPO_BOOKMARK_DTAG],
+          ...atagList
+        ] 
+      }
+    )
+    console.log("eventToPublish", eventToPublish)
 
     publishThunk({
-      event: createEvent(
-        NAMED_BOOKMARKS,
-        { tags: [ 
-          ["d", GIT_REPO_BOOKMARK_DTAG],
-          ...Array.from(selectedRepos.values())
-        ] }
-      ),
+      event: eventToPublish,
       relays: [url, ...ctx.app.router.FromUser().getUrls()],
     })
 
-    history.back()
+    $shouldReloadRepos = true;
+
+    goto(makeGitPath(url))
   }
 
   onMount(() => {
@@ -121,17 +149,35 @@
     }
   })
 
-  // TODO: if repo is checked, add it to selectedRepos AND delete from events store
-  // If unchecked, the the opposite
-  const onRepoChecked = (relay: string, address: string, event:Event) => {
-    const target = event.target as HTMLInputElement
-    if (target.checked) {
-      selectedRepos.set(address, ['a', address, relay])
+  const onRepoChecked = (
+    relay: string,
+    address: string,
+    event:TrustedEvent,
+    checked: boolean
+  ) => {
+    if (checked) {
+      $selectedRepos.set(address, {event: event, relayHint: relay})
     } else {
-      selectedRepos.delete(address)
+      $selectedRepos.delete(address)
     }
+    $selectedRepos = $selectedRepos
   }
 </script>
+
+{#snippet repoSelectCheckBox(relay: string, address:string, repo:TrustedEvent, selected: boolean)}
+  <input
+    slot="input"
+    type="checkbox"
+    class="toggle toggle-primary"
+    checked={selected}
+    onchange={event => onRepoChecked(
+      relay,
+      address,
+      repo,
+      (event.target as HTMLInputElement).checked
+    )}
+  />
+{/snippet}
 
 <form class="column gap-4" onsubmit={preventDefault(submit)}>
   <ModalHeader>
@@ -145,16 +191,28 @@
   <div
     class="scroll-container -mt-2 h-96 flex flex-grow flex-col overflow-auto py-2"
     bind:this={element}>
-    {#each $repositories as {repo, relay, address} (repo.id)}
+    <Divider>
+      <p>Selected</p>
+    </Divider>
+    {#each $repos.filter((r)=>r.selected) as {repo, relay, address} (repo.id)}
       <GitItem {url} event={repo} showActivity={false} showActions={false}/>
       <div class="flex w-full justify-end">
         <FieldInline>
           {#snippet input()}
-            <input
-              slot="input"
-              type="checkbox"
-              class="toggle toggle-primary"
-              onchange={event => onRepoChecked(relay, address, event)} />
+            {@render repoSelectCheckBox(relay, address,repo, true)}
+          {/snippet}
+        </FieldInline>
+      </div>
+    {/each}
+    <Divider>
+      <p>Other</p>
+    </Divider>
+    {#each $repos.filter((r)=>!r.selected) as {repo, relay, address} (repo.id)}
+      <GitItem {url} event={repo} showActivity={false} showActions={false}/>
+      <div class="flex w-full justify-end">
+        <FieldInline>
+          {#snippet input()}
+            {@render repoSelectCheckBox(relay, address,repo, false)}
           {/snippet}
         </FieldInline>
       </div>

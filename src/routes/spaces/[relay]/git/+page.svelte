@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { decodeRelay } from "@src/app/state"
+  import { decodeRelay, shouldReloadRepos } from "@src/app/state"
   import { load } from "@welshman/app"
   import { pubkey, userMutes } from "@welshman/app"
-  import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, getAddressTags, type TrustedEvent, type Filter } from "@welshman/util"
+  import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, getAddressTags, type TrustedEvent, type Filter, Address } from "@welshman/util"
   import { onMount } from "svelte";
   import {page} from "$app/stores"
-  import {type Writable, writable} from "svelte/store"
+  import {derived, type Writable, writable} from "svelte/store"
   import { setChecked } from "@src/app/notifications"
   import PageBar from "@src/lib/components/PageBar.svelte"
   import Icon from "@src/lib/components/Icon.svelte"
@@ -23,6 +23,7 @@
 
   const bookmarkFilter = {kinds: [NAMED_BOOKMARKS], authors: [pubkey.get()!] }
 
+  const shouldTrigger = derived(shouldReloadRepos, ($s) => $s);
 
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
 
@@ -32,7 +33,7 @@
 
   const events: Writable<TrustedEvent[]> = writable([]);
 
-  const bookmarkedRepos: Map<string, Array<string>> = new Map()
+  const loadedBookmarkedRepos: Writable<Map<string, {event: TrustedEvent, relayHint: string}>> = writable(new Map())
 
   const loadBookmarkedRepos = async () => {
     const bookmark = await load({
@@ -42,18 +43,17 @@
 
     if (bookmark.length > 0) {
       const aTagList = getAddressTags(bookmark[0].tags)
-      console.log("atagList", aTagList)
       const dTagValues: Array<string> = []
       const relayHints: Array<string> = []
-
-      // TODO:  populate bookmarkedRepos
+      const relaysOfAddresses: Map<string, string> = new Map()
 
       aTagList.forEach(([letter, value, relayHint]) => {
         dTagValues.push(value.split(":")[2])
-        if (relayHint) relayHints.push(relayHint)
+        relaysOfAddresses.set(value, relayHint || "")
+        if (relayHint){
+          relayHints.push(relayHint)
+        }
       })
-      console.log("dTagValues", dTagValues)
-      console.log("relayHints", relayHints)
 
       repoFilter = {kinds: [GIT_REPO], "#d": dTagValues}
 
@@ -61,21 +61,23 @@
         relays: relayHints,
         filters: [ repoFilter ]
       })
+      loadedRepos.forEach((repo) => {
+        const addressString = Address.fromEvent(repo).toString()
+        const hint = relaysOfAddresses.get(addressString) || ""
+        $loadedBookmarkedRepos.set(addressString, {event: repo, relayHint: hint})
+      })
       events.update(() => {
         return sortBy(
           e => -e.created_at,
           loadedRepos.filter(e => !mutedPubkeys.includes(e.pubkey)),
         )
-
       })
+
+      
     }
     loading = false;
+    console.log("loaded, events:", $events)
   }
-
-  $effect(() => {
-    if (!loading) console.log("loded, events:", $events)
-
-  })
 
   let element: Element | undefined = $state()
 
@@ -87,8 +89,19 @@
     }
   })
 
-  const onPickRepo = () => {
-    pushModal(RepoPicker, {selectedRepos: bookmarkedRepos})
+  $effect(() => {
+    if ($shouldTrigger) {
+      loadBookmarkedRepos()
+      $shouldReloadRepos = false;
+    }
+  })
+
+  const onAddRepo = () => {
+    pushModal(
+      RepoPicker,
+      {selectedRepos: loadedBookmarkedRepos},
+      {replaceState: true}
+    )
   }
 
 </script>
@@ -105,7 +118,7 @@
     {/snippet}
     {#snippet action()}
       <div class="row-2">
-        <Button class="btn btn-primary btn-sm" onclick={onPickRepo}>
+        <Button class="btn btn-primary btn-sm" onclick={onAddRepo}>
           <Icon icon="git" />
           <span class="">Add Repo</span>
         </Button>

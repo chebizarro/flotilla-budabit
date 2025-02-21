@@ -341,6 +341,8 @@ export const listenForNotifications = () => {
     )
   }
 
+  console.log("subs in listenForNotifications", subs)
+
   return () => {
     for (const sub of subs) {
       sub.close()

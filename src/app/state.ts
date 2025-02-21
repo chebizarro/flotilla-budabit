@@ -1,5 +1,5 @@
 import twColors from "tailwindcss/colors"
-import {get, derived} from "svelte/store"
+import {get, derived, writable} from "svelte/store"
 import {nip19} from "nostr-tools"
 import {
   ctx,
@@ -642,3 +642,5 @@ export const displayReaction = (content: string) => {
   if (content === "-") return "👎"
   return content
 }
+
+export const shouldReloadRepos = writable(false)
