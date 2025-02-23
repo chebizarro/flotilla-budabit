@@ -11,6 +11,7 @@
   import Link from "@src/lib/components/Link.svelte"
   import { nthEq } from "@welshman/lib"
   import { onMount } from "svelte"
+    import { nip19 } from "nostr-tools"
 
   interface Props {
     url: any
@@ -20,6 +21,14 @@
   }
 
   const {url, event, showIssues=true, showActivity}: Props = $props()
+
+  const repoNpub = $derived(nip19.npubEncode(event.pubkey))
+  const repoDtag = $derived(event.tags.find(nthEq(0, "d"))?.[1])
+
+  const gitworkshopLink = $derived(
+    `https://gitworkshop.dev/${repoNpub}/${repoDtag}`
+  )
+
   let issues: TrustedEvent[] = []
   const issueFilter:Filter = {kinds: [GIT_ISSUE]}
   let issueCount = $state(0)
@@ -52,18 +61,18 @@
     }
   })
 
-  const web = event.tags.find(nthEq(0, "web"))?.[1]
+  // This might be broken depending on repo owners updating their links or
+  // even including one in the first place
+  // const web = event.tags.find(nthEq(0, "web"))?.[1]
 </script>
 
 <div class="flex flex-wrap items-center justify-between gap-2">
   <div class="flex flex-grow flex-wrap justify-end gap-2">
-    {#if web}
-      <Button class="btn btn-primary btn-sm">
-        <Link external class="w-full cursor-pointer" href={web}>
-          <span class="">Browse</span>
-        </Link>
-      </Button>
-    {/if}
+    <Button class="btn btn-primary btn-sm" disabled={!gitworkshopLink}>
+      <Link external class="w-full cursor-pointer" href={gitworkshopLink}>
+        <span class="">Browse</span>
+      </Link>
+    </Button>
     {#if showIssues}
       <Button class="btn btn-secondary btn-sm">
         <Link class="w-full cursor-pointer" href={makeGitPath(url,event.id)}>
@@ -71,6 +80,7 @@
         </Link>
       </Button>
     {/if}
+
     {#if showActivity}
       <ReactionSummary {url} {event} {onReactionClick} reactionClass="tooltip-left" />
       <ThunkStatusOrDeleted {event} />

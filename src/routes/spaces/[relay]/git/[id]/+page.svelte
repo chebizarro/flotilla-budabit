@@ -3,7 +3,7 @@
   import {page} from "$app/stores"
   import {sortBy, sleep, nthEq} from "@welshman/lib"
   import {Address, GIT_ISSUE, type TrustedEvent} from "@welshman/util"
-  import {repository, subscribe} from "@welshman/app"
+  import {load, repository, subscribe} from "@welshman/app"
   import {deriveEvents, type ReadableWithGetter} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
@@ -14,28 +14,40 @@
   import {setChecked} from "@app/notifications"
   import type { Subscription } from "@welshman/net"
   import GitItem from "@src/app/components/GitItem.svelte"
-  import GitIssueItem from "@src/app/components/GitItem.svelte"
-  import Link from "@src/lib/components/Link.svelte"
+  import GitIssueItem from "@src/app/components/GitIssueItem.svelte"
+  import type { Readable } from "svelte/store"
+  import { nip19 } from "nostr-tools"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
-  const event = deriveEvent(id)
-  let address = ''
-  let issues: ReadableWithGetter<TrustedEvent[]>
+
+  const event:Readable<TrustedEvent> = deriveEvent(id)
+  const repoNpub = $derived(nip19.npubEncode($event.pubkey))
+  const repoDtag = $derived($event.tags.find(nthEq(0, "d"))?.[1])
+
+  const gitworkshopLink = $derived(
+    `https://gitworkshop.dev/${repoNpub}/${repoDtag}`
+  )
   let sub: Subscription
   let repoRelays:string[] = $state([])
 
   const back = () => history.back()
 
+  const issues = $derived.by(() => {
+    const address = Address.fromEvent($event).toString()
+    const issueFilter = [{kinds: [GIT_ISSUE], "#a": [address]}]
+
+    return deriveEvents(repository, {filters: issueFilter})
+  })
+
   $effect(() => {
     if ($event) {
       console.log("Repo loaded")
-      address = Address.fromEvent($event).toString()
-
+      const address = Address.fromEvent($event).toString()
       const issueFilter = [{kinds: [GIT_ISSUE], "#a": [address]}]
-      issues = deriveEvents(repository, {filters: issueFilter})
       const [tagId, ...relays] = $event.tags.find(nthEq(0, "relays")) || []
       repoRelays = relays
+
       sub = subscribe({relays: relays, filters: issueFilter})
     }
   })
@@ -51,18 +63,10 @@
 </script>
 
 <div class="relative flex flex-col-reverse gap-3 px-2">
-  <div class="absolute left-[51px] top-32 h-[calc(100%-248px)] w-[2px] bg-neutral"></div>
   {#if $event}
-    <div class="flex justify-end px-2 pb-2">
-      <Button class="btn btn-primary btn-sm">
-        <Link external class="w-full cursor-pointer" href={web}>
-          <span class="">GitWorkshop</span>
-        </Link>
-      </Button>
-    </div>
     {#if $issues}
       {#each sortBy(e => -e.created_at, $issues) as issue (issue.id)}
-        <GitIssueItem event={issue} relays={repoRelays}/>
+        <GitIssueItem event={issue} relays={repoRelays} repoLink={gitworkshopLink}/>
       {/each}
     {/if}
     <GitItem {url} event={$event} showIssues={false}/>
