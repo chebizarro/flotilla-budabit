@@ -15,15 +15,14 @@
   interface Props {
     url: any
     event: TrustedEvent
+    showIssues?: boolean
     showActivity?: boolean
   }
 
-  const {url, event, showActivity}: Props = $props()
+  const {url, event, showIssues=true, showActivity}: Props = $props()
   let issues: TrustedEvent[] = []
   const issueFilter:Filter = {kinds: [GIT_ISSUE]}
   let issueCount = $state(0)
-
-  const path = makeGitPath(url, event.id)
 
   const onReactionClick = (content: string, events: TrustedEvent[]) => {
     const reaction = events.find(e => e.pubkey === $pubkey)
@@ -34,7 +33,7 @@
     }
   }
 
-  const loadIssues =  async () => {
+  const loadIssues = async () => {
     const address = Address.fromEvent(event)
     issueFilter['#a'] = [address.toString()]
     const [tagId, ...relays] = event.tags.find(nthEq(0, "relays")) || []
@@ -48,7 +47,9 @@
   } 
 
   onMount(() => {
-    loadIssues()
+    if (showIssues) {
+      loadIssues()
+    }
   })
 
   const web = event.tags.find(nthEq(0, "web"))?.[1]
@@ -56,16 +57,20 @@
 
 <div class="flex flex-wrap items-center justify-between gap-2">
   <div class="flex flex-grow flex-wrap justify-end gap-2">
-    <Button class="btn btn-primary btn-sm">
-      <Link external class="w-full cursor-pointer" href={web}>
-        <span class="">Browse</span>
-      </Link>
-    </Button>
-    <Button class="btn btn-secondary btn-sm">
-      <Link class="w-full cursor-pointer" href={web}>
-        <span class="">{"Issues(" + issueCount + ")"}</span>
-      </Link>
-    </Button>
+    {#if web}
+      <Button class="btn btn-primary btn-sm">
+        <Link external class="w-full cursor-pointer" href={web}>
+          <span class="">Browse</span>
+        </Link>
+      </Button>
+    {/if}
+    {#if showIssues}
+      <Button class="btn btn-secondary btn-sm">
+        <Link class="w-full cursor-pointer" href={makeGitPath(url,event.id)}>
+          <span class="">{"Issues(" + issueCount + ")"}</span>
+        </Link>
+      </Button>
+    {/if}
     {#if showActivity}
       <ReactionSummary {url} {event} {onReactionClick} reactionClass="tooltip-left" />
       <ThunkStatusOrDeleted {event} />

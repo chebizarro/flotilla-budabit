@@ -8,11 +8,13 @@
     url,
     event,
     showActivity = true,
+    showIssues = true,
     showActions = true
   }: {
     url: string
     event: TrustedEvent
     showActivity?: boolean
+    showIssues?: boolean
     showActions?: boolean
   } = $props()
 
@@ -41,7 +43,7 @@
   {/if}
   {#if showActions}
     <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
-      <GitActions {showActivity} {url} {event} />
+      <GitActions {showActivity} {showIssues} {url} {event} />
     </div>
   {/if}
 </NoteCard>

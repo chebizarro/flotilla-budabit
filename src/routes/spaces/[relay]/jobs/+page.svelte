@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { decodeRelay, deriveEventsForUrl, INDEXER_RELAYS } from "@src/app/state"
+  import { decodeRelay, deriveEventsForUrl } from "@src/app/state"
   import { FREELANCE_JOB } from "@src/lib/util"
   import { createFeedController, repository, userMutes } from "@welshman/app"
   import { getPubkeyTagValues, getListTags, COMMENT } from "@welshman/util"

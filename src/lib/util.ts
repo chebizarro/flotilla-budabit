@@ -36,3 +36,10 @@ export const FREELANCE_JOB = 32767
   // is a Draft Classified listing (nip99) kind in reality.
 export const GIT_REPO = 30617
 export const GIT_REPO_BOOKMARK_DTAG = 'followed_git_repos'
+
+export enum GitIssueStatus {
+  OPEN = "open",
+  CLOSED = "closed",
+  RESOLVED = "resolved",
+  DRAFT = "draft"
+}
