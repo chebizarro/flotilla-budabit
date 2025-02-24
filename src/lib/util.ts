@@ -1,6 +1,7 @@
 import {hexToBytes, bytesToHex} from "@noble/hashes/utils"
 import * as nip19 from "nostr-tools/nip19"
 import {range, DAY} from "@welshman/lib"
+import { getEventTags } from "@welshman/util"
 
 export const displayList = <T>(xs: T[], conj = "and", n = 6, locale = "en-US") => {
   const stringItems = xs.map(String)
@@ -42,4 +43,8 @@ export enum GitIssueStatus {
   CLOSED = "Closed",
   RESOLVED = "Resolved",
   DRAFT = "Draft"
+}
+
+export const getRootEventTagValue = (tags: string[][]): string | undefined => {
+  return getEventTags(tags).find(t => t[3]==='root')?.[1]
 }

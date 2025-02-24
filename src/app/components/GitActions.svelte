@@ -1,6 +1,6 @@
 <script lang="ts">
   import { load } from "@welshman/app"
-  import {Address, GIT_ISSUE, type Filter, type TrustedEvent} from "@welshman/util"
+  import {Address, GIT_ISSUE, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE, GIT_STATUS_DRAFT, GIT_STATUS_OPEN, type Filter, type TrustedEvent} from "@welshman/util"
   import {pubkey} from "@welshman/app"
   import ReactionSummary from "@app/components/ReactionSummary.svelte"
   import ThunkStatusOrDeleted from "@app/components/ThunkStatusOrDeleted.svelte"
@@ -42,22 +42,40 @@
     }
   }
 
-  const loadIssues = async () => {
+  const loadIssuesAndStatuses = async () => {
     const address = Address.fromEvent(event)
     issueFilter['#a'] = [address.toString()]
     const [tagId, ...relays] = event.tags.find(nthEq(0, "relays")) || []
     console.log("Issue Filter", issueFilter)
+
     issues = await load({
       relays: relays,
       filters: [ issueFilter ]
     })
+
+    const statusFilter = [{
+      kinds: [
+        GIT_STATUS_OPEN,
+        GIT_STATUS_COMPLETE,
+        GIT_STATUS_CLOSED,
+        GIT_STATUS_DRAFT
+      ],
+      "#e": issues.map(issue=>issue.id)
+    }]
+
     console.log("Issues loaded:", issues)
     issueCount = issues.length
+
+    const statuses = await load({
+      relays: relays,
+      filters: statusFilter,
+    })
+    console.log("Statuses loaded:", statuses)
   } 
 
   onMount(() => {
     if (showIssues) {
-      loadIssues()
+      loadIssuesAndStatuses()
     }
   })
 

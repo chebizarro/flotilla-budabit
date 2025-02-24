@@ -1,10 +1,10 @@
 <script lang="ts">
   import {onMount} from "svelte"
   import {page} from "$app/stores"
-  import {sortBy, sleep, nthEq} from "@welshman/lib"
-  import {Address, GIT_ISSUE, type TrustedEvent} from "@welshman/util"
-  import {load, repository, subscribe} from "@welshman/app"
-  import {deriveEvents, type ReadableWithGetter} from "@welshman/store"
+  import {sortBy, sleep, nthEq, now} from "@welshman/lib"
+  import {Address, GIT_ISSUE, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE, GIT_STATUS_DRAFT, GIT_STATUS_OPEN, type TrustedEvent} from "@welshman/util"
+  import {repository, subscribe} from "@welshman/app"
+  import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
@@ -17,6 +17,7 @@
   import GitIssueItem from "@src/app/components/GitIssueItem.svelte"
   import type { Readable } from "svelte/store"
   import { nip19 } from "nostr-tools"
+  import { getRootEventTagValue } from "@src/lib/util"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -28,7 +29,7 @@
   const gitworkshopLink = $derived(
     `https://gitworkshop.dev/${repoNpub}/${repoDtag}`
   )
-  let sub: Subscription
+  let issueSub: Subscription
   let repoRelays:string[] = $state([])
 
   const back = () => history.back()
@@ -40,22 +41,65 @@
     return deriveEvents(repository, {filters: issueFilter})
   })
 
+  const statuses = $derived.by(()=>{
+    const statusFilter = [{
+      kinds: [
+        GIT_STATUS_OPEN,
+        GIT_STATUS_COMPLETE,
+        GIT_STATUS_CLOSED,
+        GIT_STATUS_DRAFT
+      ],
+      "#e": $issues.map(issue=>issue.id)
+    }]
+    return deriveEvents(repository, {filters: statusFilter})
+  })
+
+  const orderedElements = $derived.by(() => {
+    const latestStatuses = []
+    for (const issue of $issues) {
+      const statusesOfIssue = $statuses.filter(
+        e=>getRootEventTagValue(e.tags)===issue.id
+      )
+      sortBy(e => -e.created_at, statusesOfIssue)
+
+      let latestStatus = statusesOfIssue[0]
+      latestStatuses.push(
+        {issue: issue, latestStatus: latestStatus}
+      )
+    }
+
+    sortBy(
+      e => {
+        const createdAt = e?.latestStatus?.created_at ?? e.issue.created_at;
+        return createdAt ? -createdAt : createdAt;
+      },
+      latestStatuses
+    )
+    return latestStatuses
+  })
+
   $effect(() => {
     if ($event) {
       console.log("Repo loaded")
       const address = Address.fromEvent($event).toString()
-      const issueFilter = [{kinds: [GIT_ISSUE], "#a": [address]}]
+      const issueFilter = [
+        {
+          kinds: [GIT_ISSUE],
+          "#a": [address],
+          since: now(),
+        }
+      ]
       const [tagId, ...relays] = $event.tags.find(nthEq(0, "relays")) || []
       repoRelays = relays
 
-      sub = subscribe({relays: relays, filters: issueFilter})
+      issueSub = subscribe({relays: relays, filters: issueFilter})
     }
   })
 
   onMount(() => {
     return () => {
-      if (sub) {
-        sub.close()
+      if (issueSub) {
+        issueSub.close()
         setChecked($page.url.pathname)
       }
     }
@@ -64,9 +108,14 @@
 
 <div class="relative flex flex-col-reverse gap-3 px-2">
   {#if $event}
-    {#if $issues}
-      {#each sortBy(e => -e.created_at, $issues) as issue (issue.id)}
-        <GitIssueItem event={issue} relays={repoRelays} repoLink={gitworkshopLink}/>
+    {#if orderedElements}
+      {#each orderedElements as {issue, latestStatus} (issue.id)}
+        <GitIssueItem
+          {issue}
+          {latestStatus}
+          relays={repoRelays}
+          repoLink={gitworkshopLink}
+        />
       {/each}
     {/if}
     <GitItem {url} event={$event} showIssues={false}/>
