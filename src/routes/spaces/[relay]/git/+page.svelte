@@ -45,19 +45,21 @@
 
     if (bookmark.length > 0) {
       const aTagList = getAddressTags(bookmark[0].tags)
-      const dTagValues: Array<string> = []
-      const relayHints: Array<string> = []
+      const dTagValues: string[] = []
+      const authors: string[] = []
+      const relayHints: string[] = []
       const relaysOfAddresses: Map<string, string> = new Map()
 
       aTagList.forEach(([letter, value, relayHint]) => {
         dTagValues.push(value.split(":")[2])
+        authors.push(value.split(":")[1])
         relaysOfAddresses.set(value, relayHint || "")
         if (relayHint){
           relayHints.push(relayHint)
         }
       })
 
-      repoFilter = {kinds: [GIT_REPO], "#d": dTagValues}
+      repoFilter = {kinds: [GIT_REPO], authors: authors, "#d": dTagValues}
 
       const loadedRepos = await load({
         relays: relayHints,
@@ -78,7 +80,6 @@
       
     }
     loading = false;
-    console.log("loaded, events:", $events)
   }
 
   let element: Element | undefined = $state()
