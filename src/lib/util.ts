@@ -46,5 +46,12 @@ export enum GitIssueStatus {
 }
 
 export const getRootEventTagValue = (tags: string[][]): string | undefined => {
-  return getEventTags(tags).find(t => t[3]==='root')?.[1]
+  // Some people implement nip10 badly so the format
+  //["e", <issue-id>, <relay-url>, <marker>, <pubkey>]
+  // Becomes ["e", <issue-id>, <marker>]
+  // When there is no relay hint it should be left there emtpy 
+  // ["e", <issue-id, "", <marker>]
+  return getEventTags(tags).find(
+    t => t[3]==='root' || t[2] ==='root'
+  )?.[1]
 }

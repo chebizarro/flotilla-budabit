@@ -11,7 +11,7 @@
   import Link from "@src/lib/components/Link.svelte"
   import { nthEq } from "@welshman/lib"
   import { onMount } from "svelte"
-    import { nip19 } from "nostr-tools"
+  import { nip19 } from "nostr-tools"
 
   interface Props {
     url: any
@@ -46,7 +46,6 @@
     const address = Address.fromEvent(event)
     issueFilter['#a'] = [address.toString()]
     const [tagId, ...relays] = event.tags.find(nthEq(0, "relays")) || []
-    console.log("Issue Filter", issueFilter)
 
     issues = await load({
       relays: relays,
@@ -63,14 +62,12 @@
       "#e": issues.map(issue=>issue.id)
     }]
 
-    console.log("Issues loaded:", issues)
     issueCount = issues.length
 
     const statuses = await load({
       relays: relays,
       filters: statusFilter,
     })
-    console.log("Statuses loaded:", statuses)
   } 
 
   onMount(() => {

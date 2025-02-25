@@ -2,7 +2,15 @@
   import {onMount} from "svelte"
   import {page} from "$app/stores"
   import {sortBy, sleep, nthEq, now} from "@welshman/lib"
-  import {Address, GIT_ISSUE, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE, GIT_STATUS_DRAFT, GIT_STATUS_OPEN, type TrustedEvent} from "@welshman/util"
+  import {
+    Address,
+    GIT_ISSUE,
+    GIT_STATUS_CLOSED,
+    GIT_STATUS_COMPLETE,
+    GIT_STATUS_DRAFT,
+    GIT_STATUS_OPEN,
+    type TrustedEvent}
+  from "@welshman/util"
   import {repository, subscribe} from "@welshman/app"
   import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
@@ -18,6 +26,7 @@
   import type { Readable } from "svelte/store"
   import { nip19 } from "nostr-tools"
   import { getRootEventTagValue } from "@src/lib/util"
+  import Divider from "@src/lib/components/Divider.svelte"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -58,7 +67,9 @@
     const latestStatuses = []
     for (const issue of $issues) {
       const statusesOfIssue = $statuses.filter(
-        e=>getRootEventTagValue(e.tags)===issue.id
+        e=>{
+          return getRootEventTagValue(e.tags)===issue.id
+        }
       )
       sortBy(e => -e.created_at, statusesOfIssue)
 
@@ -70,8 +81,8 @@
 
     sortBy(
       e => {
-        const createdAt = e?.latestStatus?.created_at ?? e.issue.created_at;
-        return createdAt ? -createdAt : createdAt;
+        const createdAt = e.latestStatus?.created_at ?? e.issue.created_at;
+        return -createdAt;
       },
       latestStatuses
     )
@@ -80,7 +91,6 @@
 
   $effect(() => {
     if ($event) {
-      console.log("Repo loaded")
       const address = Address.fromEvent($event).toString()
       const issueFilter = [
         {
@@ -106,26 +116,7 @@
   })
 </script>
 
-<div class="relative flex flex-col-reverse gap-3 px-2">
-  {#if $event}
-    {#if orderedElements}
-      {#each orderedElements as {issue, latestStatus} (issue.id)}
-        <GitIssueItem
-          {issue}
-          {latestStatus}
-          relays={repoRelays}
-          repoLink={gitworkshopLink}
-        />
-      {/each}
-    {/if}
-    <GitItem {url} event={$event} showIssues={false}/>
-  {:else}
-    {#await sleep(5000)}
-      <Spinner loading>Loading issues...</Spinner>
-    {:then}
-      <p>Failed to load issues.</p>
-    {/await}
-  {/if}
+<div class="relative flex flex-col gap-3 px-2">
   <PageBar class="mx-0">
     {#snippet icon()}
       <div>
@@ -143,6 +134,26 @@
       </div>
     {/snippet}
   </PageBar>
+  {#if $event}
+    <GitItem {url} event={$event} showIssues={false}/>
+    <Divider />
+    {#if orderedElements}
+      {#each orderedElements as {issue, latestStatus} (issue.id)}
+        <GitIssueItem
+          {issue}
+          {latestStatus}
+          relays={repoRelays}
+          repoLink={gitworkshopLink}
+        />
+      {/each}
+    {/if}
+  {:else}
+    {#await sleep(5000)}
+      <Spinner loading>Loading issues...</Spinner>
+      {:then}
+      <p>Failed to load issues.</p>
+    {/await}
+  {/if}
 </div>
 
 
