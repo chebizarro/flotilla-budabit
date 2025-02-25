@@ -90,7 +90,9 @@
     </Button>
     {#if showIssues}
       <Button class="btn btn-secondary btn-sm">
-        <Link class="w-full cursor-pointer" href={makeGitPath(url,event.id)}>
+        <Link class="w-full cursor-pointer" href={makeGitPath(
+          url,Address.fromEvent(event).toNaddr()
+        )}>
           <span class="">{"Issues(" + issueCount + ")"}</span>
         </Link>
       </Button>
