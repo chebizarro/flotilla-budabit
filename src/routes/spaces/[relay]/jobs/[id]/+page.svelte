@@ -17,6 +17,7 @@
   import {deriveEvent, decodeRelay} from "@app/state"
   import {setChecked} from "@app/notifications"
   import JobItem from "@src/app/components/JobItem.svelte"
+    import Divider from "@src/lib/components/Divider.svelte"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -77,6 +78,7 @@
         </Button>
       </div>
     {/if}
+    <Divider />
     <JobItem {url} event={$event} external={true}/>
   {:else}
     {#await sleep(5000)}

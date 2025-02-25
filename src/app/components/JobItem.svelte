@@ -3,9 +3,7 @@
   import {type TrustedEvent} from "@welshman/util"
   import {formatTimestamp} from "@welshman/app"
   import Content from "@app/components/Content.svelte"
-  import ProfileLink from "@app/components/ProfileLink.svelte"
   import Link from "@src/lib/components/Link.svelte"
-
   import { makeJobPath } from "@app/routes"
   import JobActions from "./JobActions.svelte"
   import NoteCard from "./NoteCard.svelte"
@@ -36,9 +34,6 @@
     {/if}
     <Content {event} expandMode="inline" quoteProps={{relays: [url]}} />
     <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
-      <span class="whitespace-nowrap py-1 text-sm opacity-75">
-        Posted by <ProfileLink pubkey={event.pubkey} />
-      </span>
       <JobActions showActivity {url} {event} {external} />
     </div>
   </NoteCard>
