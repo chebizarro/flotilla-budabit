@@ -9,7 +9,7 @@
     type TrustedEvent
 
   } from "@welshman/util"
-  import { userMutes } from "@welshman/app"
+  import { formatTimestampRelative, userMutes } from "@welshman/app"
   import { nthEq } from "@welshman/lib"
   import { GitIssueStatus } from "@src/lib/util"
   import NoteCard from "./NoteCard.svelte"
@@ -27,6 +27,9 @@
   const subject = issue.tags.find(nthEq(0, "subject"))?.[1] || ""
   const issueLink = $derived(
     repoLink ? `${repoLink}/issues/${nip19.noteEncode(issue.id)}` : ''
+  )
+  const lastActive = $derived(
+    latestStatus?.created_at ?? issue.created_at
   )
 
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
@@ -65,14 +68,19 @@
   <Content event={issue}/>
   <div class="flex flex-wrap items-center justify-between gap-2">
     <div class="flex flex-grow flex-wrap items-center justify-end gap-2">
+      <div class="btn btn-neutral btn-xs relative hidden rounded-full sm:flex">
+        <Link external class="w-full cursor-pointer" href={issueLink}>
+          <span>Modified {formatTimestampRelative(lastActive)}</span>
+        </Link>
+      </div>
+      <div class="badge badge-lg {statusColor}">
+        {displayedStatus}
+      </div> 
       <Button class="btn btn-primary btn-sm" disabled = {!repoLink}>
         <Link external class="w-full cursor-pointer" href={issueLink}>
           <span class="">View</span>
         </Link>
       </Button>
-      <div class="badge badge-lg {statusColor}">
-        {displayedStatus}
-      </div> 
     </div>
   </div>
 </NoteCard>

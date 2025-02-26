@@ -268,9 +268,10 @@
     {/if}
   {:else}
     <p class="flex h-10 items-center justify-center py-20" out:fly>
-      <Spinner loading>Loading issues...</Spinner>
       {#if failedToLoad}
         <span>Failed to load issues.</span>
+      {:else}
+        <Spinner loading>Loading issues...</Spinner>
       {/if}
     </p>
   {/if}
