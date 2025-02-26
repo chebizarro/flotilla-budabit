@@ -1,7 +1,7 @@
 <script lang="ts">
-  import {onMount} from "svelte"
+  import {onMount, tick} from "svelte"
   import {page} from "$app/stores"
-  import {sortBy, sleep, nthEq, now, ctx} from "@welshman/lib"
+  import {sortBy, nthEq, now, ctx} from "@welshman/lib"
   import {
     Address,
     GIT_ISSUE,
@@ -19,7 +19,7 @@
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
   import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
-  import {deriveEvent, decodeRelay} from "@app/state"
+  import {decodeRelay} from "@app/state"
   import {setChecked} from "@app/notifications"
   import type { Subscription } from "@welshman/net"
   import GitItem from "@src/app/components/GitItem.svelte"
@@ -28,6 +28,7 @@
   import { getRootEventTagValue } from "@src/lib/util"
   import Divider from "@src/lib/components/Divider.svelte"
   import type { AddressPointer } from "nostr-tools/nip19"
+  import { fly } from "svelte/transition"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -92,20 +93,29 @@
         )
       }
 
-      sortBy(
+      return sortBy(
         e => {
-          console.log(`latestStatus ts:${e.latestStatus?.ts} , issue ts: ${e.issue.ts}`)
           const createdAt = e.latestStatus?.ts ?? e.issue.ts;
+          // console.log(`ts to return: ${-createdAt}`)
           return -createdAt;
         },
         latestStatuses
       )
-      console.log(`latest statuses`, latestStatuses)
-      return latestStatuses
     }
   })
 
+  let loading = $state(false)
+  let failedToLoad = $state(false)
+
   const initialize = async () => {
+    setTimeout(
+      ()=>{
+        if (loading) failedToLoad = true
+      },
+      8000
+    )
+    loading = true
+    await tick()
     const naddr = nip19.decode(id).data as AddressPointer
     const backupRelays = [
       ...ctx.app.router.FromPubkey(naddr.pubkey).getUrls()
@@ -140,6 +150,9 @@
         relays: repoRelays,
         filters: [issuesFilter],
       })
+
+      loading = false
+      await tick()
 
       const statusesOfAllIssuesFilter:Filter = {
         kinds: [
@@ -234,12 +247,12 @@
       </div>
     {/snippet}
   </PageBar>
-  {#if repoEvent}
+  {#if !loading && repoEvent}
     <GitItem {url} event={repoEvent} showIssues={false}/>
     <Divider />
     {#if orderedElements}
-      {#each orderedElements as {issue, latestStatus} (issue.id)}
-        {@const foundIssue = $issues!.find(i=>i.id === issue.id) as TrustedEvent}
+      {#each orderedElements as {issue:issueItem, latestStatus} (issueItem.id)}
+        {@const foundIssue = $issues!.find(i=>i.id === issueItem.id) as TrustedEvent}
         {@const status = $statuses?.find(s=>s.id === latestStatus?.sid)}
         <GitIssueItem
           issue={foundIssue}
@@ -247,13 +260,19 @@
           repoLink={gitworkshopLink}
         />
       {/each}
+      {#if orderedElements.length === 0}
+        <p class="flex h-10 items-center justify-center py-20" out:fly>
+          <span>No issues found.</span>
+        </p>
+      {/if}
     {/if}
   {:else}
-    {#await sleep(5000)}
+    <p class="flex h-10 items-center justify-center py-20" out:fly>
       <Spinner loading>Loading issues...</Spinner>
-      {:then}
-      <p>Failed to load issues.</p>
-    {/await}
+      {#if failedToLoad}
+        <span>Failed to load issues.</span>
+      {/if}
+    </p>
   {/if}
 </div>
 

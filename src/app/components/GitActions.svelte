@@ -10,8 +10,9 @@
   import Button from "@src/lib/components/Button.svelte"
   import Link from "@src/lib/components/Link.svelte"
   import { nthEq } from "@welshman/lib"
-  import { onMount } from "svelte"
+  import { onMount, tick } from "svelte"
   import { nip19 } from "nostr-tools"
+    import Spinner from "@src/lib/components/Spinner.svelte"
 
   interface Props {
     url: any
@@ -42,7 +43,10 @@
     }
   }
 
+  let loadingIssues = $state(false)
   const loadIssuesAndStatuses = async () => {
+    loadingIssues = true
+    await tick()
     const address = Address.fromEvent(event)
     issueFilter['#a'] = [address.toString()]
     const [tagId, ...relays] = event.tags.find(nthEq(0, "relays")) || []
@@ -51,6 +55,8 @@
       relays: relays,
       filters: [ issueFilter ]
     })
+
+    loadingIssues = false
 
     const statusFilter = [{
       kinds: [
@@ -64,7 +70,8 @@
 
     issueCount = issues.length
 
-    const statuses = await load({
+    // No need to await this one, justawait pre-loading
+    const statuses = load({
       relays: relays,
       filters: statusFilter,
     })
@@ -90,10 +97,12 @@
     </Button>
     {#if showIssues}
       <Button class="btn btn-secondary btn-sm">
-        <Link class="w-full cursor-pointer" href={makeGitPath(
+        <Link class="h-full w-full cursor-pointer flex items-center" href={makeGitPath(
           url,Address.fromEvent(event).toNaddr()
         )}>
-          <span class="">{"Issues(" + issueCount + ")"}</span>
+          <Spinner loading={loadingIssues} minHeight={"min-h-6"}>
+            <span class="">{"Issues(" + issueCount + ")"}</span>
+          </Spinner>
         </Link>
       </Button>
     {/if}
