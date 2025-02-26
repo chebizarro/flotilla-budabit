@@ -257,7 +257,7 @@
         <GitIssueItem
           issue={foundIssue}
           latestStatus={status}
-          repoLink={gitworkshopLink}
+          showThreadAction={true}
         />
       {/each}
       {#if orderedElements.length === 0}

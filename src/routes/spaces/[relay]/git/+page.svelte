@@ -139,7 +139,7 @@
       <p class="flex h-10 items-center justify-center py-20" out:fly>
         <Spinner {loading}>
           {#if loading}
-            Looking for Git Repos...
+            Looking Your Git Repos...
           {:else if $events.length === 0}
             No Repos found.
           {/if}

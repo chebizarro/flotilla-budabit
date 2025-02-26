@@ -1,36 +1,69 @@
 <script lang="ts">
+  import {page} from "$app/stores"
   import { 
     getListTags,
     getPubkeyTagValues,
+    getTag,
     GIT_STATUS_CLOSED,
     GIT_STATUS_COMPLETE, 
     GIT_STATUS_DRAFT, 
     GIT_STATUS_OPEN, 
+    type Filter, 
     type TrustedEvent
 
   } from "@welshman/util"
-  import { formatTimestampRelative, userMutes } from "@welshman/app"
-  import { nthEq } from "@welshman/lib"
-  import { GitIssueStatus } from "@src/lib/util"
+  import { load, formatTimestampRelative, userMutes, subscribe } from "@welshman/app"
+  import { ctx, now, nthEq, sortBy } from "@welshman/lib"
+  import { GIT_REPO, GitIssueStatus } from "@src/lib/util"
   import NoteCard from "./NoteCard.svelte"
   import Content from "./Content.svelte"
   import { nip19 } from "nostr-tools"
   import Link from "@src/lib/components/Link.svelte"
   import Button from "@src/lib/components/Button.svelte"
+  import { onMount } from "svelte"
+  import type { Subscription } from "@welshman/net"
+  import { pushModal } from "../modal"
+  import ThreadCreate from "./ThreadCreate.svelte"
+    import { decodeRelay } from "../state"
   
-  let {issue, repoLink, latestStatus = undefined}: {
+  let {
+    issue,
+    latestStatus = undefined,
+    fetchRepoAndStatus = false,
+    showThreadAction = false
+  }: {
     issue:TrustedEvent,
-    latestStatus: TrustedEvent | undefined
-    repoLink: string,
+    latestStatus?: TrustedEvent | undefined
+    fetchRepoAndStatus?: boolean,
+    showThreadAction?: boolean
   } = $props()
 
+  const url = decodeRelay($page.params.relay)
+
+  const aTag = getTag('a', issue.tags) as string[]
+  const address = aTag[1]
+  const pubkey = address.split(':')[1]
+  const relayHint = aTag[2]
+
+  const repoNpub = nip19.npubEncode(pubkey)
+  const repoDtag = address.split(':')[2]
+  const repoLink = `https://gitworkshop.dev/${repoNpub}/${repoDtag}`
+
+  const backupRelays = [
+    ...ctx.app.router.FromPubkey(pubkey!).getUrls()
+  ]
+
+  let queryRelays = relayHint ? [relayHint] : backupRelays
+
+
   const subject = issue.tags.find(nthEq(0, "subject"))?.[1] || ""
-  const issueLink = $derived(
-    repoLink ? `${repoLink}/issues/${nip19.noteEncode(issue.id)}` : ''
-  )
+  const issueLink = `${repoLink}/issues/${nip19.noteEncode(issue.id)}`
+
   const lastActive = $derived(
     latestStatus?.created_at ?? issue.created_at
   )
+
+  let statusSub: Subscription
 
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
 
@@ -59,9 +92,78 @@
       }
     }
   })
+
+  const loadRepoAndStatus = async ()=>{
+    if (aTag && aTag.length > 0) {
+      const repoFilter = {
+        kinds: [GIT_REPO],
+        authors: [pubkey!],
+        '#d': [repoDtag]
+      }
+      
+      const events = await load({
+        relays: queryRelays,
+        filters: [repoFilter]
+      })
+
+      if (events.length > 0) {
+        const repoEvent = events[0]
+
+        const [tagId, ...relays] = getTag('relays', repoEvent.tags) ?? []
+
+        queryRelays = backupRelays
+        if (relays.length > 0) {
+          queryRelays = relays
+        } else if (relayHint) {
+          queryRelays = [relayHint]
+        }
+
+        const statusFilter:Filter = {
+          kinds: [
+            GIT_STATUS_OPEN,
+            GIT_STATUS_COMPLETE,
+            GIT_STATUS_CLOSED,
+            GIT_STATUS_DRAFT
+          ],
+          "#e": [issue.id],
+        }
+
+        const statuses = await load({
+          relays: queryRelays,
+          filters: [statusFilter]
+        })
+
+        latestStatus = sortBy(
+          s => -s.created_at,
+          statuses
+        )[0]
+
+        statusFilter.since = now()
+        statusSub = subscribe({
+          relays: queryRelays,
+          filters: [statusFilter],
+          onEvent: (status) => {latestStatus = status}
+        })
+      }
+    }
+  }
+
+  const startThread = () => pushModal(
+    ThreadCreate, 
+    {url: url, jobOrGitIssue: issue, relayHint: queryRelays[0]}
+  )
+
+  onMount(()=>{
+    if (fetchRepoAndStatus)
+      loadRepoAndStatus()
+
+    return (()=>{
+      if (statusSub) statusSub.close()
+    })
+  })
 </script>
 
-<NoteCard class="card2 bg-alt" event={issue}>
+<NoteCard class="card2 bg-alt z-feature" event={issue}>
   <div class="flex w-full items-center justify-between gap-2">
     <p class="text-xl">{subject}</p>
   </div>
@@ -76,11 +178,16 @@
       <div class="badge badge-lg {statusColor}">
         {displayedStatus}
       </div> 
-      <Button class="btn btn-primary btn-sm" disabled = {!repoLink}>
+      <Button class="btn btn-info btn-sm">
         <Link external class="w-full cursor-pointer" href={issueLink}>
           <span class="">View</span>
         </Link>
       </Button>
+      {#if showThreadAction}
+        <Button class="btn btn-primary btn-sm" onclick={startThread}>
+          <span class="">+Thread</span>
+        </Button>
+      {/if}
     </div>
   </div>
 </NoteCard>

@@ -17,7 +17,7 @@
   import {deriveEvent, decodeRelay} from "@app/state"
   import {setChecked} from "@app/notifications"
   import JobItem from "@src/app/components/JobItem.svelte"
-    import Divider from "@src/lib/components/Divider.svelte"
+  import Divider from "@src/lib/components/Divider.svelte"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -66,7 +66,7 @@
       <NoteCard event={reply} class="card2 bg-alt z-feature w-full">
         <div class="col-3 ml-12">
           <Content showEntire event={reply} />
-          <JobActions event={reply} {url} external={false} />
+          <JobActions event={reply} {url} showExternal={false} />
         </div>
       </NoteCard>
     {/each}
@@ -79,7 +79,7 @@
       </div>
     {/if}
     <Divider />
-    <JobItem {url} event={$event} external={true}/>
+    <JobItem {url} event={$event} showActivity={true} showExternal={true} showThreadAction={true}/>
   {:else}
     {#await sleep(5000)}
       <Spinner loading>Loading comments...</Spinner>

@@ -117,7 +117,7 @@
   <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
     {#each $events as event (event.id)}
       <div in:fly>
-        <JobItem {url} {event} external={false} />
+        <JobItem {url} {event} showExternal={true} showThreadAction={true} showActivity={true}/>
       </div>
     {/each}
     {#if loading || $events.length === 0}

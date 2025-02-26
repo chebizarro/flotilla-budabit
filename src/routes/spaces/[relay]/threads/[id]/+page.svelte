@@ -2,8 +2,8 @@
   import {onMount} from "svelte"
   import {page} from "$app/stores"
   import {sortBy, sleep} from "@welshman/lib"
-  import {COMMENT, getTagValue} from "@welshman/util"
-  import {repository, subscribe} from "@welshman/app"
+  import {COMMENT, getTag, getTagValue, GIT_ISSUE, type Filter, type TrustedEvent} from "@welshman/util"
+  import {load, repository, subscribe, type PartialSubscribeRequest} from "@welshman/app"
   import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
@@ -16,6 +16,9 @@
   import EventReply from "@app/components/EventReply.svelte"
   import {deriveEvent, decodeRelay} from "@app/state"
   import {setChecked} from "@app/notifications"
+  import { FREELANCE_JOB } from "@src/lib/util"
+  import JobItem from "@src/app/components/JobItem.svelte"
+  import GitIssueItem from "@src/app/components/GitIssueItem.svelte"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -40,6 +43,46 @@
   let showAll = $state(false)
   let showReply = $state(false)
 
+  let jobOrGitIssue: TrustedEvent | undefined = $state(undefined)
+  const loadJob = async(jobAddress: string, relayHint: string | undefined) => {
+    const jobPubkey = jobAddress.split(":")[1]
+    const jobDTag = jobAddress.split(":")[2]
+    const jobFilter: Filter = {
+      kinds: [FREELANCE_JOB],
+      authors: [jobPubkey],
+      '#d': [jobDTag]
+    }
+    const request:PartialSubscribeRequest = {filters: [jobFilter]}
+    if (relayHint) request.relays = [relayHint]
+
+    const jobs = await load(request)
+    if (jobs.length > 0) jobOrGitIssue = jobs[0]
+  }
+
+  const loadGitIssue = async(issueId: string, relayHint: string | undefined) => {
+    const issueFilter: Filter = {
+      ids: [issueId],
+      kinds: [GIT_ISSUE],
+    }
+    const request:PartialSubscribeRequest = {filters: [issueFilter]}
+    if (relayHint) request.relays = [relayHint]
+
+    const issues = await load(request)
+    if (issues.length > 0) jobOrGitIssue = issues[0]
+  }
+
+  $effect( () => {
+    if ($event) {
+      const gitIssueId = getTagValue('gitissue', $event.tags)
+      const jobAddress = getTagValue('job', $event.tags)
+      if (gitIssueId) {
+        loadGitIssue(gitIssueId, getTag('gitissue', $event.tags)?.[2])
+      } else if (jobAddress) {
+        loadJob(jobAddress, getTag('job', $event.tags)?.[2])
+      }
+    }
+  })
+
   onMount(() => {
     const sub = subscribe({relays: [url], filters})
 
@@ -49,6 +92,16 @@
     }
   })
 </script>
+
+{#snippet jobOrGitIssueElem()}
+  {#if jobOrGitIssue}
+    {#if jobOrGitIssue.kind === FREELANCE_JOB}
+      <JobItem {url} showExternal={true} event={jobOrGitIssue} />
+    {:else if jobOrGitIssue.kind === GIT_ISSUE}
+      <GitIssueItem issue={jobOrGitIssue} fetchRepoAndStatus={true}/>
+    {/if}
+  {/if}  
+{/snippet}
 
 <div class="relative flex flex-col-reverse gap-3 px-2">
   <div class="absolute left-[51px] top-32 h-[calc(100%-248px)] w-[2px] bg-neutral"></div>
@@ -77,6 +130,7 @@
         </Button>
       </div>
     {/if}
+    {@render jobOrGitIssueElem()}
     <NoteCard event={$event} class="card2 bg-alt z-feature w-full">
       <div class="col-3 ml-12">
         <Content showEntire event={$event} relays={[url]} />
