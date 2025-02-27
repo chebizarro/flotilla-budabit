@@ -23,8 +23,6 @@
 
   const bookmarkFilter = {kinds: [NAMED_BOOKMARKS], authors: [pubkey.get()!] }
 
-  const shouldTrigger = derived(shouldReloadRepos, ($s) => $s);
-
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
 
   let repoFilter:Filter
@@ -82,8 +80,6 @@
     loading = false;
   }
 
-  let element: Element | undefined = $state()
-
   onMount(() => {
     loadBookmarkedRepos()
 
@@ -93,7 +89,7 @@
   })
 
   $effect(() => {
-    if ($shouldTrigger) {
+    if ($shouldReloadRepos) {
       loadBookmarkedRepos()
       $shouldReloadRepos = false;
     }
@@ -109,7 +105,7 @@
 
 </script>
 
-<div class="relative flex h-screen flex-col" bind:this={element}>
+<div class="relative flex h-screen flex-col">
   <PageBar>
     {#snippet icon()}
       <div class="center">
@@ -130,11 +126,6 @@
     {/snippet}
   </PageBar>
   <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
-    {#each $events as event (event.id)}
-      <div in:fly>
-      <GitItem {url} {event}/>
-      </div>
-    {/each}
     {#if loading || $events.length === 0}
       <p class="flex h-10 items-center justify-center py-20" out:fly>
         <Spinner {loading}>
@@ -145,6 +136,12 @@
           {/if}
         </Spinner>
       </p>
+    {:else}
+      {#each $events as event (event.id)}
+        <div in:fly>
+          <GitItem {url} {event}/>
+        </div>
+      {/each}
     {/if}
   </div>
 </div>
