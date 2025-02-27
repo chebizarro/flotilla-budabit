@@ -109,7 +109,6 @@
   })
 
   const onAddRepo = () => {
-    console.log("selected bookmarked repos passed to modal", loadedBookmarkedRepos)
     pushModal(
       RepoPicker,
       {selectedRepos: loadedBookmarkedRepos},

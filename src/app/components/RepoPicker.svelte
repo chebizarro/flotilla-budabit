@@ -41,7 +41,6 @@
   } = $props()
 
   let localSelectedReposState = $state([...selectedRepos])
-  console.log('localSelectedReposState', localSelectedReposState)
   $effect(() =>{
     localSelectedReposState = [...selectedRepos]
   })
@@ -56,7 +55,6 @@
   const repoEvents = deriveEvents(repository, {filters})
 
   const repos = $derived.by(() => {
-    console.log('derived')
     const elements = []
 
     for (const {address, event, relayHint} of localSelectedReposState) {
@@ -176,7 +174,6 @@
     } else {
       localSelectedReposState = localSelectedReposState.filter(r => r.address !== address)
     }
-    console.log("Add or delete repos. current state: ", localSelectedReposState)
   }
 </script>
 
