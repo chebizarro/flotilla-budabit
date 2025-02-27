@@ -96,7 +96,7 @@
       </div>
     {/snippet}
     {#snippet title()}
-      <h1 class="text-xl text-center">Job Discussion</h1>
+      <h1 class="text-lg text-center">Job Discussion</h1>
     {/snippet}
     {#snippet action()}
       <div>
