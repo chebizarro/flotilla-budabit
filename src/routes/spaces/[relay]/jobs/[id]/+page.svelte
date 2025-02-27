@@ -91,12 +91,12 @@
     {#snippet icon()}
       <div>
         <Button class="btn btn-neutral btn-sm" onclick={back}>
-          <Icon icon="alt-arrow-left" /> Go back
+          <Icon icon="alt-arrow-left" />
         </Button>
       </div>
     {/snippet}
     {#snippet title()}
-      <h1 class="text-lg text-center">Job Discussion</h1>
+      <h1 class="text-xl sm:text-lg text-center">Job Discussion</h1>
     {/snippet}
     {#snippet action()}
       <div>

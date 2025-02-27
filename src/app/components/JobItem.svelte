@@ -9,12 +9,14 @@
   const {
     url,
     event,
+    showComment = false,
     showActivity = false,
     showExternal = false,
     showThreadAction = false,
   }: {
     url: string
     event: TrustedEvent
+    showComment?: boolean
     showActivity?: boolean
     showExternal?: boolean
     showThreadAction?: boolean
@@ -35,7 +37,7 @@
   {/if}
   <Content {event} expandMode="inline" />
   <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
-    <JobActions {url} {event} {showActivity} {showExternal} {showThreadAction}/>
+    <JobActions {url} {event} {showComment} {showActivity} {showExternal} {showThreadAction}/>
   </div>
 </NoteCard>
 

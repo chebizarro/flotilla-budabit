@@ -112,7 +112,6 @@
     pushModal(
       RepoPicker,
       {selectedRepos: loadedBookmarkedRepos},
-      {replaceState: true}
     )
   }
 

@@ -18,6 +18,7 @@
     url: any
     event: any
     showExternal: boolean
+    showComment?: boolean
     showActivity?: boolean
     showThreadAction?: boolean
   }
@@ -25,6 +26,7 @@
   const {
     url,
     event,
+    showComment=false,
     showExternal=false,
     showActivity = false,
     showThreadAction = false
@@ -60,11 +62,13 @@
 
 <div class="flex flex-wrap items-center justify-between gap-2">
   <div class="flex flex-grow flex-wrap justify-end gap-2">
-    <Button class="btn btn-success btn-sm">
-      <Link class="w-full cursor-pointer" href={path}>
-        <span class="">Comment</span>
-      </Link>
-    </Button>
+    {#if showComment}
+      <Button class="btn btn-success btn-sm">
+        <Link class="w-full cursor-pointer" href={path}>
+          <span class="">Comment</span>
+        </Link>
+      </Button>
+    {/if}
     {#if showThreadAction}
       <Button class="btn btn-primary btn-sm" onclick={startThread}>
         <span class="">+Thread</span>
