@@ -3,8 +3,8 @@
   import {onMount} from "svelte"
   import { GIT_REPO_BOOKMARK_DTAG } from "@src/lib/util"
   import {page} from "$app/stores"
-  import {derived, writable, type Writable} from "svelte/store"
-  import {Address, createEvent, NAMED_BOOKMARKS, type Filter, type TrustedEvent} from "@welshman/util"
+  import {writable} from "svelte/store"
+  import {Address, createEvent, getTagValue, NAMED_BOOKMARKS, type Filter, type TrustedEvent} from "@welshman/util"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
   import ModalHeader from "@lib/components/ModalHeader.svelte"
@@ -31,14 +31,20 @@
   import { fly } from "svelte/transition"
   import GitItem from "./GitItem.svelte"
   import Divider from "@src/lib/components/Divider.svelte"
-    import { makeGitPath } from "../routes"
-    import { goto } from "$app/navigation"
+  import { makeGitPath } from "../routes"
+  import { goto } from "$app/navigation"
 
 
   const url = decodeRelay($page.params.relay)
   const {selectedRepos}: {
-    selectedRepos: Writable<Map<string, {event: TrustedEvent, relayHint: string}>>
+    selectedRepos: Array<{address: string, event: TrustedEvent, relayHint: string}>
   } = $props()
+
+  let localSelectedReposState = $state([...selectedRepos])
+  console.log('localSelectedReposState', localSelectedReposState)
+  $effect(() =>{
+    localSelectedReposState = [...selectedRepos]
+  })
 
   let unmounted = false
   let element: HTMLElement
@@ -47,31 +53,41 @@
   let loading = $state(true)
 
   const filters: Filter[] = [{kinds: [GIT_REPO]}]
-  const events = deriveEvents(repository, {filters})
+  const repoEvents = deriveEvents(repository, {filters})
 
-  const repos = derived([events, selectedRepos], ([$events, $selectedRepos]) => {
+  const repos = $derived.by(() => {
+    console.log('derived')
     const elements = []
 
-    for (const [address, value] of $selectedRepos) {
+    for (const {address, event, relayHint} of localSelectedReposState) {
       elements.push({
-        repo: value.event,
-        relay: value.relayHint,
+        repo: event,
+        relay: relayHint,
         address: address,
         selected: true
       })
     }
 
-    for (const event of $events.toReversed()) {
-      const address = Address.fromEvent(event).toString()
+    for (const event of $repoEvents.toReversed()) {
+      const address = Address.fromEvent(event)
+      const addressStr = address.toString()
       // Need to keep selected and unselected repos as distinct sets
-      if (!$selectedRepos.has(address)) {
+      if (!localSelectedReposState.find(r=>r.address===addressStr)) {
         const relayHints = tracker.getRelays(event.id)
-        const firstHint = relayHints.values().next().value || "";
+        const repoEventRelayHint = getTagValue('relays', event.tags)
+
+        const relaysFromRepoPubkey = 
+          ctx.app.router.getRelaysForPubkey(event.pubkey)?.[0] ?? ''
+
+        const firstHint = 
+          relayHints.values().next().value ??
+            repoEventRelayHint ??
+            relaysFromRepoPubkey
 
         elements.push({
           repo: event,
           relay: firstHint,
-          address: address,
+          address: addressStr,
           selected: false
         })
       }
@@ -99,8 +115,8 @@
     if ($uploading) return
     const atagList:string[][] = [];
 
-    for (const [key, value] of $selectedRepos) {
-      atagList.push(['a', key, value.relayHint])
+    for (const {address, relayHint} of localSelectedReposState) {
+      atagList.push(['a', address, relayHint])
     }
 
     const eventToPublish = createEvent(
@@ -135,7 +151,7 @@
           onScroll: () => {
             limit += 10
 
-            if ($events.length - limit < 20) {
+            if ($repoEvents.length - limit < 20) {
               ctrl.load(20)
             }
           },
@@ -156,11 +172,11 @@
     checked: boolean
   ) => {
     if (checked) {
-      $selectedRepos.set(address, {event: event, relayHint: relay})
+      localSelectedReposState.push({address, event, relayHint: relay})
     } else {
-      $selectedRepos.delete(address)
+      localSelectedReposState = localSelectedReposState.filter(r => r.address !== address)
     }
-    $selectedRepos = $selectedRepos
+    console.log("Add or delete repos. current state: ", localSelectedReposState)
   }
 </script>
 
@@ -194,7 +210,7 @@
     <Divider>
       <p>Selected</p>
     </Divider>
-    {#each $repos.filter((r)=>r.selected) as {repo, relay, address} (repo.id)}
+    {#each repos.filter((r)=>r.selected) as {repo, relay, address} (repo.id)}
       <GitItem {url} event={repo} showActivity={false} showActions={false}/>
       <div class="flex w-full justify-end">
         <FieldInline>
@@ -207,22 +223,22 @@
     <Divider>
       <p>Other</p>
     </Divider>
-    {#each $repos.filter((r)=>!r.selected) as {repo, relay, address} (repo.id)}
+    {#each repos.filter((r)=>!r.selected) as {repo, relay, address} (repo.id)}
       <GitItem {url} event={repo} showActivity={false} showActions={false}/>
       <div class="flex w-full justify-end">
         <FieldInline>
           {#snippet input()}
-            {@render repoSelectCheckBox(relay, address,repo, false)}
+            {@render repoSelectCheckBox(relay, address, repo, false)}
           {/snippet}
         </FieldInline>
       </div>
     {/each}
-    {#if loading || $events.length === 0}
+    {#if loading || $repoEvents.length === 0}
       <p class="flex h-10 items-center justify-center py-20" out:fly>
         <Spinner {loading}>
           {#if loading}
             Looking for repos...
-          {:else if $events.length === 0}
+          {:else if $repoEvents.length === 0}
             No Repos found.
           {/if}
         </Spinner>

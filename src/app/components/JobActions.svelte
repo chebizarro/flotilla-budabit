@@ -62,7 +62,7 @@
   <div class="flex flex-grow flex-wrap justify-end gap-2">
     <Button class="btn btn-success btn-sm">
       <Link class="w-full cursor-pointer" href={path}>
-        <span class="">Open</span>
+        <span class="">Comment</span>
       </Link>
     </Button>
     {#if showThreadAction}

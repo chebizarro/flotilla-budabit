@@ -1,11 +1,11 @@
 <script lang="ts">
   import { decodeRelay, shouldReloadRepos } from "@src/app/state"
-  import { load } from "@welshman/app"
+  import { load, tracker } from "@welshman/app"
   import { pubkey, userMutes } from "@welshman/app"
   import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, getAddressTags, type TrustedEvent, type Filter, Address } from "@welshman/util"
   import { onMount, tick } from "svelte";
   import {page} from "$app/stores"
-  import {derived, type Writable, writable} from "svelte/store"
+  import {type Writable, writable} from "svelte/store"
   import { setChecked } from "@src/app/notifications"
   import PageBar from "@src/lib/components/PageBar.svelte"
   import Icon from "@src/lib/components/Icon.svelte"
@@ -31,9 +31,10 @@
 
   const events: Writable<TrustedEvent[]> = writable([]);
 
-  const loadedBookmarkedRepos: Writable<Map<string, {event: TrustedEvent, relayHint: string}>> = writable(new Map())
+  let loadedBookmarkedRepos: Array<{address:string, event: TrustedEvent, relayHint: string}> = []
 
   const loadBookmarkedRepos = async () => {
+    loadedBookmarkedRepos = []
     loading = true
     await tick()
     const bookmark = await load({
@@ -64,9 +65,21 @@
         filters: [ repoFilter ]
       })
       loadedRepos.forEach((repo) => {
-        const addressString = Address.fromEvent(repo).toString()
-        const hint = relaysOfAddresses.get(addressString) || ""
-        $loadedBookmarkedRepos.set(addressString, {event: repo, relayHint: hint})
+        const address = Address.fromEvent(repo)
+        const addressString = address.toString()
+        const relayHintFromEvent = tracker.getRelays(repo.id)
+        const relaysFromAddressPubkey = 
+          ctx.app.router.getRelaysForPubkey(repo.pubkey)?.[0]
+
+        const hint = relaysOfAddresses.get(addressString) ??
+                      Array.from(relayHintFromEvent)[0] ??
+                      relaysFromAddressPubkey
+
+        loadedBookmarkedRepos.push({
+          address: addressString,
+          event: repo,
+          relayHint: hint
+        })
       })
       events.update(() => {
         return sortBy(
@@ -96,6 +109,7 @@
   })
 
   const onAddRepo = () => {
+    console.log("selected bookmarked repos passed to modal", loadedBookmarkedRepos)
     pushModal(
       RepoPicker,
       {selectedRepos: loadedBookmarkedRepos},
