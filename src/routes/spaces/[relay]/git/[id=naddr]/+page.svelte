@@ -70,7 +70,6 @@
   })
 
   const orderedElements = $derived.by(() => {
-    console.log("Ordering issues...")
     if ($issues && $statuses) {
       const latestStatuses = []
       for (const issue of $issues) {
@@ -87,7 +86,6 @@
             }
           }
         }
-        console.log("LAtest status: ", latestStatus)
         latestStatuses.push(
           {issue: {id: issue.id, ts: issue.created_at}, latestStatus: latestStatus}
         )
@@ -96,7 +94,6 @@
       return sortBy(
         e => {
           const createdAt = e.latestStatus?.ts ?? e.issue.ts;
-          // console.log(`ts to return: ${-createdAt}`)
           return -createdAt;
         },
         latestStatuses
@@ -174,12 +171,11 @@
       statusSub = subscribe({
         relays: repoRelays,
         filters: [statusesOfAllIssuesFilter],
-        onEvent: (status) => console.log("New status received", status)
+        // onEvent: (status) => console.log("New status received", status)
       })
 
       issuesFilter.since = now()
 
-      console.log("STARTING sub for ISSUE")
       newIssuesSub = subscribe({
         relays: relays,
         filters: [issuesFilter],
@@ -194,12 +190,11 @@
             "#e": [issue.id],
             since: now(),
           }]
-          console.log("Starting sub for statuses of issue",statusFilter)
           const sub = subscribe({
             relays: relays,
             filters: statusFilter,
             onEvent: (status: TrustedEvent) => {
-              console.log("Received new status",status)
+              // console.log("Received new status",status)
             }
           })
           statusOfNewIssuesSubs.push(sub) 
@@ -216,7 +211,6 @@
         statusSub.close()
       }
       if (newIssuesSub) {
-        console.log("STOPPING sub for ISSUE")
         newIssuesSub.close()
       }
       if (statusOfNewIssuesSubs.length > 0) {

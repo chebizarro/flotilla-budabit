@@ -125,7 +125,6 @@
         desc: getTagValue('description', r.repo.tags) ?? ''
       }
     })
-    console.log('repos to search', reposToSearch)
     if (debouncedTerm.length > 2) {
       const repoSearch = createSearch(
         reposToSearch,
@@ -149,7 +148,6 @@
         }
       )
       const searchResults = repoSearch.searchOptions(searchTerm)
-      console.log("searchResults", searchResults)
       const result = repos.filter(
         r => searchResults.find(res => res.id === r.repo.id)
       )
@@ -283,13 +281,15 @@
       <p>Selected</p>
     </Divider>
     {#each searchedRepos.filter((r)=>r.selected) as {repo, relay, address} (repo.id)}
-      <GitItem {url} event={repo} showActivity={false} showActions={false}/>
-      <div class="flex w-full justify-end">
-        <FieldInline>
-          {#snippet input()}
-            {@render repoSelectCheckBox(relay, address,repo, true)}
-          {/snippet}
-        </FieldInline>
+      <div out:fly="{{ duration: 200 }}">
+        <GitItem {url} event={repo} showActivity={false} showActions={false}/>
+        <div class="flex w-full justify-end">
+          <FieldInline>
+            {#snippet input()}
+              {@render repoSelectCheckBox(relay, address,repo, true)}
+            {/snippet}
+          </FieldInline>
+        </div>
       </div>
     {/each}
     <Divider>

@@ -79,7 +79,6 @@
 
   let title: string = $state("")
   const jobOrGitIssueTitle = $derived.by(() => {
-    console.log("jobOrGitIssue when generating title:", jobOrGitIssue)
     if (!jobOrGitIssue) return ''
 
     let title = ''
