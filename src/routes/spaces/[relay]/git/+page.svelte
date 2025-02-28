@@ -150,7 +150,7 @@
       </p>
     {:else}
       {#each $events as event (event.id)}
-        <div in:fly>
+        <div in:fly class="">
           <GitItem {url} {event}/>
         </div>
       {/each}

@@ -22,7 +22,7 @@
   const description = event.tags.find(nthEq(0, "description"))?.[1]
 </script>
 
-<NoteCard {event} class="card2card2-sm bg-alt">
+<NoteCard {event} class="card2 sm:card2-sm bg-alt">
   {#if name}
     <div class="flex w-full items-center justify-between gap-2">
       <p class="text-xl">{name}</p>
