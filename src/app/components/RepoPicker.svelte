@@ -1,10 +1,18 @@
 <script lang="ts">
   import {ctx} from "@welshman/lib"
+  import {debounce} from "throttle-debounce"
   import {onMount} from "svelte"
   import { GIT_REPO_BOOKMARK_DTAG } from "@src/lib/util"
   import {page} from "$app/stores"
   import {writable} from "svelte/store"
-  import {Address, createEvent, getTagValue, NAMED_BOOKMARKS, type Filter, type TrustedEvent} from "@welshman/util"
+  import {
+    Address,
+    createEvent,
+    getTagValue,
+    NAMED_BOOKMARKS,
+    type Filter,
+    type TrustedEvent
+  } from "@welshman/util"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
   import ModalHeader from "@lib/components/ModalHeader.svelte"
@@ -12,6 +20,7 @@
   import FieldInline from "@src/lib/components/FieldInline.svelte"
   import {
     createFeedController,
+    createSearch,
     publishThunk,
     repository,
     tracker
@@ -22,7 +31,7 @@
     makeWOTFeed,
   } from "@welshman/feeds"
   import {sleep} from "@welshman/lib"
-  import {createScroller, type Scroller} from "@src/lib/html"
+  import {createScroller, isMobile, type Scroller} from "@src/lib/html"
   import {deriveEvents} from "@welshman/store"
   import { GIT_REPO } from "@src/lib/util"
   import { preventDefault } from "svelte/legacy"
@@ -92,6 +101,62 @@
     }
 
     return elements
+  })
+
+  let searchTerm = $state("")
+  let debouncedTerm = $state('');
+
+  // Set up the debounced update
+  const updateDebouncedTerm = debounce(500, (term) => {
+    debouncedTerm = term;
+  });
+
+  // Watch searchTerm changes
+  $effect(() => {
+    updateDebouncedTerm(searchTerm);
+  });
+
+
+  const searchedRepos = $derived.by(()=>{
+    const reposToSearch = repos.map((r) => {
+      return {
+        id: r.repo.id,
+        name: getTagValue('name', r.repo.tags) ?? '',
+        desc: getTagValue('description', r.repo.tags) ?? ''
+      }
+    })
+    console.log('repos to search', reposToSearch)
+    if (debouncedTerm.length > 2) {
+      const repoSearch = createSearch(
+        reposToSearch,
+        {
+          getValue: (repo: {
+            id: string,
+            name: string,
+            desc: string
+          }) => repo.id,
+          fuseOptions: {
+            keys: [
+              {name: "name", weight: 0.8}, {name: 'desc', weight: 0.2}
+            ],
+            includeScore: true,
+            threshold: 0.3
+          },
+          sortFn: ({score, item}) => {
+            if (score && score > 0.3) return -score!
+            return item.name
+          }
+        }
+      )
+      const searchResults = repoSearch.searchOptions(searchTerm)
+      console.log("searchResults", searchResults)
+      const result = repos.filter(
+        r => searchResults.find(res => res.id === r.repo.id)
+      )
+      return result
+    } else {
+      return repos
+    }
   })
 
   const ctrl = createFeedController({
@@ -201,13 +266,23 @@
       <div>Select repositories to track</div>
     {/snippet}
   </ModalHeader>
+  <label class="row-2 input input-bordered">
+    <Icon icon="magnifer" />
+    <!-- svelte-ignore a11y_autofocus -->
+    <input
+      autofocus={!isMobile}
+      bind:value={searchTerm}
+      class="grow"
+      type="text"
+      placeholder="Search repos..." />
+  </label>
   <div
     class="scroll-container -mt-2 h-96 flex flex-grow flex-col overflow-auto py-2"
     bind:this={element}>
     <Divider>
       <p>Selected</p>
     </Divider>
-    {#each repos.filter((r)=>r.selected) as {repo, relay, address} (repo.id)}
+    {#each searchedRepos.filter((r)=>r.selected) as {repo, relay, address} (repo.id)}
       <GitItem {url} event={repo} showActivity={false} showActions={false}/>
       <div class="flex w-full justify-end">
         <FieldInline>
@@ -220,14 +295,16 @@
     <Divider>
       <p>Other</p>
     </Divider>
-    {#each repos.filter((r)=>!r.selected) as {repo, relay, address} (repo.id)}
-      <GitItem {url} event={repo} showActivity={false} showActions={false}/>
-      <div class="flex w-full justify-end">
-        <FieldInline>
-          {#snippet input()}
-            {@render repoSelectCheckBox(relay, address, repo, false)}
-          {/snippet}
-        </FieldInline>
+    {#each searchedRepos.filter((r)=>!r.selected) as {repo, relay, address} (repo.id)}
+      <div out:fly="{{ duration: 200 }}">
+        <GitItem {url} event={repo} showActivity={false} showActions={false}/>
+        <div class="flex w-full justify-end">
+          <FieldInline>
+            {#snippet input()}
+              {@render repoSelectCheckBox(relay, address, repo, false)}
+            {/snippet}
+          </FieldInline>
+        </div>
       </div>
     {/each}
     {#if loading || $repoEvents.length === 0}
