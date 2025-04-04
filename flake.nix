@@ -35,10 +35,11 @@ outputs = { nixpkgs, flake-utils, nvim, ... }:
                     pkgs.prettierd
                 ];
                 shellHook = ''
+                    # for ngit
                     export PATH="$HOME/.cargo/bin:$PATH";
                     # for linking welshman
-                    npm config set prefix=$HOME/.npm-global
-                    export PATH="$HOME/.npm-global/bin:$PATH"
+                    npm config set prefix=$HOME/.pnpm-global/bin
+                    export PATH="$HOME/.pnpm-global/bin:$PATH"
                 '';
             };
         }
