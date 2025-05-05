@@ -3,10 +3,12 @@
   import {page} from "$app/stores"
   import {sortBy, sleep} from "@welshman/lib"
   import {COMMENT, getTag, getTagValue, GIT_ISSUE, type Filter, type TrustedEvent} from "@welshman/util"
-  import {load, repository, subscribe, type PartialSubscribeRequest} from "@welshman/app"
+  import {load, repository, type PartialSubscribeRequest} from "@welshman/app"
+  import {request} from "@welshman/net"
   import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
+  import PageContent from "@lib/components/PageContent.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
   import Content from "@app/components/Content.svelte"
@@ -84,10 +86,12 @@
   })
 
   onMount(() => {
-    const sub = subscribe({relays: [url], filters})
+    const controller = new AbortController()
+
+    request({relays: [url], filters, signal: controller.signal})
 
     return () => {
-      sub.close()
+      controller.abort()
       setChecked($page.url.pathname)
     }
   })

@@ -1,3 +1,5 @@
+@import "@welshman/editor/index.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -328,4 +330,24 @@ emoji-picker {
 
 progress[value]::-webkit-progress-value {
   transition: width 0.5s;
+}
+
+/* content width for fixed elements */
+
+.cw {
+  @apply w-full md:w-[calc(100%-18.5rem)];
+}
+
+.cb {
+  @apply saib bottom-14 md:bottom-0;
+}
+
+/* chat view */
+
+.chat__compose {
+  @apply cb cw fixed;
+}
+
+.chat__scroll-down {
+  @apply saib fixed bottom-28 right-4 md:bottom-16;
 }

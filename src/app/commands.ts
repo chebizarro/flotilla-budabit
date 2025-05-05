@@ -1,6 +1,8 @@
 import * as nip19 from "nostr-tools/nip19"
 import {get} from "svelte/store"
-import {ctx, uniq, equals} from "@welshman/lib"
+import {randomId, ifLet, poll, uniq, equals} from "@welshman/lib"
+import type {Feed} from "@welshman/feeds"
+import type {TrustedEvent, EventContent, EventTemplate} from "@welshman/util"
 import {
   DELETE,
   REPORT,
@@ -28,31 +30,31 @@ import {
   getRelayTags,
   getRelayTagValues,
   toNostrURI,
+  getRelaysFromList,
+  RelayMode,
 } from "@welshman/util"
-import type {TrustedEvent, EventContent, EventTemplate} from "@welshman/util"
-import {PublishStatus, AuthStatus, SocketStatus} from "@welshman/net"
-import {Nip59, makeSecret, stamp, Nip46Broker} from "@welshman/signer"
+import {Pool, PublishStatus, AuthStatus, SocketStatus} from "@welshman/net"
+import {Nip59, stamp} from "@welshman/signer"
+import {Router} from "@welshman/router"
 import {
   pubkey,
   signer,
   repository,
   publishThunk,
-  publishThunks,
+  MergedThunk,
   profilesByPubkey,
   relaySelectionsByPubkey,
-  getWriteRelayUrls,
   tagEvent,
   tagEventForReaction,
-  getRelayUrls,
   userRelaySelections,
   userInboxRelaySelections,
   nip44EncryptToSelf,
   loadRelay,
-  addSession,
   clearStorage,
   dropSession,
   tagEventForComment,
   tagEventForQuote,
+  thunkIsComplete,
 } from "@welshman/app"
 import type {Thunk} from "@welshman/app"
 import {
@@ -60,16 +62,17 @@ import {
   PROTECTED,
   userMembership,
   INDEXER_RELAYS,
-  NIP46_PERMS,
+  ALERT,
+  NOTIFIER_PUBKEY,
+  NOTIFIER_RELAY,
   userRoomsByUrl,
 } from "@app/state"
-import {loadUserData} from "@app/requests"
 
 // Utils
 
 export const getPubkeyHints = (pubkey: string) => {
   const selections = relaySelectionsByPubkey.get().get(pubkey)
-  const relays = selections ? getWriteRelayUrls(selections) : []
+  const relays = selections ? getRelaysFromList(selections, RelayMode.Write) : []
   const hints = relays.length ? relays : INDEXER_RELAYS
 
   return hints
@@ -82,14 +85,20 @@ export const getPubkeyPetname = (pubkey: string) => {
   return display
 }
 
-export const getThunkError = async (thunk: Thunk) => {
-  const result = await thunk.result
-  const [{status, message}] = Object.values(result) as any
+export const getThunkError = (thunk: Thunk) =>
+  new Promise<string>(resolve => {
+    thunk.subscribe($thunk => {
+      for (const [relay, status] of Object.entries($thunk.status)) {
+        if (status === PublishStatus.Failure) {
+          resolve($thunk.details[relay])
+        }
+      }
 
-  if (status !== PublishStatus.Success) {
-    return message
-  }
-}
+      if (thunkIsComplete($thunk)) {
+        resolve("")
+      }
+    })
+  })
 
 export const prependParent = (parent: TrustedEvent | undefined, {content, tags}: EventContent) => {
   if (parent) {
@@ -97,7 +106,7 @@ export const prependParent = (parent: TrustedEvent | undefined, {content, tags}:
       id: parent.id,
       kind: parent.kind,
       author: parent.pubkey,
-      relays: ctx.app.router.Event(parent).limit(3).getUrls(),
+      relays: Router.get().Event(parent).limit(3).getUrls(),
     })
 
     tags = [...tags, tagEventForQuote(parent)]
@@ -105,38 +114,6 @@ export const prependParent = (parent: TrustedEvent | undefined, {content, tags}:
   }
 
   return {content, tags}
-}
-
-// Log in
-
-export const loginWithNip46 = async ({
-  relays,
-  signerPubkey,
-  clientSecret = makeSecret(),
-  connectSecret = "",
-}: {
-  relays: string[]
-  signerPubkey: string
-  clientSecret?: string
-  connectSecret?: string
-}) => {
-  const broker = Nip46Broker.get({relays, clientSecret, signerPubkey})
-  const result = await broker.connect(connectSecret, NIP46_PERMS)
-
-  // TODO: remove ack result
-  if (!["ack", connectSecret].includes(result)) return false
-
-  const pubkey = await broker.getPublicKey()
-
-  if (!pubkey) return false
-
-  await loadUserData(pubkey)
-
-  const handler = {relays, pubkey: signerPubkey}
-
-  addSession({method: "nip46", pubkey, secret: clientSecret, handler})
-
-  return true
 }
 
 // Log out
@@ -199,7 +176,7 @@ export const nip29 = {
 export const addSpaceMembership = async (url: string) => {
   const list = get(userMembership) || makeList({kind: GROUPS})
   const event = await addToListPublicly(list, ["r", url]).reconcile(nip44EncryptToSelf)
-  const relays = uniq([...ctx.app.router.FromUser().getUrls(), ...getRelayTagValues(event.tags)])
+  const relays = uniq([...Router.get().FromUser().getUrls(), ...getRelayTagValues(event.tags)])
 
   return publishThunk({event, relays})
 }
@@ -208,11 +185,7 @@ export const removeSpaceMembership = async (url: string) => {
   const list = get(userMembership) || makeList({kind: GROUPS})
   const pred = (t: string[]) => t[t[0] === "r" ? 1 : 2] === url
   const event = await removeFromListByPredicate(list, pred).reconcile(nip44EncryptToSelf)
-  const relays = uniq([
-    url,
-    ...ctx.app.router.FromUser().getUrls(),
-    ...getRelayTagValues(event.tags),
-  ])
+  const relays = uniq([url, ...Router.get().FromUser().getUrls(), ...getRelayTagValues(event.tags)])
 
   return publishThunk({event, relays})
 }
@@ -224,7 +197,7 @@ export const addRoomMembership = async (url: string, room: string, name: string)
     ["group", room, url, name],
   ]
   const event = await addToListPublicly(list, ...newTags).reconcile(nip44EncryptToSelf)
-  const relays = uniq([...ctx.app.router.FromUser().getUrls(), ...getRelayTagValues(event.tags)])
+  const relays = uniq([...Router.get().FromUser().getUrls(), ...getRelayTagValues(event.tags)])
 
   return publishThunk({event, relays})
 }
@@ -233,11 +206,7 @@ export const removeRoomMembership = async (url: string, room: string) => {
   const list = get(userMembership) || makeList({kind: GROUPS})
   const pred = (t: string[]) => equals(["group", room, url], t.slice(0, 3))
   const event = await removeFromListByPredicate(list, pred).reconcile(nip44EncryptToSelf)
-  const relays = uniq([
-    url,
-    ...ctx.app.router.FromUser().getUrls(),
-    ...getRelayTagValues(event.tags),
-  ])
+  const relays = uniq([url, ...Router.get().FromUser().getUrls(), ...getRelayTagValues(event.tags)])
 
   return publishThunk({event, relays})
 }
@@ -259,7 +228,7 @@ export const setRelayPolicy = (url: string, read: boolean, write: boolean) => {
     relays: [
       url,
       ...INDEXER_RELAYS,
-      ...ctx.app.router.FromUser().getUrls(),
+      ...Router.get().FromUser().getUrls(),
       ...userRoomsByUrl.get().keys(),
     ],
   })
@@ -269,7 +238,7 @@ export const setInboxRelayPolicy = (url: string, enabled: boolean) => {
   const list = get(userInboxRelaySelections) || makeList({kind: INBOX_RELAYS})
 
   // Only update inbox policies if they already exist or we're adding them
-  if (enabled || getRelayUrls(list).includes(url)) {
+  if (enabled || getRelaysFromList(list).includes(url)) {
     const tags = getRelayTags(getListTags(list)).filter(t => normalizeRelayUrl(t[1]) !== url)
 
     if (enabled) {
@@ -280,7 +249,7 @@ export const setInboxRelayPolicy = (url: string, enabled: boolean) => {
       event: createEvent(list.kind, {tags}),
       relays: [
         ...INDEXER_RELAYS,
-        ...ctx.app.router.FromUser().getUrls(),
+        ...Router.get().FromUser().getUrls(),
         ...userRoomsByUrl.get().keys(),
       ],
     })
@@ -290,21 +259,19 @@ export const setInboxRelayPolicy = (url: string, enabled: boolean) => {
 // Relay access
 
 export const checkRelayAccess = async (url: string, claim = "") => {
-  const connection = ctx.net.pool.get(url)
+  const socket = Pool.get().get(url)
 
-  await connection.auth.attempt(5000)
+  await socket.auth.attemptAuth(signer.get().sign)
 
   const thunk = publishThunk({
     event: createEvent(AUTH_JOIN, {tags: [["claim", claim]]}),
     relays: [url],
   })
 
-  const result = await thunk.result
-
-  if (result[url].status === PublishStatus.Failure) {
+  ifLet(await getThunkError(thunk), error => {
     const message =
-      connection.auth.message?.replace(/^.*: /, "") ||
-      result[url].message?.replace(/^.*: /, "") ||
+      socket.auth.details?.replace(/^.*: /, "") ||
+      error?.replace(/^.*: /, "") ||
       "join request rejected"
 
     // If it's a strict NIP 29 relay don't worry about requesting access
@@ -312,7 +279,7 @@ export const checkRelayAccess = async (url: string, claim = "") => {
     if (message !== "missing group (`h`) tag") {
       return `Failed to join relay (${message})`
     }
-  }
+  })
 }
 
 export const checkRelayProfile = async (url: string) => {
@@ -324,25 +291,30 @@ export const checkRelayProfile = async (url: string) => {
 }
 
 export const checkRelayConnection = async (url: string) => {
-  const connection = ctx.net.pool.get(url)
+  const socket = Pool.get().get(url)
 
-  await connection.socket.open()
+  socket.attemptToOpen()
 
-  if (connection.socket.status !== SocketStatus.Open) {
+  await poll({
+    signal: AbortSignal.timeout(3000),
+    condition: () => socket.status === SocketStatus.Open,
+  })
+
+  if (socket.status !== SocketStatus.Open) {
     return `Failed to connect`
   }
 }
 
 export const checkRelayAuth = async (url: string, timeout = 3000) => {
-  const connection = ctx.net.pool.get(url)
+  const socket = Pool.get().get(url)
   const okStatuses = [AuthStatus.None, AuthStatus.Ok]
 
-  await connection.auth.attempt(timeout)
+  await socket.auth.attemptAuth(signer.get().sign)
 
   // Only raise an error if it's not a timeout.
   // If it is, odds are the problem is with our signer, not the relay
-  if (!okStatuses.includes(connection.auth.status) && connection.auth.message) {
-    return `Failed to authenticate (${connection.auth.message})`
+  if (!okStatuses.includes(socket.auth.status) && socket.auth.details) {
+    return `Failed to authenticate (${socket.auth.details})`
   }
 }
 
@@ -375,13 +347,15 @@ export const sendWrapped = async ({
 }) => {
   const nip59 = Nip59.fromSigner(signer.get()!)
 
-  return publishThunks(
+  return new MergedThunk(
     await Promise.all(
-      uniq(pubkeys).map(async recipient => ({
-        event: await nip59.wrap(recipient, stamp(template)),
-        relays: ctx.app.router.PubkeyInbox(recipient).getUrls(),
-        delay,
-      })),
+      uniq(pubkeys).map(async recipient =>
+        publishThunk({
+          event: await nip59.wrap(recipient, stamp(template)),
+          relays: Router.get().PubkeyInbox(recipient).getUrls(),
+          delay,
+        }),
+      ),
     ),
   )
 }
@@ -455,3 +429,43 @@ export const makeComment = ({event, content, tags = []}: CommentParams) =>
 
 export const publishComment = ({relays, ...params}: CommentParams & {relays: string[]}) =>
   publishThunk({event: makeComment(params), relays})
+
+export type AlertParams = {
+  feed: Feed
+  cron: string
+  email: string
+  bunker: string
+  secret: string
+  description: string
+}
+
+export const makeAlert = async ({cron, email, feed, bunker, secret, description}: AlertParams) => {
+  const tags = [
+    ["feed", JSON.stringify(feed)],
+    ["cron", cron],
+    ["email", email],
+    ["description", description],
+    ["channel", "email"],
+    [
+      "handler",
+      "31990:97c70a44366a6535c145b333f973ea86dfdc2d7a99da618c40c64705ad98e322:1737058597050",
+      "wss://relay.nostr.band/",
+      "web",
+    ],
+  ]
+
+  if (bunker) {
+    tags.push(["nip46", secret, bunker])
+  }
+
+  return createEvent(ALERT, {
+    content: await signer.get().nip44.encrypt(NOTIFIER_PUBKEY, JSON.stringify(tags)),
+    tags: [
+      ["d", randomId()],
+      ["p", NOTIFIER_PUBKEY],
+    ],
+  })
+}
+
+export const publishAlert = async (params: AlertParams) =>
+  publishThunk({event: await makeAlert(params), relays: [NOTIFIER_RELAY]})
