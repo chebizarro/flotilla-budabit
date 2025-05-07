@@ -1,9 +1,9 @@
 <script lang="ts">
-  import {onMount} from "svelte"
+  import {onDestroy, onMount} from "svelte"
   import {page} from "$app/stores"
-  import {sortBy, sleep} from "@welshman/lib"
-  import {COMMENT} from "@welshman/util"
-  import {repository, subscribe} from "@welshman/app"
+  import {sortBy, sleep, now} from "@welshman/lib"
+  import {COMMENT, type TrustedEvent} from "@welshman/util"
+  import {repository} from "@welshman/app"
   import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
@@ -14,10 +14,13 @@
   import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
   import JobActions from "@app/components/JobActions.svelte"
   import EventReply from "@app/components/EventReply.svelte"
-  import {deriveEvent, decodeRelay} from "@app/state"
+  import {deriveEvent, decodeRelay, getEventsForUrl} from "@app/state"
   import {setChecked} from "@app/notifications"
   import JobItem from "@src/app/components/JobItem.svelte"
   import Divider from "@src/lib/components/Divider.svelte"
+  import {readable, type Readable} from "svelte/store"
+  import {on} from "svelte/events"
+    import { makeFeed } from "@src/app/requests"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -42,13 +45,33 @@
   let showAll = $state(false)
   let showReply = $state(false)
 
+  let events: Readable<TrustedEvent[]> = $state(readable([]))
+  let cleanup: () => void
+  let loadingEvents = $state(true)
+  let element: HTMLElement | undefined = $state()
+
   onMount(() => {
-    const sub = subscribe({relays: [url], filters})
+    ;({events, cleanup} = makeFeed({
+      element: element!,
+      relays: [url],
+      feedFilters: filters,
+      subscriptionFilters: [{kinds: [COMMENT], "#E": [id], since: now()}],
+      initialEvents: getEventsForUrl(url, [{...filters, limit: 20}]),
+      onExhausted: () => {
+        loadingEvents = false
+      },
+    }))
+
 
     return () => {
-      sub.close()
-      setChecked($page.url.pathname)
     }
+  })
+
+  onDestroy(() => {
+    cleanup()
+    setTimeout(() => {
+      setChecked($page.url.pathname)
+    }, 800)
   })
 </script>
 
@@ -79,7 +102,7 @@
       </div>
     {/if}
     <Divider />
-    <JobItem {url} event={$event} showActivity={true} showExternal={true} showThreadAction={true}/>
+    <JobItem {url} event={$event} showActivity={true} showExternal={true} showThreadAction={true} />
   {:else}
     {#await sleep(5000)}
       <Spinner loading>Loading comments...</Spinner>
@@ -96,7 +119,7 @@
       </div>
     {/snippet}
     {#snippet title()}
-      <h1 class="text-xl sm:text-lg text-center">Job Discussion</h1>
+      <h1 class="text-center text-xl sm:text-lg">Job Discussion</h1>
     {/snippet}
     {#snippet action()}
       <div>
@@ -108,4 +131,3 @@
 {#if showReply}
   <EventReply {url} event={$event} onClose={closeReply} onSubmit={closeReply} />
 {/if}
-

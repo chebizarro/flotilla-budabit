@@ -1,135 +1,107 @@
 <script lang="ts">
-  import { decodeRelay, deriveEventsForUrl } from "@src/app/state"
-  import { FREELANCE_JOB } from "@src/lib/util"
-  import { createFeedController, repository, userMutes } from "@welshman/app"
-  import { getPubkeyTagValues, getListTags, COMMENT } from "@welshman/util"
-  import { onMount } from "svelte";
-  import {page} from "$app/stores"
-  import { derived } from "svelte/store"
-  import { setChecked } from "@src/app/notifications"
+  import {decodeRelay, deriveEventsForUrl, getEventsForUrl} from "@src/app/state"
+  import {FREELANCE_JOB} from "@src/lib/util"
+  import {COMMENT, getListTags, getPubkeyTagValues, type TrustedEvent} from "@welshman/util"
+  import {onMount} from "svelte"
+  import {page} from "$app/state"
+  import {derived, readable, type Readable} from "svelte/store"
+  import {setChecked} from "@src/app/notifications"
   import PageBar from "@src/lib/components/PageBar.svelte"
   import Icon from "@src/lib/components/Icon.svelte"
   import MenuSpaceButton from "@src/app/components/MenuSpaceButton.svelte"
   import Button from "@src/lib/components/Button.svelte"
   import Spinner from "@src/lib/components/Spinner.svelte"
-  import { deriveEvents, throttled } from "@welshman/store"
-  import { sortBy, min, nthEq} from "@welshman/lib"
-  import { feedFromFilters, makeIntersectionFeed, makeRelayFeed, makeUnionFeed, makeWOTFeed } from "@welshman/feeds"
-  import { createScroller, type Scroller } from "@src/lib/html"
   import JobItem from "@src/app/components/JobItem.svelte"
-  import { fly } from "@src/lib/transition"
+  import {fly} from "@src/lib/transition"
   import Link from "@src/lib/components/Link.svelte"
+  import {makeFeed} from "@src/app/requests"
+  import PageContent from "@src/lib/components/PageContent.svelte"
+  import {userMutes} from "@welshman/app"
 
-  const url = decodeRelay($page.params.relay)
-
-  const jobFilter = {kinds: [FREELANCE_JOB], "#s": ["0"]}
-  const commentFilter = {kinds: [COMMENT], "#K": [String(FREELANCE_JOB)]}
-  const feed = feedFromFilters([jobFilter, commentFilter])
-
-  const jobs = deriveEvents(repository, { filters: [jobFilter] })
-
-  const comments = deriveEventsForUrl(url, [commentFilter])
+  const url = decodeRelay(page.params.relay)
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
+  const jobs: TrustedEvent[] = $state([])
+  const comments: TrustedEvent[] = $state([])
 
-  const events = throttled(
-    800,
-    derived([jobs, comments], ([$jobs, $comments]) => {
-      const scores = new Map<string, number>()
-
-      for (const comment of $comments) {
-        const id = comment.tags.find(nthEq(0, "E"))?.[1]
-
-        if (id) {
-          scores.set(id, min([scores.get(id), -comment.created_at]))
-        }
-      }
-
-      return sortBy(
-        e => min([scores.get(e.id), -e.created_at]),
-        $jobs.filter(e => !mutedPubkeys.includes(e.pubkey)),
-      )
-    }),
-  )
-
-  const ctrl = createFeedController({
-    useWindowing: true,
-    feed: makeIntersectionFeed(
-      makeUnionFeed(
-        makeWOTFeed({min: 0.1}), 
-        makeRelayFeed(url)
-      ),
-      feed
-    ),
-    onExhausted: () => {
-      loading = false
-    },
-  })
-
-  let limit = 20
+  let element: HTMLElement | undefined = $state()
   let loading = $state(true)
-  let element: Element | undefined = $state()
-  let scroller: Scroller
+  const limit = 20
 
   onMount(() => {
-    scroller = createScroller({
+    const {cleanup} = makeFeed({
       element: element!,
-      delay: 300,
-      threshold: 3000,
-      onScroll: () => {
-        limit += 20
-
-        if ($events.length - limit < 10) {
-          ctrl.load(50)
+      relays: [url],
+      feedFilters: [{kinds: [FREELANCE_JOB]}],
+      subscriptionFilters: [
+        {kinds: [FREELANCE_JOB]},
+        {kinds: [COMMENT], "#K": [String(FREELANCE_JOB)]},
+      ],
+      initialEvents: getEventsForUrl(url, [{kinds: [FREELANCE_JOB], limit}]),
+      onEvent: event => {
+        if (event.kind === FREELANCE_JOB) {
+          jobs.push(event)
         }
+
+        if (event.kind === COMMENT) {
+          comments.push(event)
+        }
+      },
+      onExhausted: () => {
+        loading = false
       },
     })
 
     return () => {
-      scroller?.stop()
-      setChecked($page.url.pathname)
+      cleanup()
+      setChecked(page.url.pathname)
     }
-  });
-
+  })
 </script>
 
-<div class="relative flex h-screen flex-col" bind:this={element}>
-  <PageBar>
-    {#snippet icon()}
-      <div class="center">
-        <Icon icon="jobs" />
-      </div>
-    {/snippet}
-    {#snippet title()}
-      <strong>Jobs</strong>
-    {/snippet}
-    {#snippet action()}
-      <div class="row-2">
-        <Button class="btn btn-primary btn-sm">
-          <Link external href="https://test.satshoot.com/post-job" class="bg-primary flex items-center gap-x-2">
-            <Icon icon="jobs" />
-            <span class="">Create Job</span>
-          </Link>
-        </Button>
-        <MenuSpaceButton {url} />
-      </div>
-    {/snippet}
-  </PageBar>
-  <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
-    {#each $events as event (event.id)}
-      <div in:fly>
-        <JobItem {url} {event} showComment={true} showExternal={true} showThreadAction={true} showActivity={true}/>
-      </div>
-    {/each}
-    {#if loading || $events.length === 0}
-      <p class="flex h-10 items-center justify-center py-20" out:fly>
-        <Spinner {loading}>
-          {#if loading}
-            Looking for jobs...
-          {:else if $events.length === 0}
-            No Jobs found.
-          {/if}
-        </Spinner>
-      </p>
-    {/if}
-  </div>
-</div>
+<PageBar>
+  {#snippet icon()}
+    <div class="center">
+      <Icon icon="jobs" />
+    </div>
+  {/snippet}
+  {#snippet title()}
+    <strong>Jobs</strong>
+  {/snippet}
+  {#snippet action()}
+    <div class="row-2">
+      <Button class="btn btn-primary btn-sm">
+        <Link
+          external
+          href="https://test.satshoot.com/post-job"
+          class="flex items-center gap-x-2 bg-primary">
+          <Icon icon="jobs" />
+          <span class="">Create Job</span>
+        </Link>
+      </Button>
+      <MenuSpaceButton {url} />
+    </div>
+  {/snippet}
+</PageBar>
+
+<PageContent bind:element class="flex flex-col gap-2 p-2 pt-4">
+  {#each jobs as event (event.id)}
+    <div class={"job-event" + event.id} in:fly>
+      <JobItem
+        {url}
+        {event}
+        showComment={true}
+        showExternal={true}
+        showThreadAction={true}
+        showActivity={true} />
+    </div>
+  {/each}
+  <p class="flex h-10 items-center justify-center py-20" out:fly>
+    <Spinner {loading}>
+      {#if loading}
+        Looking for jobs...
+      {:else if jobs.length === 0}
+        No Jobs found.
+      {/if}
+    </Spinner>
+  </p>
+</PageContent>

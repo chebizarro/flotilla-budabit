@@ -12,8 +12,10 @@
     type TrustedEvent
 
   } from "@welshman/util"
-  import { load, formatTimestampRelative, userMutes, subscribe } from "@welshman/app"
-  import { ctx, now, nthEq, sortBy } from "@welshman/lib"
+  import { userMutes } from "@welshman/app"
+  import { formatTimestampRelative } from "@welshman/lib"
+  import { load } from "@welshman/net"
+  import { now, nthEq, sortBy } from "@welshman/lib"
   import { GIT_REPO, GitIssueStatus } from "@src/lib/util"
   import NoteCard from "./NoteCard.svelte"
   import Content from "./Content.svelte"
@@ -25,6 +27,7 @@
   import { pushModal } from "../modal"
   import ThreadCreate from "./ThreadCreate.svelte"
     import { decodeRelay } from "../state"
+    import { Router } from "@welshman/router"
   
   let {
     issue,
@@ -50,7 +53,7 @@
   const repoLink = `https://gitworkshop.dev/${repoNpub}/${repoDtag}`
 
   const backupRelays = [
-    ...ctx.app.router.FromPubkey(pubkey!).getUrls()
+    ...Router.get().FromPubkey(pubkey!).getUrls()
   ]
 
   let queryRelays = relayHint ? [relayHint] : backupRelays

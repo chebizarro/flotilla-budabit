@@ -74,6 +74,8 @@
     "nostr-tools": "^2.7.2",
     "prettier-plugin-tailwindcss": "^0.6.5",
     "qrcode": "^1.5.4",
-    "throttle-debounce": "^5.0.2"
+    "sharp": "^0.34.1",
+    "throttle-debounce": "^5.0.2",
+    "tippy.js": "^6.3.7"
   }
 }

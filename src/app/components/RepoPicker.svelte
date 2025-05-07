@@ -1,5 +1,4 @@
 <script lang="ts">
-  import {ctx} from "@welshman/lib"
   import {debounce} from "throttle-debounce"
   import {onMount} from "svelte"
   import { GIT_REPO_BOOKMARK_DTAG } from "@src/lib/util"
@@ -19,7 +18,7 @@
   import ModalFooter from "@lib/components/ModalFooter.svelte"
   import FieldInline from "@src/lib/components/FieldInline.svelte"
   import {
-    createFeedController,
+    makeFeedController,
     createSearch,
     publishThunk,
     repository,
@@ -42,6 +41,7 @@
   import Divider from "@src/lib/components/Divider.svelte"
   import { makeGitPath } from "../routes"
   import { goto } from "$app/navigation"
+    import { Router } from "@welshman/router"
 
 
   const url = decodeRelay($page.params.relay)
@@ -84,7 +84,7 @@
         const repoEventRelayHint = getTagValue('relays', event.tags)
 
         const relaysFromRepoPubkey = 
-          ctx.app.router.getRelaysForPubkey(event.pubkey)?.[0] ?? ''
+        Router.get().getRelaysForPubkey(event.pubkey)?.[0] ?? ''
 
         const firstHint = 
           relayHints.values().next().value ??
@@ -157,7 +157,7 @@
     }
   })
 
-  const ctrl = createFeedController({
+  const ctrl = makeFeedController({
     useWindowing: true,
     feed: makeIntersectionFeed(
       makeWOTFeed({min: 0.1}),
@@ -193,7 +193,7 @@
 
     publishThunk({
       event: eventToPublish,
-      relays: [url, ...ctx.app.router.FromUser().getUrls()],
+      relays: [url, ...Router.get().FromUser().getUrls()],
     })
 
     $shouldReloadRepos = true;

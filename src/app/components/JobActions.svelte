@@ -10,9 +10,9 @@
   import Button from "@src/lib/components/Button.svelte"
   import Link from "@src/lib/components/Link.svelte"
   import {jobLink} from "@app/state"
-  import { pushModal } from "../modal"
+  import {pushModal} from "../modal"
   import ThreadCreate from "./ThreadCreate.svelte"
-  import { ctx } from "@welshman/lib"
+  import {Router} from "@welshman/router"
 
   interface Props {
     url: any
@@ -26,10 +26,10 @@
   const {
     url,
     event,
-    showComment=false,
-    showExternal=false,
+    showComment = false,
+    showExternal = false,
     showActivity = false,
-    showThreadAction = false
+    showThreadAction = false,
   }: Props = $props()
 
   const path = makeJobPath(url, event.id)
@@ -37,17 +37,15 @@
   const relayHint = $derived.by(() => {
     const eventRelays = Array.from(tracker.getRelays(event.id))
     const address = Address.fromEvent(event)
-    const pubkeyRelays = ctx.app.router.FromPubkey(address.pubkey).getUrls()
+    const pubkeyRelays = Router.get().FromPubkey(address.pubkey).getUrls()
 
     if (eventRelays.length > 0) return eventRelays[0]
     if (pubkeyRelays.length > 0) return pubkeyRelays[0]
-    return ''
+    return ""
   })
 
-  const startThread = () => pushModal(
-    ThreadCreate, 
-    {url: url, jobOrGitIssue: event, relayHint: relayHint}
-  )
+  const startThread = () =>
+    pushModal(ThreadCreate, {url: url, jobOrGitIssue: event, relayHint: relayHint})
 
   const onReactionClick = (content: string, events: TrustedEvent[]) => {
     const reaction = events.find(e => e.pubkey === $pubkey)
@@ -76,7 +74,10 @@
     {/if}
     {#if showExternal}
       <Button class="btn btn-info btn-sm">
-        <Link external class="w-full cursor-pointer" href={jobLink(Address.fromEvent(event).toNaddr())}>
+        <Link
+          external
+          class="w-full cursor-pointer"
+          href={jobLink(Address.fromEvent(event).toNaddr())}>
           <span class="">SatShoot</span>
         </Link>
       </Button>
@@ -86,6 +87,6 @@
     {#if showActivity}
       <EventActivity {url} {path} {event} />
     {/if}
-      <EventActions {url} {event} noun="Job" />
+    <EventActions {url} {event} noun="Job" />
   </div>
 </div>

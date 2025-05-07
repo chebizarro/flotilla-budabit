@@ -1,45 +1,55 @@
 <script lang="ts">
-  import { decodeRelay, shouldReloadRepos } from "@src/app/state"
-  import { load, tracker } from "@welshman/app"
-  import { pubkey, userMutes } from "@welshman/app"
-  import { getPubkeyTagValues, getListTags, NAMED_BOOKMARKS, getAddressTags, type TrustedEvent, type Filter, Address } from "@welshman/util"
-  import { onMount, tick } from "svelte";
-  import {page} from "$app/stores"
+  import {decodeRelay, shouldReloadRepos} from "@src/app/state"
+  import {tracker} from "@welshman/app"
+  import {load} from "@welshman/net"
+  import {pubkey, userMutes} from "@welshman/app"
+  import {
+    getPubkeyTagValues,
+    getListTags,
+    NAMED_BOOKMARKS,
+    getAddressTags,
+    type TrustedEvent,
+    type Filter,
+    Address,
+  } from "@welshman/util"
+  import {onMount, tick} from "svelte"
+  import {page} from "$app/state"
   import {type Writable, writable} from "svelte/store"
-  import { setChecked } from "@src/app/notifications"
+  import {setChecked} from "@src/app/notifications"
   import PageBar from "@src/lib/components/PageBar.svelte"
   import Icon from "@src/lib/components/Icon.svelte"
   import MenuSpaceButton from "@src/app/components/MenuSpaceButton.svelte"
   import Button from "@src/lib/components/Button.svelte"
   import Spinner from "@src/lib/components/Spinner.svelte"
-  import { ctx, sortBy } from "@welshman/lib"
-  import { fly } from "@src/lib/transition"
-  import { pushModal } from "@src/app/modal"
+  import {sortBy} from "@welshman/lib"
+  import {fly} from "@src/lib/transition"
+  import {pushModal} from "@src/app/modal"
   import RepoPicker from "@src/app/components/RepoPicker.svelte"
-  import { GIT_REPO } from "@src/lib/util"
+  import {GIT_REPO} from "@src/lib/util"
   import GitItem from "@src/app/components/GitItem.svelte"
+  import {Router} from "@welshman/router"
 
-  const url = decodeRelay($page.params.relay)
+  const url = decodeRelay(page.params.relay)
 
-  const bookmarkFilter = {kinds: [NAMED_BOOKMARKS], authors: [pubkey.get()!] }
+  const bookmarkFilter = {kinds: [NAMED_BOOKMARKS], authors: [pubkey.get()!]}
 
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
 
-  let repoFilter:Filter
+  let repoFilter: Filter
 
   let loading = $state(true)
 
-  const events: Writable<TrustedEvent[]> = writable([]);
+  const events: Writable<TrustedEvent[]> = writable([])
 
-  let loadedBookmarkedRepos: Array<{address:string, event: TrustedEvent, relayHint: string}> = []
+  let loadedBookmarkedRepos: Array<{address: string; event: TrustedEvent; relayHint: string}> = []
 
   const loadBookmarkedRepos = async () => {
     loadedBookmarkedRepos = []
     loading = true
     await tick()
     const bookmark = await load({
-      relays: [url, ...ctx.app.router.FromUser().getUrls()],
-      filters: [ bookmarkFilter ],
+      relays: [url, ...Router.get().FromUser().getUrls()],
+      filters: [bookmarkFilter],
     })
 
     if (bookmark.length > 0) {
@@ -53,7 +63,7 @@
         dTagValues.push(value.split(":")[2])
         authors.push(value.split(":")[1])
         relaysOfAddresses.set(value, relayHint || "")
-        if (relayHint){
+        if (relayHint) {
           relayHints.push(relayHint)
         }
       })
@@ -62,23 +72,23 @@
 
       const loadedRepos = await load({
         relays: relayHints,
-        filters: [ repoFilter ]
+        filters: [repoFilter],
       })
-      loadedRepos.forEach((repo) => {
+      loadedRepos.forEach(repo => {
         const address = Address.fromEvent(repo)
         const addressString = address.toString()
         const relayHintFromEvent = tracker.getRelays(repo.id)
-        const relaysFromAddressPubkey = 
-          ctx.app.router.getRelaysForPubkey(repo.pubkey)?.[0]
+        const relaysFromAddressPubkey = Router.get().getRelaysForPubkey(repo.pubkey)?.[0]
 
-        const hint = relaysOfAddresses.get(addressString) ??
-                      Array.from(relayHintFromEvent)[0] ??
-                      relaysFromAddressPubkey
+        const hint =
+          relaysOfAddresses.get(addressString) ??
+          Array.from(relayHintFromEvent)[0] ??
+          relaysFromAddressPubkey
 
         loadedBookmarkedRepos.push({
           address: addressString,
           event: repo,
-          relayHint: hint
+          relayHint: hint,
         })
       })
       events.update(() => {
@@ -87,34 +97,28 @@
           loadedRepos.filter(e => !mutedPubkeys.includes(e.pubkey)),
         )
       })
-
-      
     }
-    loading = false;
+    loading = false
   }
 
   onMount(() => {
     loadBookmarkedRepos()
 
     return () => {
-      setChecked($page.url.pathname)
+      setChecked(page.url.pathname)
     }
   })
 
   $effect(() => {
     if ($shouldReloadRepos) {
       loadBookmarkedRepos()
-      $shouldReloadRepos = false;
+      $shouldReloadRepos = false
     }
   })
 
   const onAddRepo = () => {
-    pushModal(
-      RepoPicker,
-      {selectedRepos: loadedBookmarkedRepos},
-    )
+    pushModal(RepoPicker, {selectedRepos: loadedBookmarkedRepos})
   }
-
 </script>
 
 <div class="relative flex h-screen flex-col">
@@ -151,7 +155,7 @@
     {:else}
       {#each $events as event (event.id)}
         <div in:fly class="">
-          <GitItem {url} {event}/>
+          <GitItem {url} {event} />
         </div>
       {/each}
     {/if}

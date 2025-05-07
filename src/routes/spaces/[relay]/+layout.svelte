@@ -16,6 +16,7 @@
   import {decodeRelay, userRoomsByUrl} from "@app/state"
   import {pullConservatively} from "@app/requests"
   import {notifications} from "@app/notifications"
+    import { FREELANCE_JOB } from "@src/lib/util"
   interface Props {
     children?: import("svelte").Snippet
   }
@@ -67,6 +68,8 @@
         {kinds: [GROUP_META]},
         {kinds: [THREAD, EVENT_TIME], since},
         {kinds: [COMMENT], "#K": [String(THREAD), String(EVENT_TIME)], since},
+        {kinds: [FREELANCE_JOB], "#s": ["0"]},
+        {kinds: [COMMENT], "#K": [String(FREELANCE_JOB)]},
         ...rooms.map(room => ({kinds: [MESSAGE], "#h": [room], since})),
       ],
     })
