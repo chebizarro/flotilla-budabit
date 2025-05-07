@@ -7,6 +7,7 @@
   import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
+  import PageContent from "@lib/components/PageContent.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
   import Content from "@app/components/Content.svelte"
@@ -84,10 +85,12 @@
   })
 
   onMount(() => {
-    const sub = subscribe({relays: [url], filters})
+    const controller = new AbortController()
+
+    request({relays: [url], filters, signal: controller.signal})
 
     return () => {
-      sub.close()
+      controller.abort()
       setChecked($page.url.pathname)
     }
   })

@@ -1,12 +1,12 @@
 <script lang="ts">
   import {onMount} from "svelte"
   import type {Snippet} from "svelte"
-  import {groupBy, uniq, uniqBy, batch} from "@welshman/lib"
-  import {REACTION, getTag, REPORT, DELETE} from "@welshman/util"
+  import {groupBy, uniq, uniqBy, batch, displayList} from "@welshman/lib"
+  import {REACTION, getReplyFilters, getTag, REPORT, DELETE} from "@welshman/util"
   import type {TrustedEvent} from "@welshman/util"
   import {deriveEvents} from "@welshman/store"
-  import {pubkey, repository, load, displayProfileByPubkey} from "@welshman/app"
-  import {displayList} from "@lib/util"
+  import {load} from "@welshman/net"
+  import {pubkey, repository, displayProfileByPubkey} from "@welshman/app"
   import {isMobile, preventDefault, stopPropagation} from "@lib/html"
   import Icon from "@lib/components/Icon.svelte"
   import EventReportDetails from "@app/components/EventReportDetails.svelte"
@@ -51,17 +51,24 @@
   )
 
   onMount(() => {
+    const controller = new AbortController()
+
     if (url) {
       load({
         relays: [url],
-        filters: [{kinds: [REACTION, REPORT, DELETE], "#e": [event.id]}],
+        signal: controller.signal,
+        filters: getReplyFilters([event], {kinds: [REACTION, REPORT, DELETE]}),
         onEvent: batch(300, (events: TrustedEvent[]) => {
           load({
             relays: [url],
-            filters: [{kinds: [DELETE], "#e": events.map(e => e.id)}],
+            filters: getReplyFilters(events, {kinds: [DELETE]}),
           })
         }),
       })
+    }
+
+    return () => {
+      controller.abort()
     }
   })
 </script>

@@ -1,5 +1,30 @@
 # Changelog
 
+# 1.0.0
+
+* Add alerts via Anchor
+* Fix nip46 signer connect
+
+# 0.2.14
+
+* Add calendar event editing
+
+# 0.2.13
+
+* Fix android keyboard issue
+
+# 0.2.12
+
+* Fix keyboard covering chat input
+* Fix thread replies
+* Make error reporting and analytics optional
+* Replace long press with tap target
+* Fix time input
+* Fix nevent hints for url-specific stuff
+* Fix confirm and reactions on mobile
+* Add reply to chat on mobile
+* Fix profile suggestions
+
 # 0.2.11
 
 * Add in-app signup flow on ios

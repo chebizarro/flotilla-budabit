@@ -2,14 +2,14 @@
 
 A discord-like nostr client based on the idea of "relays as groups".
 
-If you would like to be interoperable with Flotilla, please check out this draft NIP: https://github.com/coracle-social/nips/blob/relay-chat/xx.md
+If you would like to be interoperable with Flotilla, please check out this guide: https://habla.news/u/hodlbod@coracle.social/1741286140797
 
 # Deploy
 
 To run your own Flotilla, it's as simple as:
 
-- `npm install`
-- `npm run build`
+- `pnpm install`
+- `pnpm run build`
 - `npx serve build`
 
 ## Environment
@@ -65,12 +65,12 @@ git clone https://github.com/coracle-social/flotilla.git
 cd ~/flotilla
 nvm install
 nvm use
-npm i
+pnpm i
 
 # Optionally create and populate .env.local to suit your use case
 
 # Build the app
-NODE_OPTIONS=--max_old_space_size=16384 npm run build
+NODE_OPTIONS=--max_old_space_size=16384 pnpm run build
 
 # Exit back to root
 exit
@@ -108,4 +108,4 @@ Now, visit your domain. You should be all set up!
 
 # Development
 
-Run `npm run dev` to get a dev server, and `npm run check:watch` to watch for typescript errors. When you're ready to commit, run `npm run format && npm run lint` and fix any errors that come up.
+Run `pnpm run dev` to get a dev server, and `pnpm run check:watch` to watch for typescript errors. When you're ready to commit, run `pnpm run format && pnpm run lint` and fix any errors that come up.

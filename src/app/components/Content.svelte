@@ -38,8 +38,8 @@
     showEntire?: boolean
     hideMediaAtDepth?: number
     expandMode?: string
-    relays?: string[]
     depth?: number
+    url?: string
   }
 
   let {
@@ -49,8 +49,8 @@
     showEntire = $bindable(false),
     hideMediaAtDepth = 1,
     expandMode = "block",
-    relays = [],
     depth = 0,
+    url,
   }: Props = $props()
 
   const fullContent = parse(event)
@@ -141,15 +141,15 @@
           <ContentToken value={parsed.value} />
         {:else if isLink(parsed)}
           {#if isBlock(i)}
-            <ContentLinkBlock value={parsed.value} />
+            <ContentLinkBlock value={parsed.value} {event} />
           {:else}
             <ContentLinkInline value={parsed.value} />
           {/if}
         {:else if isProfile(parsed)}
-          <ContentMention value={parsed.value} />
+          <ContentMention value={parsed.value} {url} />
         {:else if isEvent(parsed) || isAddress(parsed)}
           {#if isBlock(i)}
-            <ContentQuote {depth} {relays} {hideMediaAtDepth} value={parsed.value} {event} />
+            <ContentQuote {depth} {url} {hideMediaAtDepth} value={parsed.value} {event} />
           {:else}
             <Link
               external

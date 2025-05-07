@@ -9,6 +9,7 @@
   import Button from "@lib/components/Button.svelte"
   import Divider from "@lib/components/Divider.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
+  import PageContent from "@lib/components/PageContent.svelte"
   import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
   import ProfileFeed from "@app/components/ProfileFeed.svelte"
   import ChannelName from "@app/components/ChannelName.svelte"
