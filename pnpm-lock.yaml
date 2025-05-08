@@ -144,6 +144,9 @@ importers:
       '@types/eslint':
         specifier: ^9.6.0
         version: 9.6.1
+      '@types/throttle-debounce':
+        specifier: ^5.0.2
+        version: 5.0.2
       autoprefixer:
         specifier: ^10.4.19
         version: 10.4.21(postcss@8.5.3)

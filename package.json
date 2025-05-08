@@ -19,6 +19,7 @@
     "@sveltejs/kit": "^2.5.27",
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
     "@types/eslint": "^9.6.0",
+    "@types/throttle-debounce": "^5.0.2",
     "autoprefixer": "^10.4.19",
     "classnames": "^2.5.1",
     "eslint": "^9.0.0",
