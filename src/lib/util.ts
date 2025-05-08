@@ -41,3 +41,5 @@ export const getRootEventTagValue = (tags: string[][]): string | undefined => {
     t => t[3]==='root' || t[2] ==='root'
   )?.[1]
 }
+
+export const ucFirst = (s: string) => s.slice(0, 1).toUpperCase() + s.slice(1)
