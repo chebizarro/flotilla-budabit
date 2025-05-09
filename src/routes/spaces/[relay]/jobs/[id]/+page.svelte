@@ -3,8 +3,6 @@
   import {page} from "$app/stores"
   import {sortBy, sleep, now} from "@welshman/lib"
   import {COMMENT, type TrustedEvent} from "@welshman/util"
-  import {repository} from "@welshman/app"
-  import {deriveEvents} from "@welshman/store"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
@@ -18,15 +16,19 @@
   import {setChecked} from "@app/notifications"
   import JobItem from "@src/app/components/JobItem.svelte"
   import Divider from "@src/lib/components/Divider.svelte"
-  import {readable, type Readable} from "svelte/store"
-  import {on} from "svelte/events"
-    import { makeFeed } from "@src/app/requests"
+  import {makeFeed} from "@src/app/requests"
+  import {readable, writable, type Readable} from "svelte/store"
+  import PageContent from "@src/lib/components/PageContent.svelte"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
   const event = deriveEvent(id)
-  const filters = [{kinds: [COMMENT], "#E": [id]}]
-  const replies = deriveEvents(repository, {filters})
+  const replies = writable<TrustedEvent[]>([])
+
+  onMount(() => {
+    const initialReplies = getEventsForUrl(url, [{kinds: [COMMENT], "#E": [id], limit: 20}])
+    replies.set(initialReplies)
+  })
 
   const back = () => history.back()
 
@@ -54,17 +56,15 @@
     ;({events, cleanup} = makeFeed({
       element: element!,
       relays: [url],
-      feedFilters: filters,
+      feedFilters: [{kinds: [COMMENT], "#E": [id]}],
       subscriptionFilters: [{kinds: [COMMENT], "#E": [id], since: now()}],
-      initialEvents: getEventsForUrl(url, [{...filters, limit: 20}]),
+      initialEvents: getEventsForUrl(url, [{kinds: [COMMENT], "#E": [id], limit: 20}]),
       onExhausted: () => {
         loadingEvents = false
       },
     }))
 
-
-    return () => {
-    }
+    return () => {}
   })
 
   onDestroy(() => {
@@ -75,59 +75,66 @@
   })
 </script>
 
-<div class="relative flex flex-col-reverse gap-3 px-2">
-  {#if $event}
-    {#if !showReply}
-      <div class="flex justify-end px-2 pb-2">
-        <Button class="btn btn-primary" onclick={openReply}>
-          <Icon icon="reply" />
-          Comment on Job
-        </Button>
-      </div>
-    {/if}
-    {#each sortBy(e => -e.created_at, $replies).slice(0, showAll ? undefined : 4) as reply (reply.id)}
-      <NoteCard event={reply} class="card2 bg-alt z-feature w-full">
-        <div class="col-3 ml-12">
-          <Content showEntire event={reply} />
-          <JobActions event={reply} {url} showExternal={false} />
+<PageBar class="mx-0">
+  {#snippet icon()}
+    <div>
+      <Button class="btn btn-neutral btn-sm" onclick={back}>
+        <Icon icon="alt-arrow-left" />
+      </Button>
+    </div>
+  {/snippet}
+  {#snippet title()}
+    <h1 class="text-center text-xl sm:text-lg">Job Discussion</h1>
+  {/snippet}
+  {#snippet action()}
+    <div>
+      <MenuSpaceButton {url} />
+    </div>
+  {/snippet}
+</PageBar>
+<PageContent bind:element class="flex flex-grow flex-col overflow-auto p-3">
+  <div class="relative flex flex-col-reverse gap-3 px-2">
+    {#if $event}
+      {#if !showReply}
+        <div class="flex justify-end px-2 pb-2">
+          <Button class="btn btn-primary" onclick={openReply}>
+            <Icon icon="reply" />
+            Comment on Job
+          </Button>
         </div>
-      </NoteCard>
-    {/each}
-    {#if !showAll && $replies.length > 4}
-      <div class="flex justify-center">
-        <Button class="btn btn-link" onclick={expand}>
-          <Icon icon="sort-vertical" />
-          Show all {$replies.length} replies
-        </Button>
-      </div>
+      {/if}
+      {#each sortBy(e => -e.created_at, $replies).slice(0, showAll ? undefined : 4) as reply (reply.id)}
+        <NoteCard event={reply} class="card2 bg-alt z-feature w-full">
+          <div class="col-3 ml-12">
+            <Content showEntire event={reply} />
+            <JobActions event={reply} {url} showExternal={false} />
+          </div>
+        </NoteCard>
+      {/each}
+      {#if !showAll && $replies.length > 4}
+        <div class="flex justify-center">
+          <Button class="btn btn-link" onclick={expand}>
+            <Icon icon="sort-vertical" />
+            Show all {$replies.length} replies
+          </Button>
+        </div>
+      {/if}
+      <Divider />
+      <JobItem
+        {url}
+        event={$event}
+        showActivity={true}
+        showExternal={true}
+        showThreadAction={true} />
+    {:else}
+      {#await sleep(5000)}
+        <Spinner loading>Loading comments...</Spinner>
+      {:then}
+        <p>Failed to load comments.</p>
+      {/await}
     {/if}
-    <Divider />
-    <JobItem {url} event={$event} showActivity={true} showExternal={true} showThreadAction={true} />
-  {:else}
-    {#await sleep(5000)}
-      <Spinner loading>Loading comments...</Spinner>
-    {:then}
-      <p>Failed to load comments.</p>
-    {/await}
-  {/if}
-  <PageBar class="mx-0">
-    {#snippet icon()}
-      <div>
-        <Button class="btn btn-neutral btn-sm" onclick={back}>
-          <Icon icon="alt-arrow-left" />
-        </Button>
-      </div>
-    {/snippet}
-    {#snippet title()}
-      <h1 class="text-center text-xl sm:text-lg">Job Discussion</h1>
-    {/snippet}
-    {#snippet action()}
-      <div>
-        <MenuSpaceButton {url} />
-      </div>
-    {/snippet}
-  </PageBar>
-</div>
+  </div>
+</PageContent>
 {#if showReply}
   <EventReply {url} event={$event} onClose={closeReply} onSubmit={closeReply} />
 {/if}

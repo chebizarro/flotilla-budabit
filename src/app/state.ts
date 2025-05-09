@@ -66,6 +66,7 @@ import {
 } from "@welshman/app"
 import type {Thunk, Relay} from "@welshman/app"
 import {deriveEvents, deriveEventsMapped, withGetter, synced} from "@welshman/store"
+import type { AddressPointer } from "nostr-tools/nip19"
 
 export const fromCsv = (s: string) => (s || "").split(",").filter(identity)
 
@@ -230,6 +231,30 @@ export const deriveEvent = (idOrAddress: string, hints: string[] = []) => {
     (events: TrustedEvent[]) => {
       if (!attempted && events.length === 0) {
         load({relays, filters})
+        attempted = true
+      }
+
+      return events[0]
+    },
+  )
+}
+
+export const deriveNaddrEvent = (naddr: string, hints: string[] = []) => {
+  let attempted = false
+  const decoded = nip19.decode(naddr).data as AddressPointer
+  const fallbackRelays = [...hints, ...INDEXER_RELAYS]
+  const relays = decoded.relays?.length > 0 ? decoded.relays : fallbackRelays
+  const filters = [{
+    authors: [decoded.pubkey],
+    kinds: [decoded.kind],
+    "#d": [decoded.identifier],
+  }]
+
+  return derived(
+    deriveEvents(repository, {filters}),
+    (events: TrustedEvent[]) => {
+      if (!attempted && events.length === 0) {
+        load({relays: relays as string[], filters})
         attempted = true
       }
 

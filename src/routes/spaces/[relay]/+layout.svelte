@@ -16,7 +16,7 @@
   import {decodeRelay, userRoomsByUrl} from "@app/state"
   import {pullConservatively} from "@app/requests"
   import {notifications} from "@app/notifications"
-    import { FREELANCE_JOB } from "@src/lib/util"
+    import { FREELANCE_JOB, GIT_REPO } from "@src/lib/util"
   interface Props {
     children?: import("svelte").Snippet
   }
@@ -66,6 +66,7 @@
       relays,
       filters: [
         {kinds: [GROUP_META]},
+        {kinds: [GIT_REPO]},
         {kinds: [THREAD, EVENT_TIME], since},
         {kinds: [COMMENT], "#K": [String(THREAD), String(EVENT_TIME)], since},
         {kinds: [FREELANCE_JOB], "#s": ["0"]},

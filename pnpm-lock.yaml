@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  ui: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/ui
+  '@nostr-git/ui': link:../../../Library/pnpm/global/5/node_modules/@nostr-git/ui
+  '@nostr-git/shared-types': link:../../../Library/pnpm/global/5/node_modules/@nostr-git/shared-types
+
 importers:
 
   .:
@@ -26,12 +31,21 @@ importers:
       '@capacitor/keyboard':
         specifier: ^7.0.0
         version: 7.0.1(@capacitor/core@7.2.0)
+      '@lucide/svelte':
+        specifier: ^0.509.0
+        version: 0.509.0(svelte@5.25.10)
       '@noble/curves':
         specifier: ^1.5.0
         version: 1.8.1
       '@noble/hashes':
         specifier: ^1.4.0
         version: 1.7.1
+      '@nostr-git/shared-types':
+        specifier: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/shared-types
+        version: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/shared-types
+      '@nostr-git/ui':
+        specifier: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/ui
+        version: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/ui
       '@poppanator/sveltekit-svg':
         specifier: ^4.2.1
         version: 4.2.1(rollup@2.79.2)(svelte@5.25.10)(svgo@3.3.2)(vite@5.4.17(@types/node@22.14.0)(terser@5.39.0))
@@ -78,8 +92,8 @@ importers:
         specifier: ^0.2.0
         version: 0.2.0(typescript@5.8.3)
       '@welshman/signer':
-        specifier: ^0.2.1
-        version: 0.2.1(nostr-signer-capacitor-plugin@0.0.4(@capacitor/core@7.2.0))(typescript@5.8.3)(ws@8.18.2)
+        specifier: ^0.2.3
+        version: 0.2.3(nostr-signer-capacitor-plugin@0.0.4(@capacitor/core@7.2.0))(typescript@5.8.3)(ws@8.18.2)
       '@welshman/store':
         specifier: ^0.2.0
         version: 0.2.0(typescript@5.8.3)
@@ -1138,6 +1152,11 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
+  '@lucide/svelte@0.509.0':
+    resolution: {integrity: sha512-rG/oNz5HiuG+9xZawNxD08x5sIgvfIcFVDx7J2YAOHNK9+zDAro/DAhWLOdmE0eag5CYzxwAWh8LVowXpZvW/g==}
+    peerDependencies:
+      svelte: ^5
+
   '@noble/ciphers@0.5.3':
     resolution: {integrity: sha512-B0+6IIHiqEs3BPMT0hcRmHvEj2QHOLu+uwt+tqDDeVd0oyVzh7BPrDcPjRnV1PV/5LaknXJJQvOuRGR0zQJz+w==}
 
@@ -1745,6 +1764,11 @@ packages:
 
   '@welshman/signer@0.2.1':
     resolution: {integrity: sha512-noHlggrExsClomHSbwY4WM0TOMs17JvNYm4sTvsH9RsWzgw0HL3Ie11roa1l6bFMBZ6uSTX7CSoxvy70z3ad2Q==}
+    peerDependencies:
+      nostr-signer-capacitor-plugin: ~0.0.4
+
+  '@welshman/signer@0.2.3':
+    resolution: {integrity: sha512-Nm08yItlAfauyIwy9++ys4bdKfleJIpoXaIaSF2EzeJKkRmQSHDiOk6q58uLaIsCKsZ6UQ0pprw7cEA04NK6vA==}
     peerDependencies:
       nostr-signer-capacitor-plugin: ~0.0.4
 
@@ -6035,6 +6059,10 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.0
 
+  '@lucide/svelte@0.509.0(svelte@5.25.10)':
+    dependencies:
+      svelte: 5.25.10
+
   '@noble/ciphers@0.5.3': {}
 
   '@noble/curves@1.1.0':
@@ -6776,6 +6804,19 @@ snapshots:
       - ws
 
   '@welshman/signer@0.2.1(nostr-signer-capacitor-plugin@0.0.4(@capacitor/core@7.2.0))(typescript@5.8.3)(ws@8.18.2)':
+    dependencies:
+      '@noble/curves': 1.8.1
+      '@noble/hashes': 1.7.1
+      '@welshman/lib': 0.2.1
+      '@welshman/net': 0.2.2(typescript@5.8.3)(ws@8.18.2)
+      '@welshman/util': 0.2.2(typescript@5.8.3)
+      nostr-signer-capacitor-plugin: 0.0.4(@capacitor/core@7.2.0)
+      nostr-tools: 2.12.0(typescript@5.8.3)
+    transitivePeerDependencies:
+      - typescript
+      - ws
+
+  '@welshman/signer@0.2.3(nostr-signer-capacitor-plugin@0.0.4(@capacitor/core@7.2.0))(typescript@5.8.3)(ws@8.18.2)':
     dependencies:
       '@noble/curves': 1.8.1
       '@noble/hashes': 1.7.1

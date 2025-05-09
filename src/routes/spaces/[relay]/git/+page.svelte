@@ -1,7 +1,13 @@
 <script lang="ts">
   import {onMount} from "svelte"
   import {page} from "$app/stores"
-  import {getPubkeyTagValues, getListTags, Address, NAMED_BOOKMARKS, type TrustedEvent} from "@welshman/util"
+  import {
+    getPubkeyTagValues,
+    getListTags,
+    Address,
+    NAMED_BOOKMARKS,
+    type TrustedEvent,
+  } from "@welshman/util"
   import {GIT_REPO} from "@src/lib/util"
   import {userMutes} from "@welshman/app"
   import {fly} from "@lib/transition"
@@ -19,12 +25,13 @@
   import {pubkey} from "@welshman/app"
   import {getAddressTags} from "@welshman/util"
   import {Router} from "@welshman/router"
+  import PageContent from "@src/lib/components/PageContent.svelte"
 
   const url = decodeRelay($page.params.relay)
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
   const repos: TrustedEvent[] = $state([])
   let loading = $state(true)
-  let loadedBookmarkedRepos: Array<{address: string, event: TrustedEvent, relayHint: string}> = []
+  let loadedBookmarkedRepos: Array<{address: string; event: TrustedEvent; relayHint: string}> = []
 
   async function loadBookmarkedRepos() {
     repos.length = 0
@@ -76,26 +83,26 @@
   }
 </script>
 
-<div class="relative flex h-screen flex-col">
-  <PageBar>
-    {#snippet icon()}
-      <div class="center">
+<PageBar>
+  {#snippet icon()}
+    <div class="center">
+      <Icon icon="git" />
+    </div>
+  {/snippet}
+  {#snippet title()}
+    <strong>Followed Repos</strong>
+  {/snippet}
+  {#snippet action()}
+    <div class="row-2">
+      <Button class="btn btn-primary btn-sm" disabled={loading} onclick={onAddRepo}>
         <Icon icon="git" />
-      </div>
-    {/snippet}
-    {#snippet title()}
-      <strong>Followed Repos</strong>
-    {/snippet}
-    {#snippet action()}
-      <div class="row-2">
-        <Button class="btn btn-primary btn-sm" disabled={loading} onclick={onAddRepo}>
-          <Icon icon="git" />
-          <span>Add Repo</span>
-        </Button>
-        <MenuSpaceButton {url} />
-      </div>
-    {/snippet}
-  </PageBar>
+        <span>Add Repo</span>
+      </Button>
+      <MenuSpaceButton {url} />
+    </div>
+  {/snippet}
+</PageBar>
+<PageContent>
   <div class="flex flex-grow flex-col gap-2 overflow-auto p-2">
     {#if loading || repos.length === 0}
       <p class="flex h-10 items-center justify-center py-20" out:fly>
@@ -115,4 +122,4 @@
       {/each}
     {/if}
   </div>
-</div>
+</PageContent>

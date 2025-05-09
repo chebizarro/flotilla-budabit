@@ -1,13 +1,14 @@
 import {config} from "dotenv"
 import daisyui from "daisyui"
 import themes from "daisyui/src/theming/themes"
+import uiPreset from '@nostr-git/ui/tailwind.preset.js';
 
 config({path: ".env.local"})
 config({path: ".env"})
 
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./src/**/*.{html,js,svelte,ts}"],
+  content: ["./src/**/*.{html,js,svelte,ts}", "./node_modules/@nostr-git/ui/src/**/*.{html,js,svelte,ts}"],
   theme: {
     extend: {},
     zIndex: {
@@ -23,6 +24,7 @@ export default {
     },
   },
   plugins: [daisyui],
+  presets: [uiPreset],
   daisyui: {
     themes: [
       {

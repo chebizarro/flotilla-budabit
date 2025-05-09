@@ -1,47 +1,61 @@
 <script lang="ts">
-  import {decodeRelay, deriveEventsForUrl, getEventsForUrl} from "@src/app/state"
-  import {FREELANCE_JOB} from "@src/lib/util"
-  import {COMMENT, getListTags, getPubkeyTagValues, type TrustedEvent} from "@welshman/util"
   import {onMount} from "svelte"
-  import {page} from "$app/state"
-  import {derived, readable, type Readable} from "svelte/store"
-  import {setChecked} from "@src/app/notifications"
-  import PageBar from "@src/lib/components/PageBar.svelte"
-  import Icon from "@src/lib/components/Icon.svelte"
-  import MenuSpaceButton from "@src/app/components/MenuSpaceButton.svelte"
-  import Button from "@src/lib/components/Button.svelte"
-  import Spinner from "@src/lib/components/Spinner.svelte"
-  import JobItem from "@src/app/components/JobItem.svelte"
-  import {fly} from "@src/lib/transition"
-  import Link from "@src/lib/components/Link.svelte"
-  import {makeFeed} from "@src/app/requests"
-  import PageContent from "@src/lib/components/PageContent.svelte"
+  import {page} from "$app/stores"
+  import {sortBy, min, nthEq} from "@welshman/lib"
+  import type {TrustedEvent} from "@welshman/util"
+  import {FREELANCE_JOB} from "@src/lib/util"
+  import {COMMENT, getListTags, getPubkeyTagValues} from "@welshman/util"
   import {userMutes} from "@welshman/app"
+  import {fly} from "@lib/transition"
+  import Icon from "@lib/components/Icon.svelte"
+  import Button from "@lib/components/Button.svelte"
+  import PageBar from "@lib/components/PageBar.svelte"
+  import PageContent from "@lib/components/PageContent.svelte"
+  import Spinner from "@lib/components/Spinner.svelte"
+  import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
+  import JobItem from "@app/components/JobItem.svelte"
+  import Link from "@lib/components/Link.svelte"
+  import {decodeRelay, getEventsForUrl, INDEXER_RELAYS} from "@app/state"
+  import {setChecked} from "@app/notifications"
+  import {makeFeed} from "@app/requests"
 
-  const url = decodeRelay(page.params.relay)
+  const url = decodeRelay($page.params.relay)
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
   const jobs: TrustedEvent[] = $state([])
   const comments: TrustedEvent[] = $state([])
+  const jobFilter = {kinds: [FREELANCE_JOB], "#s": ["0"]}
+  const commentFilter = {kinds: [COMMENT], "#K": [String(FREELANCE_JOB)]}
 
-  let element: HTMLElement | undefined = $state()
   let loading = $state(true)
-  const limit = 20
+  let element: HTMLElement | undefined = $state()
+
+  const events = $derived.by(() => {
+    const scores = new Map<string, number>()
+    for (const comment of comments) {
+      const id = comment.tags.find(nthEq(0, "E"))?.[1]
+      if (id) {
+        scores.set(id, min([scores.get(id), -comment.created_at]))
+      }
+    }
+    return sortBy(
+      (e: TrustedEvent) => min([scores.get(e.id), -e.created_at]),
+      jobs.filter((e: TrustedEvent) => !mutedPubkeys.includes(e.pubkey)),
+    )
+  })
 
   onMount(() => {
     const {cleanup} = makeFeed({
       element: element!,
-      relays: [url],
-      feedFilters: [{kinds: [FREELANCE_JOB]}],
-      subscriptionFilters: [
-        {kinds: [FREELANCE_JOB]},
-        {kinds: [COMMENT], "#K": [String(FREELANCE_JOB)]},
-      ],
-      initialEvents: getEventsForUrl(url, [{kinds: [FREELANCE_JOB], limit}]),
+      relays: INDEXER_RELAYS,
+      feedFilters: [jobFilter, commentFilter],
+      subscriptionFilters: [jobFilter, commentFilter],
+      initialEvents: getEventsForUrl(url, [
+        {kinds: [FREELANCE_JOB, COMMENT], "#s": ["0"], limit: 10},
+      ]),
       onEvent: event => {
-        if (event.kind === FREELANCE_JOB) {
+        if (event.kind === FREELANCE_JOB && !mutedPubkeys.includes(event.pubkey)) {
           jobs.push(event)
         }
-
         if (event.kind === COMMENT) {
           comments.push(event)
         }
@@ -50,10 +64,9 @@
         loading = false
       },
     })
-
     return () => {
       cleanup()
-      setChecked(page.url.pathname)
+      setChecked($page.url.pathname)
     }
   })
 </script>
@@ -83,25 +96,28 @@
   {/snippet}
 </PageBar>
 
-<PageContent bind:element class="flex flex-col gap-2 p-2 pt-4">
-  {#each jobs as event (event.id)}
-    <div class={"job-event" + event.id} in:fly>
-      <JobItem
-        {url}
-        {event}
-        showComment={true}
-        showExternal={true}
-        showThreadAction={true}
-        showActivity={true} />
+<PageContent bind:element class="flex flex-grow flex-col overflow-auto p-3">
+  {#if loading}
+    <div class="flex h-32 items-center justify-center">
+      <Spinner {loading}>Looking for jobs...</Spinner>
     </div>
-  {/each}
-  <p class="flex h-10 items-center justify-center py-20" out:fly>
-    <Spinner {loading}>
-      {#if loading}
-        Looking for jobs...
-      {:else if jobs.length === 0}
-        No Jobs found.
-      {/if}
-    </Spinner>
-  </p>
+  {:else if events.length === 0}
+    <div class="flex h-32 items-center justify-center text-gray-400">
+      <Icon icon="jobs" class="mr-2" /> No Jobs found.
+    </div>
+  {:else}
+    <div class="flex flex-col gap-3">
+      {#each events as event: TrustedEvent (event.id)}
+        <div in:fly>
+          <JobItem
+            {url}
+            {event}
+            showComment={true}
+            showExternal={true}
+            showThreadAction={true}
+            showActivity={true} />
+        </div>
+      {/each}
+    </div>
+  {/if}
 </PageContent>

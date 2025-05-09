@@ -30,6 +30,7 @@
   import type {AddressPointer} from "nostr-tools/nip19"
   import {fly} from "svelte/transition"
   import {Router} from "@welshman/router"
+  import {RepoHeader} from "@nostr-git/ui"
 
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
@@ -224,6 +225,7 @@
     {/snippet}
   </PageBar>
   {#if !loading && repoEvent}
+    <RepoHeader event={repoEvent} />
     <GitItem {url} event={repoEvent} showIssues={false} />
     <Divider />
     {#if orderedElements}
