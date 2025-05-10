@@ -9,6 +9,7 @@
   const relayArray = Array.isArray(relay) ? relay : [relay]
   const eventStore = deriveNaddrEvent(id, relayArray)
   let {children} = $props()
+  let activeTab = $page.url.pathname.split("/").pop()
 </script>
 
 <PageContent class="flex flex-grow flex-col gap-2 overflow-auto p-8">
@@ -17,29 +18,29 @@
   {:else if !$eventStore}
     <div class="p-4 text-center text-red-500">Repository not found.</div>
   {:else}
-    <RepoHeader event={$eventStore as RepoAnnouncementEvent}>
-      {#snippet children()}
-        <RepoTab tabValue="overview" label="Overview" href="overview">
+    <RepoHeader event={$eventStore as RepoAnnouncementEvent} activeTab={activeTab}>
+      {#snippet children(activeTab)}
+        <RepoTab tabValue="overview" label="Overview" href="." {activeTab}>
           {#snippet icon()}
             <FileCode class="h-4 w-4" />
           {/snippet}
         </RepoTab>
-        <RepoTab tabValue="code" label="Code" href={`./${id}/code`}>
+        <RepoTab tabValue="code" label="Code" href="code" {activeTab}>
           {#snippet icon()}
             <GitBranch class="h-4 w-4" />
           {/snippet}
         </RepoTab>
-        <RepoTab tabValue="issues" label="Issues" href="issues">
+        <RepoTab tabValue="issues" label="Issues" href="issues" {activeTab}>
           {#snippet icon()}
             <CircleAlert class="h-4 w-4" />
           {/snippet}
         </RepoTab>
-        <RepoTab tabValue="patches" label="Patches" href="patches">
+        <RepoTab tabValue="patches" label="Patches" href="patches" {activeTab}>
           {#snippet icon()}
             <GitPullRequest class="h-4 w-4" />
           {/snippet}
         </RepoTab>
-        <RepoTab tabValue="wiki" label="Wiki" href="wiki">
+        <RepoTab tabValue="wiki" label="Wiki" href="wiki" {activeTab}>
           {#snippet icon()}
             <Book class="h-4 w-4" />
           {/snippet}

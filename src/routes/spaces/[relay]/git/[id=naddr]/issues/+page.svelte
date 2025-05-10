@@ -8,19 +8,22 @@
   import {load} from "@welshman/net"
   import {onMount} from "svelte"
   import {setChecked} from "@src/app/notifications"
+  import {nthEq} from "@welshman/lib"
   const {id, relay} = $page.params
   const relayArray = Array.isArray(relay) ? relay : [relay]
-  const repo = deriveNaddrEvent(id, relayArray)
+  const repo = deriveNaddrEvent(id)
   const issues = $state([])
 
   async function loadIssues() {
     issues.length = 0
     const issueFilter = {
       kinds: [GIT_ISSUE],
-      "#d": [Address.fromEvent($repo).toString()],
+      "#a": [Address.fromEvent($repo).toString()],
     }
+    const [tagId, ...relays] = $repo.tags.find(nthEq(0, "relays")) || []
+
     const issue = await load({
-      relays: relayArray,
+      relays: relays,
       filters: [issueFilter],
     })
     if (issue.length > 0) {

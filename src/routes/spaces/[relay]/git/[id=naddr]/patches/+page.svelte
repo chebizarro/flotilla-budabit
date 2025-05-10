@@ -17,7 +17,7 @@
     patches.length = 0
     const patchFilter = {
       kinds: [GIT_PATCH],
-      "#d": [Address.fromEvent($repo).toString()],
+      "#a": [Address.fromEvent($repo).toString()],
     }
     const patch = await load({
       relays: relayArray,

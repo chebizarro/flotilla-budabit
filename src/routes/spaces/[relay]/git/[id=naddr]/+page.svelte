@@ -14,24 +14,18 @@
   } from "@welshman/util"
   import {repository} from "@welshman/app"
   import {deriveEvents} from "@welshman/store"
-  import Icon from "@lib/components/Icon.svelte"
-  import PageBar from "@lib/components/PageBar.svelte"
-  import Spinner from "@lib/components/Spinner.svelte"
-  import Button from "@lib/components/Button.svelte"
-  import MenuSpaceButton from "@app/components/MenuSpaceButton.svelte"
   import {decodeRelay} from "@app/state"
   import {setChecked} from "@app/notifications"
   import {load} from "@welshman/net"
-  import GitItem from "@src/app/components/GitItem.svelte"
-  import GitIssueItem from "@src/app/components/GitIssueItem.svelte"
   import {nip19} from "nostr-tools"
   import {getRootEventTagValue} from "@src/lib/util"
   import Divider from "@src/lib/components/Divider.svelte"
   import type {AddressPointer} from "nostr-tools/nip19"
-  import {fly} from "svelte/transition"
   import {Router} from "@welshman/router"
-  import {RepoHeader} from "@nostr-git/ui"
-
+  import {Card} from "@nostr-git/ui"
+    import { GitBranch, GitCommit, Users } from "@lucide/svelte"
+    import key from "@lucide/svelte/icons/key"
+    
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
 
@@ -204,49 +198,28 @@
       setChecked($page.url.pathname)
     }
   })
+
+  const stats = [
+    { label: 'Active Branches', value: '5', icon: GitBranch },
+    { label: 'Total Commits', value: '241', icon: GitCommit },
+    { label: 'Contributors', value: '15', icon: Users },
+  ];
+
 </script>
 
 <div class="relative flex flex-col gap-3 px-2">
-  <PageBar class="mx-0">
-    {#snippet icon()}
-      <div>
-        <Button class="btn btn-neutral btn-sm" onclick={back}>
-          <Icon icon="alt-arrow-left" /> Go back
-        </Button>
-      </div>
-    {/snippet}
-    {#snippet title()}
-      <h1 class="text-center text-xl">Repo Issues</h1>
-    {/snippet}
-    {#snippet action()}
-      <div>
-        <MenuSpaceButton {url} />
-      </div>
-    {/snippet}
-  </PageBar>
-  {#if !loading && repoEvent}
-    <RepoHeader event={repoEvent} />
-    <GitItem {url} event={repoEvent} showIssues={false} />
-    <Divider />
-    {#if orderedElements}
-      {#each orderedElements as { issue: issueItem, latestStatus } (issueItem.id)}
-        {@const foundIssue = $issues!.find(i => i.id === issueItem.id) as TrustedEvent}
-        {@const status = $statuses?.find(s => s.id === latestStatus?.sid)}
-        <GitIssueItem issue={foundIssue} latestStatus={status} showThreadAction={true} />
-      {/each}
-      {#if orderedElements.length === 0}
-        <p class="flex h-10 items-center justify-center py-20" out:fly>
-          <span>No issues found.</span>
-        </p>
-      {/if}
-    {/if}
-  {:else}
-    <p class="flex h-10 items-center justify-center py-20" out:fly>
-      {#if failedToLoad}
-        <span>Failed to load issues.</span>
-      {:else}
-        <Spinner loading>Loading issues...</Spinner>
-      {/if}
-    </p>
-  {/if}
+  <div class="grid grid-cols-3 gap-4">
+    {#each stats as stat}
+      <Card class="p-4">
+        <div class="flex items-center gap-2">
+          <stat.icon class="h-5 w-5 text-muted-foreground" />
+          <div>
+            <p class="text-sm text-muted-foreground">{stat.label}</p>
+            <p class="text-2xl font-semibold">{stat.value}</p>
+          </div>
+        </div>
+      </Card>
+    {/each}
+  </div>
+
 </div>
