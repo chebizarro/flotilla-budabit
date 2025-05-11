@@ -5,7 +5,7 @@
   import {setChecked} from "@src/app/notifications"
   import {deriveNaddrEvent} from "@src/app/state"
   import {load} from "@welshman/net"
-  import {Address, GIT_PATCH} from "@welshman/util"
+  import {Address, displayPubkey, GIT_PATCH} from "@welshman/util"
   import {onMount} from "svelte"
 
   const {id, relay} = page.params
@@ -55,6 +55,6 @@
   </div>
 
   {#each patches as patch}
-    <PatchCard event={patch} />
+    <PatchCard event={patch} owner={displayPubkey(patch.pubkey)}/>
   {/each}
 </div>

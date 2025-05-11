@@ -9,6 +9,7 @@
   import {onMount} from "svelte"
   import {setChecked} from "@src/app/notifications"
   import {nthEq} from "@welshman/lib"
+  import {deriveProfile} from "@welshman/app"
   const {id, relay} = $page.params
   const relayArray = Array.isArray(relay) ? relay : [relay]
   const repo = deriveNaddrEvent(id)
@@ -59,6 +60,6 @@
   </div>
 
   {#each issues as issue}
-    <IssueCard event={issue} />
+    <IssueCard event={issue} author={deriveProfile(issue.pubkey)}/>
   {/each}
 </div>
