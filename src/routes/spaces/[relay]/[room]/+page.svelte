@@ -42,6 +42,7 @@
   import {pushToast} from "@app/toast"
 
   const {room = GENERAL} = $page.params
+  const mounted = now()
   const lastChecked = $checked[$page.url.pathname]
   const url = decodeRelay($page.params.relay)
   const filter = {kinds: [MESSAGE], "#h": [room]}
@@ -170,7 +171,8 @@
           !newMessagesSeen &&
           adjustedLastChecked &&
           event.pubkey !== $pubkey &&
-          event.created_at > adjustedLastChecked
+          event.created_at > adjustedLastChecked &&
+          event.created_at < mounted
         ) {
           elements.push({type: "new-messages", id: "new-messages"})
           newMessagesSeen = true
@@ -213,13 +215,17 @@
     }))
 
     const observer = new ResizeObserver(() => {
-      dynamicPadding!.style.minHeight = `${chatCompose!.offsetHeight}px`
+      if (dynamicPadding && chatCompose) {
+        dynamicPadding!.style.minHeight = `${chatCompose!.offsetHeight}px`
+      }
     })
 
     observer.observe(chatCompose!)
+    observer.observe(dynamicPadding!)
 
     return () => {
       observer.unobserve(chatCompose!)
+      observer.unobserve(dynamicPadding!)
     }
   })
 

@@ -55,6 +55,10 @@
   --primary-content: oklch(var(--pc));
   --secondary: oklch(var(--s));
   --secondary-content: oklch(var(--sc));
+  --sait: env(safe-area-inset-top);
+  --saib: env(safe-area-inset-bottom);
+  --sail: env(safe-area-inset-left);
+  --sair: env(safe-area-inset-right);
 }
 
 :root,
@@ -63,50 +67,80 @@ html {
   @apply bg-base-300;
 }
 
-/* ios */
+/* safe area insets */
 
-.sait {
-  padding-top: env(safe-area-inset-top);
-}
+@layer components {
+  .pt-sai {
+    padding-top: var(--sait);
+  }
 
-.sair {
-  padding-right: env(safe-area-inset-right);
-}
+  .pr-sai {
+    padding-right: var(--sair);
+  }
 
-.saib {
-  padding-bottom: env(safe-area-inset-bottom);
-}
+  .pb-sai {
+    padding-bottom: var(--saib);
+  }
 
-.sail {
-  padding-left: env(safe-area-inset-left);
-}
+  .pl-sai {
+    padding-left: var(--sail);
+  }
 
-.saix {
-  @apply sail sair;
-}
+  .px-sai {
+    @apply pl-sai pr-sai;
+  }
 
-.saiy {
-  @apply sait saib;
-}
+  .py-sai {
+    @apply pt-sai pb-sai;
+  }
 
-.sai {
-  @apply saiy saix;
-}
+  .p-sai {
+    @apply py-sai px-sai;
+  }
 
-.top-sai {
-  top: env(safe-area-inset-top);
-}
+  .mt-sai {
+    padding-top: var(--sait);
+  }
 
-.right-sai {
-  right: env(safe-area-inset-right);
-}
+  .mr-sai {
+    padding-right: var(--sair);
+  }
 
-.bottom-sai {
-  bottom: env(safe-area-inset-bottom);
-}
+  .mb-sai {
+    padding-bottom: var(--saib);
+  }
 
-.left-sai {
-  left: env(safe-area-inset-left);
+  .ml-sai {
+    padding-left: var(--sail);
+  }
+
+  .mx-sai {
+    @apply ml-sai mr-sai;
+  }
+
+  .my-sai {
+    @apply mt-sai mb-sai;
+  }
+
+  .m-sai {
+    @apply my-sai mx-sai;
+  }
+
+  .top-sai {
+    top: var(--sait);
+  }
+
+  .right-sai {
+    right: var(--sair);
+  }
+
+  .bottom-sai {
+    bottom: var(--saib);
+  }
+
+  .left-sai {
+    left: var(--sail);
+  }
 }
 
 /* utilities */
@@ -346,11 +380,11 @@ progress[value]::-webkit-progress-value {
 /* content width for fixed elements */
 
 .cw {
-  @apply w-full md:w-[calc(100%-18.5rem)];
+  @apply w-full md:left-[18.5rem] md:w-[calc(100%-18.5rem-var(--sair))];
 }
 
 .cb {
-  @apply saib bottom-14 md:bottom-0;
+  @apply md:bottom-sai bottom-[calc(var(--saib)+3.5rem)];
 }
 
 /* chat view */
@@ -360,5 +394,5 @@ progress[value]::-webkit-progress-value {
 }
 
 .chat__scroll-down {
-  @apply saib fixed bottom-28 right-4 md:bottom-16;
+  @apply fixed bottom-28 right-4 md:bottom-16;
 }

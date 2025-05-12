@@ -121,7 +121,7 @@
               <span class="ellipsize">Requires PoW {limitation?.min_pow_difficulty}</span>
             </p>
           {/if}
-          {#if supported_nips}
+          {#if Array.isArray(supported_nips)}
             <p class="badge badge-neutral">
               <span class="ellipsize">NIPs: {supported_nips.join(", ")}</span>
             </p>
@@ -219,9 +219,9 @@
       </Button>
     </div>
     {#if pubkey}
+    <Divider>Recent posts from the relay admin</Divider>
       <div class="hidden flex-col gap-2" class:!flex={relayAdminEvents.length > 0}>
-        <Divider>Recent posts from the relay admin</Divider>
-        <ProfileFeed hideLoading {url} {pubkey} bind:events={relayAdminEvents} />
+          <ProfileFeed hideLoading {url} {pubkey} bind:events={relayAdminEvents} />
       </div>
     {/if}
   </div>

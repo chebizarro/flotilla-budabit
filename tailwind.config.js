@@ -3,8 +3,8 @@ import daisyui from "daisyui"
 import themes from "daisyui/src/theming/themes"
 import uiPreset from '@nostr-git/ui/tailwind.preset.js';
 
-config({path: ".env.local"})
 config({path: ".env"})
+config({path: ".env.template"})
 
 /** @type {import('tailwindcss').Config} */
 export default {
