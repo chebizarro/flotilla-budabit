@@ -1,21 +1,21 @@
 <script lang="ts">
   import {Button, IssueCard} from "@nostr-git/ui"
-  import {Funnel, Plus} from "@lucide/svelte"
+  import {Funnel, Plus, SearchX} from "@lucide/svelte"
   import {deriveNaddrEvent} from "@app/state"
   import {page} from "$app/stores"
-  import {GIT_ISSUE} from "@welshman/util"
+  import {GIT_ISSUE, type TrustedEvent} from "@welshman/util"
   import {Address} from "@welshman/util"
   import {load} from "@welshman/net"
   import {onMount} from "svelte"
   import {setChecked} from "@src/app/notifications"
   import {nthEq} from "@welshman/lib"
   import {deriveProfile} from "@welshman/app"
-  import Profile from "@src/app/components/Profile.svelte"
   import Spinner from "@src/lib/components/Spinner.svelte"
+
   const {id, relay} = $page.params
   const relayArray = Array.isArray(relay) ? relay : [relay]
   const repo = deriveNaddrEvent(id)
-  let issues = $state([])
+  let issues = $state([] as TrustedEvent[])
   let loading = $state(true)
   let currentPage = $state(1)
   const pageSize = 10
@@ -62,10 +62,10 @@
 
 <div>
   <div
-    class="z-10 bg-background/95 supports-[backdrop-filter]:bg-background/60 sticky top-0 mb-4 flex items-center justify-between py-4 backdrop-blur">
+    class="z-10 sticky top-0 mb-4 flex items-center justify-between bg-background/95 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
     <div>
       <h2 class="text-xl font-semibold">Issues</h2>
-      <p class="text-muted-foreground text-sm">Track bugs and feature requests</p>
+      <p class="text-sm text-muted-foreground">Track bugs and feature requests</p>
     </div>
 
     <div class="flex items-center gap-2">
@@ -74,7 +74,7 @@
         Filter
       </Button>
 
-      <Button size="sm" class="bg-git hover:bg-git-hover gap-2">
+      <Button size="sm" class="gap-2 bg-git hover:bg-git-hover">
         <Plus class="h-4 w-4" />
         New Issue
       </Button>
@@ -93,22 +93,11 @@
     </div>
   {:else if issues.length === 0}
     <div class="flex flex-col items-center justify-center py-12 text-gray-500">
-      <svg
-        class="mb-2 h-8 w-8"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M9 17v-2a4 4 0 118 0v2m-6 4h4a2 2 0 002-2v-2a6 6 0 10-12 0v2a2 2 0 002 2z" />
-      </svg>
+      <SearchX class="mb-2 h-8 w-8" />
       No issues found.
     </div>
   {:else}
-    <div
-      class="bg-background flex max-h-[32rem] flex-col gap-y-4 overflow-y-auto rounded-md p-2">
+    <div class="flex max-h-[32rem] flex-col gap-y-4 overflow-y-auto rounded-md bg-background p-2">
       {#each paginatedIssues() as issue}
         <IssueCard event={issue} author={deriveProfile(issue.pubkey, relayArray)} />
       {/each}

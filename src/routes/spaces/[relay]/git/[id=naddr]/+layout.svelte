@@ -11,7 +11,7 @@
   const relayArray = Array.isArray(relay) ? relay : [relay]
   const eventStore = deriveNaddrEvent(id, relayArray)
   let {children} = $props()
-  let activeTab = $page.url.pathname.split("/").pop()
+  let activeTab: string | undefined = $page.url.pathname.split("/").pop()
 </script>
 
 <PageContent class="flex flex-grow flex-col gap-2 overflow-auto p-8">

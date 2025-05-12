@@ -8,6 +8,7 @@ overrides:
   ui: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/ui
   '@nostr-git/ui': link:../../../Library/pnpm/global/5/node_modules/@nostr-git/ui
   '@nostr-git/shared-types': link:../../../Library/pnpm/global/5/node_modules/@nostr-git/shared-types
+  '@nostr-git/core': link:../../../Library/pnpm/global/5/node_modules/@nostr-git/core
 
 importers:
 
@@ -40,6 +41,9 @@ importers:
       '@noble/hashes':
         specifier: ^1.4.0
         version: 1.7.1
+      '@nostr-git/core':
+        specifier: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/core
+        version: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/core
       '@nostr-git/shared-types':
         specifier: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/shared-types
         version: link:../../../Library/pnpm/global/5/node_modules/@nostr-git/shared-types
