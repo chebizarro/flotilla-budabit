@@ -1,5 +1,9 @@
 <script lang="ts">
-  import {onMount, tick} from "svelte"
+  import {getContext, onMount, tick} from "svelte"
+  import type {Readable} from "svelte/store"
+  import {getRepoFileContentFromEvent} from "@nostr-git/core"
+  import markdownit from "markdown-it"
+
   import {page} from "$app/stores"
   import {sortBy, nthEq, now} from "@welshman/lib"
   import {
@@ -23,9 +27,8 @@
   import type {AddressPointer} from "nostr-tools/nip19"
   import {Router} from "@welshman/router"
   import {Card} from "@nostr-git/ui"
-    import { GitBranch, GitCommit, Users } from "@lucide/svelte"
-    import key from "@lucide/svelte/icons/key"
-    
+  import {GitBranch, GitCommit, Users} from "@lucide/svelte"
+
   const {relay, id} = $page.params
   const url = decodeRelay(relay)
 
@@ -200,11 +203,30 @@
   })
 
   const stats = [
-    { label: 'Active Branches', value: '5', icon: GitBranch },
-    { label: 'Total Commits', value: '241', icon: GitCommit },
-    { label: 'Contributors', value: '15', icon: Users },
-  ];
+    {label: "Active Branches", value: "5", icon: GitBranch},
+    {label: "Total Commits", value: "241", icon: GitCommit},
+    {label: "Contributors", value: "15", icon: Users},
+  ]
 
+  const eventStore = getContext<Readable<TrustedEvent>>("repo-event")
+
+  let readme = $state<string | undefined>(undefined)
+  let renderedReadme = $state<string | undefined>(undefined)
+  const md = markdownit({
+    html: true,
+    linkify: true,
+    typographer: true,
+  })
+
+  $effect(async () => {
+    if (!$eventStore) return
+    readme = await getRepoFileContentFromEvent({
+      repoEvent: $eventStore,
+      branch: "master",
+      path: "README.md",
+    })
+    renderedReadme = readme ? md.render(readme) : ""
+  })
 </script>
 
 <div class="relative flex flex-col gap-3 px-2">
@@ -221,5 +243,40 @@
       </Card>
     {/each}
   </div>
+  {#if renderedReadme}
+    <div class="prose prose-slate max-w-none bg-muted border border-muted rounded-xl shadow-md p-8 overflow-x-auto dark:prose-invert prose-headings:font-bold prose-headings:mb-3 prose-headings:mt-8 prose-h1:text-3xl prose-h2:text-2xl prose-h3:text-xl prose-p:leading-relaxed prose-p:my-4 prose-ul:my-4 prose-ol:my-4 prose-li:marker:text-primary prose-blockquote:border-l-4 prose-blockquote:border-accent prose-blockquote:bg-accent/10 prose-blockquote:p-4 prose-blockquote:rounded prose-blockquote:my-6 prose-table:my-6 prose-table:border prose-table:border-muted prose-th:bg-muted/50 prose-th:font-semibold prose-th:p-3 prose-td:p-3 prose-pre:bg-zinc-900 prose-pre:rounded-lg prose-pre:p-4 prose-code:bg-zinc-800 prose-code:rounded-md prose-code:px-2 prose-code:py-1 prose-code:text-sm">
+      {@html renderedReadme}
+    </div>
+  {:else}
+    <div class="text-muted-foreground">No README.md found.</div>
+  {/if}
 
+<style>
+  /* Further polish for markdown rendering in README */
+  .prose h1, .prose h2, .prose h3 {
+    letter-spacing: -0.01em;
+  }
+  .prose h1 {
+    border-bottom: 1px solid theme('colors.border');
+    padding-bottom: 0.3em;
+  }
+  .prose blockquote {
+    border-left-width: 4px;
+    border-color: var(--tw-prose-accent);
+    background: var(--tw-prose-accent-bg, rgba(59,130,246,0.05));
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin: 1.5rem 0;
+  }
+  .prose pre {
+    margin: 1.5rem 0;
+  }
+  .prose table {
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+  .prose th, .prose td {
+    border: 1px solid theme('colors.zinc.700');
+  }
+</style>
 </div>

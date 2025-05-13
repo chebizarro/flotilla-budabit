@@ -12,6 +12,9 @@
   import {deriveProfile} from "@welshman/app"
   import Spinner from "@src/lib/components/Spinner.svelte"
 
+  // Receive eventStore from layout via $props (Svelte 5 idiom)
+  const { eventStore } = $props();
+
   const {id, relay} = $page.params
   const relayArray = Array.isArray(relay) ? relay : [relay]
   const repo = deriveNaddrEvent(id)

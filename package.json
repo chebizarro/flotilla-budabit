@@ -75,6 +75,7 @@
     "fuse.js": "^7.0.0",
     "husky": "^9.1.6",
     "idb": "^8.0.0",
+    "markdown-it": "^14.1.0",
     "nostr-signer-capacitor-plugin": "^0.0.4",
     "nostr-tools": "^2.7.2",
     "prettier-plugin-tailwindcss": "^0.6.5",

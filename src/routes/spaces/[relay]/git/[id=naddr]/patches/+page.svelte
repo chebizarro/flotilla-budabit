@@ -3,13 +3,17 @@
   import {Funnel, Plus, SearchX} from "@lucide/svelte"
   import {Button, PatchCard} from "@nostr-git/ui"
   import {setChecked} from "@src/app/notifications"
+  import {onMount} from "svelte"
+  import {GIT_PATCH, type TrustedEvent} from "@welshman/util"
+  import {Address} from "@welshman/util"
+  import {load} from "@welshman/net"
+  import {nthEq} from "@welshman/lib"
   import {deriveNaddrEvent} from "@src/app/state"
   import Spinner from "@src/lib/components/Spinner.svelte"
   import {deriveProfile} from "@welshman/app"
-  import {nthEq} from "@welshman/lib"
-  import {load} from "@welshman/net"
-  import {Address, GIT_PATCH, type TrustedEvent} from "@welshman/util"
-  import {onMount} from "svelte"
+
+  // Receive eventStore from layout via $props (Svelte 5 idiom)
+  const { eventStore } = $props();
 
   const {id, relay} = page.params
   const relayArray = Array.isArray(relay) ? relay : [relay]
@@ -18,10 +22,14 @@
   let loading = $state(true)
   let currentPage = $state(1)
   const pageSize = 10
-  const pageCount = $derived(() => Math.max(1, Math.ceil(patches.length / pageSize)))
-  const paginatedPatches = $derived(() =>
-    patches.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-  )
+
+  function pageCount() {
+    return Math.max(1, Math.ceil(patches.length / pageSize))
+  }
+
+  function paginatedPatches() {
+    return patches.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  }
 
   function prevPage() {
     if (currentPage > 1) currentPage = currentPage - 1
