@@ -22,6 +22,7 @@ export const FREELANCE_JOB = 32767
   // GIT_REPOSITORY is mistakenly defined in welshman as 30403 which
   // is a Draft Classified listing (nip99) kind in reality.
 export const GIT_REPO = 30617
+export const GIT_REPO_STATE = 30618
 export const GIT_REPO_BOOKMARK_DTAG = 'followed_git_repos'
 
 export enum GitIssueStatus {
