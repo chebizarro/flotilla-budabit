@@ -94,8 +94,10 @@
 
 <div class="flex flex-wrap items-center justify-between gap-2">
   <div class="flex flex-grow flex-wrap justify-end gap-2">
-    <Button class="btn btn-primary btn-sm" disabled={!gitworkshopLink}>
-      <Link external class="w-full cursor-pointer" href={gitworkshopLink}>
+    <Button class="btn btn-primary btn-sm">
+      <Link
+        class="w-full cursor-pointer"
+        href={makeGitPath(url, Address.fromEvent(event).toNaddr())}>
         <span class="">Browse</span>
       </Link>
     </Button>
@@ -103,9 +105,9 @@
       <Button class="btn btn-secondary btn-sm">
         <Link
           class="flex h-full w-full cursor-pointer items-center"
-          href={makeGitPath(url, Address.fromEvent(event).toNaddr())}>
+          href={makeGitPath(url, Address.fromEvent(event).toNaddr()) + "/issues"}>
           <Spinner loading={loadingIssues} minHeight={"min-h-6"}>
-            <span class="">{"Issues(" + issueCount + ")"}</span>
+            <span class="">{"Issues (" + issueCount + ")"}</span>
           </Spinner>
         </Link>
       </Button>

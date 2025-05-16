@@ -1,6 +1,6 @@
 <script lang="ts">
   import {getContext, onMount} from "svelte"
-  import {FileView} from "@nostr-git/ui"
+  import {FileView, Tabs, TabsList, TabsTrigger} from "@nostr-git/ui"
   import {GitBranch} from "@lucide/svelte"
   import {listRepoFilesFromEvent, type FileEntry} from "@nostr-git/core"
   import {load} from "@welshman/net"
@@ -9,11 +9,13 @@
   import {parseRepoStateEvent, type TrustedEvent} from "@nostr-git/shared-types"
   import {page} from "$app/stores"
   import type {Readable} from "svelte/store"
-    import { nthEq } from "@welshman/lib"
+  import {nthEq} from "@welshman/lib"
+  import Popover from "@src/lib/components/Popover.svelte"
+  import Button from "@src/lib/components/Button.svelte"
+  import {fly} from "svelte/transition"
+  import Icon from "@lib/components/Icon.svelte"
 
   const {id, relay} = $page.params
-  const relayArray = Array.isArray(relay) ? relay : [relay]
-
   const eventStore = getContext<Readable<TrustedEvent>>("repo-event")
 
   // UI state
@@ -113,6 +115,16 @@
     }
   }
 
+  let showMenu = false
+
+  const toggleMenu = () => {
+    showMenu = !showMenu
+  }
+
+  const openMenu = () => {
+    showMenu = true
+  }
+
   onMount(() => {
     tryLoadRepoStateEvent()
   })
@@ -146,19 +158,27 @@
         <div class="text-muted-foreground">No files available for this branch.</div>
       </div>
     {:else}
-      <div class="mb-4 flex items-center gap-2">
-        <GitBranch class="h-5 w-5 text-muted-foreground" />
-        <select
-          class="rounded border border-border bg-secondary px-2 py-1"
-          bind:value={selectedBranch}
-          on:change={onBranchChange}>
-          {#each branches as branch}
-            <option value={branch.name}>
-              {branch.name}
-              {branch.isDefault ? " (default)" : ""}
-            </option>
-          {/each}
-        </select>
+      <div class="mb-4">
+        <Button
+          onclick={openMenu}
+          class="flex items-center gap-3 text-left transition-all hover:text-base-content">
+          <GitBranch class="h-5 w-5 text-muted-foreground" />
+          <span>{selectedBranch}</span>
+          <Icon icon="alt-arrow-down" />
+        </Button>
+        {#if showMenu}
+          <Popover hideOnClick onClose={toggleMenu}>
+            <ul transition:fly class="menu z-popover mt-2 rounded-box bg-base-100 p-2 shadow-xl">
+              {#each branches as branch}
+                <li>
+                  <Button onclick={() => (selectedBranch = branch.name)}>
+                    <span>{branch.name}</span>
+                  </Button>
+                </li>
+              {/each}
+            </ul>
+          </Popover>
+        {/if}
       </div>
       <div class="border-t border-border pt-4">
         {#if files.length === 0}

@@ -30,17 +30,29 @@
   const url = decodeRelay($page.params.relay)
   const mutedPubkeys = getPubkeyTagValues(getListTags($userMutes))
   const repos: TrustedEvent[] = $state([])
+
   let loading = $state(true)
   let loadedBookmarkedRepos: Array<{address: string; event: TrustedEvent; relayHint: string}> = []
 
   async function loadBookmarkedRepos() {
     repos.length = 0
     loading = true
-    const bookmarkFilter = {kinds: [NAMED_BOOKMARKS], authors: [pubkey.get()!]}
-    const bookmark = await load({
-      relays: [url, ...Router.get().FromUser().getUrls()],
-      filters: [bookmarkFilter],
-    })
+    // --- Logging bookmark filter and relays ---
+    const bookmarkFilter = { kinds: [NAMED_BOOKMARKS], authors: [pubkey.get()!] };
+    const bookmarkRelays = [url, ...Router.get().FromUser().getUrls()];
+    console.log("[RepoLoad] Bookmark filter:", bookmarkFilter, "Relays:", bookmarkRelays);
+    let bookmark = [];
+    try {
+      bookmark = await load({
+        relays: bookmarkRelays,
+        filters: [bookmarkFilter],
+      });
+      console.log("[RepoLoad] Bookmark result:", bookmark);
+    } catch (e) {
+      console.error("[RepoLoad] Bookmark load() error:", e, "Relays:", bookmarkRelays, "Filter:", bookmarkFilter);
+      loading = false;
+      return;
+    }
     if (bookmark.length > 0) {
       const aTagList = getAddressTags(bookmark[0].tags)
       const dTagValues: string[] = []
@@ -51,13 +63,22 @@
         dTagValues.push(value.split(":")[2])
         authors.push(value.split(":")[1])
         relaysOfAddresses.set(value, relayHint || "")
-        if (relayHint) relayHints.push(relayHint)
+        if (relayHint && !relayHints.includes(relayHint)) relayHints.push(relayHint)
       })
-      const repoFilter = {kinds: [GIT_REPO], authors, "#d": dTagValues}
-      const loadedRepos = await load({
-        relays: relayHints,
-        filters: [repoFilter],
-      })
+      const repoFilter = { kinds: [GIT_REPO], authors, "#d": dTagValues };
+      console.log("[RepoLoad] Repo filter:", repoFilter, "Relay hints:", relayHints);
+      let loadedRepos = [];
+      try {
+        loadedRepos = await load({
+          relays: relayHints,
+          filters: [repoFilter],
+        });
+        console.log("[RepoLoad] Loaded repos result:", loadedRepos);
+      } catch (e) {
+        console.error("[RepoLoad] Repo load() error:", e, "Relays:", relayHints, "Filter:", repoFilter);
+        loading = false;
+        return;
+      }
       loadedBookmarkedRepos = loadedRepos.map(repo => {
         const address = Address.fromEvent(repo)
         const addressString = address.toString()
@@ -66,6 +87,7 @@
         return {address: addressString, event: repo, relayHint: hint}
       })
       loadedRepos.filter(e => !mutedPubkeys.includes(e.pubkey)).forEach(e => repos.push(e))
+      console.log(loadedRepos)
     }
     loading = false
   }
