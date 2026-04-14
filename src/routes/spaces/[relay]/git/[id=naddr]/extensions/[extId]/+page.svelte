@@ -94,13 +94,18 @@
   let loading = $state(true)
   let error = $state<string | null>(null)
   let retryCount = $state(0)
-  let iframeSrc = $state<string | undefined>(undefined)
 
-  // Initialize iframe src when entrypoint is available
-  $effect(() => {
-    if (extEntrypoint && !iframeSrc) {
-      iframeSrc = extEntrypoint
-    }
+  // Derive iframeSrc directly from extEntrypoint (with cache-bust on retry)
+  // to avoid the about:blank onload race.  The iframe element only renders
+  // when extEntrypoint is truthy (template guard), so this always produces a
+  // real URL when the iframe exists.
+  const iframeSrc = $derived.by(() => {
+    if (!extEntrypoint) return undefined
+    if (retryCount === 0) return extEntrypoint
+    const url = new URL(extEntrypoint)
+    url.searchParams.set('_retry', retryCount.toString())
+    url.searchParams.set('_t', Date.now().toString())
+    return url.toString()
   })
 
   function buildRepoContext(): RepoContext | undefined {
@@ -167,11 +172,28 @@
     error = null
     loading = false
 
-    if (!iframeEl?.contentWindow) {
-      error = "Extension iframe not available."
+    // Capture a local reference — the bound iframeEl could become stale if
+    // Svelte tears down the block during a reactive settings update.
+    const iframe = iframeEl
+
+    if (!iframe?.contentWindow) {
+      // The iframe may have been detached by a reactive re-render between the
+      // browser firing onload and this handler running.  Retry once after a
+      // microtask to give Svelte time to re-bind the element.
+      requestAnimationFrame(() => {
+        if (iframeEl?.contentWindow) {
+          initBridge(iframeEl)
+        } else {
+          error = "Extension iframe not available — try reloading the page."
+        }
+      })
       return
     }
 
+    initBridge(iframe)
+  }
+
+  function initBridge(iframe: HTMLIFrameElement): void {
     try {
       const ext = createExtensionInstance()
       if (!ext) {
@@ -179,13 +201,15 @@
         return
       }
       // Add iframe reference so bridge.post() can send messages
-      ;(ext as any).iframe = iframeEl
+      ;(ext as any).iframe = iframe
       const b = new ExtensionBridge(ext)
-      b.attachHandlers(iframeEl.contentWindow)
+      b.attachHandlers(iframe.contentWindow)
       extInstance = ext
       bridge = b
       ready = true
       retryCount = 0
+      error = null
+      loading = false
       // Context will be sent reactively when repo data is available
     } catch (e) {
       error = `Failed to initialize extension: ${String(e)}`
@@ -199,16 +223,13 @@
   }
 
   function retryLoad(): void {
+    // Tear down existing bridge before reloading
+    bridge?.detach()
+    bridge = null
+    ready = false
     error = null
     loading = true
-    retryCount++
-    // Force iframe reload by updating src with cache buster
-    if (extEntrypoint) {
-      const url = new URL(extEntrypoint)
-      url.searchParams.set('_retry', retryCount.toString())
-      url.searchParams.set('_t', Date.now().toString())
-      iframeSrc = url.toString()
-    }
+    retryCount++  // triggers iframeSrc cache-bust via $derived
   }
 
   // Send context updates when ready and repo data is available
