@@ -35,6 +35,8 @@ const NIP100_ALLOWED_KINDS = new Set<number>([
   5401, 5402,     // Hive CI workflow run / result
   30100,          // Loom status
   10100,          // Loom worker advertisement
+  1063,           // NIP-94 file metadata (release artifacts)
+  30000,          // NIP-51 people list
 ])
 const MAX_NOSTR_QUERY_LIMIT = 500
 
@@ -642,6 +644,43 @@ registerBridgeHandler("context:getRepo", (payload, ext) => {
     }
   } catch (err: any) {
     console.error("Error in context:getRepo bridge handler:", err)
+    return {error: err.message}
+  }
+})
+
+// ── Nostr Signing (without publishing) ────────────────────────────────
+// Allows extensions to sign events without publishing them.
+// Used for release co-signing where the extension controls when to publish.
+
+registerBridgeHandler("nostr:sign", async (payload, ext) => {
+  if (ext) console.log(`[bridge] nostr:sign from ${ext.id}`)
+  try {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Invalid payload: expected unsigned event object")
+    }
+
+    const $signer = signer.get()
+    if (!$signer) {
+      throw new Error("No active signer available")
+    }
+
+    const $pubkey = pubkey.get()
+
+    // Build the event template with the signer's pubkey
+    const eventTemplate = {
+      ...payload,
+      pubkey: $pubkey || payload.pubkey,
+    }
+
+    const signed = await $signer.sign(eventTemplate)
+
+    if (!signed || !signed.id || !signed.sig) {
+      throw new Error("Signer did not return a valid signed event")
+    }
+
+    return {status: "ok", event: signed}
+  } catch (err: any) {
+    console.error("Error in nostr:sign bridge handler:", err)
     return {error: err.message}
   }
 })
