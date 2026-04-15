@@ -6,9 +6,6 @@
 	path = packages/nostr-git-ui
 	url = https://github.com/Pleb5/nostr-git-ui.git
 	branch = master
-[submodule "packages/flotilla-extension-template"]
-	path = packages/flotilla-extension-template
-	url = https://github.com/chebizarro/flotilla-extension-template.git
 [submodule "packages/budabit-kanban-extension"]
 	path = packages/budabit-kanban-extension
 	url = https://github.com/chebizarro/budabit-kanban-extension.git
