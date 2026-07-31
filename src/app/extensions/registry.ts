@@ -41,6 +41,36 @@ const addCacheBuster = (url: string): string => {
   }
 }
 
+type HostTheme = "light" | "dark"
+
+/**
+ * Read the host theme from the DOM (the root layout mirrors the theme store
+ * onto `document.body[data-theme]`). Reading the DOM instead of importing the
+ * theme store keeps this module free of browser-only module-scope side effects.
+ */
+const getHostTheme = (): HostTheme => {
+  if (typeof document === "undefined") return "light"
+  return document.body?.getAttribute("data-theme") === "dark" ? "dark" : "light"
+}
+
+const visibleColor = (value: string) =>
+  value && value !== "transparent" && value !== "rgba(0, 0, 0, 0)" ? value : ""
+
+/** Effective host background color, matching the WidgetFrame/extension-page behavior. */
+const getHostBackgroundColor = (hostTheme: HostTheme): string => {
+  if (typeof document !== "undefined" && typeof getComputedStyle === "function") {
+    const bodyBackground = visibleColor(getComputedStyle(document.body).backgroundColor)
+    if (bodyBackground) return bodyBackground
+
+    const rootBackground = visibleColor(
+      getComputedStyle(document.documentElement).backgroundColor,
+    )
+    if (rootBackground) return rootBackground
+  }
+
+  return hostTheme === "dark" ? "rgb(21, 28, 35)" : "rgb(255, 255, 255)"
+}
+
 const uniqueSecureAppUrls = (urls: Array<string | undefined>) => {
   const seen = new Set<string>()
   const secureUrls: string[] = []
@@ -279,11 +309,14 @@ class ExtensionRegistry {
     if (!ext.bridge) return
 
     // Build init payload with extension metadata
+    const hostTheme = getHostTheme()
     const initPayload: Record<string, unknown> = {
       extensionId: ext.id,
       type: ext.type,
       origin: ext.origin,
       hostVersion: "1.0.0", // Could be pulled from package.json
+      theme: hostTheme,
+      themeBackground: getHostBackgroundColor(hostTheme),
     }
 
     initPayload.widget = {
@@ -372,7 +405,38 @@ class ExtensionRegistry {
     // Send lifecycle events after bridge is ready
     this.sendLifecycleInit(updated)
 
+    // Keep registry-loaded widgets in sync with host theme changes
+    this.ensureThemeWatcher()
+
     return updated
+  }
+
+  private themeObserver?: MutationObserver
+  private lastThemeBroadcast?: string
+
+  /**
+   * Watch `document.body[data-theme]` (kept in sync with the theme store by
+   * the root layout) and broadcast `widget:themeChanged` to every loaded
+   * widget bridge whenever it changes.
+   */
+  private ensureThemeWatcher(): void {
+    if (this.themeObserver) return
+    if (typeof document === "undefined" || typeof MutationObserver === "undefined") return
+
+    this.themeObserver = new MutationObserver(() => this.broadcastTheme())
+    this.themeObserver.observe(document.body, {attributes: true, attributeFilter: ["data-theme"]})
+  }
+
+  private broadcastTheme(): void {
+    const hostTheme = getHostTheme()
+    const themeBackground = getHostBackgroundColor(hostTheme)
+    const key = `${hostTheme}|${themeBackground}`
+    if (key === this.lastThemeBroadcast) return
+    this.lastThemeBroadcast = key
+
+    for (const ext of this.list()) {
+      ext.bridge?.post("widget:themeChanged", {theme: hostTheme, themeBackground})
+    }
   }
 
   async loadWidget(event: SmartWidgetEvent): Promise<LoadedWidgetExtension> {
