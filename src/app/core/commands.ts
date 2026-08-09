@@ -576,6 +576,7 @@ export const setMessagingRelayPolicy = (url: string, enabled: boolean) => {
 export type DeleteParams = {
   event: TrustedEvent
   tags?: string[][]
+  created_at?: number
 }
 
 type PublishBehavior = {
@@ -612,7 +613,7 @@ const cloneTag = (tag: string[]) => [...tag]
 const sanitizePublishTags = (tags: string[][] = []) =>
   tags.filter(tag => tag[0] !== "-").map(cloneTag)
 
-export const makeDelete = ({event, tags = []}: DeleteParams) => {
+export const makeDelete = ({event, tags = [], created_at}: DeleteParams) => {
   const thisTags = [["k", String(event.kind)], ...tagEvent(event), ...sanitizePublishTags(tags)]
   const repoAddress = getRepoAddressForDelete(event)
   if (repoAddress) {
@@ -624,10 +625,13 @@ export const makeDelete = ({event, tags = []}: DeleteParams) => {
     thisTags.push(cloneTag(groupTag))
   }
 
-  return makeEvent(DELETE, {tags: uniqTags(thisTags)})
+  return makeEvent(DELETE, {
+    tags: uniqTags(thisTags),
+    ...(created_at === undefined ? {} : {created_at}),
+  })
 }
 
-export const makeExactEventDelete = ({event, tags = []}: DeleteParams) => {
+export const makeExactEventDelete = ({event, tags = [], created_at}: DeleteParams) => {
   const thisTags = [
     ["k", String(event.kind)],
     ["e", event.id],
@@ -642,7 +646,10 @@ export const makeExactEventDelete = ({event, tags = []}: DeleteParams) => {
     thisTags.push(cloneTag(groupTag))
   }
 
-  return makeEvent(DELETE, {tags: uniqTags(thisTags)})
+  return makeEvent(DELETE, {
+    tags: uniqTags(thisTags),
+    ...(created_at === undefined ? {} : {created_at}),
+  })
 }
 
 const logDeleteDebug = ({

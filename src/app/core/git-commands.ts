@@ -789,7 +789,13 @@ type RetainedDelete = {
 type RetainedDeleteOperation = {
   events: Map<string, TrustedEvent>
   deletes: Map<string, RetainedDelete>
-  inFlight?: Promise<number>
+  bestEffortEventIds: Set<string>
+  inFlight?: Promise<DeleteSequenceResult>
+}
+
+type DeleteSequenceResult = {
+  deletedEvents: number
+  failedBestEffortIds: Set<string>
 }
 
 const retainedDeleteOperations = new Map<string, RetainedDeleteOperation>()
@@ -798,6 +804,8 @@ const runDeleteEventsSequentially = async ({
   root,
   events,
   retainedDeletes,
+  bestEffortEventIds,
+  requireNewerDeleteTimestamp,
   relays,
   repoAddress,
   signal,
@@ -806,10 +814,14 @@ const runDeleteEventsSequentially = async ({
   root: TrustedEvent
   events: TrustedEvent[]
   retainedDeletes: Map<string, RetainedDelete>
+  bestEffortEventIds: Set<string>
+  requireNewerDeleteTimestamp: boolean
   relays: string[]
   repoAddress?: string
 } & DeleteCallbacks) => {
   let deletedEvents = events.filter(event => retainedDeletes.get(event.id)?.published).length
+  let processedEvents = deletedEvents
+  const failedBestEffortIds = new Set<string>()
 
   for (const event of events) {
     throwIfAborted(signal)
@@ -819,12 +831,13 @@ const runDeleteEventsSequentially = async ({
       repository.publish(retainedDelete.thunk.event as TrustedEvent)
       retainedDelete.published = true
       deletedEvents += 1
+      processedEvents += 1
     }
     if (retainedDelete?.published) continue
 
     reportDeleteProgress(onProgress, {
       label: "Waiting for relay acknowledgements...",
-      completed: deletedEvents,
+      completed: processedEvents,
       total: events.length,
       current: getDeleteTargetLabel(event, root),
     })
@@ -836,6 +849,9 @@ const runDeleteEventsSequentially = async ({
           relays,
           repoAddress,
           optimistic: false,
+          ...(requireNewerDeleteTimestamp
+            ? {created_at: Math.max(Math.floor(Date.now() / 1000), event.created_at + 1)}
+            : {}),
         })
 
     if (retainedDelete) {
@@ -845,28 +861,46 @@ const runDeleteEventsSequentially = async ({
       retainedDeletes.set(event.id, retainedDelete)
     }
 
-    await awaitWithAbort(waitForAnyRelayAck(thunk, thunk.options.relays), signal, () =>
-      abortThunk(thunk),
-    )
+    try {
+      await awaitWithAbort(waitForAnyRelayAck(thunk, thunk.options.relays), signal, () =>
+        abortThunk(thunk),
+      )
+    } catch (error) {
+      throwIfAborted(signal)
+      if (!bestEffortEventIds.has(event.id)) throw error
+
+      failedBestEffortIds.add(event.id)
+      processedEvents += 1
+      reportDeleteProgress(onProgress, {
+        label: "Optional cleanup was not acknowledged.",
+        completed: processedEvents,
+        total: events.length,
+        current: getDeleteTargetLabel(event, root),
+      })
+      continue
+    }
     retainedDelete.acked = true
     repository.publish(thunk.event as TrustedEvent)
     retainedDelete.published = true
     deletedEvents += 1
+    processedEvents += 1
 
     reportDeleteProgress(onProgress, {
       label: "Delete requests acknowledged.",
-      completed: deletedEvents,
+      completed: processedEvents,
       total: events.length,
       current: getDeleteTargetLabel(event, root),
     })
   }
 
-  return deletedEvents
+  return {deletedEvents, failedBestEffortIds}
 }
 
 const deleteEventsSequentially = ({
   root,
   events,
+  bestEffortEventIds = new Set<string>(),
+  requireNewerDeleteTimestamp = false,
   relays,
   repoAddress,
   signal,
@@ -874,6 +908,8 @@ const deleteEventsSequentially = ({
 }: {
   root: TrustedEvent
   events: TrustedEvent[]
+  bestEffortEventIds?: Set<string>
+  requireNewerDeleteTimestamp?: boolean
   relays: string[]
   repoAddress?: string
 } & DeleteCallbacks) => {
@@ -885,7 +921,7 @@ const deleteEventsSequentially = ({
   let operation = retainedDeleteOperations.get(operationKey)
 
   if (!operation) {
-    operation = {events: new Map(), deletes: new Map()}
+    operation = {events: new Map(), deletes: new Map(), bestEffortEventIds: new Set()}
     retainedDeleteOperations.set(operationKey, operation)
   }
   if (operation.inFlight) return operation.inFlight
@@ -893,6 +929,7 @@ const deleteEventsSequentially = ({
   for (const event of events) {
     if (event.id !== root.id) operation.events.set(event.id, event)
   }
+  for (const eventId of bestEffortEventIds) operation.bestEffortEventIds.add(eventId)
   operation.events.delete(root.id)
   operation.events.set(root.id, root)
 
@@ -900,6 +937,8 @@ const deleteEventsSequentially = ({
     root,
     events: Array.from(operation.events.values()),
     retainedDeletes: operation.deletes,
+    bestEffortEventIds: operation.bestEffortEventIds,
+    requireNewerDeleteTimestamp,
     relays,
     repoAddress,
     signal,
@@ -927,14 +966,14 @@ export const deleteIssueWithLabels = async ({
   issue: TrustedEvent
   relays?: string[]
   repoAddress?: string
-} & DeleteCallbacks): Promise<{labelsDeleted: number}> => {
-  if (!issue) return {labelsDeleted: 0}
-  if (issue.kind !== 1621) return {labelsDeleted: 0}
+} & DeleteCallbacks): Promise<{labelsDeleted: number; labelsFailed: number}> => {
+  if (!issue) return {labelsDeleted: 0, labelsFailed: 0}
+  if (issue.kind !== 1621) return {labelsDeleted: 0, labelsFailed: 0}
 
   const merged = getScopedRelayUrls(issue, relays, repoAddress)
 
   if (!issue.id || !issue.pubkey || merged.length === 0) {
-    return {labelsDeleted: 0}
+    return {labelsDeleted: 0, labelsFailed: 0}
   }
 
   reportDeleteProgress(onProgress, {
@@ -960,21 +999,33 @@ export const deleteIssueWithLabels = async ({
     // ignore label load errors; deletion can still proceed
   }
 
-  const labelEvents = repository.query(
-    [{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}],
-    {shouldSort: false},
-  ) as TrustedEvent[]
+  const labelEvents = (
+    repository.query(
+      [{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}],
+      {shouldSort: false},
+    ) as TrustedEvent[]
+  ).filter(
+    event =>
+      event.kind === 1985 &&
+      event.pubkey === issue.pubkey &&
+      event.tags.some(tag => tag[0] === "e" && tag[1] === issue.id),
+  )
 
-  await deleteEventsSequentially({
+  const result = await deleteEventsSequentially({
     root: issue,
     events: [...labelEvents, issue],
+    bestEffortEventIds: new Set(labelEvents.map(event => event.id)),
+    requireNewerDeleteTimestamp: true,
     relays: merged,
     repoAddress,
     signal,
     onProgress,
   })
 
-  return {labelsDeleted: labelEvents.length}
+  return {
+    labelsDeleted: Math.max(0, result.deletedEvents - 1),
+    labelsFailed: result.failedBestEffortIds.size,
+  }
 }
 
 export const deletePullRequestWithRelated = async ({
@@ -1054,7 +1105,7 @@ export const deletePullRequestWithRelated = async ({
 
   eventsToDelete.set(root.id, root)
 
-  const deletedEvents = await deleteEventsSequentially({
+  const {deletedEvents} = await deleteEventsSequentially({
     root,
     events: Array.from(eventsToDelete.values()),
     relays: merged,

@@ -28,11 +28,18 @@
     })
 
   const onSuccess = (result: unknown) => {
-    const {labelsDeleted = 0} = (result || {}) as {labelsDeleted?: number}
+    const {labelsDeleted = 0, labelsFailed = 0} = (result || {}) as {
+      labelsDeleted?: number
+      labelsFailed?: number
+    }
     const totalDeleted = 1 + labelsDeleted
 
     pushToast({
-      message: `Deletion requests acknowledged for ${totalDeleted} event${totalDeleted === 1 ? "" : "s"}`,
+      theme: labelsFailed > 0 ? "warning" : undefined,
+      message:
+        labelsFailed > 0
+          ? `Issue deleted, but ${labelsFailed} authored label${labelsFailed === 1 ? "" : "s"} could not be cleaned up.`
+          : `Deletion requests acknowledged for ${totalDeleted} event${totalDeleted === 1 ? "" : "s"}`,
     })
   }
 </script>

@@ -830,7 +830,7 @@ describe("budabit commands", () => {
 
       const result = await deleteIssueWithLabels({issue: null as any})
 
-      expect(result).toEqual({labelsDeleted: 0})
+      expect(result).toEqual({labelsDeleted: 0, labelsFailed: 0})
     })
 
     it("returns labelsDeleted 0 when issue kind is not 1621", async () => {
@@ -847,7 +847,7 @@ describe("budabit commands", () => {
 
       const result = await deleteIssueWithLabels({issue})
 
-      expect(result).toEqual({labelsDeleted: 0})
+      expect(result).toEqual({labelsDeleted: 0, labelsFailed: 0})
     })
 
     it("reports progress and waits for issue and label delete acknowledgements", async () => {
@@ -888,7 +888,7 @@ describe("budabit commands", () => {
         current: "issue",
       })
 
-      expect(result).toEqual({labelsDeleted: 1})
+      expect(result).toEqual({labelsDeleted: 1, labelsFailed: 0})
       expect(mockPublishDelete).toHaveBeenCalledTimes(2)
       expect(mockPublishDelete.mock.calls.map(([options]) => options.event.id)).toEqual([
         labelEvent.id,
@@ -914,6 +914,186 @@ describe("budabit commands", () => {
           expect.objectContaining({label: "Delete requests acknowledged.", completed: 2, total: 2}),
         ]),
       )
+    })
+
+    it("deletes an issue without labels", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-without-labels",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+
+      await expect(
+        deleteIssueWithLabels({issue, relays: ["wss://relay.example.com"]}),
+      ).resolves.toEqual({labelsDeleted: 0, labelsFailed: 0})
+      expect(mockPublishDelete).toHaveBeenCalledTimes(1)
+      expect(mockPublishDelete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: issue,
+          optimistic: false,
+          created_at: expect.any(Number),
+        }),
+      )
+      expect(mockPublishDelete.mock.calls[0][0].created_at).toBeGreaterThan(issue.created_at)
+    })
+
+    it("continues to the root when an authored label cleanup is rejected", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-label-rejected",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      const label = {
+        id: "label-rejected",
+        kind: 1985,
+        pubkey: issue.pubkey,
+        tags: [["e", issue.id]],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      mockRepositoryQuery.mockReturnValue([label])
+      mockWaitForAnyRelayAck
+        .mockRejectedValueOnce(new Error("label rejected"))
+        .mockResolvedValueOnce({relay: "wss://relay.example.com/"})
+
+      await expect(
+        deleteIssueWithLabels({issue, relays: ["wss://relay.example.com"]}),
+      ).resolves.toEqual({labelsDeleted: 0, labelsFailed: 1})
+      expect(mockPublishDelete.mock.calls.map(([options]) => options.event.id)).toEqual([
+        label.id,
+        issue.id,
+      ])
+      expect(mockRepositoryPublish).toHaveBeenCalledTimes(1)
+      expect(mockRepositoryPublish).toHaveBeenCalledWith(
+        expect.objectContaining({id: `delete-${issue.id}`}),
+      )
+    })
+
+    it("reports mixed authored label cleanup outcomes", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-mixed-labels",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      const labels = ["one", "two", "three"].map(id => ({
+        id: `label-${id}`,
+        kind: 1985,
+        pubkey: issue.pubkey,
+        tags: [["e", issue.id]],
+        content: "",
+        created_at: 0,
+        sig: "",
+      })) as any[]
+      mockRepositoryQuery.mockReturnValue(labels)
+      mockWaitForAnyRelayAck
+        .mockResolvedValueOnce({relay: "wss://relay.example.com/"})
+        .mockRejectedValueOnce(new Error("second label rejected"))
+        .mockResolvedValueOnce({relay: "wss://relay.example.com/"})
+        .mockResolvedValueOnce({relay: "wss://relay.example.com/"})
+
+      await expect(
+        deleteIssueWithLabels({issue, relays: ["wss://relay.example.com"]}),
+      ).resolves.toEqual({labelsDeleted: 2, labelsFailed: 1})
+      expect(mockRepositoryPublish.mock.calls.map(([event]) => event.id)).toEqual([
+        `delete-${labels[0].id}`,
+        `delete-${labels[2].id}`,
+        `delete-${issue.id}`,
+      ])
+    })
+
+    it("still fails when the issue root is rejected after optional cleanup failure", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-root-rejected-after-label",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      const label = {
+        id: "label-before-root-rejection",
+        kind: 1985,
+        pubkey: issue.pubkey,
+        tags: [["e", issue.id]],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      mockRepositoryQuery.mockReturnValue([label])
+      mockWaitForAnyRelayAck
+        .mockRejectedValueOnce(new Error("label rejected"))
+        .mockRejectedValueOnce(new Error("root rejected"))
+
+      await expect(
+        deleteIssueWithLabels({issue, relays: ["wss://relay.example.com"]}),
+      ).rejects.toThrow("root rejected")
+      expect(mockPublishDelete).toHaveBeenCalledTimes(2)
+      expect(mockRepositoryPublish).not.toHaveBeenCalled()
+    })
+
+    it("continues with root deletion after label inventory loading fails", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-label-load-failed",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      mockLoad.mockRejectedValueOnce(new Error("label inventory timeout"))
+
+      await expect(
+        deleteIssueWithLabels({issue, relays: ["wss://relay.example.com"]}),
+      ).resolves.toEqual({labelsDeleted: 0, labelsFailed: 0})
+      expect(mockPublishDelete).toHaveBeenCalledWith(expect.objectContaining({event: issue}))
+    })
+
+    it("never targets labels from another author", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-foreign-label",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      const foreignLabel = {
+        id: "foreign-label",
+        kind: 1985,
+        pubkey: "b".repeat(64),
+        tags: [["e", issue.id]],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      mockRepositoryQuery.mockReturnValue([foreignLabel])
+
+      await deleteIssueWithLabels({issue, relays: ["wss://relay.example.com"]})
+
+      expect(mockPublishDelete).toHaveBeenCalledTimes(1)
+      expect(mockPublishDelete).toHaveBeenCalledWith(expect.objectContaining({event: issue}))
     })
 
     it("does not treat thunk completion without relay success as acknowledgement", async () => {
@@ -975,6 +1155,70 @@ describe("budabit commands", () => {
       )
     })
 
+    it("treats cancellation during optional label cleanup as fatal", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-cancel-label",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      const label = {
+        id: "label-cancelled",
+        kind: 1985,
+        pubkey: issue.pubkey,
+        tags: [["e", issue.id]],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      mockRepositoryQuery.mockReturnValue([label])
+      mockWaitForAnyRelayAck.mockImplementation(() => new Promise(() => {}))
+      const controller = new AbortController()
+      const deletion = deleteIssueWithLabels({
+        issue,
+        relays: ["wss://relay.example.com"],
+        signal: controller.signal,
+      })
+
+      await vi.waitFor(() => expect(mockWaitForAnyRelayAck).toHaveBeenCalledOnce())
+      controller.abort()
+
+      await expect(deletion).rejects.toMatchObject({name: "AbortError"})
+      expect(mockAbortThunk).toHaveBeenCalledOnce()
+      expect(mockPublishDelete).toHaveBeenCalledTimes(1)
+      expect(mockRepositoryPublish).not.toHaveBeenCalled()
+    })
+
+    it("does not commit the issue when cancelled while waiting for the root ACK", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const issue = {
+        id: "issue-cancel-root",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      mockWaitForAnyRelayAck.mockImplementation(() => new Promise(() => {}))
+      const controller = new AbortController()
+      const deletion = deleteIssueWithLabels({
+        issue,
+        relays: ["wss://relay.example.com"],
+        signal: controller.signal,
+      })
+
+      await vi.waitFor(() => expect(mockWaitForAnyRelayAck).toHaveBeenCalledOnce())
+      controller.abort()
+
+      await expect(deletion).rejects.toMatchObject({name: "AbortError"})
+      expect(mockRepositoryPublish).not.toHaveBeenCalled()
+    })
+
     it("skips an acknowledged related delete and retries the exact failed root delete", async () => {
       const {deleteIssueWithLabels} = await import("./git-commands")
       const issue = {
@@ -1027,6 +1271,37 @@ describe("budabit commands", () => {
   })
 
   describe("deletePullRequestWithRelated", () => {
+    it("keeps related pull request deletion failures strict", async () => {
+      const {deletePullRequestWithRelated} = await import("./git-commands")
+      const root = {
+        id: "pr-strict-root",
+        kind: 1618,
+        pubkey: "a".repeat(64),
+        tags: [],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      const related = {
+        id: "pr-strict-label",
+        kind: 1985,
+        pubkey: root.pubkey,
+        tags: [["e", root.id]],
+        content: "",
+        created_at: 0,
+        sig: "",
+      } as any
+      mockRepositoryQuery.mockReturnValue([related])
+      mockWaitForAnyRelayAck.mockRejectedValueOnce(new Error("related rejected"))
+
+      await expect(
+        deletePullRequestWithRelated({root, relays: ["wss://relay.example.com"]}),
+      ).rejects.toThrow("related rejected")
+      expect(mockPublishDelete).toHaveBeenCalledTimes(1)
+      expect(mockPublishDelete).toHaveBeenCalledWith(expect.objectContaining({event: related}))
+      expect(mockRepositoryPublish).not.toHaveBeenCalled()
+    })
+
     it("aborts while waiting for relay acknowledgements", async () => {
       const {deletePullRequestWithRelated} = await import("./git-commands")
       const root = {
