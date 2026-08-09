@@ -199,7 +199,7 @@ describe("fetchCompleteRelayInventory", () => {
         isEventDeleted: expect.any(Function),
       }),
     )
-    const options = mockMakeLoader.mock.calls.at(-1)?.[0]
+    const options = mockMakeLoader.mock.calls.at(-1)?.[0] as any
     expect(options.isEventDeleted({id: "locally-deleted"}, "wss://relay.example/")).toBe(false)
   })
 

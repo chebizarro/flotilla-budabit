@@ -264,7 +264,9 @@
     Boolean(
       issueEvent &&
         currentRepoAddress &&
-        (issueEvent.tags || []).some(tag => tag[0] === "a" && tag[1] === currentRepoAddress),
+        (issueEvent.tags || []).some(
+          (tag: string[]) => tag[0] === "a" && tag[1] === currentRepoAddress,
+        ),
     ),
   )
   const issueRoleAuthority = $derived.by(() => {
