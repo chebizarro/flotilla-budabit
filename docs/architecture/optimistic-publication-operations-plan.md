@@ -2,9 +2,9 @@
 
 ## Status
 
-Phase 1 is implemented: the in-memory publication-operation core now satisfies the tests-first
-contract. Publishing call sites and UI recovery remain isolated follow-up phases so they can be
-migrated incrementally without changing excluded workflows.
+Phases 1 and 2 are implemented: the in-memory publication-operation core satisfies the tests-first
+contract, and route-independent recovery is mounted in the app shell. Publishing call sites remain
+isolated follow-up phases so they can be migrated incrementally without changing excluded workflows.
 
 ## Objective
 

@@ -3,6 +3,7 @@
   import {page} from "$app/stores"
   import {pubkey} from "@welshman/app"
   import Landing from "@app/components/Landing.svelte"
+  import PublicationRecoveryObserver from "@app/components/PublicationRecoveryObserver.svelte"
   import Toast from "@app/components/Toast.svelte"
   import PrimaryNav from "@app/components/PrimaryNav.svelte"
   import EmailConfirm from "@app/components/EmailConfirm.svelte"
@@ -66,4 +67,5 @@
     <Landing />
   {/if}
 </div>
+<PublicationRecoveryObserver />
 <Toast />
