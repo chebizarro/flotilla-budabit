@@ -99,6 +99,17 @@ export function toNaturalArray(values?: Iterable<string> | null): string[] {
   return Array.from(out)
 }
 
+export function toNaturalNonRoleLabels(view: NormalizedEffectiveLabelsView): string[] {
+  const labels: string[] = []
+
+  for (const [namespace, values] of Object.entries(view.byNamespace)) {
+    if (namespace === ROLE_NS) continue
+    for (const value of values) labels.push(`${namespace}/${value}`)
+  }
+
+  return toNaturalArray(labels)
+}
+
 export function extractRoleAssignments(
   events: any[],
   rootId?: string | null,

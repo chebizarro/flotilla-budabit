@@ -3,6 +3,7 @@ import {
   toNaturalLabel,
   normalizeEffectiveLabels,
   toNaturalArray,
+  toNaturalNonRoleLabels,
   extractRoleAssignments,
   groupLabels,
   buildRoleLabelEvent,
@@ -132,6 +133,20 @@ describe("labels", () => {
 
     it("skips non-string values", () => {
       expect(toNaturalArray(["a", 1, "b"] as any)).toEqual(["a", "b"])
+    })
+  })
+
+  describe("toNaturalNonRoleLabels", () => {
+    it("excludes role namespace values and preserves other NIP-32 labels", () => {
+      const view = normalizeEffectiveLabels({
+        byNamespace: {
+          [ROLE_NS]: ["reviewer"],
+          "org.nostr.git.type": ["bug"],
+          "#t": ["urgent"],
+        },
+      })
+
+      expect(toNaturalNonRoleLabels(view)).toEqual(["bug", "urgent"])
     })
   })
 

@@ -12,7 +12,11 @@
     type StatusEvent,
   } from "@nostr-git/core/events"
   import {fade} from "@lib/transition"
-  import {normalizeEffectiveLabels, toNaturalArray} from "@app/util/labels"
+  import {
+    normalizeEffectiveLabels,
+    toNaturalArray,
+    toNaturalNonRoleLabels,
+  } from "@app/util/labels"
   import {getInteractiveCardTarget, isMobile} from "@src/lib/html.js"
   import {publishEvent} from "@app/core/git-commands.js"
   import {pushModal} from "@app/util/modal"
@@ -212,7 +216,7 @@
           const effStore = deriveEffectiveLabels(pr.id)
           const effValue = effStore.get()
           const eff = normalizeEffectiveLabels(effValue)
-          const naturals = toNaturalArray(eff?.flat)
+          const naturals = toNaturalNonRoleLabels(eff)
           const eventLabels = toNaturalArray(parsed.labels)
           const labels = Array.from(new Set([...eventLabels, ...naturals]))
           byId.set(pr.id, labels)
@@ -926,7 +930,23 @@
   const canLoadMorePrs = $derived.by(() => visiblePrCount < searchedPrs.length)
   const roleAssignments = $derived.by(() => {
     const ids = pullRequests?.map((pr: any) => pr.id) || []
-    return deriveAssignmentsFor(ids)
+    const repoEvent = (repoClass as any)?.repoEvent
+    const maintainers = repoEvent ? getRepoMaintainers(repoEvent) : []
+    const authorityByRoot = new Map<string, Iterable<string>>()
+
+    for (const pr of pullRequests || []) {
+      const belongsToRepo = Boolean(
+        repoEvent &&
+          repoAddress &&
+          (pr.tags || []).some((tag: string[]) => tag[0] === "a" && tag[1] === repoAddress),
+      )
+      authorityByRoot.set(
+        pr.id,
+        belongsToRepo ? new Set([pr.pubkey, ...maintainers]) : new Set<string>(),
+      )
+    }
+
+    return deriveAssignmentsFor(ids, authorityByRoot)
   })
 
   const loadMorePrs = () => {

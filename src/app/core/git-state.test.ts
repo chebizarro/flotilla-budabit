@@ -46,9 +46,11 @@ import {
   getOwnedRepoStateLoadScopes,
   getOwnedRepoStateLoadPlans,
   getRepoScopedRelays,
+  getRoleAssignmentsByRoot,
   getVerifiedRepoMaintainers,
   groupStatusEventsByRoot,
 } from "./git-state"
+import {ROLE_NS} from "@app/util/labels"
 
 let eventCounter = 0
 
@@ -546,6 +548,63 @@ describe("budabit state", () => {
 
       expect(grouped.get(rootA)).toEqual([statusA])
       expect(grouped.get(rootB)).toEqual([statusB])
+    })
+  })
+
+  describe("getRoleAssignmentsByRoot", () => {
+    const makeReviewer = (pubkey: string, rootId: string, reviewer: string) => ({
+      kind: 1985,
+      pubkey,
+      tags: [
+        ["L", ROLE_NS],
+        ["l", "reviewer", ROLE_NS],
+        ["e", rootId],
+        ["p", reviewer],
+      ],
+    })
+
+    it("applies root-author authority independently for each PR", () => {
+      const events = [
+        makeReviewer("author-a", "root-a", "reviewer-a"),
+        makeReviewer("author-a", "root-b", "forged-reviewer"),
+        makeReviewer("author-b", "root-b", "reviewer-b"),
+      ]
+      const authority = new Map<string, Iterable<string>>([
+        ["root-a", new Set(["author-a", "maintainer"])],
+        ["root-b", new Set(["author-b", "maintainer"])],
+      ])
+
+      const result = getRoleAssignmentsByRoot(events, ["root-a", "root-b"], authority)
+
+      expect(result.get("root-a")?.reviewers).toEqual(new Set(["reviewer-a"]))
+      expect(result.get("root-b")?.reviewers).toEqual(new Set(["reviewer-b"]))
+    })
+
+    it("allows a current maintainer on every root and ignores outsiders", () => {
+      const events = [
+        makeReviewer("maintainer", "root-a", "reviewer-a"),
+        makeReviewer("maintainer", "root-b", "reviewer-b"),
+        makeReviewer("outsider", "root-a", "forged-reviewer"),
+      ]
+      const authority = new Map<string, Iterable<string>>([
+        ["root-a", new Set(["author-a", "maintainer"])],
+        ["root-b", new Set(["author-b", "maintainer"])],
+      ])
+
+      const result = getRoleAssignmentsByRoot(events, ["root-a", "root-b"], authority)
+
+      expect(result.get("root-a")?.reviewers).toEqual(new Set(["reviewer-a"]))
+      expect(result.get("root-b")?.reviewers).toEqual(new Set(["reviewer-b"]))
+    })
+
+    it("fails closed when a root has no authority entry", () => {
+      const result = getRoleAssignmentsByRoot(
+        [makeReviewer("author-a", "root-a", "reviewer-a")],
+        ["root-a"],
+        new Map(),
+      )
+
+      expect(result.get("root-a")?.reviewers).toEqual(new Set())
     })
   })
 })

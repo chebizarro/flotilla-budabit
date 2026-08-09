@@ -462,56 +462,46 @@ export const deriveRoleAssignments = (
 /**
  * Derive combined role assignments for a list of root ids.
  */
-export const deriveAssignmentsFor = (rootIds: string[]) =>
-  withGetter(
+export const getRoleAssignmentsByRoot = (
+  events: any[],
+  rootIds: string[],
+  authorizedPublishersByRoot?: Map<string, Iterable<string>>,
+) => {
+  const assignmentsByRoot = new Map<
+    string,
+    {assignees: Set<string>; reviewers: Set<string>}
+  >()
+
+  for (const rootId of rootIds) {
+    const authority = authorizedPublishersByRoot
+      ? authorizedPublishersByRoot.get(rootId) || new Set<string>()
+      : undefined
+    assignmentsByRoot.set(rootId, extractRoleAssignments(events, rootId, authority))
+  }
+
+  return assignmentsByRoot
+}
+
+export const deriveAssignmentsFor = (
+  rootIds: string[],
+  authorizedPublishersByRoot?: Map<string, Iterable<string>>,
+) => {
+  const authority = authorizedPublishersByRoot
+    ? new Map(
+        Array.from(authorizedPublishersByRoot, ([rootId, publishers]) => [
+          rootId,
+          new Set(publishers),
+        ]),
+      )
+    : undefined
+
+  return withGetter(
     derived(
       deriveEventsAsc(deriveEventsById({repository, filters: [{kinds: [1985], "#e": rootIds}]})),
-      $events => {
-        const assignmentsByRoot = new Map<
-          string,
-          {assignees: Set<string>; reviewers: Set<string>}
-        >()
-
-        // Initialize empty sets for each root ID
-        for (const rootId of rootIds) {
-          assignmentsByRoot.set(rootId, {
-            assignees: new Set<string>(),
-            reviewers: new Set<string>(),
-          })
-        }
-
-        // Parse events and assign to appropriate root IDs
-        for (const ev of $events) {
-          if (!ev || ev.kind !== 1985 || !Array.isArray(ev.tags)) continue
-
-          const hasRoleNs = ev.tags.some(
-            (t: string[]) => t[0] === "L" && t[1] === "org.nostr.git.role",
-          )
-          if (!hasRoleNs) continue
-
-          const rootTags = ev.tags.filter((t: string[]) => t[0] === "e")
-          const roleTags = ev.tags.filter(
-            (t: string[]) => t[0] === "l" && t[2] === "org.nostr.git.role",
-          )
-          const people = ev.tags.filter((t: string[]) => t[0] === "p").map((t: string[]) => t[1])
-
-          for (const rootTag of rootTags) {
-            const rootId = rootTag[1]
-            if (!rootId || !assignmentsByRoot.has(rootId)) continue
-
-            const assignment = assignmentsByRoot.get(rootId)!
-            const hasAssignee = roleTags.some((t: string[]) => t[1] === "assignee")
-            const hasReviewer = roleTags.some((t: string[]) => t[1] === "reviewer")
-
-            if (hasAssignee) for (const p of people) assignment.assignees.add(p)
-            if (hasReviewer) for (const p of people) assignment.reviewers.add(p)
-          }
-        }
-
-        return assignmentsByRoot
-      },
+      $events => getRoleAssignmentsByRoot($events as any[], rootIds, authority),
     ),
   )
+}
 
 /**
  * Assemble an issue thread (root + NIP-22 comments + statuses) for a given root id.
