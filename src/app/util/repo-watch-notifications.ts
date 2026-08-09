@@ -615,6 +615,8 @@ export const getRepoWatchNotificationCandidates = ({
   const reposByAddress = new Map(repos.map(repo => [repo.address, repo]))
   const issueReposByRootId = new Map<string, RepoWatchNotificationRepo>()
   const prReposByRootId = new Map<string, RepoWatchNotificationRepo>()
+  const issuesByRootId = new Map<string, TrustedEvent>()
+  const prsByRootId = new Map<string, TrustedEvent>()
   const candidates = new Map<string, NotificationCandidate>()
 
   for (const issue of issues) {
@@ -623,6 +625,7 @@ export const getRepoWatchNotificationCandidates = ({
     if (!repo) continue
 
     issueReposByRootId.set(issue.id, repo)
+    issuesByRootId.set(issue.id, issue)
     addCandidate({
       candidates,
       repo,
@@ -639,6 +642,7 @@ export const getRepoWatchNotificationCandidates = ({
     if (!repo) continue
 
     prReposByRootId.set(pullRequest.id, repo)
+    prsByRootId.set(pullRequest.id, pullRequest)
     addCandidate({
       candidates,
       repo,
@@ -743,34 +747,35 @@ export const getRepoWatchNotificationCandidates = ({
     const rootId = getLabelRootId(label)
     const issueRepo = issueReposByRootId.get(rootId)
     const prRepo = prReposByRootId.get(rootId)
-    const fallbackRepo = reposByAddress.get(getRepoAddress(label))
-    const fallbackSection = getRootSection(label)
-    const issueCandidateRepo =
-      issueRepo || (fallbackSection === "issues" ? fallbackRepo : undefined)
-    const prCandidateRepo = prRepo || (fallbackSection === "prs" ? fallbackRepo : undefined)
+    const issueRoot = issuesByRootId.get(rootId)
+    const prRoot = prsByRootId.get(rootId)
+    const isAuthorized = (repo: RepoWatchNotificationRepo, root: TrustedEvent) => {
+      const repoEvent = repo.repoEvent as RepoAnnouncementEvent | undefined
+      if (!repoEvent) return false
 
-    if (issueCandidateRepo) {
+      return new Set([root.pubkey, ...getRepoMaintainers(repoEvent)]).has(label.pubkey)
+    }
+
+    if (issueRepo && issueRoot && isAuthorized(issueRepo, issueRoot)) {
       addCandidate({
         candidates,
-        repo: issueCandidateRepo,
+        repo: issueRepo,
         section: "issues",
         event: label,
         enabled: isAssignment
-          ? issueCandidateRepo.options.assignments
-          : issueCandidateRepo.options.reviews,
+          ? issueRepo.options.assignments
+          : issueRepo.options.reviews,
         currentPubkey,
       })
     }
 
-    if (prCandidateRepo) {
+    if (prRepo && prRoot && isAuthorized(prRepo, prRoot)) {
       addCandidate({
         candidates,
-        repo: prCandidateRepo,
+        repo: prRepo,
         section: "prs",
         event: label,
-        enabled: isAssignment
-          ? prCandidateRepo.options.assignments
-          : prCandidateRepo.options.reviews,
+        enabled: isAssignment ? prRepo.options.assignments : prRepo.options.reviews,
         currentPubkey,
       })
     }

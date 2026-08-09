@@ -118,6 +118,15 @@ const makeRepo = (options = watchOptions()) => ({
   identifier: repoIdentifier,
   naddr,
   options,
+  repoEvent: makeEvent({
+    id: "accepted-repo-event",
+    kind: GIT_REPO_ANNOUNCEMENT,
+    pubkey: owner,
+    tags: [
+      ["d", repoIdentifier],
+      ["maintainers", maintainer],
+    ],
+  }),
 })
 
 describe("repo watch notifications", () => {
@@ -330,7 +339,90 @@ describe("repo watch notifications", () => {
     ])
   })
 
-  it("handles scoped repo events when the root event is absent", async () => {
+  it("accepts assignment notifications only from the root author or current maintainers", async () => {
+    const {getRepoWatchNotificationCandidates} = await import("./repo-watch-notifications")
+    const issue = makeEvent({
+      id: "authority-issue",
+      kind: GIT_ISSUE,
+      pubkey: outsider,
+      tags: [["a", repoAddress]],
+    })
+    const makeAssignment = (id: string, author: string) =>
+      makeEvent({
+        id,
+        kind: GIT_LABEL,
+        pubkey: author,
+        tags: [
+          ["L", ROLE_NS],
+          ["l", "assignee", ROLE_NS],
+          ["e", issue.id],
+          ["p", viewer],
+        ],
+      })
+    const options = watchOptions({
+      issues: {...defaultRepoWatchOptions.issues, new: false},
+      assignments: true,
+      activityFilter: "all",
+    })
+
+    for (const assignment of [
+      makeAssignment("root-author-assignment", outsider),
+      makeAssignment("maintainer-assignment", maintainer),
+    ]) {
+      expect(
+        getRepoWatchNotificationCandidates({
+          repos: [makeRepo(options)],
+          issues: [issue],
+          labels: [assignment],
+          currentPubkey: viewer,
+        }),
+      ).toEqual([{path: `${repoPath}/issues`, latestEvent: assignment}])
+    }
+
+    expect(
+      getRepoWatchNotificationCandidates({
+        repos: [makeRepo(options)],
+        issues: [issue],
+        labels: [makeAssignment("outsider-assignment", communityMember)],
+        currentPubkey: viewer,
+      }),
+    ).toEqual([])
+  })
+
+  it("requires accepted repository authority for assignment notifications", async () => {
+    const {getRepoWatchNotificationCandidates} = await import("./repo-watch-notifications")
+    const issue = makeEvent({
+      id: "missing-authority-issue",
+      kind: GIT_ISSUE,
+      pubkey: outsider,
+      tags: [["a", repoAddress]],
+    })
+    const assignment = makeEvent({
+      id: "missing-authority-assignment",
+      kind: GIT_LABEL,
+      pubkey: outsider,
+      tags: [
+        ["L", ROLE_NS],
+        ["l", "assignee", ROLE_NS],
+        ["e", issue.id],
+        ["p", viewer],
+      ],
+    })
+    const {repoEvent: _repoEvent, ...repoWithoutAuthority} = makeRepo(
+      watchOptions({issues: {...defaultRepoWatchOptions.issues, new: false}, assignments: true}),
+    )
+
+    expect(
+      getRepoWatchNotificationCandidates({
+        repos: [repoWithoutAuthority],
+        issues: [issue],
+        labels: [assignment],
+        currentPubkey: viewer,
+      }),
+    ).toEqual([])
+  })
+
+  it("fails closed for role events when the root event is absent", async () => {
     const {getRepoWatchNotificationCandidates, getRepoWatchRootIdsForEvents} =
       await import("./repo-watch-notifications")
     const issueComment = makeEvent({
@@ -387,7 +479,7 @@ describe("repo watch notifications", () => {
         currentPubkey: viewer,
       }),
     ).toEqual([
-      {path: `${repoPath}/issues`, latestEvent: assignment},
+      {path: `${repoPath}/issues`, latestEvent: issueComment},
       {path: `${repoPath}/prs`, latestEvent: prStatus},
     ])
   })
