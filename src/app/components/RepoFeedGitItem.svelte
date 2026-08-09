@@ -19,7 +19,7 @@
   import RepoActivityThreadCreate from "@app/components/RepoActivityThreadCreate.svelte"
   import ThunkFailure from "@app/components/ThunkFailure.svelte"
   import {getInteractiveCardTarget} from "@lib/html"
-  import {publishReaction, publishSocialDelete} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {activeUserCommunityRefs} from "@app/core/community-state"
   import {
     COMMUNITY_WRITE_TARGETS,
@@ -193,16 +193,15 @@
     })
   }
 
-  const deleteReaction = async (event: TrustedEvent) =>
-    publishSocialDelete({
-      url,
+  const deleteReaction = async (reaction: TrustedEvent) =>
+    publishReactionDeleteOperation({
+      reaction,
       relays: relayTargets,
-      event,
       repoAddress,
     })
 
   const createReaction = async (template: EventContent) =>
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event,
       relays: relayTargets,
@@ -288,6 +287,7 @@
       <ReactionSummary
         {url}
         relays={relayTargets}
+        operationRelays={relayTargets}
         {zapScopeH}
         {scopeH}
         strictZapRelays={true}

@@ -72,7 +72,7 @@
     type PublicationDestinationSelection,
   } from "@app/util/permalink-publishing"
   import {publishRepoEventAfterAck} from "@app/core/git-commands"
-  import {publishDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {
     canEditReplyEvent,
     editedTargetIds,
@@ -636,16 +636,20 @@
     }
   }
 
-  const deleteCommentReaction = async (event: TrustedEvent) => {
+  const deleteCommentReaction = async (reaction: TrustedEvent) => {
     const relays = getCommentPublishRelays()
     if (relays.length === 0) return
-    publishDelete({event, relays, repoAddress: commitCommentRepoAddress})
+    publishReactionDeleteOperation({
+      reaction,
+      relays,
+      repoAddress: commitCommentRepoAddress,
+    })
   }
 
   const createCommentReaction = async (comment: CommentEvent, template: EventContent) => {
     const relays = getCommentPublishRelays()
     if (relays.length === 0) return
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event: comment as unknown as TrustedEvent,
       relays,

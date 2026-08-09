@@ -7,18 +7,18 @@
   import NoteContent from "@app/components/NoteContent.svelte"
   import NoteCard from "@app/components/NoteCard.svelte"
   import ReactionSummary from "@app/components/ReactionSummary.svelte"
-  import {publishDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
 
   const {url, event} = $props()
 
-  const deleteReaction = async (event: TrustedEvent) =>
-    publishDelete({relays: [url], event})
+  const deleteReaction = async (reaction: TrustedEvent) =>
+    publishReactionDeleteOperation({reaction, relays: [url]})
 
   const createReaction = async (template: EventContent) =>
-    publishReaction({...template, event, relays: [url]})
+    publishReactionOperation({...template, event, relays: [url]})
 
   const onEmoji = async (emoji: NativeEmoji) =>
-    publishReaction({
+    publishReactionOperation({
       event,
       content: emoji.unicode,
       relays: [url],
@@ -29,7 +29,10 @@
   <NoteContent {event} expandMode="inline" />
   <div class="flex w-full justify-between gap-2">
     <ReactionSummary {url} {event} {deleteReaction} {createReaction} reactionClass="tooltip-right">
-      <EmojiButton {onEmoji} class="btn btn-neutral btn-xs h-[26px] rounded-box">
+      <EmojiButton
+        {onEmoji}
+        class="btn btn-neutral btn-xs h-[26px] rounded-box"
+        aria-label="Add reaction">
         <Icon icon={SmileCircle} size={4} />
       </EmojiButton>
     </ReactionSummary>

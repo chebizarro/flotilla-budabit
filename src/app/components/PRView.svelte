@@ -78,7 +78,7 @@
     publishRepoEventAfterAck,
     publishRepoEventWithRelayOutcomes,
   } from "@app/core/git-commands"
-  import {publishDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {fetchRelayEventsWithTimeout} from "@app/util/fetch-relay-events"
   import {HIDDEN_ROOT_IDS_KEY, getRepoMaintainers} from "@app/core/git-state"
   import {
@@ -2627,18 +2627,22 @@
     }
   }
 
-  const deleteCommentReaction = async (event: any) => {
+  const deleteCommentReaction = async (reaction: any) => {
     const relays = getCommentPublishRelays()
     if (relays.length === 0) return
 
-    publishDelete({event: event as unknown as TrustedEvent, relays, repoAddress: prRepoAddress})
+    publishReactionDeleteOperation({
+      reaction: reaction as unknown as TrustedEvent,
+      relays,
+      repoAddress: prRepoAddress,
+    })
   }
 
   const createCommentReaction = async (comment: CommentEvent, template: EventContent) => {
     const relays = getCommentPublishRelays()
     if (relays.length === 0) return
 
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event: comment as unknown as TrustedEvent,
       relays,

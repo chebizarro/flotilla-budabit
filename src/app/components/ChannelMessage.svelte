@@ -26,7 +26,7 @@
     getCommunityCensorReason,
     getCommunityReportEventAddress,
   } from "@app/core/community-reports"
-  import {publishSocialDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
   import {pushModal} from "@app/util/modal"
   import CommunityWidgetSlotLaunchers from "@app/components/community/CommunityWidgetSlotLaunchers.svelte"
@@ -168,15 +168,14 @@
       relays: profileRelayHints,
     })
 
-  const deleteReaction = async (event: TrustedEvent) =>
-    publishSocialDelete({
-      url,
+  const deleteReaction = async (reaction: TrustedEvent) =>
+    publishReactionDeleteOperation({
+      reaction,
       relays: actionRelayTargets,
-      event,
     })
 
   const createReaction = async (template: EventContent) =>
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event,
       relays: actionRelayTargets,
@@ -306,6 +305,7 @@
       <ReactionSummary
         {url}
         relays={relayTargets}
+        operationRelays={actionRelayTargets}
         allowedAuthors={interactionAuthorPubkeys}
         {scopeH}
         {event}

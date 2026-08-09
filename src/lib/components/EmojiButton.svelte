@@ -12,9 +12,11 @@
     onEmoji: (emoji: NativeEmoji) => void
     children?: Snippet
     class?: string
+    disabled?: boolean
+    "aria-label"?: string
   }
 
-  const {onEmoji, children, class: className = ""}: Props = $props()
+  const {onEmoji, children, class: className = "", ...buttonProps}: Props = $props()
 
   const open = () => {
     if (!popover || popover.state.isDestroyed) return
@@ -70,7 +72,7 @@
   component={EmojiPicker}
   props={{onClick}}
   params={{trigger: "manual", interactive: true}}>
-  <Button onclick={open} class={className}>
+  <Button {...buttonProps} onclick={open} class={className}>
     {@render children?.()}
   </Button>
 </Tippy>

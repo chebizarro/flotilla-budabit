@@ -16,7 +16,7 @@
     makeCalendarEventIcs,
     makeGoogleCalendarEventUrl,
   } from "@app/core/calendar-export"
-  import {publishSocialDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {makeCalendarPath, makeSpacePath} from "@app/util/routes"
   import {pushModal} from "@app/util/modal"
   import {downloadText} from "@lib/html"
@@ -84,11 +84,11 @@
       redirectPath: redirectOnEdit ? path : undefined,
     })
 
-  const deleteReaction = async (event: TrustedEvent) =>
-    publishSocialDelete({url, relays: actionRelays, event})
+  const deleteReaction = async (reaction: TrustedEvent) =>
+    publishReactionDeleteOperation({reaction, relays: actionRelays})
 
   const createReaction = async (template: EventContent) =>
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event,
       relays: actionRelays,
@@ -105,6 +105,7 @@
   <ReactionSummary
     {url}
     {relays}
+    operationRelays={actionRelays}
     {scopeH}
     {event}
     {readOnly}

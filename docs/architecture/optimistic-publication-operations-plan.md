@@ -2,9 +2,9 @@
 
 ## Status
 
-Phases 1 through 3 are implemented: the operation core and route-independent recovery are active,
-and community room messages use retained operation previews until relay confirmation. Remaining
-publishing call sites stay isolated so they can be migrated without changing excluded workflows.
+Phases 1 through 4 are implemented: the operation core and route-independent recovery are active,
+community room messages use retained previews, and ordinary reaction additions/deletions use
+rollback projections. Remaining publishing call sites stay isolated from excluded workflows.
 
 ## Objective
 

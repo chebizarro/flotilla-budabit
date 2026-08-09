@@ -17,7 +17,7 @@
   import ModerationAction from "@app/components/community/ModerationAction.svelte"
   import EventDeleteConfirm from "@app/components/EventDeleteConfirm.svelte"
   import {ENABLE_ZAPS} from "@app/core/state"
-  import {publishReaction} from "@app/core/commands"
+  import {publishReactionOperation} from "@app/core/commands"
   import {pushModal} from "@app/util/modal"
 
   type Props = {
@@ -55,7 +55,7 @@
 
   const onEmoji = (async (event: TrustedEvent, emoji: NativeEmoji) => {
     history.back()
-    publishReaction({
+    publishReactionOperation({
       event,
       relays: actionRelays,
       content: emoji.unicode,

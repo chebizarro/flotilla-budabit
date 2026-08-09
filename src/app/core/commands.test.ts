@@ -5,6 +5,7 @@ import * as nip19 from "nostr-tools/nip19"
 import {get} from "svelte/store"
 import {repository} from "@welshman/app"
 import * as welshmanApp from "@welshman/app"
+import * as publicationOperationModule from "./publication-operations"
 import {getWidgetLineId} from "@app/extensions/widget-identity"
 import {
   blossomDashboardState,
@@ -930,6 +931,64 @@ describe("commands", () => {
       expect(publishSpy).toHaveBeenCalledTimes(1)
     } finally {
       publishSpy.mockRestore()
+    }
+  })
+
+  it("registers reaction additions and exact deletes as rollback operations", async () => {
+    const startSpy = vi
+      .spyOn(publicationOperationModule, "startPublication")
+      .mockImplementation(options => ({
+        operationId: "reaction-operation",
+        settled: Promise.resolve({event: options.event} as any),
+      }))
+    const {publishReactionDeleteOperation, publishReactionOperation} = await import("./commands")
+    const target = {
+      id: "1".repeat(64),
+      pubkey: "b".repeat(64),
+      kind: 1,
+      created_at: 1,
+      content: "target",
+      tags: [],
+      sig: "2".repeat(128),
+    } as any
+
+    try {
+      publishReactionOperation({
+        event: target,
+        content: "🔥",
+        relays: ["wss://relay.example.com"],
+      })
+
+      const addition = startSpy.mock.calls[0][0]
+      expect(addition).toMatchObject({
+        relays: ["wss://relay.example.com/"],
+        label: "Reaction",
+        preview: "rollback-on-failure",
+      })
+      expect(addition.event).toMatchObject({kind: 7, content: "🔥"})
+
+      const reaction = {
+        ...addition.event,
+        id: "3".repeat(64),
+        pubkey: "a".repeat(64),
+        sig: "4".repeat(128),
+      } as any
+      publishReactionDeleteOperation({
+        reaction,
+        relays: ["wss://relay.example.com"],
+      })
+
+      const deletion = startSpy.mock.calls[1][0]
+      expect(deletion).toMatchObject({
+        relays: ["wss://relay.example.com/"],
+        label: "Remove reaction",
+        preview: "rollback-on-failure",
+        semanticKey: addition.semanticKey,
+      })
+      expect(deletion.event.kind).toBe(5)
+      expect(deletion.event.tags).toContainEqual(expect.arrayContaining(["e", reaction.id]))
+    } finally {
+      startSpy.mockRestore()
     }
   })
 

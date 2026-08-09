@@ -64,8 +64,12 @@ describe("strict community publication source contracts", () => {
       "pushModal(EventDeleteConfirm, {url, event, noun, relays, repoAddress})",
     )
     expect(report).toContain("const publishRelays = normalizeRelays(relays)")
-    expect(threadActions).toContain("publishSocialDelete({url, relays: actionRelays, event})")
-    expect(calendarActions).toContain("publishSocialDelete({url, relays: actionRelays, event})")
+    expect(threadActions).toContain(
+      "publishReactionDeleteOperation({reaction, relays: actionRelays})",
+    )
+    expect(calendarActions).toContain(
+      "publishReactionDeleteOperation({reaction, relays: actionRelays})",
+    )
   })
 
   it("does not broaden stars, badges, or widgets beyond definition relays", () => {

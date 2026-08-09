@@ -13,7 +13,7 @@ import {
 } from "@welshman/lib"
 import {Nip01Signer} from "@welshman/signer"
 import type {UploadTask} from "@welshman/editor"
-import type {TrustedEvent, EventContent, Profile} from "@welshman/util"
+import type {TrustedEvent, EventContent, EventTemplate, Profile} from "@welshman/util"
 import {
   DELETE,
   REPORT,
@@ -143,6 +143,16 @@ import {
   type BlossomUploadContext,
 } from "@app/core/blossom"
 import {requireRepoPublicationScope} from "@app/core/repo-publication"
+import {
+  clearPublicationOperations,
+  publicationOperations,
+  startPublication,
+  type PublicationHandle,
+} from "@app/core/publication-operations"
+import {
+  getReactionOperationSemanticKey,
+  getReactionTargetEventId,
+} from "@app/core/reaction-operations"
 
 // Utils
 
@@ -481,9 +491,8 @@ export const logout = async () => {
     console.warn("[logout] Failed to terminate git worker", error)
   }
 
-  if ($pubkey) {
-    dropSession($pubkey)
-  }
+  clearPublicationOperations()
+  if ($pubkey) dropSession($pubkey)
 
   clearActiveCommunity()
   clearCommunityBootstrapCache()
@@ -832,6 +841,87 @@ export const publishReaction = ({
     relays: repoAddress
       ? requireRepoPublicationScope({event, relays, repoAddress})
       : requireScopedPublishRelays(relays),
+  })
+}
+
+const getPendingReactionOperation = (semanticKey: string) => {
+  const activePubkey = pubkey.get()
+  if (!activePubkey) return undefined
+
+  return Array.from(get(publicationOperations).values()).find(
+    operation =>
+      operation.ownerPubkey === activePubkey &&
+      operation.semanticKey === semanticKey &&
+      operation.phase === "publishing",
+  )
+}
+
+const startReactionOperation = ({
+  event,
+  relays,
+  semanticKey,
+  label,
+}: {
+  event: EventTemplate
+  relays: string[]
+  semanticKey: string
+  label: string
+}): PublicationHandle => {
+  const pending = getPendingReactionOperation(semanticKey)
+  if (pending) {
+    return {operationId: pending.operationId, settled: Promise.resolve(pending)}
+  }
+
+  return startPublication({
+    event,
+    relays,
+    label,
+    semanticKey,
+    preview: "rollback-on-failure",
+  })
+}
+
+export const publishReactionOperation = ({
+  relays,
+  repoAddress,
+  ...params
+}: ReactionParams & {relays: string[]; repoAddress?: string}) => {
+  const reaction = makeReaction(params)
+  const publishRelays = repoAddress
+    ? requireRepoPublicationScope({event: reaction, relays, repoAddress})
+    : requireScopedPublishRelays(relays)
+
+  return startReactionOperation({
+    event: reaction,
+    relays: publishRelays,
+    semanticKey: getReactionOperationSemanticKey(params.event.id, reaction),
+    label: "Reaction",
+  })
+}
+
+export const publishReactionDeleteOperation = ({
+  reaction,
+  relays,
+  repoAddress,
+}: {
+  reaction: TrustedEvent
+  relays: string[]
+  repoAddress?: string
+}) => {
+  if (reaction.kind !== REACTION) throw new Error("Reaction deletion requires a reaction event")
+
+  const targetEventId = getReactionTargetEventId(reaction)
+  if (!targetEventId) throw new Error("Reaction deletion requires a target event")
+
+  const publishRelays = repoAddress
+    ? requireRepoPublicationScope({event: reaction, relays, repoAddress})
+    : requireScopedPublishRelays(relays)
+
+  return startReactionOperation({
+    event: makeDelete({event: reaction}),
+    relays: publishRelays,
+    semanticKey: getReactionOperationSemanticKey(targetEventId, reaction),
+    label: "Remove reaction",
   })
 }
 

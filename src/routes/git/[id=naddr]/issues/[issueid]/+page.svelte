@@ -46,7 +46,7 @@
   import {publishRepoEventAfterAck} from "@app/core/git-commands"
   import {PeoplePicker} from "@nostr-git/ui"
   import {createLabelEvent} from "@nostr-git/core/events"
-  import {publishDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import LogIn from "@app/components/LogIn.svelte"
   import {pushModal} from "@app/util/modal"
   import EventActions from "@app/components/EventActions.svelte"
@@ -263,10 +263,10 @@
   const issueBelongsToAcceptedRepo = $derived.by(() =>
     Boolean(
       issueEvent &&
-        currentRepoAddress &&
-        (issueEvent.tags || []).some(
-          (tag: string[]) => tag[0] === "a" && tag[1] === currentRepoAddress,
-        ),
+      currentRepoAddress &&
+      (issueEvent.tags || []).some(
+        (tag: string[]) => tag[0] === "a" && tag[1] === currentRepoAddress,
+      ),
     ),
   )
   const issueRoleAuthority = $derived.by(() => {
@@ -289,11 +289,7 @@
   const assigneeLabelEvents = $derived.by(() =>
     roleLabelEvents.filter(ev =>
       ev.tags.some(
-        tag =>
-          tag[0] === "l" &&
-          tag[1] === "assignee" &&
-          tag[2] === ROLE_NS &&
-          tag[3] !== "del",
+        tag => tag[0] === "l" && tag[1] === "assignee" && tag[2] === ROLE_NS && tag[3] !== "del",
       ),
     ),
   )
@@ -439,11 +435,11 @@
 
   const getPublishRelays = () => [...repoBoundRelays]
 
-  const deleteReaction = async (event: TrustedEvent) => {
+  const deleteReaction = async (reaction: TrustedEvent) => {
     const relays = getPublishRelays()
 
-    publishDelete({
-      event,
+    publishReactionDeleteOperation({
+      reaction,
       relays,
       repoAddress: issueEditRepoAddress,
     })
@@ -454,7 +450,7 @@
 
     const relays = getPublishRelays()
 
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event: issueEvent as TrustedEvent,
       relays,
@@ -462,11 +458,11 @@
     })
   }
 
-  const deleteCommentReaction = async (event: any) => {
+  const deleteCommentReaction = async (reaction: any) => {
     const relays = getPublishRelays()
 
-    publishDelete({
-      event: event as unknown as TrustedEvent,
+    publishReactionDeleteOperation({
+      reaction: reaction as unknown as TrustedEvent,
       relays,
       repoAddress: issueEditRepoAddress,
     })
@@ -475,7 +471,7 @@
   const createCommentReaction = async (comment: CommentEvent, template: EventContent) => {
     const relays = getPublishRelays()
 
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event: comment as unknown as TrustedEvent,
       relays,

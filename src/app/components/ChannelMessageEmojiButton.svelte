@@ -4,7 +4,7 @@
   import SmileCircle from "@assets/icons/smile-circle.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import EmojiButton from "@lib/components/EmojiButton.svelte"
-  import {publishReaction} from "@app/core/commands"
+  import {publishReactionOperation} from "@app/core/commands"
 
   interface Props {
     url: string
@@ -29,7 +29,7 @@
   })
 
   const onEmoji = async (emoji: NativeEmoji) =>
-    publishReaction({
+    publishReactionOperation({
       event,
       relays: reactionRelays,
       content: emoji.unicode,
@@ -38,6 +38,6 @@
     })
 </script>
 
-<EmojiButton {onEmoji} class="btn join-item btn-xs">
+<EmojiButton {onEmoji} class="btn join-item btn-xs" aria-label="Add reaction">
   <Icon icon={SmileCircle} size={4} />
 </EmojiButton>

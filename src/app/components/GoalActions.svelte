@@ -7,7 +7,7 @@
   import EventActivity from "@app/components/EventActivity.svelte"
   import EventActions from "@app/components/EventActions.svelte"
   import RoomName from "@app/components/RoomName.svelte"
-  import {publishDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {makeGoalPath, makeSpacePath} from "@app/util/routes"
 
   interface Props {
@@ -42,10 +42,11 @@
   const h = getTagValue("h", event.tags)
   const actionRelays = $derived(publishRelays ?? (relays.length > 0 ? relays : url ? [url] : []))
 
-  const deleteReaction = async (event: TrustedEvent) => publishDelete({relays: actionRelays, event})
+  const deleteReaction = async (reaction: TrustedEvent) =>
+    publishReactionDeleteOperation({reaction, relays: actionRelays})
 
   const createReaction = async (template: EventContent) =>
-    publishReaction({
+    publishReactionOperation({
       ...template,
       event,
       relays: actionRelays,
@@ -62,6 +63,7 @@
   <ReactionSummary
     {url}
     {relays}
+    operationRelays={actionRelays}
     {scopeH}
     {event}
     {readOnly}

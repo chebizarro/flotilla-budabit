@@ -4,7 +4,7 @@
   import ThunkStatusOrDeleted from "@app/components/ThunkStatusOrDeleted.svelte"
   import EventActivity from "@app/components/EventActivity.svelte"
   import EventActions from "@app/components/EventActions.svelte"
-  import {publishSocialDelete, publishReaction} from "@app/core/commands"
+  import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {makeThreadPath} from "@app/util/routes"
 
   interface Props {
@@ -23,11 +23,11 @@
     path = makeThreadPath(url, event.id),
   }: Props = $props()
 
-  const deleteReaction = async (event: TrustedEvent) =>
-    publishSocialDelete({url, event})
+  const deleteReaction = async (reaction: TrustedEvent) =>
+    publishReactionDeleteOperation({reaction, relays: [url]})
 
   const createReaction = async (template: EventContent) =>
-    publishReaction({...template, event, relays: [url]})
+    publishReactionOperation({...template, event, relays: [url]})
 </script>
 
 <div class="flex flex-wrap items-center justify-between gap-2">

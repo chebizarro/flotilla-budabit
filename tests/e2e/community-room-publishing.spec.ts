@@ -39,6 +39,34 @@ const room = finalizeEvent(
   communitySecret,
 )
 
+const seededMessage = finalizeEvent(
+  {
+    kind: 9,
+    created_at: 3,
+    content: "Message with a reaction",
+    tags: [
+      ["h", DEV_PUBKEY],
+      ["E", room.id, relayUrl, DEV_PUBKEY],
+      ["K", "11"],
+    ],
+  },
+  communitySecret,
+)
+
+const seededReaction = finalizeEvent(
+  {
+    kind: 7,
+    created_at: 4,
+    content: "🔥",
+    tags: [
+      ["h", DEV_PUBKEY],
+      ["k", "9"],
+      ["e", seededMessage.id, relayUrl],
+    ],
+  },
+  communitySecret,
+)
+
 const communityInput = `ncommunity://${DEV_PUBKEY}?relay=${encodeURIComponent(relayUrl)}`
 const roomPath = `/c/${encodeURIComponent(communityInput)}/rooms/${room.id}`
 
@@ -121,4 +149,116 @@ test("keeps a failed room message visible with retry and discard actions", async
   await recoveryToast.getByRole("button", {name: "Dismiss notification"}).click()
   await message.getByRole("button", {name: "Discard", exact: true}).click()
   await expect(message).toHaveCount(0)
+})
+
+test("rolls a rejected reaction addition back and reapplies it during retry", async ({page}) => {
+  const mockRelay = new MockRelay({
+    seedEvents: [definition, room, seededMessage],
+    publishResponsesByRelay: {
+      [relayUrl]: {outcome: "reject", latency: 2_000, message: "rejected for test"},
+    },
+  })
+
+  await openRoom(page, mockRelay)
+  const message = page.locator("[data-event]").filter({hasText: seededMessage.content})
+  await message.getByRole("button", {name: "Add reaction"}).last().click()
+  const picker = page.locator("emoji-picker")
+  await expect(picker).toBeVisible()
+  await picker.evaluate(element => {
+    element.dispatchEvent(
+      new CustomEvent("emoji-click", {
+        detail: {emoji: {unicode: "🔥"}, unicode: "🔥"},
+      }),
+    )
+  })
+
+  const pendingReaction = message.getByRole("button", {name: "Publishing reaction..."})
+  await expect(pendingReaction).toBeVisible({timeout: 1_000})
+  await mockRelay.waitForEvent(7)
+  await expect(pendingReaction).toHaveCount(0, {timeout: 5_000})
+
+  const recoveryToast = page.getByRole("alert").filter({hasText: "Reaction"})
+  await recoveryToast.getByRole("button", {name: "Retry", exact: true}).click()
+  await expect(pendingReaction).toBeVisible({timeout: 1_000})
+  await expect
+    .poll(() => mockRelay.getPublishedEvents().filter(event => event.kind === 7).length)
+    .toBe(2)
+  await expect(pendingReaction).toHaveCount(0, {timeout: 5_000})
+})
+
+test("commits an accepted reaction addition", async ({page}) => {
+  const mockRelay = new MockRelay({
+    seedEvents: [definition, room, seededMessage],
+    publishResponsesByRelay: {
+      [relayUrl]: {outcome: "accept", latency: 500},
+    },
+  })
+
+  await openRoom(page, mockRelay)
+  const message = page.locator("[data-event]").filter({hasText: seededMessage.content})
+  await message.getByRole("button", {name: "Add reaction"}).last().click()
+  const picker = page.locator("emoji-picker")
+  await expect(picker).toBeVisible()
+  await picker.evaluate(element => {
+    element.dispatchEvent(
+      new CustomEvent("emoji-click", {
+        detail: {emoji: {unicode: "🔥"}, unicode: "🔥"},
+      }),
+    )
+  })
+
+  await expect(message.getByRole("button", {name: "Publishing reaction..."})).toBeVisible({
+    timeout: 1_000,
+  })
+  await mockRelay.waitForEvent(7)
+  await expect(message.getByRole("button", {name: /Click to remove your reaction/})).toBeVisible({
+    timeout: 5_000,
+  })
+})
+
+test("rolls a rejected reaction delete back and reapplies it during retry", async ({page}) => {
+  const mockRelay = new MockRelay({
+    seedEvents: [definition, room, seededMessage, seededReaction],
+    publishResponsesByRelay: {
+      [relayUrl]: {outcome: "reject", latency: 2_000, message: "rejected for test"},
+    },
+  })
+
+  await openRoom(page, mockRelay)
+  const message = page.locator("[data-event]").filter({hasText: seededMessage.content})
+  const reaction = message.getByRole("button", {name: /Click to remove your reaction/})
+  await expect(reaction).toBeVisible()
+
+  await reaction.click()
+  await expect(reaction).toHaveCount(0)
+  await mockRelay.waitForEvent(5)
+  await expect(reaction).toBeVisible({timeout: 5_000})
+
+  const recoveryToast = page.getByRole("alert").filter({hasText: "Remove reaction"})
+  await recoveryToast.getByRole("button", {name: "Retry", exact: true}).click()
+  await expect(reaction).toHaveCount(0)
+  await expect
+    .poll(() => mockRelay.getPublishedEvents().filter(event => event.kind === 5).length)
+    .toBe(2)
+  await expect(reaction).toBeVisible({timeout: 5_000})
+})
+
+test("commits an accepted reaction delete without restoring the reaction", async ({page}) => {
+  const mockRelay = new MockRelay({
+    seedEvents: [definition, room, seededMessage, seededReaction],
+    publishResponsesByRelay: {
+      [relayUrl]: {outcome: "accept", latency: 500},
+    },
+  })
+
+  await openRoom(page, mockRelay)
+  const message = page.locator("[data-event]").filter({hasText: seededMessage.content})
+  const reaction = message.getByRole("button", {name: /Click to remove your reaction/})
+  await expect(reaction).toBeVisible()
+
+  await reaction.click()
+  await mockRelay.waitForEvent(5)
+  await expect(reaction).toHaveCount(0)
+  await page.waitForTimeout(750)
+  await expect(reaction).toHaveCount(0)
 })

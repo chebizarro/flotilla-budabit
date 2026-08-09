@@ -9,7 +9,6 @@
     ZAP_RESPONSE,
     getReplyFilters,
     getEmojiTags,
-    getEmojiTag,
     fromMsats,
     getTag,
     DELETE,
@@ -32,6 +31,12 @@
   import {REACTION_KINDS} from "@app/core/state"
   import {pushModal} from "@app/util/modal"
   import {getZapReceiptFilters, getZapRelays} from "@app/util/zaps"
+  import {publicationOperations} from "@app/core/publication-operations"
+  import {
+    getReactionIdentity,
+    getReactionOperationSemanticKey,
+    projectReactionOperations,
+  } from "@app/core/reaction-operations"
 
   interface Props {
     event: TrustedEvent
@@ -39,6 +44,7 @@
     createReaction: (event: EventContent) => void
     url?: string
     relays?: string[]
+    operationRelays?: string[]
     scopeH?: string
     zapScopeH?: string
     strictZapRelays?: boolean
@@ -56,6 +62,7 @@
     createReaction,
     url = "",
     relays = [],
+    operationRelays = relays,
     scopeH = "",
     zapScopeH = "",
     strictZapRelays = false,
@@ -160,11 +167,23 @@
     ),
   )
 
-  const scopedReactions = $derived.by(() =>
+  const canonicalReactions = $derived.by(() =>
     getRelayScopedEvents($engagements, $engagementsByRelay).filter(
       event => event.kind === REACTION && matchesScopeH(event) && matchesAllowedAuthor(event),
     ),
   )
+  const reactionProjection = $derived.by(() =>
+    projectReactionOperations({
+      reactions: canonicalReactions,
+      operations: $publicationOperations.values(),
+      targetEventId: event.id,
+      ownerPubkey: $pubkey || "",
+      relays: operationRelays,
+      scopeH,
+      allowedAuthors,
+    }),
+  )
+  const scopedReactions = $derived(reactionProjection.reactions)
 
   const scopedZaps = $derived.by(() =>
     Array.from($zaps.values()).filter(zap =>
@@ -193,7 +212,7 @@
 
   const reportReasons = $derived(uniq(map(e => getTag("e", e.tags)?.[2], scopedReports)))
 
-  const getReactionKey = (e: TrustedEvent) => getEmojiTag(e.content, e.tags)?.join("") || e.content
+  const getReactionKey = (e: TrustedEvent) => getReactionIdentity(e)
 
   const groupedReactions = $derived(
     groupBy(
@@ -295,12 +314,16 @@
     {#each groupedReactions.entries() as [key, events]}
       {@const pubkeys = events.map(e => e.pubkey)}
       {@const isOwn = $pubkey && pubkeys.includes($pubkey)}
+      {@const semanticKey = getReactionOperationSemanticKey(event.id, events[0])}
+      {@const pending = reactionProjection.pendingSemanticKeys.has(semanticKey)}
       {@const info = displayList(pubkeys.map(pubkey => displayProfileByPubkey(pubkey)))}
-      {@const tooltip = readOnly
-        ? `${info} reacted`
-        : isOwn
-          ? `${info} reacted. Click to remove your reaction.`
-          : `${info} reacted. Click to add this reaction.`}
+      {@const tooltip = pending
+        ? "Publishing reaction..."
+        : readOnly
+          ? `${info} reacted`
+          : isOwn
+            ? `${info} reacted. Click to remove your reaction.`
+            : `${info} reacted. Click to add this reaction.`}
       {@const onClick = () => onReactionClick(events)}
       <button
         type="button"
@@ -313,10 +336,11 @@
             tooltip: !noTooltip && !isMobile,
             "border-neutral-content/20": !isOwn,
             "btn-primary": isOwn,
-            "cursor-default": readOnly,
+            "cursor-default": readOnly || pending,
           },
         )}
-        onclick={readOnly ? undefined : stopPropagation(preventDefault(onClick))}>
+        disabled={pending}
+        onclick={readOnly || pending ? undefined : stopPropagation(preventDefault(onClick))}>
         <Reaction event={events[0]} />
         {#if events.length > 1}
           <span>{events.length}</span>

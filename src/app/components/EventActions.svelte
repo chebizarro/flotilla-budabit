@@ -13,7 +13,7 @@
   import EmojiButton from "@lib/components/EmojiButton.svelte"
   import EventMenu from "@app/components/EventMenu.svelte"
   import {ENABLE_ZAPS} from "@app/core/state"
-  import {publishReaction} from "@app/core/commands"
+  import {publishReactionOperation} from "@app/core/commands"
   import {stopPropagation} from "@lib/html"
 
   type Props = {
@@ -75,7 +75,7 @@
   const hidePopover = () => popover?.hide()
 
   const onEmoji = async (emoji: NativeEmoji) =>
-    publishReaction({
+    publishReactionOperation({
       event,
       content: emoji.unicode,
       relays: reactionRelays,
@@ -105,7 +105,7 @@
     </ZapButton>
   {/if}
   {#if !menuOnly && !readOnly}
-    <EmojiButton {onEmoji} class="btn join-item btn-neutral btn-xs">
+    <EmojiButton {onEmoji} class="btn join-item btn-neutral btn-xs" aria-label="Add reaction">
       <Icon icon={SmileCircle} size={4} />
     </EmojiButton>
   {/if}
