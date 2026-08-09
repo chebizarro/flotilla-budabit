@@ -79,7 +79,7 @@ test("shows a room message before relay acknowledgement and keeps it after succe
   await expect(message.getByText("Failed to send!", {exact: true})).toHaveCount(0)
 })
 
-test("keeps a failed room message visible with its retry action", async ({page}) => {
+test("keeps a failed room message visible with retry and discard actions", async ({page}) => {
   const messageText = "Retryable failed room message"
   const mockRelay = new MockRelay({
     seedEvents: [definition, room],
@@ -93,16 +93,32 @@ test("keeps a failed room message visible with its retry action", async ({page})
   await page.getByRole("button", {name: "Send message"}).click()
 
   const message = page.locator("[data-event]").filter({hasText: messageText})
-  const failure = message.getByText("Failed to send!", {exact: true})
+  const failure = message.getByText("Publication not confirmed.", {exact: true})
   await expect(message).toBeVisible({timeout: 1_000})
   await expect(failure).toBeVisible({timeout: 5_000})
-  await failure.hover()
 
-  const retry = page.getByRole("button", {name: "Retry", exact: true})
+  const recoveryToast = page.getByRole("alert").filter({hasText: "Room message"})
+  await recoveryToast.getByRole("button", {name: "Dismiss notification"}).click()
+  await expect(message).toBeVisible()
+
+  await page.getByRole("link", {name: "Home", exact: true}).first().click()
+  await expect(page).toHaveURL(/\/c\/npub/)
+  await page.goBack()
+  await expect(
+    page.locator('[data-component="PageBar"]').getByText("Publishing Room", {exact: true}),
+  ).toBeVisible({timeout: 10_000})
+  await expect(message).toBeVisible()
+
+  const retry = message.getByRole("button", {name: "Retry", exact: true})
   await expect(retry).toBeVisible()
   await retry.click()
   await expect
     .poll(() => mockRelay.getPublishedEvents().filter(event => event.kind === 9).length)
     .toBe(2)
   await expect(message).toHaveCount(1)
+  await expect(failure).toBeVisible({timeout: 5_000})
+
+  await recoveryToast.getByRole("button", {name: "Dismiss notification"}).click()
+  await message.getByRole("button", {name: "Discard", exact: true}).click()
+  await expect(message).toHaveCount(0)
 })

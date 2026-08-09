@@ -43,6 +43,16 @@ describe("strict community publication source contracts", () => {
     }
   })
 
+  it("keeps pending room messages outside the canonical repository", () => {
+    const room = readProjectFile("../../routes/c/[community]/rooms/[room]/+page.svelte")
+
+    expect(room).toContain("startPublication({")
+    expect(room).toContain('preview: "retain-on-failure"')
+    expect(room).toContain("$publicationOperations.values()")
+    expect(room).not.toContain("publishThunk({")
+    expect(room).not.toContain("$thunks")
+  })
+
   it("passes explicit relay arrays through report and delete menus", () => {
     const eventMenu = readProjectFile("../components/EventMenu.svelte")
     const report = readProjectFile("../components/Report.svelte")

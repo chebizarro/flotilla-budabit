@@ -2,9 +2,9 @@
 
 ## Status
 
-Phases 1 and 2 are implemented: the in-memory publication-operation core satisfies the tests-first
-contract, and route-independent recovery is mounted in the app shell. Publishing call sites remain
-isolated follow-up phases so they can be migrated incrementally without changing excluded workflows.
+Phases 1 through 3 are implemented: the operation core and route-independent recovery are active,
+and community room messages use retained operation previews until relay confirmation. Remaining
+publishing call sites stay isolated so they can be migrated without changing excluded workflows.
 
 ## Objective
 

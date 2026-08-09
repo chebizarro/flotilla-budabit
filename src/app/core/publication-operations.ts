@@ -26,6 +26,7 @@ export type StartPublicationOptions = {
   event: EventTemplate
   relays: string[]
   confirmRelays?: string[]
+  delay?: number
   label: string
   href?: string
   semanticKey?: string
@@ -313,6 +314,7 @@ export const startPublication = (options: StartPublicationOptions): PublicationH
     event: options.event,
     relays,
     optimistic: false,
+    ...(options.delay ? {delay: options.delay} : {}),
   })
   const operationId = randomId()
   const snapshot: PublicationSnapshot = Object.freeze({

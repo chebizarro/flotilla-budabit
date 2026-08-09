@@ -40,7 +40,10 @@
             <Component toast={item} {...props} />
           {/if}
         </p>
-        <Button class="flex shrink-0 items-center opacity-75" onclick={() => popToast(item.id)}>
+        <Button
+          class="flex shrink-0 items-center opacity-75"
+          onclick={() => popToast(item.id)}
+          aria-label="Dismiss notification">
           <Icon icon={CloseCircle} />
         </Button>
       </div>

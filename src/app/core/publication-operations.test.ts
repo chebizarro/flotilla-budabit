@@ -182,6 +182,25 @@ describe("single-event publication operations", () => {
     expect(mocks.repositoryPublish).toHaveBeenCalledWith(event)
   })
 
+  it("preserves a delayed publication without changing confirmation relays", async () => {
+    mocks.waitForAnyRelayAck.mockResolvedValue(acknowledgement)
+    const event = makeEvent("7")
+
+    const operation = startPublication({...makeOptions(event), delay: 750})
+    await operation.settled
+
+    expect(mocks.publishThunk).toHaveBeenCalledWith({
+      event,
+      relays: [relayOne, relayTwo],
+      optimistic: false,
+      delay: 750,
+    })
+    expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(
+      mocks.publishThunk.mock.results[0]?.value,
+      [relayOne, relayTwo],
+    )
+  })
+
   it("rejects an empty confirmation set before starting publication", () => {
     expect(() =>
       startPublication({

@@ -2,7 +2,7 @@
   import {readable, type Readable} from "svelte/store"
   import {onDestroy, tick} from "svelte"
   import {page} from "$app/stores"
-  import {pubkey, publishThunk, repository, thunks} from "@welshman/app"
+  import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById, throttled} from "@welshman/store"
   import {formatTimestampAsDate, int, MINUTE, now} from "@welshman/lib"
   import type {EventContent, TrustedEvent} from "@welshman/util"
@@ -25,7 +25,6 @@
   import RoomImage from "@app/components/RoomImage.svelte"
   import RoomItem from "@app/components/RoomItem.svelte"
   import RoomName from "@app/components/RoomName.svelte"
-  import ThunkToast from "@app/components/ThunkToast.svelte"
   import {
     activeCommunityBootstrapStatus,
     activeCommunityDefinition,
@@ -71,6 +70,11 @@
   } from "@app/core/event-edits"
   import {publishEditedMessage} from "@app/core/event-edit-publish"
   import {
+    isPublicationPreviewVisible,
+    publicationOperations,
+    startPublication,
+  } from "@app/core/publication-operations"
+  import {
     checked,
     effectiveCommunityNotificationBaselines,
     getNotificationCheckedAt,
@@ -93,7 +97,13 @@
   type RoomElement =
     | {type: "new-messages"; id: string}
     | {type: "date"; id: string; value: string; showPubkey: false}
-    | {type: "note"; id: string; value: TrustedEvent; showPubkey: boolean}
+    | {
+        type: "note"
+        id: string
+        value: TrustedEvent
+        showPubkey: boolean
+        operationId?: string
+      }
 
   const FEED_EMPTY_SETTLE_TIMEOUT_MS = 10_000
   const ROOM_LOAD_RETRY_DELAYS_MS = [5_000, 10_000, 20_000]
@@ -385,21 +395,14 @@
     }
 
     try {
-      const thunk = publishThunk({
+      startPublication({
         relays,
         event: makeEvent(MESSAGE, template),
         delay: $userSettingsValues.send_delay,
+        label: "Room message",
+        href: roomPath,
+        preview: "retain-on-failure",
       })
-
-      if ($userSettingsValues.send_delay) {
-        pushToast({
-          timeout: 0,
-          children: {
-            component: ThunkToast,
-            props: {thunk},
-          },
-        })
-      }
     } catch (error) {
       pushToast({
         theme: "error",
@@ -610,16 +613,28 @@
   const messageEventCandidates = $derived.by(() => {
     const eventsById = new Map<string, TrustedEvent>()
 
-    // Pending thunks are local UI state; relay provenance is added only after an ACK.
-    for (const thunk of $thunks) {
-      if (thunk.options.optimistic !== false) {
-        eventsById.set(thunk.event.id, thunk.event as TrustedEvent)
-      }
+    for (const operation of $publicationOperations.values()) {
+      if (operation.ownerPubkey !== $pubkey || !isPublicationPreviewVisible(operation)) continue
+      if (!readCommunityRoomMessages([operation.event], communityPubkey, roomId).length) continue
+
+      eventsById.set(operation.event.id, operation.event as TrustedEvent)
     }
 
     for (const event of $events) eventsById.set(event.id, event)
 
     return Array.from(eventsById.values()).sort((a, b) => b.created_at - a.created_at)
+  })
+  const messageOperationIds = $derived.by(() => {
+    const operationIds = new Map<string, string>()
+
+    for (const operation of $publicationOperations.values()) {
+      if (operation.ownerPubkey !== $pubkey || !isPublicationPreviewVisible(operation)) continue
+      if (!readCommunityRoomMessages([operation.event], communityPubkey, roomId).length) continue
+
+      operationIds.set(operation.event.id, operation.operationId)
+    }
+
+    return operationIds
   })
   const messages = $derived(
     readCommunityRoomMessages(
@@ -666,6 +681,7 @@
         id: event.id,
         type: "note",
         value: event,
+        operationId: messageOperationIds.get(event.id),
         showPubkey:
           previousPubkey !== event.pubkey || event.created_at - previousCreatedAt > int(3, MINUTE),
       })
@@ -990,8 +1006,9 @@
             interactionAuthorPubkeys={messageAuthorPubkeys}
             scopeH={communityPubkey}
             communitySectionName={roomMessageSectionName}
+            operationId={item.operationId}
             {event}
-            readOnly={!canReact}
+            readOnly={!canReact || Boolean(item.operationId)}
             {replyTo}
             showPubkey={item.showPubkey}
             canEdit={canEditEvent}
