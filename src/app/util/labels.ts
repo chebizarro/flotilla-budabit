@@ -102,18 +102,24 @@ export function toNaturalArray(values?: Iterable<string> | null): string[] {
 export function extractRoleAssignments(
   events: any[],
   rootId?: string | null,
+  authorizedPublishers?: Iterable<string>,
 ): {assignees: Set<string>; reviewers: Set<string>} {
   const assignees = new Set<string>()
   const reviewers = new Set<string>()
+  const authority =
+    authorizedPublishers === undefined ? undefined : new Set(Array.from(authorizedPublishers))
   if (!Array.isArray(events)) return {assignees, reviewers}
 
   for (const ev of events) {
     if (!ev || ev.kind !== 1985 || !Array.isArray(ev.tags)) continue
+    if (authority && !authority.has(ev.pubkey)) continue
     const hasRoleNs = ev.tags.some((t: string[]) => t[0] === "L" && t[1] === ROLE_NS)
     if (!hasRoleNs) continue
     if (rootId && !ev.tags.some((t: string[]) => t[0] === "e" && t[1] === rootId)) continue
 
-    const roleTags = ev.tags.filter((t: string[]) => t[0] === "l" && t[2] === ROLE_NS)
+    const roleTags = ev.tags.filter(
+      (t: string[]) => t[0] === "l" && t[2] === ROLE_NS && t[3] !== "del",
+    )
     const hasAssignee = roleTags.some((t: string[]) => t[1] === "assignee")
     const hasReviewer = roleTags.some((t: string[]) => t[1] === "reviewer")
     const people = ev.tags.filter((t: string[]) => t[0] === "p").map((t: string[]) => t[1])

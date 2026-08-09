@@ -234,6 +234,80 @@ describe("labels", () => {
       const result = extractRoleAssignments(events as any)
       expect(result.assignees).toEqual(new Set())
     })
+
+    it("accepts root-author and maintainer assignments from an explicit authority set", () => {
+      const events = [
+        {
+          kind: 1985,
+          pubkey: "root-author",
+          tags: [
+            ["L", ROLE_NS],
+            ["l", "assignee", ROLE_NS],
+            ["e", "root1"],
+            ["p", "alice"],
+          ],
+        },
+        {
+          kind: 1985,
+          pubkey: "maintainer",
+          tags: [
+            ["L", ROLE_NS],
+            ["l", "assignee", ROLE_NS],
+            ["e", "root1"],
+            ["p", "bob"],
+          ],
+        },
+      ]
+
+      const result = extractRoleAssignments(
+        events as any,
+        "root1",
+        new Set(["root-author", "maintainer"]),
+      )
+
+      expect(result.assignees).toEqual(new Set(["alice", "bob"]))
+    })
+
+    it("ignores outsider assignments and treats an empty authority set as deny-all", () => {
+      const events = [
+        {
+          kind: 1985,
+          pubkey: "outsider",
+          tags: [
+            ["L", ROLE_NS],
+            ["l", "reviewer", ROLE_NS],
+            ["e", "root1"],
+            ["p", "alice"],
+          ],
+        },
+      ]
+
+      expect(
+        extractRoleAssignments(events as any, "root1", new Set(["root-author"])).reviewers,
+      ).toEqual(new Set())
+      expect(extractRoleAssignments(events as any, "root1", new Set()).reviewers).toEqual(
+        new Set(),
+      )
+    })
+
+    it("does not interpret role removal operations as assignments", () => {
+      const events = [
+        {
+          kind: 1985,
+          pubkey: "root-author",
+          tags: [
+            ["L", ROLE_NS],
+            ["l", "assignee", ROLE_NS, "del"],
+            ["e", "root1"],
+            ["p", "alice"],
+          ],
+        },
+      ]
+
+      expect(
+        extractRoleAssignments(events as any, "root1", new Set(["root-author"])).assignees,
+      ).toEqual(new Set())
+    })
   })
 
   describe("groupLabels", () => {

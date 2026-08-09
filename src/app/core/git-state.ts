@@ -444,13 +444,20 @@ export const loadRepoAnnouncementByAddress = (repoAddr: string) => {
 /**
  * Derive role assignments for a given root id.
  */
-export const deriveRoleAssignments = (rootId: string) =>
-  withGetter(
+export const deriveRoleAssignments = (
+  rootId: string,
+  authorizedPublishers?: Iterable<string>,
+) => {
+  const authority =
+    authorizedPublishers === undefined ? undefined : new Set(Array.from(authorizedPublishers))
+
+  return withGetter(
     derived(
       deriveEventsAsc(deriveEventsById({repository, filters: [{kinds: [1985], "#e": [rootId]}]})),
-      $events => extractRoleAssignments($events as any[], rootId),
+      $events => extractRoleAssignments($events as any[], rootId, authority),
     ),
   )
+}
 
 /**
  * Derive combined role assignments for a list of root ids.

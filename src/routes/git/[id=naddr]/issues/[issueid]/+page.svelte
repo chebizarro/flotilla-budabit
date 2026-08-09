@@ -51,9 +51,8 @@
   import {pushModal} from "@app/util/modal"
   import EventActions from "@app/components/EventActions.svelte"
   import ReactionSummary from "@app/components/ReactionSummary.svelte"
-  import {ROLE_NS, buildRoleLabelEvent} from "@app/util/labels"
+  import {ROLE_NS, buildRoleLabelEvent, extractRoleAssignments} from "@app/util/labels"
   import {
-    deriveRoleAssignments,
     getRepoDeclaredMaintainers,
     getRepoMaintainers,
     REPO_PROFILE_RELAYS_KEY,
@@ -197,15 +196,6 @@
     deriveEventsAsc(deriveEventsById({repository, filters: [getCoverLetterFilter()]})),
   )
 
-  const roleLabelEvents = $derived.by(() => {
-    const events = ($allIssueLabelEvents || []) as LabelEvent[]
-    return events.filter(
-      (ev: any) =>
-        ev?.kind === 1985 &&
-        Array.isArray(ev.tags) &&
-        ev.tags.some((t: string[]) => t[0] === "L" && t[1] === ROLE_NS),
-    )
-  })
   const parsedIssueLabelEvents = $derived.by(() =>
     extractLabelEvents((($allIssueLabelEvents || []) as LabelEvent[]) || []),
   )
@@ -216,15 +206,6 @@
     }
     return map
   })
-  const assigneeLabelEvents = $derived.by(() => {
-    const events = (roleLabelEvents || []) as LabelEvent[]
-    return events.filter(
-      ev =>
-        Array.isArray(ev.tags) &&
-        ev.tags.some((t: string[]) => t[0] === "l" && t[1] === "assignee" && t[2] === ROLE_NS),
-    )
-  })
-
   const fallbackMaintainers = $derived.by(() => {
     const owner = (repoClass as any).repoEvent?.pubkey as string | undefined
     return new Set<string>([...(repoClass.maintainers || []), owner].filter(Boolean) as string[])
@@ -276,6 +257,44 @@
     if (maintainers.length > 0) return new Set(maintainers)
     return fallbackMaintainers
   })
+  const acceptedRepoEvent = $derived.by(
+    () => (repoClass as any).repoEvent as RepoAnnouncementEvent | undefined,
+  )
+  const issueBelongsToAcceptedRepo = $derived.by(() =>
+    Boolean(
+      issueEvent &&
+        currentRepoAddress &&
+        (issueEvent.tags || []).some(tag => tag[0] === "a" && tag[1] === currentRepoAddress),
+    ),
+  )
+  const issueRoleAuthority = $derived.by(() => {
+    if (!issueEvent || !acceptedRepoEvent || !issueBelongsToAcceptedRepo) return new Set<string>()
+
+    return new Set([issueEvent.pubkey, ...getRepoMaintainers(acceptedRepoEvent)])
+  })
+  const roleLabelEvents = $derived.by(() => {
+    if (!issueEvent) return [] as LabelEvent[]
+
+    return (($allIssueLabelEvents || []) as LabelEvent[]).filter(
+      ev =>
+        ev?.kind === 1985 &&
+        issueRoleAuthority.has(ev.pubkey) &&
+        Array.isArray(ev.tags) &&
+        ev.tags.some(tag => tag[0] === "e" && tag[1] === issueEvent.id) &&
+        ev.tags.some(tag => tag[0] === "L" && tag[1] === ROLE_NS),
+    )
+  })
+  const assigneeLabelEvents = $derived.by(() =>
+    roleLabelEvents.filter(ev =>
+      ev.tags.some(
+        tag =>
+          tag[0] === "l" &&
+          tag[1] === "assignee" &&
+          tag[2] === ROLE_NS &&
+          tag[3] !== "del",
+      ),
+    ),
+  )
   const issueStatusRepo = $derived.by(
     () =>
       ({
@@ -682,10 +701,12 @@
     return toNaturalArray(issue.labels || [])
   })
 
-  const roleAssignments = $derived.by(() => (issue ? deriveRoleAssignments(issue.id) : undefined))
-  const assignees = $derived.by(() =>
-    Array.from((roleAssignments?.get()?.assignees || new Set()) as Set<string>),
+  const roleAssignments = $derived.by(() =>
+    issue
+      ? extractRoleAssignments(roleLabelEvents, issue.id, issueRoleAuthority)
+      : {assignees: new Set<string>(), reviewers: new Set<string>()},
   )
+  const assignees = $derived.by(() => Array.from(roleAssignments.assignees))
   const recommendedAssigneePubkeys = $derived.by(() => {
     if (!issue) return []
 
