@@ -131,7 +131,8 @@
       params={{trigger: "manual", interactive: true}}>
       <Button
         class="btn btn-neutral btn-xs {menuOnly ? 'rounded-full' : 'join-item'}"
-        onclick={showPopover}>
+        onclick={showPopover}
+        aria-label={`Open ${noun.toLowerCase()} actions`}>
         <Icon icon={MenuDots} size={4} />
       </Button>
     </Tippy>

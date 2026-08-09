@@ -60,7 +60,6 @@
   const hiddenRootIds = $derived.by(() =>
     hiddenRootIdsStore ? $hiddenRootIdsStore : new Set<string>(),
   )
-  const isHiddenRoot = $derived.by(() => hiddenRootIds.has(prId))
   const isDeletedRepositoryEvent = (event?: TrustedEvent) =>
     Boolean(event && (repository as any).isDeleted?.(event))
   const getFirstTagValue = (event: {tags?: string[][]} | undefined, tagName: string) =>
@@ -96,6 +95,7 @@
     if (!directEvent || directEvent.kind !== GIT_PULL_REQUEST_UPDATE) return ""
     return getFirstTagValue(directEvent, "E") || getFirstTagValue(directEvent, "e") || ""
   })
+  const isHiddenRoot = $derived.by(() => hiddenRootIds.has(updateRootId || prId))
   const updateRootEventStore = $derived.by(() => {
     if (!updateRootId) return undefined
     return deriveEventsAsc(

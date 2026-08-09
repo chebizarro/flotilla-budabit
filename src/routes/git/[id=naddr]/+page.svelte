@@ -29,6 +29,7 @@
   import {pushModal} from "@app/util/modal"
   import ResetRepoConfirm from "@app/components/ResetRepoConfirm.svelte"
   import {
+    HIDDEN_ROOT_IDS_KEY,
     PULL_REQUESTS_KEY,
     REPO_KEY,
     REPO_PROFILE_RELAYS_KEY,
@@ -69,6 +70,7 @@
     REPO_VERIFIED_MAINTAINERS_KEY,
   )
   const pullRequestsStore = getContext<Readable<PullRequestEvent[]>>(PULL_REQUESTS_KEY)
+  const hiddenRootIdsStore = getContext<Readable<Set<string>>>(HIDDEN_ROOT_IDS_KEY)
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -82,6 +84,9 @@
     repoVerifiedMaintainersContext?.maintainers ?? emptyVerifiedMaintainers
   const verifiedMaintainers = $derived.by(() => $repoVerifiedMaintainersStore)
   const pullRequests = $derived.by(() => (pullRequestsStore ? $pullRequestsStore : []))
+  const hiddenRootIds = $derived.by(() =>
+    hiddenRootIdsStore ? $hiddenRootIdsStore : new Set<string>(),
+  )
   const repoBasePath = $derived.by(() => $page.url.pathname.replace(/\/+$/, ""))
 
   const isOwner = $derived.by(() => {
@@ -629,6 +634,7 @@
     const items: RecentActivityItem[] = []
 
     for (const issue of repoClass.issues) {
+      if (hiddenRootIds.has(issue.id)) continue
       items.push({
         id: issue.id,
         title: getIssueTitle(issue),
@@ -640,6 +646,7 @@
     }
 
     for (const pullRequest of pullRequests) {
+      if (hiddenRootIds.has(pullRequest.id)) continue
       items.push({
         id: pullRequest.id,
         title: getPullRequestTitle(pullRequest),

@@ -162,6 +162,7 @@
     getVerifiedRepoMaintainers,
     groupStatusEventsByRoot,
   } from "@app/core/git-state"
+  import {getHiddenRepoEventIds} from "@app/core/git-moderation"
   import {loadBudabitProfile} from "@app/core/profile-resolver"
   import {peopleDiscoverySearch} from "@app/core/people-discovery-search"
   import {userRepoWatchValues} from "@app/core/repo-watch"
@@ -1384,37 +1385,13 @@
     return deriveRootScopedEvents<TrustedEvent>(rootIds, [REPORT])
   }
 
-  const isRelayHint = (value: string | undefined) => /^wss?:\/\//i.test(value?.trim() || "")
-
-  const getReportReason = (tag: string[]) => {
-    const markerReason = tag[3]?.trim()
-    if (markerReason) return markerReason.toLowerCase()
-    const maybeReason = tag[2]?.trim()
-    return maybeReason && !isRelayHint(maybeReason) ? maybeReason.toLowerCase() : ""
-  }
-
-  const getOwnerSpamReportTargetId = (event: TrustedEvent, repoOwner: string) => {
-    if (event.kind !== REPORT || !repoOwner || event.pubkey !== repoOwner) return ""
-
-    const targetTag = (event.tags || []).find(
-      (tag: string[]) => tag[0] === "e" && tag[1] && getReportReason(tag) === "spam",
-    )
-
-    return targetTag?.[1] || ""
-  }
-
   function deriveHiddenRepoEventIds(
     reportEvents: Readable<TrustedEvent[]>,
     repoOwner: Readable<string[]>,
   ) {
     return derived([reportEvents, repoOwner], ([$reports, $owners]) => {
       const owner = $owners[0] || repoPubkey
-      const hidden = new Set<string>()
-      for (const report of $reports || []) {
-        const targetId = getOwnerSpamReportTargetId(report, owner)
-        if (targetId) hidden.add(targetId)
-      }
-      return hidden
+      return getHiddenRepoEventIds($reports || [], owner)
     }) as Readable<Set<string>>
   }
 

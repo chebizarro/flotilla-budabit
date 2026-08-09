@@ -18,10 +18,11 @@
   import EventDeleteConfirm from "@app/components/EventDeleteConfirm.svelte"
   import IssueDeleteConfirm from "@app/components/IssueDeleteConfirm.svelte"
   import PullRequestDeleteConfirm from "@app/components/PullRequestDeleteConfirm.svelte"
-  import {pushModal} from "@app/util/modal"
+  import {clearModals, pushModal} from "@app/util/modal"
   import {clip, pushToast} from "@app/util/toast"
   import {publishReport} from "@app/core/commands"
   import {makeEventShareEntityForEvent} from "@app/util/event-share"
+  import {goto} from "$app/navigation"
 
   type Props = {
     url: string
@@ -67,7 +68,13 @@
           : url
             ? [url]
             : []
-    if (reportRelays.length === 0) return
+    if (reportRelays.length === 0) {
+      pushToast({
+        theme: "error",
+        message: `No repository relays are available to hide this ${noun}.`,
+      })
+      return
+    }
 
     const hideKey = JSON.stringify({eventId: event.id, relays: reportRelays, repoAddress})
     let thunk = failedHideThunks.get(hideKey)
@@ -99,7 +106,12 @@
     failedHideThunks.clear()
     repository.publish(thunk.event as TrustedEvent)
     pushToast({message: `${noun} hidden from BudaBit users.`})
-    history.back()
+    clearModals()
+    if (event.kind === GIT_PULL_REQUEST && /\/prs\/[^/]+\/?$/.test(location.pathname)) {
+      await goto(location.pathname.replace(/\/prs\/[^/]+\/?$/, "/prs"))
+    } else {
+      history.back()
+    }
   }
 
   const hideSpam = () => {
