@@ -10,7 +10,7 @@
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
   import AltArrowRight from "@assets/icons/alt-arrow-right.svg?dataurl"
   import {chunk} from "@welshman/lib"
-  import {load, publish, PublishStatus} from "@welshman/net"
+  import {publish, PublishStatus} from "@welshman/net"
   import {repository, pubkey, signer} from "@welshman/app"
   import {Address, DELETE, makeEvent, type TrustedEvent} from "@welshman/util"
   import {pushToast} from "@app/util/toast"
@@ -50,6 +50,7 @@
     getRepoDeleteAddresses,
   } from "@app/util/repo-delete"
   import type {Repo} from "@nostr-git/ui"
+  import {fetchCompleteRelayInventory} from "@app/util/fetch-relay-events"
 
   type Props = {
     repoClass: Repo
@@ -658,16 +659,10 @@
         repoAddresses: deleteRepoAddresses,
       })
 
-      let inventoryError = ""
-      if (relays.length > 0) {
-        await load({relays, filters}).catch(error => {
-          inventoryError = error instanceof Error ? error.message : String(error)
-        })
-      }
-
-      const events = repository.query(filters, {shouldSort: false}) as TrustedEvent[]
+      const inventory = await fetchCompleteRelayInventory({relays, filters})
+      const inventoryError = ""
       const byId = new Map<string, TrustedEvent>()
-      for (const event of events) {
+      for (const event of inventory.events) {
         if (event.pubkey !== ownerPubkey) continue
         byId.set(event.id, event)
       }
@@ -682,7 +677,6 @@
       let metadataDeliveriesAttempted = 0
       let metadataDeliveriesAccepted = 0
       const metadataFailures: string[] = []
-      if (inventoryError) metadataFailures.push(`Metadata discovery: ${inventoryError}`)
       for (const group of deleteChunks) {
         const tags = buildRepoDeleteTags(group)
         if (tags.length > 0) {

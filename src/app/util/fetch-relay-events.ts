@@ -1,4 +1,5 @@
 import {load, makeLoader, Pool} from "@welshman/net"
+import {isRelayUrl, normalizeRelayUrl, type Filter, type TrustedEvent} from "@welshman/util"
 import {normalizeRelayHints} from "@app/util/event-links"
 
 const DEFAULT_RELAY_FETCH_TIMEOUT_MS = 2500
@@ -74,4 +75,114 @@ export async function fetchRelayEventsWithTimeout<TEvent = any>(params: {
   }
 
   return events
+}
+
+export type CompleteRelayInventory = {
+  events: TrustedEvent[]
+  eventsByRelay: Map<string, TrustedEvent[]>
+  relays: string[]
+}
+
+const makeAbortError = () => new DOMException("Operation aborted", "AbortError")
+
+const normalizeInventoryRelays = (relays: string[]) => {
+  const normalized = new Set<string>()
+
+  for (const relay of relays || []) {
+    try {
+      const url = normalizeRelayUrl(relay)
+      if (isRelayUrl(url)) normalized.add(url)
+    } catch {
+      continue
+    }
+  }
+
+  return Array.from(normalized)
+}
+
+export async function fetchCompleteRelayInventory(params: {
+  relays: string[]
+  filters: Filter[]
+  timeoutMs?: number
+  signal?: AbortSignal
+}): Promise<CompleteRelayInventory> {
+  const relays = normalizeInventoryRelays(params.relays)
+  if (relays.length === 0) throw new Error("Repository deletion requires declared metadata relays")
+  if (params.signal?.aborted) throw makeAbortError()
+
+  const pool = new Pool()
+  const operationController = new AbortController()
+  const signal = params.signal
+    ? AbortSignal.any([params.signal, operationController.signal])
+    : operationController.signal
+  const eventsByRelay = new Map<string, TrustedEvent[]>()
+  const loader = makeLoader({
+    delay: 0,
+    threshold: 1,
+    timeout: Math.max(1, params.timeoutMs || DEFAULT_RELAY_FETCH_TIMEOUT_MS),
+    context: {pool},
+    isEventDeleted: () => false,
+  })
+
+  const queryRelay = async (relay: string) => {
+    const events: TrustedEvent[] = []
+    let sawEose = false
+    let terminalError = ""
+
+    try {
+      await loader({
+        relays: [relay],
+        filters: params.filters,
+        signal,
+        onEvent: event => events.push(event),
+        onEose: url => {
+          if (normalizeRelayUrl(url) === relay) sawEose = true
+        },
+        onDisconnect: url => {
+          if (!sawEose) terminalError = `Relay disconnected before EOSE: ${url}`
+        },
+        onClosed: (message, url) => {
+          if (!sawEose) terminalError = `Relay closed before EOSE: ${url}${message ? ` (${message})` : ""}`
+        },
+      })
+    } catch (error) {
+      if (params.signal?.aborted) throw makeAbortError()
+      throw error
+    }
+
+    if (params.signal?.aborted) throw makeAbortError()
+    if (terminalError) throw new Error(terminalError)
+    if (!sawEose) throw new Error(`Relay did not complete repository inventory with EOSE: ${relay}`)
+
+    const deduped = Array.from(new Map(events.map(event => [event.id, event])).values())
+    eventsByRelay.set(relay, deduped)
+    return deduped
+  }
+
+  try {
+    const requests = relays.map(relay =>
+      queryRelay(relay).catch(error => {
+        operationController.abort()
+        throw error
+      }),
+    )
+    const settled = await Promise.allSettled(requests)
+    const failure = settled.find(result => result.status === "rejected") as
+      | PromiseRejectedResult
+      | undefined
+    if (failure) throw failure.reason
+
+    const events = Array.from(
+      new Map(
+        settled.flatMap(result =>
+          result.status === "fulfilled" ? result.value.map(event => [event.id, event] as const) : [],
+        ),
+      ).values(),
+    )
+
+    return {events, eventsByRelay, relays}
+  } finally {
+    operationController.abort()
+    pool.clear()
+  }
 }

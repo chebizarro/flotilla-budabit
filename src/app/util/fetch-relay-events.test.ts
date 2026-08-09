@@ -94,3 +94,130 @@ describe("fetchRelayEventsWithTimeout", () => {
     expect(mockPoolClear).toHaveBeenCalledOnce()
   })
 })
+
+describe("fetchCompleteRelayInventory", () => {
+  beforeEach(() => {
+    mockLoad.mockReset()
+    mockMakeLoader.mockClear()
+    mockPoolClear.mockReset()
+  })
+
+  it("requires EOSE independently from every normalized relay", async () => {
+    mockLoad.mockImplementation(async options => {
+      const relay = options.relays[0]
+      options.onEvent({id: `event-${relay}`, pubkey: "a".repeat(64), kind: 1621, tags: []})
+      options.onEose(relay)
+      return []
+    })
+    const {fetchCompleteRelayInventory} = await import("./fetch-relay-events")
+
+    const result = await fetchCompleteRelayInventory({
+      relays: ["wss://one.example", "wss://two.example/", "wss://one.example/"],
+      filters: [{kinds: [1621]}],
+    })
+
+    expect(result.relays).toEqual(["wss://one.example/", "wss://two.example/"])
+    expect(result.events).toHaveLength(2)
+    expect(mockLoad.mock.calls.map(([options]) => options.relays)).toEqual([
+      ["wss://one.example/"],
+      ["wss://two.example/"],
+    ])
+    expect(mockPoolClear).toHaveBeenCalledOnce()
+  })
+
+  it("accepts an empty inventory only after every relay reaches EOSE", async () => {
+    mockLoad.mockImplementation(async options => {
+      options.onEose(options.relays[0])
+      return []
+    })
+    const {fetchCompleteRelayInventory} = await import("./fetch-relay-events")
+
+    await expect(
+      fetchCompleteRelayInventory({
+        relays: ["wss://empty.example"],
+        filters: [{kinds: [30617]}],
+      }),
+    ).resolves.toMatchObject({events: [], relays: ["wss://empty.example/"]})
+  })
+
+  it("rejects events followed by disconnect before EOSE", async () => {
+    mockLoad.mockImplementation(async options => {
+      options.onEvent({id: "partial"})
+      options.onDisconnect(options.relays[0])
+      return []
+    })
+    const {fetchCompleteRelayInventory} = await import("./fetch-relay-events")
+
+    await expect(
+      fetchCompleteRelayInventory({
+        relays: ["wss://partial.example"],
+        filters: [{kinds: [1621]}],
+      }),
+    ).rejects.toThrow("disconnected before EOSE")
+    expect(mockPoolClear).toHaveBeenCalledOnce()
+  })
+
+  it("rejects CLOSED and missing-EOSE completion", async () => {
+    const {fetchCompleteRelayInventory} = await import("./fetch-relay-events")
+    mockLoad.mockImplementationOnce(async options => {
+      options.onClosed("policy", options.relays[0])
+      return []
+    })
+
+    await expect(
+      fetchCompleteRelayInventory({
+        relays: ["wss://closed.example"],
+        filters: [{kinds: [1621]}],
+      }),
+    ).rejects.toThrow("closed before EOSE")
+
+    mockLoad.mockResolvedValueOnce([])
+    await expect(
+      fetchCompleteRelayInventory({
+        relays: ["wss://timeout.example"],
+        filters: [{kinds: [1621]}],
+      }),
+    ).rejects.toThrow("did not complete repository inventory with EOSE")
+  })
+
+  it("disables local deletion filtering in an isolated all-relay loader", async () => {
+    mockLoad.mockImplementation(async options => {
+      options.onEose(options.relays[0])
+      return []
+    })
+    const {fetchCompleteRelayInventory} = await import("./fetch-relay-events")
+
+    await fetchCompleteRelayInventory({
+      relays: ["wss://relay.example"],
+      filters: [{kinds: [1621]}],
+    })
+
+    expect(mockMakeLoader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threshold: 1,
+        context: {pool: expect.any(MockPool)},
+        isEventDeleted: expect.any(Function),
+      }),
+    )
+    const options = mockMakeLoader.mock.calls.at(-1)?.[0]
+    expect(options.isEventDeleted({id: "locally-deleted"}, "wss://relay.example/")).toBe(false)
+  })
+
+  it("fails closed when there are no valid declared relays or the caller aborts", async () => {
+    const {fetchCompleteRelayInventory} = await import("./fetch-relay-events")
+
+    await expect(
+      fetchCompleteRelayInventory({relays: ["not-a-relay"], filters: [{kinds: [30617]}]}),
+    ).rejects.toThrow("requires declared metadata relays")
+
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      fetchCompleteRelayInventory({
+        relays: ["wss://relay.example"],
+        filters: [{kinds: [30617]}],
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({name: "AbortError"})
+  })
+})
