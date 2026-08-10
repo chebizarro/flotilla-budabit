@@ -353,7 +353,6 @@ account restoration, stale-intent detection, private-event handling, and exact w
 | ----------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Community room message              | Single kind `9` thunk             | Existing room candidate merge is the reference projection. Replace repository optimism with operation previews.      |
 | Current thread creation             | Single kind `11` thunk            | Add pending root projection to thread list/detail so navigation does not lose the item.                              |
-| Compose-menu thread creation        | Single kind `11` thunk            | Reuse the same thread projection.                                                                                    |
 | Repository-activity thread creation | Single thread event               | The Nostr thread publication is standalone even though its source item is Git activity. Do not change Git transport. |
 | Thread reply                        | Single kind `1111` thunk          | Merge operation previews into thread replies and retain unconfirmed replies.                                         |
 | Goal comment                        | Single kind `1111` thunk          | Merge operation previews into detail activity.                                                                       |
@@ -627,7 +626,7 @@ Extend the room retain-on-failure pattern to safe authored content.
 
 ### Steps
 
-- Migrate current and compose-menu thread creation.
+- Migrate current community thread creation.
 - Migrate repository-activity thread creation without changing Git transport.
 - Add pending thread-root projections to list and detail routes.
 - Migrate thread, goal, and calendar comments.

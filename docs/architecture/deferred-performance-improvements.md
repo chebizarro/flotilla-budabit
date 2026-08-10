@@ -110,9 +110,6 @@ Smaller items observed during the audit, in rough priority order:
   unmount and `buffer`/`events` grow unboundedly while mounted.
 - `src/app/components/NewNotificationSound.svelte` - `notifications.subscribe`
   unsubscriber is discarded in `onMount`.
-- `src/app/components/GitIssueItem.svelte` - latent per-item live `request`
-  when `fetchRepoAndStatus` is enabled; would exhaust the live subscription
-  budget on any sizable list if a caller ever enables it.
 - `packages/nostr-git-core/src/git/git.ts` - the 60 second `repoDepthCache` TTL
   causes repeated deepening fetches for file operations on quiet repos.
 - `packages/nostr-git-core/src/git/merge-analysis.ts` - `checkIfPRApplied`

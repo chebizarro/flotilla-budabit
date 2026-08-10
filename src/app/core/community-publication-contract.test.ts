@@ -1,4 +1,4 @@
-import {readFileSync} from "node:fs"
+import {existsSync, readFileSync} from "node:fs"
 import {describe, expect, it} from "vitest"
 
 const readProjectFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
@@ -106,7 +106,6 @@ describe("strict community publication source contracts", () => {
   it("uses retained operations for authored thread and comment publications", () => {
     const publishers = [
       "../../routes/c/[community]/threads/create/+page.svelte",
-      "../components/ThreadCreate.svelte",
       "../components/RepoActivityThreadCreate.svelte",
       "../../routes/c/[community]/threads/[thread]/+page.svelte",
       "../../routes/c/[community]/goals/[goal]/+page.svelte",
@@ -127,6 +126,15 @@ describe("strict community publication source contracts", () => {
     expect(calendarForm).toContain("startPublication({")
     expect(calendarForm).toContain("validateRetry: assertReplaceablePublicationIsCurrent")
     expect(calendarForm).toContain("optimistic: false")
+  })
+
+  it("removes dormant unscoped thread launchers", () => {
+    const composeMenu = readProjectFile("../components/ComposeMenu.svelte")
+
+    expect(composeMenu).not.toContain("ThreadCreate")
+    expect(composeMenu).not.toContain("Create Thread")
+    expect(existsSync(new URL("../components/ThreadCreate.svelte", import.meta.url))).toBe(false)
+    expect(existsSync(new URL("../components/GitIssueItem.svelte", import.meta.url))).toBe(false)
   })
 
   it("projects retained authored operations into thread, goal, and calendar routes", () => {

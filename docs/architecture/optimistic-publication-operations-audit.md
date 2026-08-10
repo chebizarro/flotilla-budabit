@@ -45,7 +45,6 @@ these flows, after a qualifying ACK or tracker observation.
 | Ordinary reaction add/delete            | `src/app/core/commands.ts`, `src/app/core/reaction-operations.ts`                      |
 | Community star/unstar                   | `src/app/components/community/CommunityStarButton.svelte`                              |
 | Current community thread creation       | `src/routes/c/[community]/threads/create/+page.svelte`                                 |
-| Compose-menu thread creation            | `src/app/components/ThreadCreate.svelte`                                               |
 | Repository-activity thread creation     | `src/app/components/RepoActivityThreadCreate.svelte`                                   |
 | Thread roots and comments               | `src/routes/c/[community]/threads/`, `src/app/core/authored-publication-operations.ts` |
 | Goal comments and compose goal creation | `src/routes/c/[community]/goals/`, `src/app/components/GoalCreate.svelte`              |
