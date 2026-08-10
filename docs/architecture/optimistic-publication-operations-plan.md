@@ -2,9 +2,12 @@
 
 ## Status
 
-Phases 1 through 4 are implemented: the operation core and route-independent recovery are active,
-community room messages use retained previews, and ordinary reaction additions/deletions use
-rollback projections. Remaining publishing call sites stay isolated from excluded workflows.
+Phases 1 through 8 are implemented for the initial safe scope. The operation core and
+route-independent recovery are active; room messages, threads, comments, and safe compose creations
+use retained previews; reactions and community stars use rollback projections; and independent
+governance publications use exact operation recovery. Remaining default optimism is classified in
+the [phase 8 audit](./optimistic-publication-operations-audit.md), and changing Welshman's default is
+deferred to a [separate admission plan](./welshman-repository-admission-plan.md).
 
 ## Objective
 

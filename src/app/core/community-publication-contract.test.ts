@@ -90,4 +90,114 @@ describe("strict community publication source contracts", () => {
     expect(explore).toContain("publishRelayHints={item.publishRelayHints}")
     expect(explore).toContain("getLoadedCommunityPublishRelays")
   })
+
+  it("keeps pending community stars outside the canonical repository", () => {
+    const star = readProjectFile("../components/community/CommunityStarButton.svelte")
+
+    expect(star).toContain("startPublication({")
+    expect(star).toContain('preview: "rollback-on-failure"')
+    expect(star).toContain("$publicationOperations.values()")
+    expect(star).toContain('tags: supersededStarEventId ? [["e", supersededStarEventId]] : []')
+    expect(star).not.toContain("publishThunk({")
+    expect(star).not.toContain("repository.publish(")
+    expect(star).not.toContain("publishDelete(")
+  })
+
+  it("uses retained operations for authored thread and comment publications", () => {
+    const publishers = [
+      "../../routes/c/[community]/threads/create/+page.svelte",
+      "../components/ThreadCreate.svelte",
+      "../components/RepoActivityThreadCreate.svelte",
+      "../../routes/c/[community]/threads/[thread]/+page.svelte",
+      "../../routes/c/[community]/goals/[goal]/+page.svelte",
+      "../../routes/c/[community]/calendar/[event]/+page.svelte",
+      "../components/GoalCreate.svelte",
+    ]
+
+    for (const publisher of publishers) {
+      const source = readProjectFile(publisher)
+
+      expect(source, publisher).toContain("startPublication({")
+      expect(source, publisher).toContain('preview: "retain-on-failure"')
+      expect(source, publisher).not.toContain("publishThunk({")
+      expect(source, publisher).not.toContain("signEventForPublication(")
+    }
+
+    const calendarForm = readProjectFile("../components/CalendarEventForm.svelte")
+    expect(calendarForm).toContain("startPublication({")
+    expect(calendarForm).toContain("validateRetry: assertReplaceablePublicationIsCurrent")
+    expect(calendarForm).toContain("optimistic: false")
+  })
+
+  it("projects retained authored operations into thread, goal, and calendar routes", () => {
+    const routes = [
+      "../../routes/c/[community]/threads/+page.svelte",
+      "../../routes/c/[community]/threads/[thread]/+page.svelte",
+      "../../routes/c/[community]/goals/+page.svelte",
+      "../../routes/c/[community]/goals/[goal]/+page.svelte",
+      "../../routes/c/[community]/calendar/+page.svelte",
+      "../../routes/c/[community]/calendar/[event]/+page.svelte",
+    ]
+
+    for (const route of routes) {
+      const source = readProjectFile(route)
+      expect(source, route).toContain("projectAuthoredPublicationEvents({")
+      expect(source, route).toContain("$publicationOperations.values()")
+    }
+
+    const channelMessage = readProjectFile("../components/ChannelMessage.svelte")
+    expect(channelMessage).toContain("<PublicationStatus {operationId}")
+    expect(channelMessage).toContain("operationId ? undefined : $thunks.find")
+  })
+
+  it("registers independent governance publications without repository optimism", () => {
+    const communityHome = readProjectFile("../../routes/c/[community]/+page.svelte")
+    const reportCard = readProjectFile("../components/community/CommunityContentReportCard.svelte")
+
+    expect(communityHome).toContain("getModeratorInviteResponseSemanticKey(")
+    expect(communityHome).toContain("validateRetry: assertReplaceablePublicationIsCurrent")
+    expect(communityHome).toContain("<PublicationStatus {operationId}")
+    expect(communityHome).toContain("disabled={startableModeratorInvites.length === 0}")
+    expect(communityHome).toContain('preview: "none"')
+    expect(communityHome).not.toContain("publishThunk({")
+
+    expect(reportCard).toContain("getReportReviewSemanticKey(")
+    expect(reportCard).toContain("candidate.ownerPubkey === currentPubkey")
+    expect(reportCard).toContain("<PublicationStatus {operationId}")
+    expect(reportCard).toContain("startPublication({")
+    expect(reportCard).toContain('preview: "none"')
+    expect(reportCard).not.toContain("waitForThunkCompletion")
+    expect(reportCard).not.toContain("repository.removeEvent")
+    expect(reportCard).not.toContain("repository.publish(")
+    expect(reportCard).not.toContain("publishThunk({")
+  })
+
+  it("hands direct compose goal and calendar events off to canonical community feeds", () => {
+    const goals = readProjectFile("../../routes/c/[community]/goals/+page.svelte")
+    const goal = readProjectFile("../../routes/c/[community]/goals/[goal]/+page.svelte")
+    const calendar = readProjectFile("../../routes/c/[community]/calendar/+page.svelte")
+    const calendarEvent = readProjectFile(
+      "../../routes/c/[community]/calendar/[event]/+page.svelte",
+    )
+
+    expect(goals).toContain('"#h": [communityPubkey]')
+    expect(goal).toContain('getTagValue("h", goal.tags) === communityPubkey')
+    expect(calendar).toContain('"#h": [communityPubkey]')
+    expect(calendar).toContain("calendarProjection.events.toSorted(")
+    expect(calendarEvent).toContain('getTagValue("h", event.tags) === communityPubkey')
+  })
+
+  it("keeps dependent publications disabled until authored roots are canonical", () => {
+    const thread = readProjectFile("../../routes/c/[community]/threads/[thread]/+page.svelte")
+    const goal = readProjectFile("../../routes/c/[community]/goals/[goal]/+page.svelte")
+    const calendar = readProjectFile("../../routes/c/[community]/calendar/[event]/+page.svelte")
+
+    expect(thread).toContain("!threadOperationId &&")
+    expect(thread).toContain("{#if !threadOperationId}")
+    expect(goal).toContain("!goalOperationId &&")
+    expect(goal).toContain("disableContributions={Boolean(goalOperationId)}")
+    expect(goal).toContain("{#if !goalOperationId}")
+    expect(calendar).toContain("!eventOperationId &&")
+    expect(calendar).toContain("{#if !eventOperationId}")
+  })
 })
