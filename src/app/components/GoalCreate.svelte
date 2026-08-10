@@ -1,7 +1,7 @@
 <script lang="ts">
   import {writable} from "svelte/store"
-  import {makeEvent, ZAP_GOAL} from "@welshman/util"
-  import {publishThunk} from "@welshman/app"
+  import {makeEvent, prep, ZAP_GOAL} from "@welshman/util"
+  import {pubkey} from "@welshman/app"
   import {isMobile, preventDefault} from "@lib/html"
   import Paperclip from "@assets/icons/paperclip-2.svg?dataurl"
   import Bolt from "@assets/icons/bolt.svg?dataurl"
@@ -17,7 +17,8 @@
   import {pushToast} from "@app/util/toast"
   import {makeEditor} from "@app/editor"
   import type {BlossomUploadStage} from "@app/core/blossom"
-  import {signEventForPublication} from "@app/core/publication"
+  import {startPublication} from "@app/core/publication-operations"
+  import {makeCommunityGoalPath} from "@app/util/routes"
 
   type Props = {
     url: string
@@ -35,6 +36,7 @@
 
   const submit = async () => {
     if ($uploading || submitting) return
+    if (!$pubkey) return pushToast({theme: "error", message: "Sign in to create a funding goal."})
 
     if (!content) {
       return pushToast({
@@ -67,9 +69,14 @@
         tags.push(["h", h])
       }
 
-      const event = await signEventForPublication(makeEvent(ZAP_GOAL, {content, tags}))
-
-      publishThunk({relays: [url], event})
+      const event = prep(makeEvent(ZAP_GOAL, {content, tags}), $pubkey)
+      startPublication({
+        relays: [url],
+        event,
+        label: "Funding goal",
+        href: h ? makeCommunityGoalPath(h, event.id) : undefined,
+        preview: "retain-on-failure",
+      })
 
       history.back()
     } catch (error) {

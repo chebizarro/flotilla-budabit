@@ -11,6 +11,7 @@
   import Button from "@lib/components/Button.svelte"
   import Markdown from "@lib/components/Markdown.svelte"
   import ThunkFailure from "@app/components/ThunkFailure.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import NoteContentMinimal from "@app/components/NoteContentMinimal.svelte"
   import ProfileCircle from "@app/components/ProfileCircle.svelte"
   import ProfileDetail from "@app/components/ProfileDetail.svelte"
@@ -50,6 +51,7 @@
     onReplyParentOpen?: (event: TrustedEvent) => void
     canEdit?: (event: TrustedEvent) => boolean
     onEdit?: (event: TrustedEvent) => void
+    operationId?: string
   }
 
   const {
@@ -69,6 +71,7 @@
     onReplyParentOpen = undefined,
     canEdit = () => false,
     onEdit = undefined,
+    operationId = undefined,
   }: Props = $props()
 
   const LEADING_EVENT_URI =
@@ -95,7 +98,8 @@
     return content.slice(match[0].length)
   }
 
-  const thunk = $derived($thunks.find(t => t.event.id === event.id))
+  const thunk = $derived(operationId ? undefined : $thunks.find(t => t.event.id === event.id))
+  const effectiveReadOnly = $derived(readOnly || Boolean(operationId))
   const displayEvent = $derived(
     replyParent
       ? {...event, content: stripLeadingReplyQuote(event.content, replyParent.id)}
@@ -132,8 +136,10 @@
       : undefined,
   )
 
-  const reply = replyTo ? () => replyTo(event) : undefined
-  const edit = !readOnly && canEdit(event) && onEdit ? () => onEdit(event) : undefined
+  const reply = $derived(!effectiveReadOnly && replyTo ? () => replyTo(event) : undefined)
+  const edit = $derived(
+    !effectiveReadOnly && canEdit(event) && onEdit ? () => onEdit(event) : undefined,
+  )
   const openReplyParent = () => {
     if (replyParent) onReplyParentOpen?.(replyParent)
   }
@@ -144,7 +150,7 @@
       event,
       reply,
       edit,
-      readOnly,
+      readOnly: effectiveReadOnly,
       relays: actionRelayTargets,
       scopeH,
       communitySectionName,
@@ -185,9 +191,9 @@
 
 <TapTarget
   data-event={event.id}
-  onTap={inert || censorReason ? null : onTap}
+  onTap={inert || effectiveReadOnly || censorReason ? null : onTap}
   class="group relative flex w-full cursor-default flex-col p-2 pb-3 text-left">
-  {#if !inert && !censorReason}
+  {#if !inert && !effectiveReadOnly && !censorReason}
     <div class="z-10 absolute right-2 top-2 sm:hidden">
       <Button
         class="btn btn-neutral btn-xs rounded-full border border-solid border-neutral bg-base-100/90 shadow-sm backdrop-blur"
@@ -271,13 +277,15 @@
             {url}
             {communitySectionName} />
         {/if}
-        {#if thunk}
+        {#if operationId}
+          <PublicationStatus {operationId} class="mt-2" />
+        {:else if thunk}
           <ThunkFailure showToastOnRetry {thunk} class="mt-2" />
         {/if}
       </div>
     </div>
   </div>
-  {#if !inert && !readOnly && !censorReason}
+  {#if !inert && !effectiveReadOnly && !censorReason}
     <div class="ml-10 mt-3 flex items-center gap-2 pl-1 sm:hidden">
       <div
         class="join rounded-full border border-solid border-neutral bg-base-100/90 text-xs shadow-sm backdrop-blur"
@@ -309,7 +317,7 @@
         allowedAuthors={interactionAuthorPubkeys}
         {scopeH}
         {event}
-        {readOnly}
+        readOnly={effectiveReadOnly}
         {deleteReaction}
         {createReaction}
         reactionClass="tooltip-right" />
@@ -319,10 +327,10 @@
     <div class="z-10 absolute right-2 top-2 hidden items-center gap-1 text-xs sm:flex">
       <div
         class="join rounded-full border border-solid border-neutral bg-base-100/90 shadow-sm backdrop-blur">
-        {#if ENABLE_ZAPS && !readOnly}
+        {#if ENABLE_ZAPS && !effectiveReadOnly}
           <ChannelMessageZapButton {event} relays={actionRelayTargets} {scopeH} />
         {/if}
-        {#if !readOnly}
+        {#if !effectiveReadOnly}
           <ChannelMessageEmojiButton {url} {event} relays={actionRelayTargets} {scopeH} />
         {/if}
         {#if reply}
@@ -340,9 +348,9 @@
           {event}
           relays={actionRelayTargets}
           {communitySectionName}
-          readOnly={inert || readOnly} />
+          readOnly={inert || effectiveReadOnly} />
       </div>
-      {#if !readOnly}
+      {#if !effectiveReadOnly}
         <CommunityWidgetSlotLaunchers
           communityPubkey={url}
           relayHints={relayTargets}

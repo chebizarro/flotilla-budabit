@@ -2,7 +2,7 @@
   import {onDestroy, tick} from "svelte"
   import {goto} from "$app/navigation"
   import {page} from "$app/stores"
-  import {pubkey, publishThunk, repository} from "@welshman/app"
+  import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {sortBy} from "@welshman/lib"
   import {
@@ -32,10 +32,12 @@
   import CalendarEventHeader from "@app/components/CalendarEventHeader.svelte"
   import CalendarEventMeta from "@app/components/CalendarEventMeta.svelte"
   import CalendarEventDate from "@app/components/CalendarEventDate.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {
     makeCommunityCalendarEventReply,
     readCommunityCalendarEventReply,
   } from "@app/core/community-calendar"
+  import {isCalendarEventKind} from "@app/core/calendar-events"
   import {
     activeCommunityBootstrapStatus,
     activeCommunityDefinition,
@@ -70,7 +72,8 @@
     filterVisibleAfterDeletesAndEdits,
   } from "@app/core/event-edits"
   import {publishEditedReply} from "@app/core/event-edit-publish"
-  import {signEventForPublication} from "@app/core/publication"
+  import {publicationOperations, startPublication} from "@app/core/publication-operations"
+  import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {setChecked} from "@app/util/notifications"
   import {pushToast} from "@app/util/toast"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -178,14 +181,29 @@
   const eventEvents = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: eventFilters})),
   )
+  const eventProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $eventEvents,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event =>
+        isCalendarEventKind(event.kind) &&
+        (event.id === eventParam || getTagValue("d", event.tags) === eventParam) &&
+        getTagValue("h", event.tags) === communityPubkey &&
+        calendarAuthorPubkeys.some(
+          author => normalizePubkey(author) === normalizePubkey(event.pubkey),
+        ),
+    }),
+  )
   const event = $derived.by(() => {
-    const events = sortBy(candidate => -candidate.created_at, $eventEvents)
+    const events = sortBy(candidate => -candidate.created_at, eventProjection.events)
 
     return (
       events.find(candidate => candidate.id === eventParam) ||
       events.find(candidate => getTagValue("d", candidate.tags) === eventParam)
     )
   })
+  const eventOperationId = $derived(event ? eventProjection.operationIds.get(event.id) : undefined)
   const eventAddress = $derived.by(() => {
     const identifier = event ? getTagValue("d", event.tags) : ""
 
@@ -211,6 +229,7 @@
 
     const allowedAuthors = new Set(calendarAuthorPubkeys.map(normalizePubkey).filter(Boolean))
     if (!allowedAuthors.has(normalizePubkey(event.pubkey))) return false
+    if (getTagValue("h", event.tags) === communityPubkey) return true
 
     return $targetingEvents.some(targetingEvent => {
       const targeting = parseTargetedPublication(targetingEvent)
@@ -274,10 +293,21 @@
   const replyEventsStore = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: replyFilters})),
   )
+  const replyProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $replyEventsStore,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event =>
+        Boolean(
+          readCommunityCalendarEventReply(event, communityPubkey, approvedEvent?.id, eventAddress),
+        ),
+    }),
+  )
   const replies = $derived(
     sortBy(
       reply => reply.event.created_at,
-      filterVisibleAfterDeletesAndEdits($replyEventsStore, $editedTargetIds)
+      filterVisibleAfterDeletesAndEdits(replyProjection.events, $editedTargetIds)
         .map(replyEvent =>
           readCommunityCalendarEventReply(
             replyEvent,
@@ -306,6 +336,7 @@
   const canReply = $derived(
     Boolean(
       approvedEvent &&
+      !eventOperationId &&
       communityBootstrapReady &&
       !approvedEventCensorReason &&
       $pubkey &&
@@ -322,6 +353,7 @@
   const canReact = $derived(
     Boolean(
       approvedEvent &&
+      !eventOperationId &&
       communityBootstrapReady &&
       !approvedEventCensorReason &&
       $pubkey &&
@@ -409,8 +441,13 @@
     })
 
     try {
-      const event = await signEventForPublication(makeEvent(COMMENT, template))
-      publishThunk({relays, event})
+      startPublication({
+        relays,
+        event: makeEvent(COMMENT, template),
+        label: "Calendar comment",
+        href: eventPath,
+        preview: "retain-on-failure",
+      })
     } catch (error) {
       pushToast({
         theme: "error",
@@ -621,20 +658,25 @@
               url={communityPubkey}
               relays={$activeCommunityRelays}
               communitySectionName={approvedEventSectionName} />
+            {#if eventOperationId}
+              <PublicationStatus operationId={eventOperationId} />
+            {/if}
           </div>
         </div>
-        <div class="flex w-full flex-col justify-end sm:flex-row">
-          <CalendarEventActions
-            url={communityPubkey}
-            relays={$activeCommunityRelays}
-            publishRelays={calendarEditPublishRelays}
-            scopeH={communityPubkey}
-            communitySectionName={approvedEventSectionName}
-            allowedAuthors={interactionAuthorPubkeys}
-            readOnly={!canReact}
-            redirectOnEdit
-            event={approvedEvent} />
-        </div>
+        {#if !eventOperationId}
+          <div class="flex w-full flex-col justify-end sm:flex-row">
+            <CalendarEventActions
+              url={communityPubkey}
+              relays={$activeCommunityRelays}
+              publishRelays={calendarEditPublishRelays}
+              scopeH={communityPubkey}
+              communitySectionName={approvedEventSectionName}
+              allowedAuthors={interactionAuthorPubkeys}
+              readOnly={!canReact}
+              redirectOnEdit
+              event={approvedEvent} />
+          </div>
+        {/if}
       {/if}
     </article>
 
@@ -658,6 +700,7 @@
             <ChannelMessage
               url={communityPubkey}
               event={item.event}
+              operationId={replyProjection.operationIds.get(item.id)}
               showPubkey
               readOnly={!canReact}
               interactionRelays={$activeCommunityRelays}

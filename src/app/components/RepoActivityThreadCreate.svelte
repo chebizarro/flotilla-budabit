@@ -1,8 +1,7 @@
 <script lang="ts">
   import {goto} from "$app/navigation"
-  import {profilesByPubkey, publishThunk} from "@welshman/app"
-  import {PublishStatus} from "@welshman/net"
-  import {getTagValue, makeEvent, THREAD, type TrustedEvent} from "@welshman/util"
+  import {profilesByPubkey, pubkey} from "@welshman/app"
+  import {getTagValue, makeEvent, prep, THREAD, type TrustedEvent} from "@welshman/util"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
   import AltArrowRight from "@assets/icons/alt-arrow-right.svg?dataurl"
   import NotesMinimalistic from "@assets/icons/notes-minimalistic.svg?dataurl"
@@ -25,6 +24,7 @@
   import {formatShortNpub} from "@app/util/pubkeys"
   import {makeCommunityThreadPath} from "@app/util/routes"
   import {pushToast} from "@app/util/toast"
+  import {startPublication} from "@app/core/publication-operations"
   import {GIT_ISSUE, GIT_PULL_REQUEST} from "@nostr-git/core/events"
 
   type Props = {
@@ -32,12 +32,6 @@
     url?: string
     relays?: string[]
     defaultCommunityPubkey?: string
-  }
-
-  type PublishThunkResult = {
-    event?: TrustedEvent
-    complete?: Promise<unknown>
-    results?: Record<string, {status?: unknown}>
   }
 
   const {event, url = "", relays = [], defaultCommunityPubkey = ""}: Props = $props()
@@ -60,54 +54,6 @@
     return profile?.display_name || profile?.name || formatShortNpub(pubkey) || "Community"
   }
 
-  const isRelaySuccessStatus = (status: unknown) =>
-    status === PublishStatus.Success || String(status).toLowerCase() === "success"
-
-  const hasRelaySuccess = (thunk: PublishThunkResult) =>
-    Object.values(thunk.results || {}).some(result => isRelaySuccessStatus(result?.status))
-
-  const waitForFirstRelaySuccess = (thunk: PublishThunkResult, timeoutMs = 30_000) =>
-    new Promise<void>((resolve, reject) => {
-      let settled = false
-      const timers: {
-        interval?: ReturnType<typeof setInterval>
-        timeout?: ReturnType<typeof setTimeout>
-      } = {}
-
-      const cleanup = () => {
-        if (timers.interval) clearInterval(timers.interval)
-        if (timers.timeout) clearTimeout(timers.timeout)
-      }
-
-      const finish = (fn: () => void) => {
-        if (settled) return
-        settled = true
-        cleanup()
-        fn()
-      }
-
-      const check = () => {
-        if (!hasRelaySuccess(thunk)) return false
-        finish(resolve)
-        return true
-      }
-
-      if (check()) return
-
-      timers.interval = setInterval(check, 100)
-      timers.timeout = setTimeout(
-        () => finish(() => reject(new Error("No relay accepted the thread in time."))),
-        timeoutMs,
-      )
-
-      thunk.complete
-        ?.then(() => {
-          if (check()) return
-          finish(() => reject(new Error("No relay accepted the thread.")))
-        })
-        .catch(error => finish(() => reject(error)))
-    })
-
   const back = () => history.back()
 
   const createThread = async () => {
@@ -125,30 +71,36 @@
 
     try {
       const content = trimmedContext ? `${quoteUri}\n\n${trimmedContext}` : quoteUri
-      const threadEvent = makeEvent(
-        THREAD,
-        makeCommunityThread({
-          communityPubkey: selectedCommunity.communityPubkey,
-          title: trimmedTitle,
-          content,
-          tags: quoteTags,
-        }),
+      if (!$pubkey) throw new Error("Sign in to create a thread.")
+      const threadEvent = prep(
+        makeEvent(
+          THREAD,
+          makeCommunityThread({
+            communityPubkey: selectedCommunity.communityPubkey,
+            title: trimmedTitle,
+            content,
+            tags: quoteTags,
+          }),
+        ),
+        $pubkey,
       )
-      const thunk = publishThunk({relays: publishRelays, event: threadEvent}) as PublishThunkResult
-      const publishedEvent = thunk.event
-
-      if (!publishedEvent?.id) {
-        throw new Error("Thread could not be signed.")
-      }
-
-      await waitForFirstRelaySuccess(thunk)
-      await goto(makeCommunityThreadPath(selectedCommunity.communityPubkey, publishedEvent.id), {
+      const href = makeCommunityThreadPath(selectedCommunity.communityPubkey, threadEvent.id)
+      startPublication({
+        relays: publishRelays,
+        event: threadEvent,
+        label: "Repository activity thread",
+        href,
+        preview: "retain-on-failure",
+      })
+      await goto(href, {
         replaceState: true,
       })
-      pushToast({message: `thread '${trimmedTitle}' created!`})
     } catch (error) {
       console.error("Failed to create activity thread", error)
-      pushToast({theme: "error", message: "Failed to create thread. No relay accepted it yet."})
+      pushToast({
+        theme: "error",
+        message: error instanceof Error ? error.message : "Failed to create thread.",
+      })
     } finally {
       publishing = false
     }

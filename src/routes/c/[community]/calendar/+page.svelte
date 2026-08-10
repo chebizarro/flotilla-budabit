@@ -6,7 +6,7 @@
   import {pubkey, repository, tracker} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {formatTimestampAsDate, last, now} from "@welshman/lib"
-  import {type Filter, type TrustedEvent} from "@welshman/util"
+  import {getTagValue, type Filter, type TrustedEvent} from "@welshman/util"
   import CalendarMinimalistic from "@assets/icons/calendar-minimalistic.svg?dataurl"
   import CalendarAdd from "@assets/icons/calendar-add.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
@@ -51,6 +51,8 @@
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
   import {makeCalendarFeed} from "@app/core/requests"
+  import {publicationOperations} from "@app/core/publication-operations"
+  import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {setChecked} from "@app/util/notifications"
   import {makeCommunityCalendarPath, parseCommunityRouteParam} from "@app/util/routes"
@@ -190,6 +192,13 @@
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const targetingIds = targetingIdsByKind.get(target.kind) || []
 
+      if (communityPubkey && calendarAuthorPubkeys.length > 0) {
+        filters.unshift({
+          kinds: [target.kind],
+          authors: calendarAuthorPubkeys,
+          "#h": [communityPubkey],
+        })
+      }
       if (targetingIds.length > 0 && calendarAuthorPubkeys.length > 0) {
         filters.unshift({kinds: [target.kind], authors: calendarAuthorPubkeys, "#h": targetingIds})
       }
@@ -233,11 +242,31 @@
     return Boolean(range && (range.end ?? range.start) >= now())
   }
 
+  const calendarProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $events,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event =>
+        isCalendarEventKind(event.kind) &&
+        getTagValue("h", event.tags) === communityPubkey &&
+        calendarAuthorPubkeys.some(
+          author => normalizePubkey(author) === normalizePubkey(event.pubkey),
+        ),
+    }),
+  )
+  const projectedCalendarEvents = $derived.by(() =>
+    calendarProjection.events.toSorted(
+      (a, b) =>
+        (getCalendarEventRange(a)?.start ?? Number.POSITIVE_INFINITY) -
+        (getCalendarEventRange(b)?.start ?? Number.POSITIVE_INFINITY),
+    ),
+  )
   const items = $derived.by(() => {
     let haveSeenFutureEvent = false
     let previousDateDisplay: string | undefined
 
-    return $events
+    return projectedCalendarEvents
       .filter(event => !isCommunityPersonBanned($activeCommunityReportState, event.pubkey))
       .filter(event => Boolean(getRange(event)))
       .map<CalendarItem>(event => {
@@ -511,6 +540,7 @@
         communitySectionName={getCalendarEventSectionName(event.kind)}
         allowedAuthors={interactionAuthorPubkeys}
         readOnly={!canReact}
+        operationId={calendarProjection.operationIds.get(event.id)}
         {event} />
     </div>
   {/each}

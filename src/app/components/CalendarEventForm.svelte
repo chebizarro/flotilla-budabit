@@ -3,7 +3,7 @@
   import {writable} from "svelte/store"
   import {goto} from "$app/navigation"
   import {HOUR, now, randomId} from "@welshman/lib"
-  import {EVENT_DATE, EVENT_TIME, makeEvent, type TrustedEvent} from "@welshman/util"
+  import {EVENT_DATE, EVENT_TIME, getTagValue, makeEvent, type TrustedEvent} from "@welshman/util"
   import {publishThunk, repository, retryThunk, waitForAnyRelayAck} from "@welshman/app"
   import {preventDefault} from "@lib/html"
   import MapPoint from "@assets/icons/map-point.svg?dataurl"
@@ -26,8 +26,10 @@
     timestampToDateInputValue,
   } from "@app/core/calendar-events"
   import type {BlossomUploadStage} from "@app/core/blossom"
-  import {signEventForPublication} from "@app/core/publication"
+  import {startPublication} from "@app/core/publication-operations"
+  import {assertReplaceablePublicationIsCurrent} from "@app/core/replaceable-publication"
   import {pushToast} from "@app/util/toast"
+  import {makeCommunityCalendarPath} from "@app/util/routes"
 
   type Props = {
     url: string
@@ -159,8 +161,15 @@
       isCreating = true
 
       try {
-        const signedEvent = await signEventForPublication(event)
-        publishThunk({event: signedEvent, relays: publishRelays})
+        const identifier = getTagValue("d", event.tags)
+        startPublication({
+          event,
+          relays: publishRelays,
+          label: "Calendar event",
+          href: h && identifier ? makeCommunityCalendarPath(h, identifier) : undefined,
+          preview: "retain-on-failure",
+          validateRetry: assertReplaceablePublicationIsCurrent,
+        })
       } catch (error) {
         pushToast({
           theme: "error",
@@ -170,8 +179,6 @@
       } finally {
         isCreating = false
       }
-
-      pushToast({message: "Your event has been saved!"})
 
       if (redirectPath) {
         goto(redirectPath, {replaceState: true})

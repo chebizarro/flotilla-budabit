@@ -15,10 +15,18 @@
     relays?: string[]
     publishRelays?: string[]
     scopeH?: string
+    disableContributions?: boolean
     class?: string
   }
 
-  const {event, relays = [], publishRelays = undefined, scopeH = "", ...props}: Props = $props()
+  const {
+    event,
+    relays = [],
+    publishRelays = undefined,
+    scopeH = "",
+    disableContributions = false,
+    ...props
+  }: Props = $props()
   const zapRelays = $derived(publishRelays ?? relays)
 
   const zaps = deriveArray(
@@ -52,8 +60,10 @@
     </div>
   </div>
   <progress class="progress progress-primary" value={zapAmount} max={goalAmount}></progress>
-  <ZapButton {event} relayHints={zapRelays} {scopeH} class="btn btn-primary lg:m-auto lg:px-20">
-    <Icon icon={Bolt} />
-    Contribute to this goal
-  </ZapButton>
+  {#if !disableContributions}
+    <ZapButton {event} relayHints={zapRelays} {scopeH} class="btn btn-primary lg:m-auto lg:px-20">
+      <Icon icon={Bolt} />
+      Contribute to this goal
+    </ZapButton>
+  {/if}
 </div>

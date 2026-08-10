@@ -29,6 +29,8 @@
     makeCommunityThreadsFilter,
   } from "@app/core/community-feeds"
   import {readCommunityThreadReply, readCommunityThreads} from "@app/core/community-threads"
+  import {publicationOperations} from "@app/core/publication-operations"
+  import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
@@ -143,13 +145,25 @@
   let lastFeedKey = ""
   const waitingForFeed = $derived(Boolean(feedKey && !feedInitialized))
 
+  const threadProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $events,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event =>
+        Boolean(
+          readCommunityThreads([event], communityPubkey).length ||
+          readCommunityThreadReply(event, communityPubkey),
+        ),
+    }),
+  )
   const threads = $derived.by(() => {
     const repliesByThread = new Map<string, number>()
-    const roots = readCommunityThreads($events, communityPubkey).filter(
+    const roots = readCommunityThreads(threadProjection.events, communityPubkey).filter(
       thread => !isCommunityPersonBanned($activeCommunityReportState, thread.event.pubkey),
     )
 
-    for (const event of $events) {
+    for (const event of threadProjection.events) {
       if (isCommunityPersonBanned($activeCommunityReportState, event.pubkey)) continue
 
       const reply = readCommunityThreadReply(event, communityPubkey)
@@ -319,6 +333,7 @@
         communitySectionName={threadSectionName}
         allowedAuthors={replyAuthorPubkeys}
         readOnly={!canReact}
+        operationId={threadProjection.operationIds.get(thread.event.id)}
         event={thread.event} />
     {/each}
     {#if communityBootstrapLoading || communityPermissionsLoading}

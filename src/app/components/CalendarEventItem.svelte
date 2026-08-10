@@ -4,6 +4,7 @@
   import Link from "@lib/components/Link.svelte"
   import CalendarEventActions from "@app/components/CalendarEventActions.svelte"
   import CalendarEventHeader from "@app/components/CalendarEventHeader.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import ModeratedContent from "@app/components/community/ModeratedContent.svelte"
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import RoomLink from "@app/components/RoomLink.svelte"
@@ -25,6 +26,7 @@
     allowedAuthors?: string[]
     showRoom?: boolean
     activityLiveCovered?: boolean
+    operationId?: string
   }
 
   const {
@@ -38,6 +40,7 @@
     allowedAuthors,
     showRoom = false,
     activityLiveCovered = false,
+    operationId = undefined,
   }: Props = $props()
 
   const h = getTagValue("h", event.tags)
@@ -63,6 +66,9 @@
       <ModeratedContent reason={censorReason} />
     {:else}
       <CalendarEventHeader {event} />
+      {#if operationId}
+        <PublicationStatus {operationId} class="text-sm" />
+      {/if}
       <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
         <span class="whitespace-nowrap py-1 text-sm opacity-75">
           Posted by <ProfileLink pubkey={event.pubkey} {relays} />
@@ -70,17 +76,19 @@
             in <RoomLink {url} {h} />
           {/if}
         </span>
-        <CalendarEventActions
-          showActivity
-          {url}
-          {relays}
-          {publishRelays}
-          {scopeH}
-          {communitySectionName}
-          {readOnly}
-          {allowedAuthors}
-          {activityLiveCovered}
-          {event} />
+        {#if !operationId}
+          <CalendarEventActions
+            showActivity
+            {url}
+            {relays}
+            {publishRelays}
+            {scopeH}
+            {communitySectionName}
+            {readOnly}
+            {allowedAuthors}
+            {activityLiveCovered}
+            {event} />
+        {/if}
       </div>
     {/if}
   </Link>

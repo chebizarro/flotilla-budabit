@@ -7,6 +7,7 @@
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import GoalActions from "@app/components/GoalActions.svelte"
   import GoalSummary from "@app/components/GoalSummary.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import RoomLink from "@app/components/RoomLink.svelte"
   import {activeCommunityReportState} from "@app/core/community-state"
   import {
@@ -26,6 +27,7 @@
     allowedAuthors?: string[]
     showRoom?: boolean
     activityLiveCovered?: boolean
+    operationId?: string
   }
 
   const {
@@ -39,6 +41,7 @@
     allowedAuthors = undefined,
     showRoom = false,
     activityLiveCovered = false,
+    operationId = undefined,
   }: Props = $props()
 
   const summary = getTagValue("summary", event.tags)
@@ -71,7 +74,16 @@
         expandMode="inline"
         minLength={50}
         maxLength={300} />
-      <GoalSummary {url} {event} {relays} {publishRelays} {scopeH} />
+      <GoalSummary
+        {url}
+        {event}
+        {relays}
+        {publishRelays}
+        {scopeH}
+        disableContributions={Boolean(operationId)} />
+      {#if operationId}
+        <PublicationStatus {operationId} class="text-sm" />
+      {/if}
       <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
         <span class="whitespace-nowrap py-1 text-sm opacity-75">
           Posted by <ProfileLink pubkey={event.pubkey} {relays} />
@@ -79,17 +91,19 @@
             in <RoomLink {url} {h} />
           {/if}
         </span>
-        <GoalActions
-          showActivity
-          {url}
-          {relays}
-          {publishRelays}
-          {scopeH}
-          {communitySectionName}
-          {readOnly}
-          {allowedAuthors}
-          {activityLiveCovered}
-          {event} />
+        {#if !operationId}
+          <GoalActions
+            showActivity
+            {url}
+            {relays}
+            {publishRelays}
+            {scopeH}
+            {communitySectionName}
+            {readOnly}
+            {allowedAuthors}
+            {activityLiveCovered}
+            {event} />
+        {/if}
       </div>
     {/if}
   </Link>

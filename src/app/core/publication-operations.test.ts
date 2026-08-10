@@ -297,6 +297,23 @@ describe("single-event publication operations", () => {
     expect(getOperation(operation.operationId)?.phase).toBe("unconfirmed")
   })
 
+  it("validates freshness before retrying an unconfirmed operation", async () => {
+    const validateRetry = vi.fn(() => {
+      throw new Error("A newer version of this publication already exists")
+    })
+    mocks.waitForAnyRelayAck.mockRejectedValue(new Error("relay rejected event"))
+    const operation = startPublication({...makeOptions(makeEvent("8")), validateRetry})
+    await operation.settled
+
+    await expect(retryPublication(operation.operationId)).rejects.toThrow(
+      "A newer version of this publication already exists",
+    )
+
+    expect(validateRetry).toHaveBeenCalledWith(makeEvent("8"))
+    expect(mocks.retryThunk).not.toHaveBeenCalled()
+    expect(getOperation(operation.operationId)?.phase).toBe("unconfirmed")
+  })
+
   it("discards an unconfirmed operation without changing repository state", async () => {
     mocks.waitForAnyRelayAck.mockRejectedValue(new Error("relay rejected event"))
     const operation = startPublication(makeOptions(makeEvent("2")))

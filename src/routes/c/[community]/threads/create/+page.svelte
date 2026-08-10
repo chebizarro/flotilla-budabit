@@ -1,8 +1,8 @@
 <script lang="ts">
   import {goto} from "$app/navigation"
   import {page} from "$app/stores"
-  import {publishThunk, pubkey} from "@welshman/app"
-  import {makeEvent, THREAD} from "@welshman/util"
+  import {pubkey} from "@welshman/app"
+  import {makeEvent, prep, THREAD} from "@welshman/util"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
   import NotesMinimalistic from "@assets/icons/notes-minimalistic.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
@@ -21,13 +21,17 @@
     activeCommunityReportState,
   } from "@app/core/community-state"
   import {makeCommunityThread} from "@app/core/community-threads"
-  import {signEventForPublication} from "@app/core/publication"
+  import {startPublication} from "@app/core/publication-operations"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
     getCommunityWriteTargetSectionName,
   } from "@app/core/community-permissions"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {
+    makeCommunityPath,
+    makeCommunityThreadPath,
+    parseCommunityRouteParam,
+  } from "@app/util/routes"
 
   const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
   const communityPubkey = $derived(parsedCommunity?.pubkey || "")
@@ -84,13 +88,20 @@
     creating = true
 
     try {
-      const event = await signEventForPublication(
+      const event = prep(
         makeEvent(
           THREAD,
           makeCommunityThread({communityPubkey, title: trimmedTitle, content: trimmedContent}),
         ),
+        $pubkey!,
       )
-      publishThunk({relays, event})
+      startPublication({
+        relays,
+        event,
+        label: "Community thread",
+        href: makeCommunityThreadPath(communityPubkey, event.id),
+        preview: "retain-on-failure",
+      })
     } catch (error) {
       pushToast({
         theme: "error",
@@ -101,7 +112,6 @@
       creating = false
     }
 
-    pushToast({message: "Thread published."})
     if (threadsPath) goto(threadsPath)
   }
 

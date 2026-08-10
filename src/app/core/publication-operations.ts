@@ -31,6 +31,7 @@ export type StartPublicationOptions = {
   href?: string
   semanticKey?: string
   preview: PublicationPreviewPolicy
+  validateRetry?: (event: HashedEvent) => void | Promise<void>
 }
 
 export type PublicationSnapshot = {
@@ -65,6 +66,7 @@ type PublicationRuntime = {
   resolveAttempt?: (snapshot: PublicationSnapshot) => void
   retryPromise?: Promise<PublicationSnapshot>
   cleanupTimer?: ReturnType<typeof setTimeout>
+  validateRetry?: (event: HashedEvent) => void | Promise<void>
 }
 
 const CONFIRMED_HANDOFF_MS = 5_000
@@ -335,6 +337,7 @@ export const startPublication = (options: StartPublicationOptions): PublicationH
     confirmRelays,
     generation: 1,
     committed: false,
+    validateRetry: options.validateRetry,
   }
 
   runtimes.set(operationId, runtime)
@@ -375,6 +378,13 @@ export const retryPublication = (operationId: string): Promise<PublicationSnapsh
 
     const current = requireOwnedOperation(operationId)
     if (current !== runtime || runtime.generation !== generation || runtime.thunk !== thunk) {
+      throw new Error("Publication operation changed before retry")
+    }
+
+    await runtime.validateRetry?.(runtime.thunk.event)
+
+    const validated = requireOwnedOperation(operationId)
+    if (validated !== runtime || runtime.generation !== generation || runtime.thunk !== thunk) {
       throw new Error("Publication operation changed before retry")
     }
 

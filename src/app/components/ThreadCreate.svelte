@@ -1,7 +1,7 @@
 <script lang="ts">
   import {writable} from "svelte/store"
-  import {makeEvent, THREAD} from "@welshman/util"
-  import {publishThunk} from "@welshman/app"
+  import {makeEvent, prep, THREAD} from "@welshman/util"
+  import {pubkey} from "@welshman/app"
   import {isMobile, preventDefault} from "@lib/html"
   import Paperclip from "@assets/icons/paperclip-2.svg?dataurl"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
@@ -15,6 +15,8 @@
   import {pushToast} from "@app/util/toast"
   import {makeEditor} from "@app/editor"
   import type {BlossomUploadStage} from "@app/core/blossom"
+  import {startPublication} from "@app/core/publication-operations"
+  import {makeCommunityThreadPath} from "@app/util/routes"
 
   type Props = {
     url: string
@@ -32,6 +34,7 @@
 
   const submit = async () => {
     if ($uploading) return
+    if (!$pubkey) return pushToast({theme: "error", message: "Sign in to create a thread."})
 
     if (!title) {
       return pushToast({
@@ -56,9 +59,13 @@
       tags.push(["h", h])
     }
 
-    publishThunk({
+    const event = prep(makeEvent(THREAD, {content, tags}), $pubkey)
+    startPublication({
       relays: [url],
-      event: makeEvent(THREAD, {content, tags}),
+      event,
+      label: "Thread",
+      href: h ? makeCommunityThreadPath(h, event.id) : undefined,
+      preview: "retain-on-failure",
     })
 
     history.back()

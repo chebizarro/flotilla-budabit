@@ -7,6 +7,7 @@
   import ModeratedContent from "@app/components/community/ModeratedContent.svelte"
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import ThreadActions from "@app/components/ThreadActions.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {activeCommunityReportState} from "@app/core/community-state"
   import {
     getCommunityCensorReason,
@@ -24,6 +25,7 @@
     readOnly?: boolean
     allowedAuthors?: string[]
     activityLiveCovered?: boolean
+    operationId?: string
   }
 
   const {
@@ -36,6 +38,7 @@
     readOnly = false,
     allowedAuthors = undefined,
     activityLiveCovered = false,
+    operationId = undefined,
   }: Props = $props()
 
   const title = getTagValue("title", event.tags)
@@ -62,6 +65,9 @@
   {/if}
   {#if !censorReason}
     <Content {event} {url} {communitySectionName} expandMode="inline" />
+    {#if operationId}
+      <PublicationStatus {operationId} class="text-sm" />
+    {/if}
     <div class="flex w-full flex-wrap items-end justify-between gap-2">
       <div class="flex flex-col items-start gap-1 py-1 text-sm opacity-75">
         <span class="whitespace-nowrap">
@@ -70,17 +76,19 @@
         </span>
         <span>{formatTimestamp(event.created_at)}</span>
       </div>
-      <ThreadActions
-        showActivity
-        {url}
-        {relays}
-        {publishRelays}
-        {scopeH}
-        {communitySectionName}
-        {readOnly}
-        {allowedAuthors}
-        {activityLiveCovered}
-        {event} />
+      {#if !operationId}
+        <ThreadActions
+          showActivity
+          {url}
+          {relays}
+          {publishRelays}
+          {scopeH}
+          {communitySectionName}
+          {readOnly}
+          {allowedAuthors}
+          {activityLiveCovered}
+          {event} />
+      {/if}
     </div>
   {/if}
 </Link>

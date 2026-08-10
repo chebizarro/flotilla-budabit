@@ -1,7 +1,7 @@
 <script lang="ts">
   import {onDestroy, tick} from "svelte"
   import {page} from "$app/stores"
-  import {pubkey, publishThunk, repository} from "@welshman/app"
+  import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {sortBy} from "@welshman/lib"
   import {
@@ -30,6 +30,7 @@
   import CommunityMenuButton from "@app/components/CommunityMenuButton.svelte"
   import GoalSummary from "@app/components/GoalSummary.svelte"
   import GoalActions from "@app/components/GoalActions.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {makeComment} from "@app/core/commands"
   import {
     activeCommunityBootstrapStatus,
@@ -61,7 +62,8 @@
     filterVisibleAfterDeletesAndEdits,
   } from "@app/core/event-edits"
   import {publishEditedReply} from "@app/core/event-edit-publish"
-  import {signEventForPublication} from "@app/core/publication"
+  import {publicationOperations, startPublication} from "@app/core/publication-operations"
+  import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {setChecked} from "@app/util/notifications"
   import {pushToast} from "@app/util/toast"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -162,7 +164,20 @@
       : [],
   )
   const goalEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: goalFilters})))
-  const goal = $derived($goalEvents[0])
+  const goalProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $goalEvents,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event =>
+        event.kind === ZAP_GOAL &&
+        event.id === goalId &&
+        getTagValue("h", event.tags) === communityPubkey &&
+        goalAuthorPubkeys.some(author => normalizePubkey(author) === normalizePubkey(event.pubkey)),
+    }),
+  )
+  const goal = $derived(goalProjection.events[0])
+  const goalOperationId = $derived(goal ? goalProjection.operationIds.get(goal.id) : undefined)
   const goalTargetingId = $derived(goal ? getTagValue("h", goal.tags) || "" : "")
   const targetingFilters = $derived<Filter[]>(
     communityBootstrapReady && communityPubkey && goal
@@ -183,6 +198,7 @@
 
     const allowedAuthors = new Set(goalAuthorPubkeys.map(normalizePubkey).filter(Boolean))
     if (!allowedAuthors.has(normalizePubkey(goal.pubkey))) return false
+    if (getTagValue("h", goal.tags) === communityPubkey) return true
 
     return $targetingEvents.some(targetingEvent => {
       const targeting = parseTargetedPublication(targetingEvent)
@@ -224,10 +240,22 @@
   const replyEventsStore = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: replyFilters})),
   )
+  const replyProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $replyEventsStore,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event =>
+        event.kind === COMMENT &&
+        getTagValue("E", event.tags) === approvedGoal?.id &&
+        getTagValue("K", event.tags) === String(ZAP_GOAL) &&
+        getTagValue("h", event.tags) === communityPubkey,
+    }),
+  )
   const replies = $derived(
     sortBy(
       replyEvent => -replyEvent.created_at,
-      filterVisibleAfterDeletesAndEdits($replyEventsStore, $editedTargetIds).filter(
+      filterVisibleAfterDeletesAndEdits(replyProjection.events, $editedTargetIds).filter(
         event => !isCommunityPersonBanned($activeCommunityReportState, event.pubkey),
       ),
     ),
@@ -236,6 +264,7 @@
   const canReply = $derived(
     Boolean(
       approvedGoal &&
+      !goalOperationId &&
       communityBootstrapReady &&
       !approvedGoalCensorReason &&
       $pubkey &&
@@ -252,6 +281,7 @@
   const canReact = $derived(
     Boolean(
       approvedGoal &&
+      !goalOperationId &&
       communityBootstrapReady &&
       !approvedGoalCensorReason &&
       $pubkey &&
@@ -302,14 +332,17 @@
     const relays = $activeCommunityPublishRelays
 
     try {
-      const event = await signEventForPublication(
-        makeComment({
+      startPublication({
+        event: makeComment({
           event: approvedGoal,
           content: trimmed,
           tags: [["h", communityPubkey], ...tags],
         }),
-      )
-      publishThunk({relays, event})
+        relays,
+        label: "Goal comment",
+        href: goalPath,
+        preview: "retain-on-failure",
+      })
     } catch (error) {
       pushToast({
         theme: "error",
@@ -510,19 +543,25 @@
               url={communityPubkey}
               relays={$activeCommunityRelays}
               publishRelays={$activeCommunityPublishRelays}
-              scopeH={communityPubkey} />
-            <div class="flex w-full justify-end">
-              <GoalActions
-                showRoom={false}
-                event={approvedGoal}
-                url={communityPubkey}
-                relays={$activeCommunityRelays}
-                publishRelays={$activeCommunityPublishRelays}
-                scopeH={communityPubkey}
-                communitySectionName={goalSectionName}
-                allowedAuthors={interactionAuthorPubkeys}
-                readOnly={!canReact} />
-            </div>
+              scopeH={communityPubkey}
+              disableContributions={Boolean(goalOperationId)} />
+            {#if goalOperationId}
+              <PublicationStatus operationId={goalOperationId} />
+            {/if}
+            {#if !goalOperationId}
+              <div class="flex w-full justify-end">
+                <GoalActions
+                  showRoom={false}
+                  event={approvedGoal}
+                  url={communityPubkey}
+                  relays={$activeCommunityRelays}
+                  publishRelays={$activeCommunityPublishRelays}
+                  scopeH={communityPubkey}
+                  communitySectionName={goalSectionName}
+                  allowedAuthors={interactionAuthorPubkeys}
+                  readOnly={!canReact} />
+              </div>
+            {/if}
           </div>
         </NoteCard>
       {/if}
@@ -556,6 +595,7 @@
               <ChannelMessage
                 url={communityPubkey}
                 event={replyEvent}
+                operationId={replyProjection.operationIds.get(replyEvent.id)}
                 showPubkey
                 readOnly={!canReact}
                 interactionRelays={$activeCommunityRelays}

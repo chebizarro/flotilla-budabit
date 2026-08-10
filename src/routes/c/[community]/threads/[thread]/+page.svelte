@@ -1,7 +1,7 @@
 <script lang="ts">
   import {onDestroy, tick} from "svelte"
   import {page} from "$app/stores"
-  import {repository, publishThunk, pubkey} from "@welshman/app"
+  import {repository, pubkey} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {COMMENT, makeEvent, type EventContent, type TrustedEvent} from "@welshman/util"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
@@ -21,6 +21,7 @@
   import RoomComposeEdit from "@app/components/RoomComposeEdit.svelte"
   import RoomComposeParent from "@app/components/RoomComposeParent.svelte"
   import ThreadActions from "@app/components/ThreadActions.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
@@ -59,7 +60,8 @@
     filterVisibleAfterDeletesAndEdits,
   } from "@app/core/event-edits"
   import {publishEditedReply} from "@app/core/event-edit-publish"
-  import {signEventForPublication} from "@app/core/publication"
+  import {publicationOperations, startPublication} from "@app/core/publication-operations"
+  import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {setChecked} from "@app/util/notifications"
   import {makeCommunityThreadPath, parseCommunityRouteParam} from "@app/util/routes"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -166,8 +168,29 @@
   const replyEvents = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: replyFilters})),
   )
+  const threadProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $threadEvents,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event => Boolean(readCommunityThread(event, communityPubkey)?.id === threadId),
+    }),
+  )
+  const replyProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $replyEvents,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event => Boolean(readCommunityThreadReply(event, communityPubkey, threadId)),
+    }),
+  )
   const thread = $derived(
-    $threadEvents[0] ? readCommunityThread($threadEvents[0], communityPubkey) : undefined,
+    threadProjection.events[0]
+      ? readCommunityThread(threadProjection.events[0], communityPubkey)
+      : undefined,
+  )
+  const threadOperationId = $derived(
+    thread ? threadProjection.operationIds.get(thread.id) : undefined,
   )
   const threadCensorReason = $derived.by(() =>
     communityPubkey && threadId
@@ -181,7 +204,7 @@
       : undefined,
   )
   const replies = $derived(
-    filterVisibleAfterDeletesAndEdits($replyEvents, $editedTargetIds)
+    filterVisibleAfterDeletesAndEdits(replyProjection.events, $editedTargetIds)
       .map(event => readCommunityThreadReply(event, communityPubkey, threadId))
       .filter(Boolean)
       .filter(reply => !isCommunityPersonBanned($activeCommunityReportState, reply!.event.pubkey))
@@ -198,6 +221,7 @@
   const canReply = $derived(
     Boolean(
       thread &&
+      !threadOperationId &&
       communityBootstrapReady &&
       !threadCensorReason &&
       $pubkey &&
@@ -214,6 +238,7 @@
   const canReact = $derived(
     Boolean(
       $pubkey &&
+      !threadOperationId &&
       communityBootstrapReady &&
       !threadCensorReason &&
       $activeCommunityDefinition &&
@@ -303,8 +328,13 @@
     })
 
     try {
-      const event = await signEventForPublication(makeEvent(COMMENT, template))
-      publishThunk({relays, event})
+      startPublication({
+        relays,
+        event: makeEvent(COMMENT, template),
+        label: "Thread comment",
+        href: threadPath,
+        preview: "retain-on-failure",
+      })
     } catch (error) {
       pushToast({
         theme: "error",
@@ -462,17 +492,22 @@
             url={communityPubkey}
             communitySectionName={threadSectionName}
             expandMode="inline" />
-          <div class="mt-3 flex justify-end">
-            <ThreadActions
-              url={communityPubkey}
-              relays={$activeCommunityRelays}
-              publishRelays={$activeCommunityPublishRelays}
-              scopeH={communityPubkey}
-              communitySectionName={threadSectionName}
-              allowedAuthors={replyAuthorPubkeys}
-              readOnly={!canReact}
-              event={thread.event} />
-          </div>
+          {#if threadOperationId}
+            <PublicationStatus operationId={threadOperationId} class="mt-3" />
+          {/if}
+          {#if !threadOperationId}
+            <div class="mt-3 flex justify-end">
+              <ThreadActions
+                url={communityPubkey}
+                relays={$activeCommunityRelays}
+                publishRelays={$activeCommunityPublishRelays}
+                scopeH={communityPubkey}
+                communitySectionName={threadSectionName}
+                allowedAuthors={replyAuthorPubkeys}
+                readOnly={!canReact}
+                event={thread.event} />
+            </div>
+          {/if}
         </NoteCard>
       {/if}
     </article>
@@ -498,6 +533,7 @@
               <ChannelMessage
                 url={communityPubkey}
                 event={item.event}
+                operationId={replyProjection.operationIds.get(item.id)}
                 showPubkey
                 readOnly={!canReact}
                 interactionRelays={$activeCommunityRelays}

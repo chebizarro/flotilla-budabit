@@ -40,6 +40,8 @@
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
   import {makeFeed} from "@app/core/requests"
+  import {publicationOperations} from "@app/core/publication-operations"
+  import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {setChecked} from "@app/util/notifications"
   import {makeCommunityGoalPath, parseCommunityRouteParam} from "@app/util/routes"
@@ -156,6 +158,13 @@
   const goalFeedFilters = $derived.by<Filter[]>(() => {
     const filters: Filter[] = [...goalFilters]
 
+    if (communityPubkey && goalAuthorPubkeys.length > 0) {
+      filters.unshift({
+        kinds: [ZAP_GOAL],
+        authors: goalAuthorPubkeys,
+        "#h": [communityPubkey],
+      })
+    }
     if (targetingIds.length > 0 && goalAuthorPubkeys.length > 0) {
       filters.unshift({kinds: [ZAP_GOAL], authors: goalAuthorPubkeys, "#h": targetingIds})
     }
@@ -201,11 +210,24 @@
     ),
   )
 
+  const goalProjection = $derived.by(() =>
+    projectAuthoredPublicationEvents({
+      events: $events,
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      matches: event =>
+        event.kind === ZAP_GOAL &&
+        getTagValue("h", event.tags) === communityPubkey &&
+        goalAuthorPubkeys.some(author => normalizePubkey(author) === normalizePubkey(event.pubkey)),
+    }),
+  )
   const items = $derived.by(() => {
     const scores = new Map<string, number[]>()
     const [goals, comments] = partition(
       spec({kind: ZAP_GOAL}),
-      $events.filter(event => !isCommunityPersonBanned($activeCommunityReportState, event.pubkey)),
+      goalProjection.events.filter(
+        event => !isCommunityPersonBanned($activeCommunityReportState, event.pubkey),
+      ),
     )
 
     for (const comment of comments) {
@@ -404,6 +426,7 @@
       communitySectionName={goalSectionName}
       allowedAuthors={interactionAuthorPubkeys}
       readOnly={!canReact}
+      operationId={goalProjection.operationIds.get(event.id)}
       event={$state.snapshot(event)} />
   {/each}
   {#if communityBootstrapLoading || communityPermissionsLoading}
