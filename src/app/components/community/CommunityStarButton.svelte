@@ -1,10 +1,9 @@
 <script lang="ts">
-  import {pubkey, publishThunk, repository} from "@welshman/app"
-  import {type TrustedEvent} from "@welshman/util"
+  import {pubkey} from "@welshman/app"
   import Star from "@assets/icons/star.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import LogIn from "@app/components/LogIn.svelte"
-  import {publishDelete} from "@app/core/commands"
+  import {makeDelete} from "@app/core/commands"
   import {
     activeCommunityStarByCommunity,
     getCommunityStarRelays,
@@ -12,6 +11,16 @@
   } from "@app/core/community-state"
   import {normalizeRelays} from "@app/core/community"
   import {makeCommunityDefinitionAddress} from "@app/core/community-forms"
+  import {
+    discardPublication,
+    publicationOperations,
+    retryPublication,
+    startPublication,
+  } from "@app/core/publication-operations"
+  import {
+    getCommunityStarOperationSemanticKey,
+    projectCommunityStarOperation,
+  } from "@app/core/community-star-operations"
   import {pushToast} from "@app/util/toast"
   import {pushModal} from "@app/util/modal"
   import {makeCommunityStarReaction} from "@app/util/community-stars"
@@ -30,12 +39,20 @@
     class: className = "btn btn-square btn-sm",
   }: Props = $props()
 
-  let toggling = $state(false)
   const relays = $derived(getCommunityStarRelays(relayHints))
   const publishRelays = $derived(
     publishRelayHints === undefined ? relays : normalizeRelays(publishRelayHints),
   )
-  const star = $derived($activeCommunityStarByCommunity.get(communityPubkey))
+  const starProjection = $derived(
+    projectCommunityStarOperation({
+      star: $activeCommunityStarByCommunity.get(communityPubkey),
+      operations: $publicationOperations.values(),
+      ownerPubkey: $pubkey || "",
+      communityPubkey,
+    }),
+  )
+  const star = $derived(starProjection.star)
+  const toggling = $derived(starProjection.pending)
 
   const toggleStar = () => {
     if (!$pubkey) {
@@ -47,29 +64,56 @@
       return
     }
 
-    toggling = true
-
     try {
+      const desiredStarred = !star
+      if (
+        starProjection.retryOperationId &&
+        starProjection.retryDesiredStarred === desiredStarred
+      ) {
+        void retryPublication(starProjection.retryOperationId).catch(error => {
+          pushToast({
+            theme: "error",
+            message: `Failed to retry star: ${error instanceof Error ? error.message : String(error)}`,
+          })
+        })
+        return
+      }
+      const supersededStarEventId = starProjection.retryDesiredStarred
+        ? starProjection.retryEventId
+        : undefined
+      if (starProjection.retryOperationId) {
+        discardPublication(starProjection.retryOperationId)
+      }
+
       if (star) {
-        const thunk = publishDelete({event: star.reaction, relays: publishRelays})
-        if (thunk?.event) repository.publish(thunk.event as TrustedEvent)
-        pushToast({message: "Community unstarred."})
+        startPublication({
+          event: makeDelete({
+            event: star.reaction,
+            tags: supersededStarEventId ? [["e", supersededStarEventId]] : [],
+          }),
+          relays: publishRelays,
+          label: "Unstar community",
+          semanticKey: getCommunityStarOperationSemanticKey(communityPubkey),
+          preview: "rollback-on-failure",
+        })
       } else {
         const event = makeCommunityStarReaction({
           communityPubkey,
           relayHints: publishRelayHints ?? relayHints,
         })
-        const thunk = publishThunk({event, relays: publishRelays})
-        if (thunk?.event) repository.publish(thunk.event as TrustedEvent)
-        pushToast({message: "Community starred."})
+        startPublication({
+          event,
+          relays: publishRelays,
+          label: "Star community",
+          semanticKey: getCommunityStarOperationSemanticKey(communityPubkey),
+          preview: "rollback-on-failure",
+        })
       }
     } catch (error) {
       pushToast({
         theme: "error",
         message: `Failed to update star: ${error instanceof Error ? error.message : String(error)}`,
       })
-    } finally {
-      toggling = false
     }
   }
 
