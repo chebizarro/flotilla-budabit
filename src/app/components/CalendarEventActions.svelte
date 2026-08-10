@@ -31,10 +31,12 @@
     showActivity?: boolean
     relays?: string[]
     publishRelays?: string[]
+    reactionRelays?: string[]
     scopeH?: string
     communitySectionName?: string
     readOnly?: boolean
     allowedAuthors?: string[]
+    reactionAllowedAuthors?: string[]
     redirectOnEdit?: boolean
     activityLiveCovered?: boolean
   }
@@ -46,10 +48,12 @@
     showActivity,
     relays = [],
     publishRelays = undefined,
+    reactionRelays = undefined,
     scopeH = "",
     communitySectionName = "",
     readOnly = false,
     allowedAuthors = undefined,
+    reactionAllowedAuthors = undefined,
     redirectOnEdit = false,
     activityLiveCovered = false,
   }: Props = $props()
@@ -59,6 +63,7 @@
   const path = makeCalendarPath(url, eventRouteParam)
   const canExport = $derived(Boolean(makeCalendarEventIcs(event)))
   const actionRelays = $derived(publishRelays ?? (relays.length > 0 ? relays : url ? [url] : []))
+  const reactionRelayTargets = $derived(reactionRelays ?? actionRelays)
 
   const getEventPageUrl = () => new URL(path, window.location.origin).toString()
 
@@ -85,13 +90,13 @@
     })
 
   const deleteReaction = async (reaction: TrustedEvent) =>
-    publishReactionDeleteOperation({reaction, relays: actionRelays})
+    publishReactionDeleteOperation({reaction, relays: reactionRelayTargets})
 
   const createReaction = async (template: EventContent) =>
     publishReactionOperation({
       ...template,
       event,
-      relays: actionRelays,
+      relays: reactionRelayTargets,
       tags: [...(template.tags || []), ...(scopeH ? [["h", scopeH]] : [])],
     })
 </script>
@@ -105,11 +110,11 @@
   <ReactionSummary
     {url}
     {relays}
-    operationRelays={actionRelays}
+    operationRelays={reactionRelayTargets}
     {scopeH}
     {event}
     {readOnly}
-    {allowedAuthors}
+    allowedAuthors={reactionAllowedAuthors ?? allowedAuthors}
     {deleteReaction}
     {createReaction}
     reactionClass="tooltip-left" />
@@ -145,6 +150,7 @@
   <EventActions
     {url}
     relays={actionRelays}
+    reactionRelays={reactionRelayTargets}
     {scopeH}
     {communitySectionName}
     {readOnly}

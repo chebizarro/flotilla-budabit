@@ -144,7 +144,9 @@
     return Array.from(scopedEvents.values())
   }
 
-  const engagementFilters: Filter[] = [{kinds: [REPORT, REACTION], "#e": [event.id]}]
+  const engagementFilters = getReplyFilters([event], {
+    kinds: [REPORT, REACTION],
+  }) as Filter[]
   const engagements = deriveArray(deriveEventsById({repository, filters: engagementFilters}))
   const engagementsByRelay = deriveEventsByIdByUrl({
     repository,

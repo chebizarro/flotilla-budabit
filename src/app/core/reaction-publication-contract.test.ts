@@ -58,8 +58,31 @@ describe("reaction publication source contracts", () => {
 
     expect(summary).toContain("projectReactionOperations({")
     expect(summary).toContain("pendingSemanticKeys.has(semanticKey)")
+    expect(summary).toContain("getReplyFilters([event]")
     expect(commands).toContain('preview: "rollback-on-failure"')
     expect(repoCollection).not.toContain("publishReactionOperation")
     expect(repoCollection).not.toContain("publishReactionDeleteOperation")
+  })
+
+  it("keeps calendar reaction transport on community-definition relays", () => {
+    const listRoute = readProjectFile("../../routes/c/[community]/calendar/+page.svelte")
+    const detailRoute = readProjectFile("../../routes/c/[community]/calendar/[event]/+page.svelte")
+    const item = readProjectFile("../components/CalendarEventItem.svelte")
+    const actions = readProjectFile("../components/CalendarEventActions.svelte")
+    const eventActions = readProjectFile("../components/EventActions.svelte")
+
+    for (const route of [listRoute, detailRoute]) {
+      expect(route).toContain("reactionRelays={$activeCommunityPublishRelays}")
+      expect(route).toContain("$activeCommunityPublishRelays.length > 0")
+      expect(route).toContain("reactionAllowedAuthors={reactionAuthorPubkeys}")
+    }
+    expect(item).toContain("{reactionRelays}")
+    expect(actions).toContain("relays: reactionRelayTargets")
+    expect(actions).toContain("operationRelays={reactionRelayTargets}")
+    expect(actions).toContain("reactionRelays={reactionRelayTargets}")
+    expect(eventActions).toContain("reactionRelays ?? relays")
+    expect(actions).not.toContain(
+      "publishReactionDeleteOperation({reaction, relays: actionRelays})",
+    )
   })
 })

@@ -10,6 +10,7 @@ import {
   parseJson,
   simpleCache,
   normalizeUrl,
+  now,
 } from "@welshman/lib"
 import {Nip01Signer} from "@welshman/signer"
 import type {UploadTask} from "@welshman/editor"
@@ -927,7 +928,7 @@ export const publishReactionDeleteOperation = ({
     : requireScopedPublishRelays(relays)
 
   return startReactionOperation({
-    event: makeDelete({event: reaction}),
+    event: makeDelete({event: reaction, created_at: Math.max(now(), reaction.created_at + 1)}),
     relays: publishRelays,
     semanticKey: getReactionOperationSemanticKey(targetEventId, reaction),
     label: "Remove reaction",

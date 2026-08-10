@@ -155,6 +155,16 @@
         })
       : [],
   )
+  const reactionAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
   const targetingIdsByKind = $derived.by(() => {
     const idsByKind = new Map<number, string[]>()
     const allowedAuthors = new Set(calendarAuthorPubkeys.map(normalizePubkey).filter(Boolean))
@@ -224,6 +234,7 @@
     Boolean(
       $pubkey &&
       communityBootstrapReady &&
+      $activeCommunityPublishRelays.length > 0 &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -535,10 +546,12 @@
         url={communityPubkey}
         relays={$activeCommunityRelays}
         publishRelays={calendarEditPublishRelays}
+        reactionRelays={$activeCommunityPublishRelays}
         scopeH={communityPubkey}
         activityLiveCovered
         communitySectionName={getCalendarEventSectionName(event.kind)}
         allowedAuthors={interactionAuthorPubkeys}
+        reactionAllowedAuthors={reactionAuthorPubkeys}
         readOnly={!canReact}
         operationId={calendarProjection.operationIds.get(event.id)}
         {event} />

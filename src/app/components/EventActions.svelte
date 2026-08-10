@@ -23,6 +23,7 @@
     hideZap?: boolean
     customActions?: Snippet
     relays?: string[]
+    reactionRelays?: string[]
     scopeH?: string
     zapScopeH?: string
     strictZapRelays?: boolean
@@ -45,6 +46,7 @@
     hideZap,
     customActions,
     relays = [],
+    reactionRelays = undefined,
     scopeH = "",
     zapScopeH = "",
     strictZapRelays = false,
@@ -60,8 +62,10 @@
     class: className = "",
   }: Props = $props()
 
-  const reactionRelays = $derived.by(() => {
-    const scopedRelays = (relays || []).filter(Boolean)
+  const reactionRelayTargets = $derived.by(() => {
+    const scopedRelays = (reactionRelays ?? relays).filter(Boolean)
+
+    if (reactionRelays !== undefined) return scopedRelays
 
     if (scopeH || repoAddress || scopedRelays.length > 0) {
       return scopedRelays
@@ -78,7 +82,7 @@
     publishReactionOperation({
       event,
       content: emoji.unicode,
-      relays: reactionRelays,
+      relays: reactionRelayTargets,
       repoAddress: repoAddress || undefined,
       tags: scopeH ? [["h", scopeH]] : [],
     })

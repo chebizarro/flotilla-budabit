@@ -987,6 +987,7 @@ describe("commands", () => {
       })
       expect(deletion.event.kind).toBe(5)
       expect(deletion.event.tags).toContainEqual(expect.arrayContaining(["e", reaction.id]))
+      expect((deletion.event as any).created_at).toBeGreaterThan(reaction.created_at)
     } finally {
       startSpy.mockRestore()
     }

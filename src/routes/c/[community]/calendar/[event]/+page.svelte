@@ -159,6 +159,16 @@
         })
       : [],
   )
+  const reactionAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
   const calendarEditPublishRelays = $derived(
     normalizeRelays([...getUserOutboxRelays(), ...$activeCommunityPublishRelays]),
   )
@@ -340,6 +350,7 @@
       communityBootstrapReady &&
       !approvedEventCensorReason &&
       $pubkey &&
+      $activeCommunityPublishRelays.length > 0 &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -669,9 +680,11 @@
               url={communityPubkey}
               relays={$activeCommunityRelays}
               publishRelays={calendarEditPublishRelays}
+              reactionRelays={$activeCommunityPublishRelays}
               scopeH={communityPubkey}
               communitySectionName={approvedEventSectionName}
               allowedAuthors={interactionAuthorPubkeys}
+              reactionAllowedAuthors={reactionAuthorPubkeys}
               readOnly={!canReact}
               redirectOnEdit
               event={approvedEvent} />

@@ -20,10 +20,12 @@
     event: TrustedEvent
     relays?: string[]
     publishRelays?: string[]
+    reactionRelays?: string[]
     scopeH?: string
     communitySectionName?: string
     readOnly?: boolean
     allowedAuthors?: string[]
+    reactionAllowedAuthors?: string[]
     showRoom?: boolean
     activityLiveCovered?: boolean
     operationId?: string
@@ -34,10 +36,12 @@
     event,
     relays = [],
     publishRelays = undefined,
+    reactionRelays = undefined,
     scopeH = "",
     communitySectionName = "",
     readOnly = false,
     allowedAuthors,
+    reactionAllowedAuthors,
     showRoom = false,
     activityLiveCovered = false,
     operationId = undefined,
@@ -82,10 +86,12 @@
             {url}
             {relays}
             {publishRelays}
+            {reactionRelays}
             {scopeH}
             {communitySectionName}
             {readOnly}
             {allowedAuthors}
+            {reactionAllowedAuthors}
             {activityLiveCovered}
             {event} />
         {/if}
