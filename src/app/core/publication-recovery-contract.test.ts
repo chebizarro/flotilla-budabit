@@ -4,12 +4,18 @@ import {describe, expect, it} from "vitest"
 const readProjectFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
 
 describe("publication recovery source contracts", () => {
-  it("keeps recovery globally accessible after toast dismissal", () => {
+  it("keeps recovery accessible from the notification center after toast dismissal", () => {
     const observer = readProjectFile("../components/PublicationRecoveryObserver.svelte")
     const list = readProjectFile("../components/PublicationRecoveryList.svelte")
+    const notifications = readProjectFile("../components/NotificationsModal.svelte")
+    const primaryNav = readProjectFile("../components/PrimaryNav.svelte")
 
-    expect(observer).toContain("PublicationRecoveryList")
-    expect(observer).toContain("recoverableOperations.length")
+    expect(observer).not.toContain("PublicationRecoveryList")
+    expect(observer).not.toContain("fixed z-toast")
+    expect(notifications).toContain("PublicationRecoveryList")
+    expect(notifications).toContain("openPublicationRecovery")
+    expect(notifications).toContain("Publications")
+    expect(primaryNav).toContain("publicationOperationsNeedingAttention")
     expect(list).toContain("cancelPublication")
     expect(list).toContain("retryPublication")
     expect(list).toContain("discardPublication")

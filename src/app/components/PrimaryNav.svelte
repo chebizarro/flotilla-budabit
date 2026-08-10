@@ -14,6 +14,7 @@
   import PrimaryNavItem from "@lib/components/PrimaryNavItem.svelte"
   import MenuSettings from "@app/components/MenuSettings.svelte"
   import NotificationsModal from "@app/components/NotificationsModal.svelte"
+  import {publicationOperationsNeedingAttention} from "@app/core/publication-operations"
   import {pushModal} from "@app/util/modal"
   import {
     hasNotificationCenterUnread,
@@ -36,7 +37,9 @@
     if ($pubkey) goto("/chat")
     else pushModal(LogIn)
   }
-  const hasTopLevelNotification = $derived($hasNotificationCenterUnread)
+  const hasTopLevelNotification = $derived(
+    $hasNotificationCenterUnread || $publicationOperationsNeedingAttention.length > 0,
+  )
 
   $effect(() => {
     rememberLatestNotificationTimestamp($latestNotificationCenterTimestamp)

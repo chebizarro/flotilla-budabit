@@ -23,6 +23,7 @@
   import Mailbox from "@assets/icons/mailbox.svg?dataurl"
   import Magnifier from "@assets/icons/magnifier.svg?dataurl"
   import Reply from "@assets/icons/reply.svg?dataurl"
+  import Refresh from "@assets/icons/refresh-circle.svg?dataurl"
   import RoundAltArrowDown from "@assets/icons/round-alt-arrow-down.svg?dataurl"
   import UserSpeak from "@assets/icons/user-speak.svg?dataurl"
   import Users from "@assets/icons/users-group-rounded.svg?dataurl"
@@ -37,8 +38,13 @@
   import ProfileName from "@app/components/ProfileName.svelte"
   import NoteContent from "@app/components/NoteContent.svelte"
   import NotificationDmContent from "@app/components/NotificationDmContent.svelte"
+  import PublicationRecoveryList from "@app/components/PublicationRecoveryList.svelte"
   import {deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
   import {DM_KIND} from "@app/core/state"
+  import {
+    publicationOperationsNeedingAttention,
+    recoverablePublicationOperations,
+  } from "@app/core/publication-operations"
   import {clearModals, pushModal} from "@app/util/modal"
   import {markNotificationsRead} from "@app/util/notification-center"
   import {
@@ -86,6 +92,8 @@
   const canLoadOlderHistory = $derived($notificationHistoryCanLoadMore)
   const loadMoreLabel = $derived(loadMoreHistoryPending ? "Loading..." : "Load more")
   const navigationPending = $derived(Boolean(pendingNavigationKey))
+  const publicationOperationCount = $derived($recoverablePublicationOperations.length)
+  const publicationAttentionCount = $derived($publicationOperationsNeedingAttention.length)
   const notificationSettingsTarget: NotificationRowNavigation = {
     label: "Notification settings",
     path: "/settings/notifications",
@@ -280,6 +288,8 @@
 
   const isFilterActive = (source: NotificationRowFilter) => rowFilters.includes(source)
 
+  const openPublicationRecovery = () => pushModal(PublicationRecoveryList)
+
   const openNotificationSettings = (event: Event) =>
     openNavigationTarget(event, notificationSettingsTarget)
 </script>
@@ -328,6 +338,17 @@
           {/if}
         </label>
       {/each}
+      <Button
+        class="btn btn-xs gap-1.5 {publicationAttentionCount > 0 ? 'btn-warning' : 'btn-outline'}"
+        aria-label={`Open publication recovery${publicationOperationCount > 0 ? ` with ${publicationOperationCount} item${publicationOperationCount === 1 ? "" : "s"}` : ""}`}
+        onclick={openPublicationRecovery}>
+        <Icon icon={Refresh} size={3.5} />
+        <span>Publications</span>
+        {#if publicationOperationCount > 0}
+          <span class="badge badge-sm">{publicationOperationCount}</span>
+        {/if}
+        <Icon icon={ArrowRightUp} size={3} />
+      </Button>
     </div>
   </div>
 

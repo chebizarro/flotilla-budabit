@@ -27,7 +27,7 @@
 </script>
 
 {#if href}
-  <a {href} class={wrapperClass}>
+  <a {href} class={wrapperClass} aria-label={title || undefined}>
     <div
       class={avatarClass}
       class:bg-base-300={active}
@@ -40,7 +40,7 @@
     </div>
   </a>
 {:else}
-  <Button {onclick} class={wrapperClass}>
+  <Button {onclick} class={wrapperClass} aria-label={title || undefined}>
     <div
       class={avatarClass}
       class:bg-base-300={active}

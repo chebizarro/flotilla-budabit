@@ -1,4 +1,4 @@
-import {writable, type Readable} from "svelte/store"
+import {derived, writable, type Readable} from "svelte/store"
 import {
   abortThunk,
   pubkey,
@@ -92,6 +92,18 @@ export class PublicationCapacityError extends Error {
 export const publicationOperations: Readable<Map<string, PublicationSnapshot>> = {
   subscribe: operationStore.subscribe,
 }
+
+export const recoverablePublicationOperations = derived(publicationOperations, operations =>
+  Array.from(operations.values()).filter(operation =>
+    ["publishing", "unconfirmed"].includes(operation.phase),
+  ),
+)
+
+export const publicationOperationsNeedingAttention = derived(
+  recoverablePublicationOperations,
+  operations =>
+    operations.filter(operation => operation.phase === "unconfirmed" || operation.attempt > 1),
+)
 
 const copyResults = (results: PublishResultsByRelay): PublishResultsByRelay =>
   Object.fromEntries(

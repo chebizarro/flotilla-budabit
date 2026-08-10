@@ -7,16 +7,12 @@
   import {
     cancelPublication,
     discardPublication,
-    publicationOperations,
+    recoverablePublicationOperations,
     retryPublication,
   } from "@app/core/publication-operations"
   import {clearModals, closeTopModal} from "@app/util/modal"
 
-  const operations = $derived.by(() =>
-    Array.from($publicationOperations.values()).filter(operation =>
-      ["publishing", "unconfirmed"].includes(operation.phase),
-    ),
-  )
+  const operations = $derived($recoverablePublicationOperations)
   let retryingIds = $state(new Set<string>())
   let retryErrors = $state<Record<string, string>>({})
 

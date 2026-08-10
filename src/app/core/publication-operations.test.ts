@@ -53,6 +53,8 @@ import {
   normalizePublicationRelays,
   PublicationCapacityError,
   publicationOperations,
+  publicationOperationsNeedingAttention,
+  recoverablePublicationOperations,
   retryPublication,
   startPublication,
   type PublicationSnapshot,
@@ -358,6 +360,41 @@ describe("single-event publication operations", () => {
     })
   })
 
+  it("keeps failed publications in attention while retrying until they confirm", async () => {
+    const firstAttempt = deferred<typeof acknowledgement>()
+    const retryAttempt = deferred<typeof acknowledgement>()
+    mocks.waitForAnyRelayAck
+      .mockReturnValueOnce(firstAttempt.promise)
+      .mockReturnValueOnce(retryAttempt.promise)
+    const operation = startPublication(makeOptions(makeEvent("0")))
+
+    expect(get(recoverablePublicationOperations).map(item => item.operationId)).toEqual([
+      operation.operationId,
+    ])
+    expect(get(publicationOperationsNeedingAttention)).toEqual([])
+
+    firstAttempt.reject(new Error("relay rejected event"))
+    await operation.settled
+
+    expect(get(publicationOperationsNeedingAttention).map(item => item.operationId)).toEqual([
+      operation.operationId,
+    ])
+
+    const retried = retryPublication(operation.operationId)
+    await vi.waitFor(() =>
+      expect(getOperation(operation.operationId)).toMatchObject({phase: "publishing", attempt: 2}),
+    )
+    expect(get(publicationOperationsNeedingAttention).map(item => item.operationId)).toEqual([
+      operation.operationId,
+    ])
+
+    retryAttempt.resolve(acknowledgement)
+    await retried
+
+    expect(get(recoverablePublicationOperations)).toEqual([])
+    expect(get(publicationOperationsNeedingAttention)).toEqual([])
+  })
+
   it("uses one tracker observer and confirms from normalized late evidence", async () => {
     mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => {}))
     const first = startPublication(makeOptions(makeEvent("b")))
@@ -507,9 +544,12 @@ describe("single-event publication operations", () => {
     const operation = startPublication(makeOptions(makeEvent("2")))
     await operation.settled
 
+    expect(get(publicationOperationsNeedingAttention)).toHaveLength(1)
+
     discardPublication(operation.operationId)
 
     expect(getOperation(operation.operationId)).toBeUndefined()
+    expect(get(publicationOperationsNeedingAttention)).toEqual([])
     expect(mocks.repositoryPublish).not.toHaveBeenCalled()
   })
 
@@ -519,10 +559,14 @@ describe("single-event publication operations", () => {
     const operation = startPublication(makeOptions(makeEvent("3")))
     const thunk = mocks.publishThunk.mock.results[0]?.value as unknown as Thunk
 
+    expect(get(recoverablePublicationOperations)).toHaveLength(1)
+    expect(get(publicationOperationsNeedingAttention)).toEqual([])
+
     cancelPublication(operation.operationId)
 
     expect(mocks.abortThunk).toHaveBeenCalledWith(thunk)
     expect(getOperation(operation.operationId)).toBeUndefined()
+    expect(get(recoverablePublicationOperations)).toEqual([])
     expect(mocks.repositoryPublish).not.toHaveBeenCalled()
   })
 

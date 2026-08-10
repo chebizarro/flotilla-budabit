@@ -129,6 +129,26 @@ test("keeps a failed room message visible with retry and discard actions", async
   await recoveryToast.getByRole("button", {name: "Dismiss notification"}).click()
   await expect(message).toBeVisible()
 
+  await expect(page.getByRole("button", {name: /Open publication recovery/})).toHaveCount(0)
+  const notificationsButton = page.getByRole("button", {name: "Notifications", exact: true})
+  const notificationIndicator = notificationsButton.locator("div.absolute.rounded-full.bg-primary")
+  await expect(notificationIndicator).toBeVisible()
+  await notificationsButton.click()
+
+  const publicationsButton = page.getByRole("button", {
+    name: "Open publication recovery with 1 item",
+  })
+  await expect(publicationsButton).toBeVisible()
+  await expect(publicationsButton).toHaveClass(/btn-warning/)
+  await publicationsButton.click()
+  const modalRoot = page.getByTestId("modal-root")
+  await expect(page.getByRole("heading", {name: "Publication recovery"})).toBeVisible()
+  await expect(page.getByText("Room message", {exact: true})).toBeVisible()
+  await expect(modalRoot.getByRole("button", {name: "Retry", exact: true})).toBeVisible()
+  await modalRoot.getByRole("button", {name: "Close", exact: true}).click()
+  await page.getByRole("button", {name: "Close dialog"}).click({position: {x: 5, y: 5}})
+  await expect(notificationIndicator).toBeVisible()
+
   await page.getByRole("link", {name: "Home", exact: true}).first().click()
   await expect(page).toHaveURL(/\/c\/npub/)
   await page.goBack()
@@ -147,8 +167,14 @@ test("keeps a failed room message visible with retry and discard actions", async
   await expect(failure).toBeVisible({timeout: 5_000})
 
   await recoveryToast.getByRole("button", {name: "Dismiss notification"}).click()
-  await message.getByRole("button", {name: "Discard", exact: true}).click()
+  await notificationsButton.click()
+  await page.getByRole("button", {name: "Open publication recovery with 1 item"}).click()
+  await modalRoot.getByRole("button", {name: "Discard local copy", exact: true}).click()
+  await expect(page.getByText("No publications currently need attention.")).toBeVisible()
+  await modalRoot.getByRole("button", {name: "Close", exact: true}).click()
+  await page.getByRole("button", {name: "Close dialog"}).click({position: {x: 5, y: 5}})
   await expect(message).toHaveCount(0)
+  await expect(notificationIndicator).toHaveCount(0)
 })
 
 test("rolls a rejected reaction addition back and reapplies it during retry", async ({page}) => {
