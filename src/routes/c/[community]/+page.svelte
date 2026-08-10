@@ -503,24 +503,41 @@
         ? `Are you sure you decline moderator role in ${communityName} community?`
         : `Do you really accept moderator role in ${communityName} community?`,
       confirm: () => {
+        let started = 0
+        let startError: unknown
+
         for (const invite of invites) {
           const response = makeModeratorInviteResponseProfileList({
             profileList: invite.profileList,
             declined,
           })
 
-          startPublication({
-            relays,
-            event: makeEvent(response.kind, response),
-            label: `Moderator response for ${invite.displayName}`,
-            href: $page.url.pathname,
-            semanticKey: getModeratorInviteResponseSemanticKey(invite.profileList.address),
-            preview: "none",
-            validateRetry: assertReplaceablePublicationIsCurrent,
-          })
+          try {
+            startPublication({
+              relays,
+              event: makeEvent(response.kind, response),
+              label: `Moderator response for ${invite.displayName}`,
+              href: $page.url.pathname,
+              semanticKey: getModeratorInviteResponseSemanticKey(invite.profileList.address),
+              preview: "none",
+              validateRetry: assertReplaceablePublicationIsCurrent,
+            })
+            started += 1
+          } catch (error) {
+            startError ||= error
+          }
         }
 
-        history.back()
+        if (startError) {
+          pushToast({
+            theme: "error",
+            message:
+              startError instanceof Error
+                ? startError.message
+                : "Failed to publish a moderator response.",
+          })
+        }
+        if (started > 0) history.back()
       },
     })
   }

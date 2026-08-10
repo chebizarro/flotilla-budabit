@@ -145,6 +145,7 @@ import {
 import {requireRepoPublicationScope} from "@app/core/repo-publication"
 import {
   clearPublicationOperations,
+  PublicationCapacityError,
   publicationOperations,
   startPublication,
   type PublicationHandle,
@@ -153,6 +154,7 @@ import {
   getReactionOperationSemanticKey,
   getReactionTargetEventId,
 } from "@app/core/reaction-operations"
+import {pushToast} from "@app/util/toast"
 
 // Utils
 
@@ -866,19 +868,26 @@ const startReactionOperation = ({
   relays: string[]
   semanticKey: string
   label: string
-}): PublicationHandle => {
+}): PublicationHandle | undefined => {
   const pending = getPendingReactionOperation(semanticKey)
   if (pending) {
     return {operationId: pending.operationId, settled: Promise.resolve(pending)}
   }
 
-  return startPublication({
-    event,
-    relays,
-    label,
-    semanticKey,
-    preview: "rollback-on-failure",
-  })
+  try {
+    return startPublication({
+      event,
+      relays,
+      label,
+      semanticKey,
+      preview: "rollback-on-failure",
+    })
+  } catch (error) {
+    if (!(error instanceof PublicationCapacityError)) throw error
+
+    pushToast({theme: "error", message: error.message})
+    return undefined
+  }
 }
 
 export const publishReactionOperation = ({

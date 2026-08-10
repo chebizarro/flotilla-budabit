@@ -2,7 +2,11 @@
   import {goto} from "$app/navigation"
   import {pubkey} from "@welshman/app"
   import Button from "@lib/components/Button.svelte"
-  import {publicationOperations, retryPublication} from "@app/core/publication-operations"
+  import {
+    discardPublication,
+    publicationOperations,
+    retryPublication,
+  } from "@app/core/publication-operations"
   import {popToast, type Toast} from "@app/util/toast"
 
   type Props = {
@@ -34,6 +38,11 @@
     if (operation?.href) void goto(operation.href)
   }
 
+  const discard = () => {
+    discardPublication(operationId)
+    popToast(toast.id)
+  }
+
   $effect(() => {
     if (operation) return
     popToast(toast.id)
@@ -57,6 +66,9 @@
       <span class="text-xs opacity-75">Publishing...</span>
     {:else}
       <span class="text-xs opacity-75">Publication was not confirmed by any relay.</span>
+      <span class="text-xs opacity-75">
+        Discard does not retract an event a relay may already have accepted.
+      </span>
       {#if accountMismatch}
         <span class="text-xs text-warning">
           Restore the account that created this publication to retry.
@@ -74,6 +86,9 @@
         {#if operation.href}
           <Button class="btn btn-ghost btn-xs" onclick={view}>View</Button>
         {/if}
+        <Button class="btn btn-ghost btn-xs" onclick={discard}>
+          {operation.preview === "retain-on-failure" ? "Discard local copy" : "Discard retry"}
+        </Button>
       </span>
     {/if}
   </span>
