@@ -11,7 +11,10 @@ import {
 import {randomId} from "@welshman/lib"
 import type {PublishResultsByRelay} from "@welshman/net"
 import {
+  LOCAL_RELAY_URL,
+  isRelayUrl,
   isSignedEvent,
+  normalizeRelayUrl,
   type EventTemplate,
   type HashedEvent,
   type TrustedEvent,
@@ -62,16 +65,29 @@ type PublicationRuntime = {
   generation: number
   committed: boolean
   unsubscribeThunk?: () => void
-  unsubscribeTracker?: () => void
   resolveAttempt?: (snapshot: PublicationSnapshot) => void
   retryPromise?: Promise<PublicationSnapshot>
-  cleanupTimer?: ReturnType<typeof setTimeout>
   validateRetry?: (event: HashedEvent) => void | Promise<void>
 }
 
 const CONFIRMED_HANDOFF_MS = 5_000
+export const MAX_PUBLICATION_OPERATIONS = 100
 const operationStore = writable<Map<string, PublicationSnapshot>>(new Map())
 const runtimes = new Map<string, PublicationRuntime>()
+const confirmedCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let reservedAdmissions = 0
+let trackerObserverAttached = false
+
+export class PublicationCapacityError extends Error {
+  readonly name = "PublicationCapacityError"
+  readonly code = "PUBLICATION_CAPACITY_REACHED"
+
+  constructor() {
+    super(
+      `Publication recovery is full (${MAX_PUBLICATION_OPERATIONS} items). Wait for a publication to finish, or cancel or discard an existing item in Publication recovery, then try again. This item was not sent.`,
+    )
+  }
+}
 
 export const publicationOperations: Readable<Map<string, PublicationSnapshot>> = {
   subscribe: operationStore.subscribe,
@@ -136,32 +152,23 @@ const stopThunkSubscription = (runtime: PublicationRuntime) => {
   runtime.unsubscribeThunk = undefined
 }
 
-const stopTrackerSubscription = (runtime: PublicationRuntime) => {
-  runtime.unsubscribeTracker?.()
-  runtime.unsubscribeTracker = undefined
-}
-
-const removeRuntime = (runtime: PublicationRuntime) => {
+const removeRuntime = (runtime: PublicationRuntime, removeOperationSnapshot = true) => {
   runtime.generation += 1
   stopThunkSubscription(runtime)
-  stopTrackerSubscription(runtime)
-  if (runtime.cleanupTimer) clearTimeout(runtime.cleanupTimer)
-  runtime.cleanupTimer = undefined
   runtimes.delete(runtime.snapshot.operationId)
-  removeSnapshot(runtime.snapshot.operationId)
+  if (removeOperationSnapshot) removeSnapshot(runtime.snapshot.operationId)
+  syncTrackerObserver()
 }
 
-const scheduleConfirmedCleanup = (runtime: PublicationRuntime) => {
-  if (runtime.cleanupTimer) clearTimeout(runtime.cleanupTimer)
+const scheduleConfirmedCleanup = (operationId: string) => {
+  const existingTimer = confirmedCleanupTimers.get(operationId)
+  if (existingTimer) clearTimeout(existingTimer)
 
-  runtime.cleanupTimer = setTimeout(() => {
-    if (
-      runtimes.get(runtime.snapshot.operationId) === runtime &&
-      runtime.snapshot.phase === "confirmed"
-    ) {
-      removeRuntime(runtime)
-    }
+  const timer = setTimeout(() => {
+    confirmedCleanupTimers.delete(operationId)
+    removeSnapshot(operationId)
   }, CONFIRMED_HANDOFF_MS)
+  confirmedCleanupTimers.set(operationId, timer)
 }
 
 const commitEvent = (runtime: PublicationRuntime, event: HashedEvent) => {
@@ -182,7 +189,6 @@ const confirmOperation = (
   const confirmedEvent = event || runtime.thunk.event
   commitEvent(runtime, confirmedEvent)
   stopThunkSubscription(runtime)
-  stopTrackerSubscription(runtime)
 
   const snapshot = updateSnapshot(runtime, {
     event: confirmedEvent,
@@ -192,7 +198,8 @@ const confirmOperation = (
   })
 
   settleAttempt(runtime, snapshot)
-  scheduleConfirmedCleanup(runtime)
+  removeRuntime(runtime, false)
+  scheduleConfirmedCleanup(snapshot.operationId)
 }
 
 const markUnconfirmed = (runtime: PublicationRuntime, generation: number, error: unknown) => {
@@ -210,11 +217,25 @@ const markUnconfirmed = (runtime: PublicationRuntime, generation: number, error:
   settleAttempt(runtime, snapshot)
 }
 
+const normalizeTrackerRelay = (relay: string) => {
+  if (relay === LOCAL_RELAY_URL || !isRelayUrl(relay)) return ""
+
+  try {
+    const normalized = normalizeRelayUrl(relay)
+    return normalized !== LOCAL_RELAY_URL && isRelayUrl(normalized) ? normalized : ""
+  } catch {
+    return ""
+  }
+}
+
 const hasQualifyingTrackerEvidence = (runtime: PublicationRuntime, eventId: string) => {
   const seenRelays =
     typeof tracker.getRelays === "function" ? tracker.getRelays(eventId) : new Set<string>()
+  const normalizedSeenRelays = new Set(
+    Array.from(seenRelays, normalizeTrackerRelay).filter(Boolean),
+  )
   return runtime.confirmRelays.some(
-    relay => seenRelays.has(relay) || tracker.hasRelay?.(eventId, relay),
+    relay => normalizedSeenRelays.has(relay) || tracker.hasRelay?.(eventId, relay),
   )
 }
 
@@ -226,7 +247,8 @@ const reconcileTrackerEvidence = (
   if (runtimes.get(runtime.snapshot.operationId) !== runtime) return
   if (!["publishing", "unconfirmed"].includes(runtime.snapshot.phase)) return
   if (runtime.thunk.event.id !== eventId) return
-  if (relay && !runtime.confirmRelays.includes(relay)) return
+  const normalizedRelay = relay ? normalizeTrackerRelay(relay) : ""
+  if (relay && (!normalizedRelay || !runtime.confirmRelays.includes(normalizedRelay))) return
   if (!relay && !hasQualifyingTrackerEvidence(runtime, eventId)) return
 
   const repositoryEvent = getRepositoryEvent(eventId)
@@ -236,28 +258,38 @@ const reconcileTrackerEvidence = (
   confirmOperation(runtime, {event: repositoryEvent || ownedEvent})
 }
 
-const attachTrackerSubscription = (runtime: PublicationRuntime) => {
-  if (runtime.unsubscribeTracker || typeof tracker.on !== "function") return
+const onTrackerAdd = (eventId: string, relay: string) => {
+  const normalizedRelay = normalizeTrackerRelay(relay)
+  if (!normalizedRelay) return
 
-  const onAdd = (eventId: string, relay: string) => {
-    if (eventId !== runtime.thunk.event.id || !runtime.confirmRelays.includes(relay)) return
-    queueMicrotask(() => reconcileTrackerEvidence(runtime, eventId, relay))
-  }
-  const onLoad = () => {
-    queueMicrotask(() => reconcileTrackerEvidence(runtime))
-  }
-
-  tracker.on("add", onAdd)
-  tracker.on("load", onLoad)
-  runtime.unsubscribeTracker = () => {
-    if (typeof tracker.off === "function") {
-      tracker.off("add", onAdd)
-      tracker.off("load", onLoad)
+  queueMicrotask(() => {
+    for (const runtime of runtimes.values()) {
+      if (runtime.thunk.event.id !== eventId) continue
+      reconcileTrackerEvidence(runtime, eventId, normalizedRelay)
     }
-  }
+  })
+}
 
-  if (hasQualifyingTrackerEvidence(runtime, runtime.thunk.event.id)) {
-    queueMicrotask(() => reconcileTrackerEvidence(runtime))
+const onTrackerLoad = () => {
+  queueMicrotask(() => {
+    for (const runtime of runtimes.values()) {
+      reconcileTrackerEvidence(runtime)
+    }
+  })
+}
+
+function syncTrackerObserver() {
+  const shouldAttach = runtimes.size > 0 && typeof tracker.on === "function"
+  if (shouldAttach === trackerObserverAttached) return
+
+  if (shouldAttach) {
+    tracker.on("add", onTrackerAdd)
+    tracker.on("load", onTrackerLoad)
+    trackerObserverAttached = true
+  } else if (trackerObserverAttached) {
+    tracker.off?.("add", onTrackerAdd)
+    tracker.off?.("load", onTrackerLoad)
+    trackerObserverAttached = false
   }
 }
 
@@ -283,7 +315,11 @@ const beginAttempt = (runtime: PublicationRuntime) => {
   })
 
   attachThunkSubscription(runtime, generation)
-  attachTrackerSubscription(runtime)
+  syncTrackerObserver()
+
+  if (hasQualifyingTrackerEvidence(runtime, runtime.thunk.event.id)) {
+    queueMicrotask(() => reconcileTrackerEvidence(runtime))
+  }
 
   void Promise.resolve()
     .then(() => waitForAnyRelayAck(runtime.thunk, runtime.confirmRelays))
@@ -293,6 +329,31 @@ const beginAttempt = (runtime: PublicationRuntime) => {
     )
 
   return settled
+}
+
+export const normalizePublicationRelays = (relays: string[], label = "publication relay") => {
+  const normalizedRelays: string[] = []
+
+  for (const candidate of relays) {
+    const relay = typeof candidate === "string" ? candidate.trim() : ""
+    if (!relay || relay === LOCAL_RELAY_URL || !isRelayUrl(relay)) {
+      throw new Error(`Invalid ${label}: ${String(candidate)}`)
+    }
+
+    let normalized: string
+    try {
+      normalized = normalizeRelayUrl(relay)
+    } catch {
+      throw new Error(`Invalid ${label}: ${candidate}`)
+    }
+
+    if (normalized === LOCAL_RELAY_URL || !isRelayUrl(normalized)) {
+      throw new Error(`Invalid ${label}: ${candidate}`)
+    }
+    if (!normalizedRelays.includes(normalized)) normalizedRelays.push(normalized)
+  }
+
+  return normalizedRelays
 }
 
 const validateRelaySets = (relays: string[], confirmRelays: string[]) => {
@@ -307,46 +368,78 @@ const validateRelaySets = (relays: string[], confirmRelays: string[]) => {
   }
 }
 
-export const startPublication = (options: StartPublicationOptions): PublicationHandle => {
-  const relays = Array.from(new Set(options.relays))
-  const confirmRelays = Array.from(new Set(options.confirmRelays || relays))
-  validateRelaySets(relays, confirmRelays)
-
-  const thunk = publishThunk({
-    event: options.event,
-    relays,
-    optimistic: false,
-    presentation: "private",
-    ...(options.delay ? {delay: options.delay} : {}),
-  })
-  const operationId = randomId()
-  const snapshot: PublicationSnapshot = Object.freeze({
-    operationId,
-    ownerPubkey: thunk.pubkey,
-    label: options.label,
-    href: options.href,
-    semanticKey: options.semanticKey,
-    event: thunk.event,
-    phase: "publishing",
-    preview: options.preview,
-    attempt: 1,
-    results: copyResults(thunk.results),
-  })
-  const runtime: PublicationRuntime = {
-    snapshot,
-    thunk,
-    confirmRelays,
-    generation: 1,
-    committed: false,
-    validateRetry: options.validateRetry,
+const reserveAdmission = () => {
+  if (runtimes.size + reservedAdmissions >= MAX_PUBLICATION_OPERATIONS) {
+    throw new PublicationCapacityError()
   }
 
-  runtimes.set(operationId, runtime)
-  publishSnapshot(snapshot)
+  reservedAdmissions += 1
+  let reserved = true
 
-  return {
-    operationId,
-    settled: beginAttempt(runtime),
+  return () => {
+    if (!reserved) return
+    reserved = false
+    reservedAdmissions -= 1
+  }
+}
+
+export const startPublication = (options: StartPublicationOptions): PublicationHandle => {
+  const relays = normalizePublicationRelays(options.relays)
+  const confirmRelays =
+    options.confirmRelays === undefined
+      ? [...relays]
+      : normalizePublicationRelays(options.confirmRelays, "confirmation relay")
+  validateRelaySets(relays, confirmRelays)
+  const releaseAdmission = reserveAdmission()
+  let thunk: PublicationThunk | undefined
+  let runtime: PublicationRuntime | undefined
+
+  try {
+    thunk = publishThunk({
+      event: options.event,
+      relays,
+      optimistic: false,
+      presentation: "private",
+      ...(options.delay ? {delay: options.delay} : {}),
+    })
+    const operationId = randomId()
+    const snapshot: PublicationSnapshot = Object.freeze({
+      operationId,
+      ownerPubkey: thunk.pubkey,
+      label: options.label,
+      href: options.href,
+      semanticKey: options.semanticKey,
+      event: thunk.event,
+      phase: "publishing",
+      preview: options.preview,
+      attempt: 1,
+      results: copyResults(thunk.results),
+    })
+    runtime = {
+      snapshot,
+      thunk,
+      confirmRelays,
+      generation: 1,
+      committed: false,
+      validateRetry: options.validateRetry,
+    }
+
+    runtimes.set(operationId, runtime)
+    releaseAdmission()
+    publishSnapshot(snapshot)
+
+    return {
+      operationId,
+      settled: beginAttempt(runtime),
+    }
+  } catch (error) {
+    if (runtime && runtimes.get(runtime.snapshot.operationId) === runtime) {
+      removeRuntime(runtime)
+    }
+    if (thunk) abortThunk(thunk)
+    throw error
+  } finally {
+    releaseAdmission()
   }
 }
 
@@ -440,6 +533,10 @@ export const clearPublicationOperations = () => {
     resolve?.(cancelled)
   }
 
+  for (const timer of confirmedCleanupTimers.values()) clearTimeout(timer)
+  confirmedCleanupTimers.clear()
+  syncTrackerObserver()
+
   operationStore.set(new Map())
 }
 
@@ -447,4 +544,14 @@ export const isPublicationPreviewVisible = (operation: PublicationSnapshot) => {
   if (operation.phase === "publishing") return operation.preview !== "none"
   if (operation.phase === "unconfirmed") return operation.preview === "retain-on-failure"
   return false
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (trackerObserverAttached) {
+      tracker.off?.("add", onTrackerAdd)
+      tracker.off?.("load", onTrackerLoad)
+      trackerObserverAttached = false
+    }
+  })
 }

@@ -1,26 +1,41 @@
 import {get} from "svelte/store"
 import type {Thunk} from "@welshman/app"
-import type {EventTemplate, TrustedEvent} from "@welshman/util"
+import {LOCAL_RELAY_URL, type EventTemplate, type TrustedEvent} from "@welshman/util"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 
-const mocks = vi.hoisted(() => ({
-  activePubkey: "a".repeat(64),
-  abortThunk: vi.fn(),
-  publishThunk: vi.fn(),
-  repositoryPublish: vi.fn(),
-  retryThunk: vi.fn(),
-  waitForAnyRelayAck: vi.fn(),
-}))
+const mocks = vi.hoisted(() => {
+  const trackerListeners = {
+    add: new Set<(eventId: string, relay: string) => void>(),
+    load: new Set<() => void>(),
+  }
+
+  return {
+    activePubkey: "a".repeat(64),
+    abortThunk: vi.fn(),
+    publishThunk: vi.fn(),
+    repositoryGetEvent: vi.fn(),
+    repositoryPublish: vi.fn(),
+    retryThunk: vi.fn(),
+    trackerHasRelay: vi.fn(),
+    trackerListeners,
+    trackerOff: vi.fn(),
+    trackerOn: vi.fn(),
+    trackerRelays: new Map<string, Set<string>>(),
+    waitForAnyRelayAck: vi.fn(),
+  }
+})
 
 vi.mock("@welshman/app", () => ({
   abortThunk: mocks.abortThunk,
   pubkey: {get: () => mocks.activePubkey},
   publishThunk: mocks.publishThunk,
-  repository: {publish: mocks.repositoryPublish},
+  repository: {getEvent: mocks.repositoryGetEvent, publish: mocks.repositoryPublish},
   retryThunk: mocks.retryThunk,
   tracker: {
-    getRelays: vi.fn(() => new Set<string>()),
-    hasRelay: vi.fn(() => false),
+    getRelays: (eventId: string) => mocks.trackerRelays.get(eventId) || new Set<string>(),
+    hasRelay: mocks.trackerHasRelay,
+    off: mocks.trackerOff,
+    on: mocks.trackerOn,
   },
   waitForAnyRelayAck: mocks.waitForAnyRelayAck,
 }))
@@ -34,6 +49,9 @@ import {
   clearPublicationOperations,
   discardPublication,
   isPublicationPreviewVisible,
+  MAX_PUBLICATION_OPERATIONS,
+  normalizePublicationRelays,
+  PublicationCapacityError,
   publicationOperations,
   retryPublication,
   startPublication,
@@ -109,14 +127,61 @@ const makeOptions = (
 
 const getOperation = (operationId: string) => get(publicationOperations).get(operationId)
 
+const emitTrackerAdd = (eventId: string, relay: string) => {
+  mocks.trackerRelays.set(eventId, new Set([...(mocks.trackerRelays.get(eventId) || []), relay]))
+  for (const listener of mocks.trackerListeners.add) listener(eventId, relay)
+}
+
+const emitTrackerLoad = () => {
+  for (const listener of mocks.trackerListeners.load) listener()
+}
+
+const makeIndexedEvent = (index: number): TrustedEvent => ({
+  ...makeEvent("a"),
+  id: index.toString(16).padStart(64, "0"),
+  content: `publication-${index}`,
+})
+
 describe("single-event publication operations", () => {
   beforeEach(() => {
     mocks.activePubkey = owner
     mocks.abortThunk.mockReset()
     mocks.publishThunk.mockReset()
+    mocks.repositoryGetEvent.mockReset().mockReturnValue(undefined)
     mocks.repositoryPublish.mockReset().mockReturnValue(true)
     mocks.retryThunk.mockReset()
+    mocks.trackerHasRelay.mockReset().mockReturnValue(false)
+    mocks.trackerOff.mockReset()
+    mocks.trackerOn.mockReset()
+    mocks.trackerRelays.clear()
+    mocks.trackerListeners.add.clear()
+    mocks.trackerListeners.load.clear()
     mocks.waitForAnyRelayAck.mockReset()
+
+    mocks.trackerOn.mockImplementation(
+      (
+        event: "add" | "load",
+        listener: ((eventId: string, relay: string) => void) | (() => void),
+      ) => {
+        if (event === "add") {
+          mocks.trackerListeners.add.add(listener as (eventId: string, relay: string) => void)
+        } else {
+          mocks.trackerListeners.load.add(listener as () => void)
+        }
+      },
+    )
+    mocks.trackerOff.mockImplementation(
+      (
+        event: "add" | "load",
+        listener: ((eventId: string, relay: string) => void) | (() => void),
+      ) => {
+        if (event === "add") {
+          mocks.trackerListeners.add.delete(listener as (eventId: string, relay: string) => void)
+        } else {
+          mocks.trackerListeners.load.delete(listener as () => void)
+        }
+      },
+    )
 
     mocks.publishThunk.mockImplementation(options => makeThunk(options))
     mocks.retryThunk.mockImplementation((thunk: TestThunk) =>
@@ -217,6 +282,66 @@ describe("single-event publication operations", () => {
     expect(mocks.repositoryPublish).not.toHaveBeenCalled()
   })
 
+  it("rejects confirmation relays outside the normalized destination set", () => {
+    expect(() =>
+      startPublication({
+        ...makeOptions(makeEvent("5")),
+        relays: ["wss://relay-one.example"],
+        confirmRelays: ["wss://relay-two.example"],
+      }),
+    ).toThrow("Confirmation relays must be publication destinations")
+
+    expect(mocks.publishThunk).not.toHaveBeenCalled()
+  })
+
+  it("normalizes relay identities before deduplication and confirmation checks", async () => {
+    mocks.waitForAnyRelayAck.mockResolvedValue(acknowledgement)
+    const event = makeEvent("9")
+    const operation = startPublication({
+      ...makeOptions(event),
+      relays: ["wss://relay-one.example", relayOne],
+      confirmRelays: ["wss://relay-one.example"],
+    })
+
+    await operation.settled
+
+    expect(mocks.publishThunk).toHaveBeenCalledWith({
+      event,
+      relays: [relayOne],
+      optimistic: false,
+      presentation: "private",
+    })
+    expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(
+      mocks.publishThunk.mock.results[0]?.value,
+      [relayOne],
+    )
+    expect(Object.keys(getOperation(operation.operationId)?.results || {})).toEqual([relayOne])
+  })
+
+  it("rejects malformed and local relays before creating a thunk", () => {
+    expect(() =>
+      startPublication({...makeOptions(makeEvent("b")), relays: ["https://relay.example"]}),
+    ).toThrow("Invalid publication relay")
+    expect(() =>
+      startPublication({...makeOptions(makeEvent("b")), relays: [LOCAL_RELAY_URL]}),
+    ).toThrow("Invalid publication relay")
+    expect(() =>
+      startPublication({
+        ...makeOptions(makeEvent("b")),
+        confirmRelays: ["not a relay"],
+      }),
+    ).toThrow("Invalid confirmation relay")
+
+    expect(mocks.publishThunk).not.toHaveBeenCalled()
+  })
+
+  it("normalizes standalone publication relay lists strictly", () => {
+    expect(normalizePublicationRelays(["relay-one.example", relayOne])).toEqual([relayOne])
+    expect(() => normalizePublicationRelays(["file:///tmp/relay"])).toThrow(
+      "Invalid publication relay",
+    )
+  })
+
   it("retains an unconfirmed operation without committing it", async () => {
     mocks.waitForAnyRelayAck.mockRejectedValue(new Error("No relay confirmed publication"))
     const event = makeEvent("e")
@@ -231,6 +356,64 @@ describe("single-event publication operations", () => {
       preview: "retain-on-failure",
       error: "No relay confirmed publication",
     })
+  })
+
+  it("uses one tracker observer and confirms from normalized late evidence", async () => {
+    mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => {}))
+    const first = startPublication(makeOptions(makeEvent("b")))
+    startPublication(makeOptions(makeEvent("c")))
+
+    expect(mocks.trackerListeners.add.size).toBe(1)
+    expect(mocks.trackerListeners.load.size).toBe(1)
+
+    emitTrackerAdd(makeEvent("b").id, "wss://relay-one.example")
+    await Promise.resolve()
+
+    await expect(first.settled).resolves.toMatchObject({phase: "confirmed"})
+    expect(mocks.repositoryPublish).toHaveBeenCalledWith(makeEvent("b"))
+    expect(mocks.trackerListeners.add.size).toBe(1)
+    expect(mocks.trackerListeners.load.size).toBe(1)
+  })
+
+  it("detaches the tracker observer when the final runtime is removed", () => {
+    mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => {}))
+    const operation = startPublication(makeOptions(makeEvent("b")))
+
+    cancelPublication(operation.operationId)
+
+    expect(mocks.trackerListeners.add.size).toBe(0)
+    expect(mocks.trackerListeners.load.size).toBe(0)
+    expect(mocks.trackerOff).toHaveBeenCalledTimes(2)
+  })
+
+  it("reconciles normalized tracker evidence loaded from storage", async () => {
+    mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => {}))
+    const event = makeEvent("d")
+    const operation = startPublication(makeOptions(event))
+
+    mocks.trackerRelays.set(event.id, new Set(["wss://relay-two.example"]))
+    emitTrackerLoad()
+    await Promise.resolve()
+
+    await expect(operation.settled).resolves.toMatchObject({phase: "confirmed"})
+    expect(mocks.repositoryPublish).toHaveBeenCalledWith(event)
+  })
+
+  it("bounds active runtimes and restores capacity after cancellation", () => {
+    mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => {}))
+    const operations = Array.from({length: MAX_PUBLICATION_OPERATIONS}, (_, index) =>
+      startPublication(makeOptions(makeIndexedEvent(index + 1))),
+    )
+
+    expect(mocks.trackerListeners.add.size).toBe(1)
+    expect(mocks.trackerListeners.load.size).toBe(1)
+    expect(() => startPublication(makeOptions(makeIndexedEvent(10_000)))).toThrow(
+      PublicationCapacityError,
+    )
+    expect(mocks.publishThunk).toHaveBeenCalledTimes(MAX_PUBLICATION_OPERATIONS)
+
+    cancelPublication(operations[0].operationId)
+    expect(() => startPublication(makeOptions(makeIndexedEvent(10_001)))).not.toThrow()
   })
 
   it("retries the exact event in the same logical operation and commits after confirmation", async () => {

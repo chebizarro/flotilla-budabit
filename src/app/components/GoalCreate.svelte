@@ -17,7 +17,7 @@
   import {pushToast} from "@app/util/toast"
   import {makeEditor} from "@app/editor"
   import type {BlossomUploadStage} from "@app/core/blossom"
-  import {startPublication} from "@app/core/publication-operations"
+  import {normalizePublicationRelays, startPublication} from "@app/core/publication-operations"
   import {makeCommunityGoalPath} from "@app/util/routes"
 
   type Props = {
@@ -58,11 +58,13 @@
         })
       }
 
+      const publishRelay = normalizePublicationRelays([url])[0]!
+
       const tags = [
         ...ed.storage.nostr.getEditorTags(),
         ["summary", summary],
         ["amount", String(amount)],
-        ["relays", url],
+        ["relays", publishRelay],
       ]
 
       if (h) {
@@ -71,7 +73,7 @@
 
       const event = prep(makeEvent(ZAP_GOAL, {content, tags}), $pubkey)
       startPublication({
-        relays: [url],
+        relays: [publishRelay],
         event,
         label: "Funding goal",
         href: h ? makeCommunityGoalPath(h, event.id) : undefined,
