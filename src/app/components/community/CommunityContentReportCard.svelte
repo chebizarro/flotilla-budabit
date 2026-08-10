@@ -13,11 +13,12 @@
     makeEvent,
     type TrustedEvent,
   } from "@welshman/util"
-  import {pubkey, publishThunk, repository, waitForThunkCompletion} from "@welshman/app"
+  import {pubkey, repository} from "@welshman/app"
   import Button from "@lib/components/Button.svelte"
   import Confirm from "@lib/components/Confirm.svelte"
   import Link from "@lib/components/Link.svelte"
   import ProfileLink from "@app/components/ProfileLink.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {
     activeCommunityDefinition,
     activeCommunityProfileListEvents,
@@ -26,6 +27,8 @@
   } from "@app/core/community-state"
   import {TARGETED_PUBLICATION_KIND, normalizePubkey} from "@app/core/community"
   import {getCommunityScopedPublishRelays} from "@app/core/community-relays"
+  import {publicationOperations, startPublication} from "@app/core/publication-operations"
+  import {getReportReviewSemanticKey} from "@app/core/governance-publication-operations"
   import {
     canReviewCommunityContentReport,
     makeCommunityReportReviewLabel,
@@ -63,8 +66,28 @@
         )
       : [],
   )
+  const reportOperationIds = $derived.by(() => {
+    const operationIds = new Map<string, string>()
+
+    for (const report of reviewablePendingReports) {
+      const semanticKey = getReportReviewSemanticKey(report.event.id)
+      const operation = Array.from($publicationOperations.values()).find(
+        candidate =>
+          candidate.ownerPubkey === currentPubkey &&
+          candidate.semanticKey === semanticKey &&
+          (candidate.phase === "publishing" || candidate.phase === "unconfirmed"),
+      )
+
+      if (operation) operationIds.set(report.event.id, operation.operationId)
+    }
+
+    return operationIds
+  })
+  const startablePendingReports = $derived(
+    reviewablePendingReports.filter(report => !reportOperationIds.has(report.event.id)),
+  )
   const canReview = $derived(
-    Boolean(currentPubkey && reportRelays.length > 0 && reviewablePendingReports.length > 0),
+    Boolean(currentPubkey && reportRelays.length > 0 && startablePendingReports.length > 0),
   )
   const latestReview = $derived(
     group.reviews.toSorted(
@@ -137,16 +160,7 @@
     return getTargetEventKindLabel(targetEvent)
   })
 
-  const hasSuccessfulRelay = (thunk: ReturnType<typeof publishThunk>) =>
-    Object.values(thunk.results).some(result => result.status === "success")
-
-  const getPublishError = (thunk: ReturnType<typeof publishThunk>) => {
-    const result = Object.values(thunk.results).find(result => result.status !== "success")
-
-    return result ? `${result.relay}: ${result.detail || result.status}` : "No relay confirmed."
-  }
-
-  const publishReviewedLabels = async () => {
+  const publishReviewedLabels = () => {
     if (!$activeCommunityDefinition || !canReview || reviewStatus === "publishing") return
 
     if (reportRelays.length === 0) {
@@ -155,55 +169,48 @@
     }
 
     reviewStatus = "publishing"
-    const thunks = reviewablePendingReports.map(report => {
-      const template = makeCommunityReportReviewLabel({
-        communityPubkey: $activeCommunityDefinition!.pubkey,
-        reportId: report.event.id,
-        targetEventId: report.targetEventId,
-        targetEventKind: report.targetEventKind,
-        sectionName: report.sectionName,
-        reporterPubkey: report.reporterPubkey,
-      })
+    let started = 0
+    let startError: unknown
 
-      return publishThunk({relays: reportRelays, event: makeEvent(template.kind, template)})
-    })
+    for (const report of startablePendingReports) {
+      try {
+        const template = makeCommunityReportReviewLabel({
+          communityPubkey: $activeCommunityDefinition.pubkey,
+          reportId: report.event.id,
+          targetEventId: report.targetEventId,
+          targetEventKind: report.targetEventKind,
+          sectionName: report.sectionName,
+          reporterPubkey: report.reporterPubkey,
+        })
 
-    await Promise.all(
-      thunks.map(async thunk => {
-        try {
-          await waitForThunkCompletion(thunk)
-        } catch {
-          // The result map below carries the relay-specific failure detail.
-        }
-      }),
-    )
-
-    const successfulThunks = thunks.filter(hasSuccessfulRelay)
-    const failedThunk = thunks.find(thunk => !hasSuccessfulRelay(thunk))
-
-    for (const thunk of thunks) {
-      if (hasSuccessfulRelay(thunk)) {
-        if (thunk.event) repository.publish(thunk.event as TrustedEvent)
-      } else if (thunk.event) {
-        repository.removeEvent(thunk.event.id)
+        startPublication({
+          relays: reportRelays,
+          event: makeEvent(template.kind, template),
+          label: "Report review label",
+          href: targetPath,
+          semanticKey: getReportReviewSemanticKey(report.event.id),
+          preview: "none",
+        })
+        started += 1
+      } catch (error) {
+        startError ||= error
       }
     }
 
     reviewStatus = "idle"
-    if (successfulThunks.length === 0) {
+    if (startError) {
       pushToast({
         theme: "error",
-        message: `Review publish failed: ${failedThunk ? getPublishError(failedThunk) : "No relay confirmed."}`,
+        message:
+          startError instanceof Error ? startError.message : "Failed to start a report review.",
       })
-      return
     }
 
-    pushToast({theme: "success", message: "Report marked reviewed."})
-    history.back()
+    if (started > 0) history.back()
   }
 
   const confirmReviewed = () => {
-    const count = reviewablePendingReports.length
+    const count = startablePendingReports.length
 
     pushModal(Confirm, {
       title: count === 1 ? "Mark report reviewed" : "Mark reports reviewed",
@@ -276,6 +283,10 @@
       {/if}
     </div>
   </div>
+
+  {#each Array.from(new Set(reportOperationIds.values())) as operationId (operationId)}
+    <PublicationStatus {operationId} class="mt-3" />
+  {/each}
 
   <div class="mt-3 grid gap-2 text-sm md:grid-cols-2">
     <div class="rounded-box bg-base-200 p-3">

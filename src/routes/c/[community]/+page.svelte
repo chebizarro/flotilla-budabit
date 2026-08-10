@@ -1,7 +1,7 @@
 <script lang="ts">
   import {page} from "$app/stores"
   import {request} from "@welshman/net"
-  import {pubkey, publishThunk, repository, tracker} from "@welshman/app"
+  import {pubkey, repository, tracker} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {makeEvent, type Filter, type TrustedEvent} from "@welshman/util"
   import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
@@ -25,6 +25,7 @@
   import CommunityRoomCreate from "@app/components/community/CommunityRoomCreate.svelte"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
+  import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {fade} from "@lib/transition"
   import {normalizePubkey, normalizeRelays} from "@app/core/community"
   import {
@@ -59,6 +60,9 @@
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {publicationOperations, startPublication} from "@app/core/publication-operations"
+  import {assertReplaceablePublicationIsCurrent} from "@app/core/replaceable-publication"
+  import {getModeratorInviteResponseSemanticKey} from "@app/core/governance-publication-operations"
   import {
     isCommunityHomeCoreReady,
     isCommunityHomeExtensionReady,
@@ -282,6 +286,28 @@
       profileListEvents: moderatorInviteProfileListEvents,
     })
   })
+  const moderatorInviteOperationIds = $derived.by(() => {
+    const operationIds = new Map<string, string>()
+
+    for (const invite of pendingModeratorInvites) {
+      const semanticKey = getModeratorInviteResponseSemanticKey(invite.profileList.address)
+      const operation = Array.from($publicationOperations.values()).find(
+        candidate =>
+          candidate.ownerPubkey === $pubkey &&
+          candidate.semanticKey === semanticKey &&
+          (candidate.phase === "publishing" || candidate.phase === "unconfirmed"),
+      )
+
+      if (operation) operationIds.set(invite.profileList.address, operation.operationId)
+    }
+
+    return operationIds
+  })
+  const startableModeratorInvites = $derived(
+    pendingModeratorInvites.filter(
+      invite => !moderatorInviteOperationIds.has(invite.profileList.address),
+    ),
+  )
   const moderatorInviteProfileListRefs = $derived.by(() =>
     getCommunityModeratorInviteProfileListRefs({
       definition: routeCommunityDefinition,
@@ -458,7 +484,11 @@
   }
 
   const respondToModeratorInvite = (declined: boolean) => {
-    const invites = pendingModeratorInvites
+    const invites = Array.from(
+      new Map(
+        startableModeratorInvites.map(invite => [invite.profileList.address, invite]),
+      ).values(),
+    )
     if (invites.length === 0) return
 
     const relays = $activeCommunityPublishRelays
@@ -479,15 +509,17 @@
             declined,
           })
 
-          publishThunk({relays, event: makeEvent(response.kind, response)})
+          startPublication({
+            relays,
+            event: makeEvent(response.kind, response),
+            label: `Moderator response for ${invite.displayName}`,
+            href: $page.url.pathname,
+            semanticKey: getModeratorInviteResponseSemanticKey(invite.profileList.address),
+            preview: "none",
+            validateRetry: assertReplaceablePublicationIsCurrent,
+          })
         }
 
-        pushToast({
-          theme: declined ? "warning" : "success",
-          message: declined
-            ? `You will still remain a member with full access to ${communityName}`
-            : "Moderator role accepted.",
-        })
         history.back()
       },
     })
@@ -811,15 +843,20 @@
               <span class="badge badge-warning">{invite.displayName}</span>
             {/each}
           </div>
+          {#each Array.from(new Set(moderatorInviteOperationIds.values())) as operationId (operationId)}
+            <PublicationStatus {operationId} class="mt-3" />
+          {/each}
         </div>
         <div class="grid shrink-0 grid-cols-1 gap-2 sm:w-40">
           <Button
             class="btn btn-warning justify-center"
+            disabled={startableModeratorInvites.length === 0}
             onclick={() => respondToModeratorInvite(false)}>
             Accept
           </Button>
           <Button
             class="btn btn-ghost justify-center"
+            disabled={startableModeratorInvites.length === 0}
             onclick={() => respondToModeratorInvite(true)}>
             Decline
           </Button>
