@@ -316,6 +316,7 @@ export const startPublication = (options: StartPublicationOptions): PublicationH
     event: options.event,
     relays,
     optimistic: false,
+    presentation: "private",
     ...(options.delay ? {delay: options.delay} : {}),
   })
   const operationId = randomId()

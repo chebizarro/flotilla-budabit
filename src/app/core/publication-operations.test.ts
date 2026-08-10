@@ -47,6 +47,7 @@ type TestThunk = {
     event: EventTemplate
     relays: string[]
     optimistic: boolean
+    presentation?: "global" | "private"
   }
   results: Record<string, {relay: string; status: string; detail?: string}>
 }
@@ -142,6 +143,7 @@ describe("single-event publication operations", () => {
       event,
       relays: [relayOne, relayTwo],
       optimistic: false,
+      presentation: "private",
     })
     await vi.waitFor(() => expect(mocks.waitForAnyRelayAck).toHaveBeenCalledOnce())
     expect(mocks.repositoryPublish).not.toHaveBeenCalled()
@@ -177,6 +179,7 @@ describe("single-event publication operations", () => {
       event,
       relays: [relayOne, relayTwo],
       optimistic: false,
+      presentation: "private",
     })
     expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(thunk, [relayTwo])
     expect(mocks.repositoryPublish).toHaveBeenCalledWith(event)
@@ -193,6 +196,7 @@ describe("single-event publication operations", () => {
       event,
       relays: [relayOne, relayTwo],
       optimistic: false,
+      presentation: "private",
       delay: 750,
     })
     expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(
@@ -246,6 +250,7 @@ describe("single-event publication operations", () => {
     const retryThunk = mocks.retryThunk.mock.results[0]?.value as TestThunk
     expect(retryThunk).not.toBe(firstThunk)
     expect(retryThunk.event).toBe(firstThunk.event)
+    expect(retryThunk.options.presentation).toBe("private")
     expect(mocks.waitForAnyRelayAck).toHaveBeenNthCalledWith(2, retryThunk, [relayOne, relayTwo])
     expect(retried).toMatchObject({
       operationId: operation.operationId,

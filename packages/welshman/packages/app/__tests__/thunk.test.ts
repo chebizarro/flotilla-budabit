@@ -1,3 +1,4 @@
+import {get} from "svelte/store"
 import {MockAdapter, PublishStatus, LOCAL_RELAY_URL} from "@welshman/net"
 import {NOTE, DIRECT_MESSAGE, WRAP, makeEvent, getPubkey, makeSecret, prep} from "@welshman/util"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
@@ -8,6 +9,7 @@ import {
   MergedThunk,
   publishThunk,
   retryThunk,
+  thunks,
   Thunk,
   thunkQueue,
   flattenThunks,
@@ -27,6 +29,7 @@ describe("thunk", () => {
   beforeEach(() => {
     vi.useFakeTimers()
     addSession(makeNip01Session(secret))
+    thunks.set([])
   })
 
   afterEach(async () => {
@@ -35,6 +38,7 @@ describe("thunk", () => {
     await vi.runAllTimersAsync()
     vi.useRealTimers()
     vi.clearAllMocks()
+    thunks.set([])
     thunkQueue.start()
     dropSession(pubkey)
   })
@@ -160,6 +164,50 @@ describe("thunk", () => {
       expect(publishSpy).toHaveBeenCalled()
       expect(result).toHaveProperty("event")
       expect(result).toHaveProperty("options")
+      expect(get(thunks)).toContain(result)
+    })
+
+    it("publishes private thunks without exposing them through the global store", async () => {
+      const relay = "private-relay"
+      const send = vi.fn()
+      const adapter = new MockAdapter(relay, send)
+      const trackSpy = vi.spyOn(tracker, "track")
+      const thunk = publishThunk({
+        event: prep(makeEvent(NOTE, {tags: [["test", "private-presentation"]]}), pubkey),
+        relays: [relay],
+        optimistic: false,
+        presentation: "private",
+        context: {getAdapter: () => adapter},
+      })
+      const ack = waitForAnyRelayAck(thunk)
+
+      expect(get(thunks)).not.toContain(thunk)
+
+      await vi.advanceTimersByTimeAsync(100)
+      expect(send).toHaveBeenCalledOnce()
+
+      adapter.receive(["OK", thunk.event.id, true, "accepted"])
+
+      await expect(ack).resolves.toMatchObject({relay, status: PublishStatus.Success})
+      expect(trackSpy).toHaveBeenCalledWith(thunk.event.id, relay)
+      expect(get(thunks)).not.toContain(thunk)
+    })
+
+    it("preserves private presentation when retrying", () => {
+      const thunk = publishThunk({
+        event: prep(makeEvent(NOTE, {tags: [["test", "private-retry"]]}), pubkey),
+        relays: [LOCAL_RELAY_URL],
+        optimistic: false,
+        presentation: "private",
+      })
+
+      const retry = retryThunk(thunk)
+
+      expect(retry.options.presentation).toBe("private")
+      expect(get(thunks)).not.toContain(thunk)
+      expect(get(thunks)).not.toContain(retry)
+      abortThunk(thunk)
+      abortThunk(retry)
     })
 
     it("does not insert or remove ordinary events when optimistic is false", async () => {

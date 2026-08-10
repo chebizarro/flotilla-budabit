@@ -30,6 +30,7 @@ export type ThunkOptions = Override<
     delay?: number
     pow?: number
     optimistic?: boolean
+    presentation?: "global" | "private"
   }
 >
 
@@ -232,7 +233,10 @@ export class Thunk {
       this._optimisticEventId = this.event.id
     }
 
-    thunks.update($thunks => append(this, $thunks))
+    const hasGlobalPresentation = this.options.presentation !== "private"
+    if (hasGlobalPresentation) {
+      thunks.update($thunks => append(this, $thunks))
+    }
 
     this.controller.signal.addEventListener("abort", () => {
       if (this.wrap) {
@@ -242,7 +246,9 @@ export class Thunk {
         this._optimisticEventId = undefined
       }
 
-      thunks.update($thunks => remove(this, $thunks))
+      if (hasGlobalPresentation) {
+        thunks.update($thunks => remove(this, $thunks))
+      }
     })
   }
 
