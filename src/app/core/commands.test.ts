@@ -945,12 +945,13 @@ describe("commands", () => {
     const target = {
       id: "1".repeat(64),
       pubkey: "b".repeat(64),
-      kind: 1,
+      kind: 31922,
       created_at: 1,
       content: "target",
-      tags: [],
+      tags: [["d", "calendar-event"]],
       sig: "2".repeat(128),
     } as any
+    const replacement = {...target, id: "5".repeat(64), created_at: 2}
 
     try {
       publishReactionOperation({
@@ -975,6 +976,7 @@ describe("commands", () => {
       } as any
       publishReactionDeleteOperation({
         reaction,
+        targetEvent: replacement,
         relays: ["wss://relay.example.com"],
       })
 
@@ -986,6 +988,11 @@ describe("commands", () => {
         semanticKey: addition.semanticKey,
       })
       expect(deletion.event.kind).toBe(5)
+      expect(addition.event.tags).toContainEqual([
+        "a",
+        `${target.kind}:${target.pubkey}:calendar-event`,
+        expect.any(String),
+      ])
       expect(deletion.event.tags).toContainEqual(expect.arrayContaining(["e", reaction.id]))
       expect((deletion.event as any).created_at).toBeGreaterThan(reaction.created_at)
     } finally {

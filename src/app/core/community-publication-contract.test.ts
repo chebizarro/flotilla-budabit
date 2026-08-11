@@ -68,7 +68,7 @@ describe("strict community publication source contracts", () => {
       "publishReactionDeleteOperation({reaction, relays: actionRelays})",
     )
     expect(calendarActions).toContain(
-      "publishReactionDeleteOperation({reaction, relays: reactionRelayTargets})",
+      "publishReactionDeleteOperation({reaction, targetEvent: event, relays: reactionRelayTargets})",
     )
   })
 

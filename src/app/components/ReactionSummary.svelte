@@ -33,6 +33,7 @@
   import {getZapReceiptFilters, getZapRelays} from "@app/util/zaps"
   import {publicationOperations} from "@app/core/publication-operations"
   import {
+    getReactionEventReference,
     getReactionIdentity,
     getReactionOperationSemanticKey,
     projectReactionOperations,
@@ -178,7 +179,7 @@
     projectReactionOperations({
       reactions: canonicalReactions,
       operations: $publicationOperations.values(),
-      targetEventId: event.id,
+      targetEvent: event,
       ownerPubkey: $pubkey || "",
       relays: operationRelays,
       scopeH,
@@ -316,7 +317,10 @@
     {#each groupedReactions.entries() as [key, events]}
       {@const pubkeys = events.map(e => e.pubkey)}
       {@const isOwn = $pubkey && pubkeys.includes($pubkey)}
-      {@const semanticKey = getReactionOperationSemanticKey(event.id, events[0])}
+      {@const semanticKey = getReactionOperationSemanticKey(
+        getReactionEventReference(event),
+        events[0],
+      )}
       {@const pending = reactionProjection.pendingSemanticKeys.has(semanticKey)}
       {@const info = displayList(pubkeys.map(pubkey => displayProfileByPubkey(pubkey)))}
       {@const tooltip = pending

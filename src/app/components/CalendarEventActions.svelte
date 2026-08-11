@@ -90,7 +90,7 @@
     })
 
   const deleteReaction = async (reaction: TrustedEvent) =>
-    publishReactionDeleteOperation({reaction, relays: reactionRelayTargets})
+    publishReactionDeleteOperation({reaction, targetEvent: event, relays: reactionRelayTargets})
 
   const createReaction = async (template: EventContent) =>
     publishReactionOperation({

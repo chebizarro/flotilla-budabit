@@ -1,10 +1,12 @@
 import {
   DELETE,
   REACTION,
+  getAddress,
   getEmojiTag,
   getTag,
   getTagValue,
   getTagValues,
+  isReplaceable,
   normalizeRelayUrl,
   type EventContent,
   type TrustedEvent,
@@ -16,14 +18,22 @@ const REACTION_OPERATION_PREFIX = "reaction:"
 export const getReactionIdentity = (event: EventContent) =>
   getEmojiTag(event.content, event.tags)?.join("") || event.content
 
-export const getReactionTargetEventId = (reaction: EventContent) =>
-  getTagValue("e", reaction.tags) || ""
+export const getReactionTargetReference = (reaction: EventContent) => {
+  const address = getTagValue("a", reaction.tags)
+  if (address) return `a:${address}`
 
-export const getReactionOperationSemanticKey = (targetEventId: string, reaction: EventContent) =>
-  `${REACTION_OPERATION_PREFIX}${targetEventId}:${encodeURIComponent(getReactionIdentity(reaction))}`
+  const eventId = getTagValue("e", reaction.tags)
+  return eventId ? `e:${eventId}` : ""
+}
 
-const getReactionOperationTargetPrefix = (targetEventId: string) =>
-  `${REACTION_OPERATION_PREFIX}${targetEventId}:`
+export const getReactionEventReference = (event: TrustedEvent) =>
+  isReplaceable(event) ? `a:${getAddress(event)}` : `e:${event.id}`
+
+export const getReactionOperationSemanticKey = (targetReference: string, reaction: EventContent) =>
+  `${REACTION_OPERATION_PREFIX}${encodeURIComponent(targetReference)}:${encodeURIComponent(getReactionIdentity(reaction))}`
+
+const getReactionOperationTargetPrefix = (targetReference: string) =>
+  `${REACTION_OPERATION_PREFIX}${encodeURIComponent(targetReference)}:`
 
 const normalizeRelay = (relay: string) => {
   try {
@@ -43,14 +53,14 @@ const operationMatchesRelays = (operation: PublicationSnapshot, relays: string[]
 const operationIsVisibleReactionMutation = ({
   operation,
   ownerPubkey,
-  targetEventId,
+  targetReference,
   relays,
   scopeH,
   allowedAuthorSet,
 }: {
   operation: PublicationSnapshot
   ownerPubkey: string
-  targetEventId: string
+  targetReference: string
   relays: string[]
   scopeH: string
   allowedAuthorSet?: Set<string>
@@ -58,7 +68,7 @@ const operationIsVisibleReactionMutation = ({
   operation.ownerPubkey === ownerPubkey &&
   operation.phase === "publishing" &&
   operation.preview === "rollback-on-failure" &&
-  operation.semanticKey?.startsWith(getReactionOperationTargetPrefix(targetEventId)) &&
+  operation.semanticKey?.startsWith(getReactionOperationTargetPrefix(targetReference)) &&
   operationMatchesRelays(operation, relays) &&
   (!scopeH || getTag("h", operation.event.tags)?.[1] === scopeH) &&
   (!allowedAuthorSet || allowedAuthorSet.has(operation.ownerPubkey.toLowerCase()))
@@ -66,7 +76,7 @@ const operationIsVisibleReactionMutation = ({
 export const projectReactionOperations = ({
   reactions,
   operations,
-  targetEventId,
+  targetEvent,
   ownerPubkey,
   relays = [],
   scopeH = "",
@@ -74,12 +84,13 @@ export const projectReactionOperations = ({
 }: {
   reactions: TrustedEvent[]
   operations: Iterable<PublicationSnapshot>
-  targetEventId: string
+  targetEvent: TrustedEvent
   ownerPubkey: string
   relays?: string[]
   scopeH?: string
   allowedAuthors?: string[]
 }) => {
+  const targetReference = getReactionEventReference(targetEvent)
   const allowedAuthorSet = allowedAuthors
     ? new Set(allowedAuthors.map(author => author.toLowerCase()).filter(Boolean))
     : undefined
@@ -87,7 +98,7 @@ export const projectReactionOperations = ({
     operationIsVisibleReactionMutation({
       operation,
       ownerPubkey,
-      targetEventId,
+      targetReference,
       relays,
       scopeH,
       allowedAuthorSet,
@@ -100,7 +111,7 @@ export const projectReactionOperations = ({
     if (operation.semanticKey) pendingSemanticKeys.add(operation.semanticKey)
     if (
       operation.event.kind === REACTION &&
-      getReactionTargetEventId(operation.event) === targetEventId
+      getReactionTargetReference(operation.event) === targetReference
     ) {
       reactionsById.set(operation.event.id, operation.event as TrustedEvent)
     }

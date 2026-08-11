@@ -55,6 +55,21 @@ const calendarEvent = finalizeEvent(
   communitySecret,
 )
 
+const calendarEventReplacement = finalizeEvent(
+  {
+    kind: 31922,
+    created_at: 5,
+    content: "Replacement with stable reaction projection",
+    tags: [
+      ["d", "calendar-reaction-scope"],
+      ["h", DEV_PUBKEY],
+      ["title", "Calendar reaction scope replacement"],
+      ["start", "2099-01-01"],
+    ],
+  },
+  communitySecret,
+)
+
 const seededReaction = finalizeEvent(
   {
     kind: 7,
@@ -80,13 +95,14 @@ const eventPath = `/c/${encodeURIComponent(communityInput)}/calendar/calendar-re
 const openCalendarEvent = async (
   page: Parameters<typeof seedDevSession>[0],
   mockRelay: MockRelay,
+  title = "Calendar reaction scope",
 ) => {
   await seedDevSession(page)
   await mockRelay.setup(page)
   await page.goto(eventPath)
-  await expect(
-    page.getByRole("article").getByText("Calendar reaction scope", {exact: true}),
-  ).toBeVisible({timeout: 10_000})
+  await expect(page.getByRole("article").getByText(title, {exact: true})).toBeVisible({
+    timeout: 10_000,
+  })
 }
 
 test("publishes calendar reaction additions only to community relays", async ({page}) => {
@@ -139,4 +155,38 @@ test("publishes calendar reaction deletes only to community relays", async ({pag
   const deletion = await mockRelay.waitForEvent(5)
   await expect.poll(() => destinations).toEqual([communityRelay])
   expect(deletion.created_at).toBeGreaterThan(seededReaction.created_at)
+})
+
+test("projects a replaced calendar reaction delete during rejection and retry", async ({page}) => {
+  const destinations: string[] = []
+  const mockRelay = new MockRelay({
+    seedEvents: [definition, relayList, calendarEvent, calendarEventReplacement, seededReaction],
+    publishResponsesByRelay: {
+      [communityRelay]: {outcome: "reject", latency: 2_000, message: "rejected for test"},
+      [personalOutboxRelay]: {outcome: "accept", latency: 250},
+    },
+    onPublish: (event, relay) => {
+      if (event.kind === 5) destinations.push(relay)
+    },
+  })
+
+  await openCalendarEvent(page, mockRelay, "Calendar reaction scope replacement")
+  const reaction = page.getByRole("button", {name: /Click to remove your reaction/})
+  await expect(reaction).toBeVisible({timeout: 10_000})
+
+  await reaction.click()
+  await expect(reaction).toHaveCount(0, {timeout: 1_000})
+  const deletion = await mockRelay.waitForEvent(5)
+  await expect(reaction).toBeVisible({timeout: 5_000})
+
+  const recoveryToast = page.getByRole("alert").filter({hasText: "Remove reaction"})
+  await recoveryToast.getByRole("button", {name: "Retry", exact: true}).click()
+  await expect(reaction).toHaveCount(0, {timeout: 1_000})
+  await expect
+    .poll(() => mockRelay.getPublishedEvents().filter(event => event.kind === 5).length)
+    .toBe(2)
+  await expect(reaction).toBeVisible({timeout: 5_000})
+
+  expect(deletion.created_at).toBeGreaterThan(seededReaction.created_at)
+  expect(destinations).toEqual([communityRelay, communityRelay])
 })

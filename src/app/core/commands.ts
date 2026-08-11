@@ -152,8 +152,9 @@ import {
   type PublicationHandle,
 } from "@app/core/publication-operations"
 import {
+  getReactionEventReference,
   getReactionOperationSemanticKey,
-  getReactionTargetEventId,
+  getReactionTargetReference,
 } from "@app/core/reaction-operations"
 import {pushToast} from "@app/util/toast"
 
@@ -904,24 +905,28 @@ export const publishReactionOperation = ({
   return startReactionOperation({
     event: reaction,
     relays: publishRelays,
-    semanticKey: getReactionOperationSemanticKey(params.event.id, reaction),
+    semanticKey: getReactionOperationSemanticKey(getReactionEventReference(params.event), reaction),
     label: "Reaction",
   })
 }
 
 export const publishReactionDeleteOperation = ({
   reaction,
+  targetEvent,
   relays,
   repoAddress,
 }: {
   reaction: TrustedEvent
+  targetEvent?: TrustedEvent
   relays: string[]
   repoAddress?: string
 }) => {
   if (reaction.kind !== REACTION) throw new Error("Reaction deletion requires a reaction event")
 
-  const targetEventId = getReactionTargetEventId(reaction)
-  if (!targetEventId) throw new Error("Reaction deletion requires a target event")
+  const targetReference = targetEvent
+    ? getReactionEventReference(targetEvent)
+    : getReactionTargetReference(reaction)
+  if (!targetReference) throw new Error("Reaction deletion requires a target event")
 
   const publishRelays = repoAddress
     ? requireRepoPublicationScope({event: reaction, relays, repoAddress})
@@ -930,7 +935,7 @@ export const publishReactionDeleteOperation = ({
   return startReactionOperation({
     event: makeDelete({event: reaction, created_at: Math.max(now(), reaction.created_at + 1)}),
     relays: publishRelays,
-    semanticKey: getReactionOperationSemanticKey(targetEventId, reaction),
+    semanticKey: getReactionOperationSemanticKey(targetReference, reaction),
     label: "Remove reaction",
   })
 }
