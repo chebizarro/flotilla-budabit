@@ -25,6 +25,7 @@ import {
   type UserProfileMap,
   type CommentEventMap,
 } from "@nostr-git/core";
+import { GIT_ISSUE, GIT_PULL_REQUEST } from "@nostr-git/core/events";
 import { parseRepoId } from "@nostr-git/core/utils";
 import type {
   RepoAnnouncementEvent,
@@ -1442,7 +1443,11 @@ async function fetchAndPublishCommentsStreaming(
           context.userProfiles,
           commentEventMap,
           context.importTimestamp,
-          context.currentTimestamp
+          context.currentTimestamp,
+          {
+            rootKind: isPrComment ? GIT_PULL_REQUEST : GIT_ISSUE,
+            repoAddr: context.repoAddr,
+          }
         );
 
         if (convertedComments.length > 0) {
@@ -1534,7 +1539,8 @@ async function fetchAndPublishCommentsStreaming(
             context.userProfiles,
             commentEventMap,
             context.importTimestamp,
-            context.currentTimestamp
+            context.currentTimestamp,
+            { rootKind: GIT_ISSUE, repoAddr: context.repoAddr }
           );
 
           if (convertedComments.length > 0) {
@@ -1615,7 +1621,8 @@ async function fetchAndPublishCommentsStreaming(
             context.userProfiles,
             commentEventMap,
             context.importTimestamp,
-            context.currentTimestamp
+            context.currentTimestamp,
+            { rootKind: GIT_PULL_REQUEST, repoAddr: context.repoAddr }
           );
 
           if (convertedComments.length > 0) {
