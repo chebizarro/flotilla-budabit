@@ -55,6 +55,14 @@ describe("email digest notification settings UI", () => {
     expect(source).toContain("I've verified, refresh status")
   })
 
+  it("shows a verification CTA for each pending community registration", () => {
+    expect(communityAlertSource).toContain('label === "Pending confirmation"')
+    expect(communityAlertSource).toContain("Verify your community delivery email")
+    expect(communityAlertSource).toContain("$userCommunityAlertDeliveryProfile.email")
+    expect(communityAlertSource).toContain("I've verified, refresh status")
+    expect(communityAlertSource).toContain("onclick={() => refresh(group)}")
+  })
+
   it("mounts independent community alerts between in-app and Git forms", () => {
     expect(source).toContain(
       'import CommunityAlertSettings from "@app/components/CommunityAlertSettings.svelte"',

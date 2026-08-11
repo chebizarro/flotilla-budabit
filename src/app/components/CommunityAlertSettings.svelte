@@ -593,6 +593,34 @@
             </span>
           </div>
 
+          {#if label === "Pending confirmation"}
+            <div class="mt-4 rounded-xl border border-warning/40 bg-warning/10 p-4" role="status">
+              <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex min-w-0 items-start gap-3">
+                  <div class="shrink-0 rounded-xl bg-warning/15 p-2.5 text-warning-content">
+                    <Icon icon={Mailbox} size={5} />
+                  </div>
+                  <div class="min-w-0">
+                    <h3 class="font-semibold">Verify your community delivery email</h3>
+                    <p class="mt-1 text-sm leading-6 text-muted-foreground">
+                      We sent a verification email{$userCommunityAlertDeliveryProfile.email
+                        ? ` to ${$userCommunityAlertDeliveryProfile.email}`
+                        : ""}. Open that inbox, follow the verification link, and confirm to
+                      activate alerts for this community.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  class="btn btn-warning btn-sm inline-flex max-w-full shrink-0 items-center justify-center whitespace-normal text-center [&>span]:min-h-0 [&>span]:w-full [&>span]:justify-center"
+                  disabled={Boolean(loading[group.communityPubkey]) || !settingsReady}
+                  onclick={() => refresh(group)}>
+                  <Spinner loading={loading[group.communityPubkey] === "refresh"}
+                    >I've verified, refresh status</Spinner>
+                </Button>
+              </div>
+            </div>
+          {/if}
+
           <div class="mt-4 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(16rem,0.65fr)]">
             <div class="grid min-w-0 gap-5">
               {#if choices.length > 1}
