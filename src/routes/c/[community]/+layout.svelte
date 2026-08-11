@@ -71,7 +71,8 @@
 
   const {children}: Props = $props()
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
+  const routeCommunity = $derived($page.params.community || "")
+  const parsedCommunity = $derived(parseCommunityRouteParam(routeCommunity))
   const hasInlineCommunityMenu = $derived(
     [
       "/c/[community]",
@@ -113,6 +114,7 @@
   let authRelayUrl = $state("")
   let relayAuthError = $state("")
   let shownAuthErrorKey = $state("")
+  let communityBootstrapInputKey = ""
   let communityDefinitionPermissionRefreshKey = ""
   // Per-relay subscriptions so the community live stream expands additively
   // when new relays are discovered instead of tearing down existing streams.
@@ -254,8 +256,11 @@
   })
 
   $effect(() => {
-    const routeCommunity = $page.params.community || ""
     const currentPubkey = $pubkey || ""
+    const inputKey = JSON.stringify([routeCommunity, currentPubkey])
+
+    if (communityBootstrapInputKey === inputKey) return
+    communityBootstrapInputKey = inputKey
 
     const load = async () => {
       if (!parsedCommunity) {

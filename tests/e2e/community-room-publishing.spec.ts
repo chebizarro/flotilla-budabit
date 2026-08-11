@@ -66,6 +66,21 @@ const seededReaction = finalizeEvent(
   },
   communitySecret,
 )
+const scrollMessages = Array.from({length: 30}, (_, index) =>
+  finalizeEvent(
+    {
+      kind: 9,
+      created_at: index + 5,
+      content: `Publishing scroll fixture ${index + 1}`,
+      tags: [
+        ["h", DEV_PUBKEY],
+        ["E", room.id, relayUrl, DEV_PUBKEY],
+        ["K", "11"],
+      ],
+    },
+    communitySecret,
+  ),
+)
 
 const communityInput = `ncommunity://${DEV_PUBKEY}?relay=${encodeURIComponent(relayUrl)}`
 const roomPath = `/c/${encodeURIComponent(communityInput)}/rooms/${room.id}`
@@ -85,19 +100,49 @@ test("shows a room message before relay acknowledgement and keeps it after succe
 }) => {
   const messageText = "Optimistic message before acknowledgement"
   const mockRelay = new MockRelay({
-    seedEvents: [definition, room],
+    seedEvents: [definition, room, ...scrollMessages],
     publishResponsesByRelay: {
       [relayUrl]: {outcome: "accept", latency: 2_000},
     },
   })
 
   await openRoom(page, mockRelay)
+  const scroller = page.locator('[data-component="PageContent"]')
+  await expect(page.getByText("Publishing scroll fixture 30", {exact: true})).toBeVisible()
+  await scroller.evaluate(element =>
+    element.scrollTo({top: -element.scrollHeight, behavior: "auto"}),
+  )
+  await expect.poll(() => scroller.evaluate(element => element.scrollTop)).toBeLessThan(-100)
   await page.locator('.chat__compose [contenteditable="true"]').fill(messageText)
   await page.getByRole("button", {name: "Send message"}).click()
 
   const message = page.locator("[data-event]").filter({hasText: messageText})
   await expect(message).toBeVisible({timeout: 1_000})
   await expect(message).toHaveCount(1)
+
+  const expectMessageFullyVisible = async () => {
+    await expect
+      .poll(() =>
+        page.evaluate(text => {
+          const composer = document.querySelector(".chat__compose")
+          const message = Array.from(document.querySelectorAll<HTMLElement>("[data-event]")).find(
+            element => element.textContent?.includes(text),
+          )
+          const scroller = document.querySelector<HTMLElement>('[data-component="PageContent"]')
+          if (!composer || !message || !scroller) return false
+
+          return (
+            Math.abs(scroller.scrollTop) <= 1 &&
+            message.getBoundingClientRect().bottom <= composer.getBoundingClientRect().top + 1
+          )
+        }, messageText),
+      )
+      .toBe(true)
+  }
+
+  await expectMessageFullyVisible()
+  await page.waitForTimeout(500)
+  await expectMessageFullyVisible()
 
   await mockRelay.waitForEvent(9)
   await page.waitForTimeout(2_100)

@@ -1,13 +1,13 @@
 <script lang="ts">
   import {readable, type Readable} from "svelte/store"
-  import {onDestroy, tick} from "svelte"
+  import {onDestroy, tick, untrack} from "svelte"
   import {page} from "$app/stores"
   import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById, throttled} from "@welshman/store"
   import {formatTimestampAsDate, int, MINUTE, now} from "@welshman/lib"
   import type {EventContent, TrustedEvent} from "@welshman/util"
   import {makeEvent, MESSAGE, THREAD} from "@welshman/util"
-  import {fade, fly, slide} from "@lib/transition"
+  import {fade, fly} from "@lib/transition"
   import AltArrowDown from "@assets/icons/alt-arrow-down.svg?dataurl"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
   import Button from "@lib/components/Button.svelte"
@@ -81,6 +81,7 @@
     setChecked,
   } from "@app/util/notifications"
   import {popKey} from "@lib/implicit"
+  import {waitAndScrollToEvent} from "@lib/html"
   import {pushToast} from "@app/util/toast"
   import {recoverActiveNip46Receiver} from "@app/util/nip46"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -373,7 +374,7 @@
       clearParent()
       clearShare()
       clearEventToEdit()
-      void tick().then(() => scrollToBottom())
+      void pinToBottomAfterLayout()
       return true
     }
 
@@ -414,7 +415,7 @@
     clearParent()
     clearShare()
     clearEventToEdit()
-    void tick().then(() => scrollToBottom())
+    void pinToBottomAfterLayout()
     return true
   }
 
@@ -434,10 +435,26 @@
     }
   }
 
-  const scrollToNewMessages = () =>
+  const scrollToNewMessages = () => {
+    cancelHashTargetStabilization()
     newMessages?.scrollIntoView({behavior: "smooth", block: "center"})
+  }
 
-  const scrollToBottom = () => element?.scrollTo({top: 0, behavior: "smooth"})
+  const scrollToBottom = () => {
+    cancelHashTargetStabilization()
+    element?.scrollTo({top: 0, behavior: "smooth"})
+  }
+
+  const waitForAnimationFrame = () =>
+    new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+
+  const pinToBottomAfterLayout = async () => {
+    cancelHashTargetStabilization()
+    await tick()
+    await waitForAnimationFrame()
+    await waitForAnimationFrame()
+    element?.scrollTo({top: 0, behavior: "auto"})
+  }
 
   const clearFeedEmptySettleTimer = () => {
     if (!feedEmptySettleTimer) return
@@ -579,8 +596,24 @@
   let feedEmptySettleTimer: ReturnType<typeof setTimeout> | undefined
   let roomAutoRetryTimer: ReturnType<typeof setTimeout> | undefined
   let messageAutoRetryTimer: ReturnType<typeof setTimeout> | undefined
+  let hashTargetLoadController: AbortController | undefined
   let lastFeedKey = ""
   let lastRoomRetryPath = ""
+  let hashTargetRoomPath = ""
+  let hashTargetRequest = 0
+  let hashTargetStabilizationUntil = $state(0)
+  let hashTarget = $state({id: "", request: 0})
+  let hashTargetEvents = $state<TrustedEvent[]>([])
+  let loadedHashTargetKey = ""
+  let revealingHashTargetKey = ""
+  let revealedHashTargetKey = ""
+
+  const cancelHashTargetStabilization = () => {
+    hashTargetStabilizationUntil = 0
+  }
+
+  const scrollToRoomTarget = (id: string, root: ParentNode, signal?: AbortSignal) =>
+    waitAndScrollToEvent(id, {root, signal, behavior: "auto"})
   const waitingForRoom = $derived(
     Boolean(
       communityBootstrapReady &&
@@ -620,6 +653,11 @@
       eventsById.set(operation.event.id, operation.event as TrustedEvent)
     }
 
+    if (communityPermissionReady && room) {
+      for (const event of hashTargetEvents) {
+        if (messageAuthorPubkeys.includes(event.pubkey)) eventsById.set(event.id, event)
+      }
+    }
     for (const event of $events) eventsById.set(event.id, event)
 
     return Array.from(eventsById.values()).sort((a, b) => b.created_at - a.created_at)
@@ -695,6 +733,171 @@
     nextElements.reverse()
 
     return nextElements
+  })
+
+  const syncHashTarget = () => {
+    const match = window.location.hash.match(/^#event-([0-9a-f]{64})$/i)
+    const id = match?.[1]?.toLowerCase() || ""
+    hashTargetLoadController?.abort()
+    hashTargetLoadController = undefined
+    revealingHashTargetKey = ""
+    cancelHashTargetStabilization()
+    hashTargetEvents = id ? hashTargetEvents.filter(event => event.id === id) : []
+    hashTarget = {id, request: ++hashTargetRequest}
+  }
+
+  $effect(() => {
+    if (typeof window === "undefined") return
+
+    untrack(syncHashTarget)
+    window.addEventListener("hashchange", syncHashTarget)
+
+    return () => window.removeEventListener("hashchange", syncHashTarget)
+  })
+
+  $effect(() => {
+    const {id, request} = hashTarget
+    if (hashTargetRoomPath !== roomPath) {
+      hashTargetLoadController?.abort()
+      hashTargetLoadController = undefined
+      hashTargetEvents = []
+      loadedHashTargetKey = ""
+      revealingHashTargetKey = ""
+      revealedHashTargetKey = ""
+      cancelHashTargetStabilization()
+      hashTargetRoomPath = roomPath
+    }
+
+    const targetKey = `${roomPath}:${request}:${id}`
+    const targetIsLoaded =
+      room?.event.id === id || elements.some(item => item.type === "note" && item.id === id)
+
+    if (!id) return
+
+    const cachedTarget = repository.getEvent(id) as TrustedEvent | undefined
+    if (
+      !targetIsLoaded &&
+      cachedTarget &&
+      room &&
+      messageFilters.length > 0 &&
+      communityPermissionReady &&
+      messageAuthorPubkeys.includes(cachedTarget.pubkey) &&
+      !hashTargetEvents.some(event => event.id === id) &&
+      readCommunityRoomMessages([cachedTarget], communityPubkey, roomId).length > 0
+    ) {
+      hashTargetEvents = [cachedTarget]
+      return
+    }
+
+    if (targetIsLoaded) {
+      if (revealedHashTargetKey === targetKey || revealingHashTargetKey === targetKey) return
+
+      hashTargetLoadController?.abort()
+      const controller = new AbortController()
+      hashTargetLoadController = controller
+      revealingHashTargetKey = targetKey
+
+      void tick()
+        .then(() => {
+          if (controller.signal.aborted || hashTarget.request !== request) return false
+
+          const root = room?.event.id === id ? document : element
+          if (!root) return false
+
+          return scrollToRoomTarget(id, root, controller.signal)
+        })
+        .then(revealed => {
+          if (revealed && !controller.signal.aborted && hashTarget.request === request) {
+            revealedHashTargetKey = targetKey
+            hashTargetStabilizationUntil = Date.now() + 5_000
+          }
+        })
+        .finally(() => {
+          if (revealingHashTargetKey === targetKey) revealingHashTargetKey = ""
+          if (hashTargetLoadController === controller) hashTargetLoadController = undefined
+        })
+      return
+    }
+
+    const relays = $activeCommunityRelays
+    const filters = messageFilters.map(filter => ({...filter, ids: [id], limit: 1}))
+    const loadKey = `${targetKey}:${relays.join("|")}:${JSON.stringify(filters)}`
+    if (relays.length === 0 || filters.length === 0) {
+      hashTargetLoadController?.abort()
+      hashTargetLoadController = undefined
+      return
+    }
+    if (loadedHashTargetKey === loadKey) return
+
+    loadedHashTargetKey = loadKey
+    hashTargetLoadController?.abort()
+    const controller = new AbortController()
+    const requestedRoomPath = roomPath
+    hashTargetLoadController = controller
+
+    void hydrateCommunityEventsWithStatus({
+      key: `room-hash-target:${loadKey}`,
+      relays,
+      filters,
+      authenticate: true,
+      timeout: FEED_EMPTY_SETTLE_TIMEOUT_MS,
+      authTimeout: COMMUNITY_PRIORITY_RELAY_AUTH_TIMEOUT,
+      settle: "first-non-empty",
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      signal: controller.signal,
+    }).then(result => {
+      if (
+        controller.signal.aborted ||
+        hashTarget.request !== request ||
+        roomPath !== requestedRoomPath ||
+        loadedHashTargetKey !== loadKey
+      )
+        return
+
+      const targetEvents = result.events.filter(
+        event =>
+          event.id === id &&
+          room &&
+          communityPermissionReady &&
+          messageAuthorPubkeys.includes(event.pubkey) &&
+          readCommunityRoomMessages([event], communityPubkey, roomId).length > 0,
+      )
+      if (targetEvents.length > 0) {
+        hashTargetEvents = [...hashTargetEvents.filter(event => event.id !== id), ...targetEvents]
+      }
+    })
+  })
+
+  // Older feed batches can shift an off-feed target after its first reveal.
+  // Re-center during a bounded window unless the user starts interacting.
+  $effect(() => {
+    const {id, request} = hashTarget
+    void elements.length
+    const targetKey = `${roomPath}:${request}:${id}`
+    const root = element
+    const stabilizationUntil = hashTargetStabilizationUntil
+    const remaining = stabilizationUntil - Date.now()
+
+    if (!id || !root || revealedHashTargetKey !== targetKey || remaining <= 0) return
+
+    const recenterTimer = setTimeout(() => {
+      if (
+        hashTarget.request !== request ||
+        revealedHashTargetKey !== targetKey ||
+        hashTargetStabilizationUntil !== stabilizationUntil
+      )
+        return
+
+      void scrollToRoomTarget(id, root)
+    }, 350)
+    const disarmTimer = setTimeout(() => {
+      if (hashTargetStabilizationUntil === stabilizationUntil) cancelHashTargetStabilization()
+    }, remaining)
+
+    return () => {
+      clearTimeout(recenterTimer)
+      clearTimeout(disarmTimer)
+    }
   })
 
   // Re-evaluate scroll indicators after the rendered element list changes.
@@ -850,6 +1053,23 @@
       messageAutoRetryAttempt >= ROOM_LOAD_RETRY_DELAYS_MS.length,
   )
   const recoveringMessageFeed = $derived(messageFeedNeedsRecovery && !messageFeedFailureVisible)
+  const roomContentStatus = $derived.by(() => {
+    if (
+      communityBootstrapLoading ||
+      communityPermissionsLoading ||
+      waitingForRoom ||
+      recoveringRoomLookup
+    ) {
+      return "loading"
+    }
+    if (roomLookupIncomplete) return "room-incomplete"
+    if (!room) return "room-missing"
+    if (waitingForFeed || loadingEvents || recoveringMessageFeed) return "loading"
+    if (messageFeedFailureVisible) return "feed-incomplete"
+    if (!feedEmptySettled && elements.length === 0) return "loading"
+    if (elements.length === 0) return "empty"
+    if (exhaustedEvents) return "exhausted"
+  })
   const foregroundRoomLoadSettled = $derived(
     Boolean(
       roomCensorReason ||
@@ -936,6 +1156,7 @@
   })
 
   onDestroy(() => {
+    hashTargetLoadController?.abort()
     clearRoomAutoRetry()
     clearMessageAutoRetry()
     clearActiveCommunityRoomLoad(communityPubkey, roomId)
@@ -961,7 +1182,7 @@
     </div>
   {/snippet}
   {#snippet title()}
-    <strong>
+    <strong data-event={room?.event.id}>
       {#if roomCensorReason}
         Moderated room
       {:else}
@@ -981,7 +1202,13 @@
     <ModeratedContent reason={roomCensorReason} />
   </PageContent>
 {:else}
-  <PageContent bind:element onscroll={onScroll} class="flex flex-col-reverse pt-4">
+  <PageContent
+    bind:element
+    onscroll={onScroll}
+    onpointerdown={cancelHashTargetStabilization}
+    ontouchstart={cancelHashTargetStabilization}
+    onwheel={cancelHashTargetStabilization}
+    class="flex flex-col-reverse pt-4">
     <div bind:this={dynamicPadding}></div>
     {#each elements as item (item.id)}
       {#if item.type === "new-messages"}
@@ -997,7 +1224,7 @@
         <Divider>{item.value}</Divider>
       {:else}
         {@const event = $state.snapshot(item.value as TrustedEvent)}
-        <div in:slide class:-mt-1={!item.showPubkey}>
+        <div class:-mt-1={!item.showPubkey}>
           <RoomItem
             url={communityPubkey}
             profileRelays={$activeCommunityRelays}
@@ -1016,17 +1243,17 @@
         </div>
       {/if}
     {/each}
-    {#if communityBootstrapLoading || communityPermissionsLoading || waitingForRoom || waitingForFeed || loadingEvents || elements.length === 0 || exhaustedEvents || (elements.length === 0 && (feedLoadStatus === "incomplete" || feedLoadStatus === "failed"))}
-      <p class="flex h-10 flex-col items-center justify-center gap-2 py-20 text-center">
-        {#if communityBootstrapLoading}
-          <Spinner loading>Loading community...</Spinner>
-        {:else if communityPermissionsLoading}
-          <Spinner loading>Loading room permissions...</Spinner>
-        {:else if waitingForRoom}
+    {#if roomContentStatus}
+      <p
+        class="flex h-10 flex-col items-center justify-center gap-2 py-20 text-center"
+        data-room-loading-stage={roomContentStatus === "loading" &&
+        !communityBootstrapLoading &&
+        communityPermissionsLoading
+          ? "permissions"
+          : undefined}>
+        {#if roomContentStatus === "loading"}
           <Spinner loading>Loading room...</Spinner>
-        {:else if recoveringRoomLookup}
-          <Spinner loading>Still loading room...</Spinner>
-        {:else if roomLookupIncomplete}
+        {:else if roomContentStatus === "room-incomplete"}
           <span>Room lookup is incomplete or temporarily unavailable.</span>
           <button
             class="btn btn-neutral btn-sm"
@@ -1035,15 +1262,9 @@
             onclick={() => retryRoomLookup()}>
             {retryingRoomLookup ? "Retrying..." : "Retry"}
           </button>
-        {:else if !room}
+        {:else if roomContentStatus === "room-missing"}
           <span>Room not found or not approved for this community.</span>
-        {:else if waitingForFeed}
-          <Spinner loading>Looking for messages...</Spinner>
-        {:else if loadingEvents}
-          <Spinner loading={loadingEvents}>Looking for messages...</Spinner>
-        {:else if recoveringMessageFeed}
-          <Spinner loading>Still looking for messages...</Spinner>
-        {:else if messageFeedFailureVisible}
+        {:else if roomContentStatus === "feed-incomplete"}
           <span>Message history is incomplete or temporarily unavailable.</span>
           <button
             class="btn btn-neutral btn-sm"
@@ -1052,11 +1273,9 @@
             onclick={() => retryMessageFeed()}>
             {retryingMessageFeed ? "Retrying..." : "Retry"}
           </button>
-        {:else if !feedEmptySettled && elements.length === 0}
-          <Spinner loading>Still looking for messages...</Spinner>
-        {:else if elements.length === 0}
+        {:else if roomContentStatus === "empty"}
           <span>No messages yet.</span>
-        {:else}
+        {:else if roomContentStatus === "exhausted"}
           <Spinner>End of message history</Spinner>
         {/if}
       </p>
@@ -1065,7 +1284,10 @@
 {/if}
 
 {#if !roomCensorReason && room}
-  <div class="chat__compose bg-base-200" bind:this={chatCompose}>
+  <div
+    class="chat__compose bg-base-200"
+    bind:this={chatCompose}
+    onfocusin={cancelHashTargetStabilization}>
     {#if canSendMessage}
       <div>
         {#if parent}
