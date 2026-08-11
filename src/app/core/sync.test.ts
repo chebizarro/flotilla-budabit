@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
   return {
     page: createStore({url: {pathname: "/home"}, params: {} as Record<string, string>}),
     pubkey: createStore<string | undefined>(undefined),
+    signer: createStore<object | undefined>(undefined),
     userRelayList: createStore<any>(null),
     userFollowList: createStore<any>(null),
     userMessagingRelayList: createStore<any>(null),
@@ -49,6 +50,7 @@ const mocks = vi.hoisted(() => {
     loadUserMuteList: vi.fn().mockResolvedValue(undefined),
     loadSettings: vi.fn().mockResolvedValue(undefined),
     hydrateEmailDigestSettings: vi.fn().mockResolvedValue(undefined),
+    hydrateCommunityAlertSettings: vi.fn().mockResolvedValue(undefined),
     hasNegentropy: vi.fn(() => false),
     repositoryQuery: vi.fn(() => []),
     trackerGetRelays: vi.fn(() => new Set<string>()),
@@ -132,6 +134,7 @@ vi.mock("@welshman/net", () => ({
 
 vi.mock("@welshman/app", () => ({
   pubkey: mocks.pubkey,
+  signer: mocks.signer,
   loadRelay: mocks.loadRelay,
   loadProfile: mocks.loadProfile,
   tracker: {
@@ -208,6 +211,10 @@ vi.mock("@app/core/email-digest-state", () => ({
   hydrateEmailDigestSettings: mocks.hydrateEmailDigestSettings,
 }))
 
+vi.mock("@app/core/community-alerts-state", () => ({
+  hydrateCommunityAlertSettings: mocks.hydrateCommunityAlertSettings,
+}))
+
 const flush = () => new Promise(resolve => setTimeout(resolve, 0))
 
 describe("syncApplicationData", () => {
@@ -216,6 +223,7 @@ describe("syncApplicationData", () => {
     vi.resetModules()
     mocks.page.set({url: {pathname: "/home"}, params: {}})
     mocks.pubkey.set(undefined)
+    mocks.signer.set(undefined)
     mocks.userRelayList.set(null)
     mocks.userFollowList.set(null)
     mocks.userMessagingRelayList.set(null)
@@ -335,6 +343,7 @@ describe("syncApplicationData", () => {
   })
 
   it("loads current-user metadata when the user relay list is available", async () => {
+    mocks.signer.set({})
     mocks.userRelayList.set({event: {pubkey: "b".repeat(64)}})
 
     const {syncApplicationData} = await import("./sync")
@@ -344,10 +353,27 @@ describe("syncApplicationData", () => {
     expect(mocks.loadSettings).toHaveBeenCalledWith("b".repeat(64))
     expect(mocks.loadRepoWatch).toHaveBeenCalledWith("b".repeat(64))
     expect(mocks.hydrateEmailDigestSettings).toHaveBeenCalledWith("b".repeat(64))
+    expect(mocks.hydrateCommunityAlertSettings).toHaveBeenCalledWith("b".repeat(64))
     expect(mocks.loadUserBlossomServerList).toHaveBeenCalledWith()
     expect(mocks.loadUserFollowList).toHaveBeenCalledWith()
     expect(mocks.loadUserMuteList).toHaveBeenCalledWith()
     expect(mocks.loadProfile).toHaveBeenCalledWith("b".repeat(64))
+
+    cleanup()
+  })
+
+  it("hydrates community alert settings when the signer becomes available", async () => {
+    const userPubkey = "b".repeat(64)
+    mocks.userRelayList.set({event: {pubkey: userPubkey}})
+
+    const {syncApplicationData} = await import("./sync")
+    const cleanup = syncApplicationData()
+    await flush()
+    expect(mocks.hydrateCommunityAlertSettings).not.toHaveBeenCalled()
+
+    mocks.signer.set({})
+    await flush()
+    expect(mocks.hydrateCommunityAlertSettings).toHaveBeenCalledWith(userPubkey)
 
     cleanup()
   })

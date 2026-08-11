@@ -58,6 +58,7 @@ import {
   makeUserLoader,
   makeUserData,
 } from "@welshman/app"
+import {COMMUNITY_ALERTS_SUBSCRIPTION_KIND} from "@app/core/community-alerts"
 
 export const fromCsv = (s: string) => (s || "").split(",").filter(identity)
 
@@ -113,7 +114,9 @@ export const NIP46_PERMS =
   "nip44_encrypt,nip44_decrypt,switch_relays," +
   [
     CLIENT_AUTH,
+    APP_DATA,
     BLOSSOM_AUTH,
+    COMMUNITY_ALERTS_SUBSCRIPTION_KIND,
     DELETE,
     HTTP_AUTH,
     LIVE_CHAT_MESSAGE,

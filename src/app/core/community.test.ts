@@ -20,6 +20,7 @@ import {
   buildTargetedPublication,
   canWriteFromProfileList,
   findCommunitySection,
+  getCommunityAlertServiceDescriptorKey,
   getCommunityEmailDigestServiceDescriptorKey,
   getCommunityMainRelay,
   getDefaultCommunitySectionKinds,
@@ -29,6 +30,7 @@ import {
   makeCommunitySetupRefs,
   getProfileListPubkeys,
   normalizeGeohash,
+  normalizeCommunityAlertService,
   normalizeCommunityEmailDigestService,
   normalizeCommunitySectionName,
   normalizePubkey,
@@ -246,7 +248,47 @@ describe("community protocol helpers", () => {
     ])
   })
 
-  it("ignores malformed email digest service declarations", () => {
+  it("normalizes and round-trips community alert declarations separately", () => {
+    const service = {
+      servicePubkey: pubkeyC.toUpperCase(),
+      requestRelay: "WSS://ALERTS.EXAMPLE.COM",
+      handlerAddress: `31990:${pubkeyB.toUpperCase()}:community-alerts`,
+      handlerRelay: "wss://HANDLERS.EXAMPLE.COM",
+    }
+    const normalized = {
+      servicePubkey: pubkeyC,
+      requestRelay: "wss://alerts.example.com/",
+      handlerAddress: `31990:${pubkeyB}:community-alerts`,
+      handlerRelay: "wss://handlers.example.com/",
+    }
+    const template = buildCommunityDefinition({
+      relays: ["wss://relay.example.com"],
+      sections: [{name: "General", kinds: [{kind: 1111}]}],
+      communityAlertServices: [service, {...service}],
+    })
+    const definition = parseCommunityDefinition(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND, pubkey: pubkeyA, tags: template.tags}),
+    )!
+
+    expect(normalizeCommunityAlertService(service)).toEqual(normalized)
+    expect(definition.communityAlertServices).toEqual([normalized])
+    expect(definition.emailDigestServices).toEqual([])
+    expect(template.tags.filter(tag => tag[1] === "community-alerts")).toEqual([
+      [
+        "service",
+        "community-alerts",
+        pubkeyC,
+        "wss://alerts.example.com/",
+        `31990:${pubkeyB}:community-alerts`,
+        "wss://handlers.example.com/",
+      ],
+    ])
+    expect(getCommunityAlertServiceDescriptorKey(service)).toBe(
+      getCommunityAlertServiceDescriptorKey(normalized),
+    )
+  })
+
+  it("keeps malformed email digest declarations out of the typed collection", () => {
     const validTag = [
       "service",
       "email-digest",
@@ -310,6 +352,14 @@ describe("community protocol helpers", () => {
         handlerRelay: "wss://handlers.example.com/",
       },
     ])
+    expect(definition.otherServiceTags).toHaveLength(9)
+    expect(definition.otherServiceTags).toContainEqual(validTag.slice(0, 5))
+    expect(definition.otherServiceTags).toContainEqual([
+      "service",
+      "email-digest",
+      "bad",
+      ...validTag.slice(3),
+    ])
   })
 
   it("enforces Anchor service URL and handler address limits", () => {
@@ -359,6 +409,15 @@ describe("community protocol helpers", () => {
       `31990:${pubkeyC}:daily`,
       "wss://handlers.example.com",
     ]
+    const malformedExactAlert = [
+      "service",
+      "community-alerts",
+      "bad-pubkey",
+      "wss://alerts.example.com",
+      `31990:${pubkeyC}:alerts`,
+      "wss://handlers.example.com",
+    ]
+    const malformedNameless = ["service"]
     const definition = parseCommunityDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
@@ -367,6 +426,8 @@ describe("community protocol helpers", () => {
           [...futureService],
           [...extendedDigest],
           malformedExactDigest,
+          malformedExactAlert,
+          malformedNameless,
           ["content", "General"],
           ["k", "1111"],
         ],
@@ -382,10 +443,18 @@ describe("community protocol helpers", () => {
       makeEvent({kind: COMMUNITY_DEFINITION_KIND, pubkey: pubkeyA, tags: rebuilt.tags}),
     )!
 
-    expect(definition.otherServiceTags).toEqual([futureService, extendedDigest])
+    expect(definition.otherServiceTags).toEqual([
+      futureService,
+      extendedDigest,
+      malformedExactDigest,
+      malformedExactAlert,
+      malformedNameless,
+    ])
     expect(rebuilt.tags).toContainEqual(futureService)
     expect(rebuilt.tags).toContainEqual(extendedDigest)
-    expect(rebuilt.tags).not.toContainEqual(malformedExactDigest)
+    expect(rebuilt.tags).toContainEqual(malformedExactDigest)
+    expect(rebuilt.tags).toContainEqual(malformedExactAlert)
+    expect(rebuilt.tags).toContainEqual(malformedNameless)
     expect(reparsed.otherServiceTags).toEqual(definition.otherServiceTags)
   })
 

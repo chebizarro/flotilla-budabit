@@ -58,6 +58,8 @@
     isHexPubkey,
     makeCommunityNcommunity,
     makeCommunitySetupSection,
+    normalizeCommunityAlertHandlerAddress,
+    normalizeCommunityAlertService,
     normalizeCommunityEmailDigestHandlerAddress,
     normalizeCommunityEmailDigestService,
     normalizeCommunityServiceRelay,
@@ -67,6 +69,7 @@
     normalizeRelays,
     parseCommunityDefinition,
     type CommunityBadgeRef,
+    type CommunityAlertService,
     type CommunityDefinition,
     type CommunityDefinitionSectionInput,
     type CommunityEmailDigestService,
@@ -141,6 +144,10 @@
     | "emailDigestRequestRelay"
     | "emailDigestHandlerAddress"
     | "emailDigestHandlerRelay"
+    | "communityAlertServicePubkey"
+    | "communityAlertRequestRelay"
+    | "communityAlertHandlerAddress"
+    | "communityAlertHandlerRelay"
     | "mints"
     | "tosRef"
     | "tosRelay"
@@ -178,6 +185,7 @@
     blossomServers: string[]
     graspServers: string[]
     emailDigestServices: CommunityEmailDigestService[]
+    communityAlertServices: CommunityAlertService[]
     otherServiceTags: CommunityOtherServiceTag[]
     mints: CommunityMint[]
     tos?: {ref: string; relay?: string}
@@ -202,6 +210,11 @@
     emailDigestHandlerAddress: string
     emailDigestHandlerRelay: string
     additionalEmailDigestServices: CommunityEmailDigestService[]
+    communityAlertServicePubkey: string
+    communityAlertRequestRelay: string
+    communityAlertHandlerAddress: string
+    communityAlertHandlerRelay: string
+    additionalCommunityAlertServices: CommunityAlertService[]
     mints: string
     tosRef: string
     tosRelay: string
@@ -345,6 +358,12 @@
     emailDigestHandlerAddress: communityDefinition.emailDigestServices[0]?.handlerAddress || "",
     emailDigestHandlerRelay: communityDefinition.emailDigestServices[0]?.handlerRelay || "",
     additionalEmailDigestServices: communityDefinition.emailDigestServices.slice(1),
+    communityAlertServicePubkey: communityDefinition.communityAlertServices[0]?.servicePubkey || "",
+    communityAlertRequestRelay: communityDefinition.communityAlertServices[0]?.requestRelay || "",
+    communityAlertHandlerAddress:
+      communityDefinition.communityAlertServices[0]?.handlerAddress || "",
+    communityAlertHandlerRelay: communityDefinition.communityAlertServices[0]?.handlerRelay || "",
+    additionalCommunityAlertServices: communityDefinition.communityAlertServices.slice(1),
     mints: communityDefinition.mints
       .map(mint => [mint.url, mint.type].filter(Boolean).join(" "))
       .join("\n"),
@@ -727,6 +746,72 @@
     })
   }
 
+  const validateCommunityAlertServiceFields = (
+    nextErrors: FieldErrors,
+    updateValues = false,
+  ): CommunityAlertService | undefined => {
+    const fieldNames = [
+      "communityAlertServicePubkey",
+      "communityAlertRequestRelay",
+      "communityAlertHandlerAddress",
+      "communityAlertHandlerRelay",
+    ]
+    for (const field of fieldNames) delete nextErrors[field]
+
+    const servicePubkeyValue = communityAlertServicePubkey.trim()
+    const requestRelayValue = communityAlertRequestRelay.trim()
+    const handlerAddressValue = communityAlertHandlerAddress.trim()
+    const handlerRelayValue = communityAlertHandlerRelay.trim()
+    if (!servicePubkeyValue && !requestRelayValue && !handlerAddressValue && !handlerRelayValue) {
+      return undefined
+    }
+
+    const normalizedServicePubkey = isHexPubkey(servicePubkeyValue)
+      ? servicePubkeyValue.toLowerCase()
+      : ""
+    const normalizedRequestRelay = normalizeCommunityServiceRelay(requestRelayValue)
+    const normalizedHandlerAddress = normalizeCommunityAlertHandlerAddress(handlerAddressValue)
+    const normalizedHandlerRelay = normalizeCommunityServiceRelay(handlerRelayValue)
+
+    if (!servicePubkeyValue) {
+      nextErrors.communityAlertServicePubkey = "Service pubkey is required when adding a provider."
+    } else if (!normalizedServicePubkey) {
+      nextErrors.communityAlertServicePubkey = "Service pubkey must be 64 hexadecimal characters."
+    }
+    if (!requestRelayValue) {
+      nextErrors.communityAlertRequestRelay =
+        "Request/status relay is required when adding a provider."
+    } else if (!normalizedRequestRelay) {
+      nextErrors.communityAlertRequestRelay = "Request/status relay must be a valid wss:// URL."
+    }
+    if (!handlerAddressValue) {
+      nextErrors.communityAlertHandlerAddress =
+        "Handler address is required when adding a provider."
+    } else if (!normalizedHandlerAddress) {
+      nextErrors.communityAlertHandlerAddress =
+        "Handler address must use 31990:<64hex pubkey>:<nonempty id>."
+    }
+    if (!handlerRelayValue) {
+      nextErrors.communityAlertHandlerRelay = "Handler relay is required when adding a provider."
+    } else if (!normalizedHandlerRelay) {
+      nextErrors.communityAlertHandlerRelay = "Handler relay must be a valid wss:// URL."
+    }
+
+    if (updateValues) {
+      if (normalizedServicePubkey) communityAlertServicePubkey = normalizedServicePubkey
+      if (normalizedRequestRelay) communityAlertRequestRelay = normalizedRequestRelay
+      if (normalizedHandlerAddress) communityAlertHandlerAddress = normalizedHandlerAddress
+      if (normalizedHandlerRelay) communityAlertHandlerRelay = normalizedHandlerRelay
+    }
+
+    return normalizeCommunityAlertService({
+      servicePubkey: servicePubkeyValue,
+      requestRelay: requestRelayValue,
+      handlerAddress: handlerAddressValue,
+      handlerRelay: handlerRelayValue,
+    })
+  }
+
   const setFieldError = (field: string, message = "") => {
     const nextErrors = {...errors}
 
@@ -923,6 +1008,15 @@
       case "emailDigestHandlerRelay": {
         const nextErrors = {...errors}
         validateEmailDigestServiceFields(nextErrors, true)
+        errors = nextErrors
+        break
+      }
+      case "communityAlertServicePubkey":
+      case "communityAlertRequestRelay":
+      case "communityAlertHandlerAddress":
+      case "communityAlertHandlerRelay": {
+        const nextErrors = {...errors}
+        validateCommunityAlertServiceFields(nextErrors, true)
         errors = nextErrors
         break
       }
@@ -1151,6 +1245,7 @@
       })
       .filter(Boolean)
     const normalizedEmailDigestService = validateEmailDigestServiceFields(nextErrors)
+    const normalizedCommunityAlertService = validateCommunityAlertServiceFields(nextErrors)
     const normalizedMints = validateMints(nextErrors)
     const trimmedTosRef = tosRef.trim()
     const normalizedTosRelay = normalizeRelay(tosRelay)
@@ -1207,6 +1302,10 @@
       emailDigestServices: [
         ...(normalizedEmailDigestService ? [normalizedEmailDigestService] : []),
         ...additionalEmailDigestServices,
+      ],
+      communityAlertServices: [
+        ...(normalizedCommunityAlertService ? [normalizedCommunityAlertService] : []),
+        ...additionalCommunityAlertServices,
       ],
       otherServiceTags: definition?.otherServiceTags || [],
       mints: normalizedMints,
@@ -1561,6 +1660,7 @@
           blossomServers: validated.blossomServers,
           graspServers: validated.graspServers,
           emailDigestServices: validated.emailDigestServices,
+          communityAlertServices: validated.communityAlertServices,
           otherServiceTags: validated.otherServiceTags,
           mints: validated.mints,
           tos: validated.tos,
@@ -1685,6 +1785,13 @@
         additionalEmailDigestServices = originalDraftState.additionalEmailDigestServices.map(
           service => ({...service}),
         )
+        communityAlertServicePubkey = originalDraftState.communityAlertServicePubkey
+        communityAlertRequestRelay = originalDraftState.communityAlertRequestRelay
+        communityAlertHandlerAddress = originalDraftState.communityAlertHandlerAddress
+        communityAlertHandlerRelay = originalDraftState.communityAlertHandlerRelay
+        additionalCommunityAlertServices = originalDraftState.additionalCommunityAlertServices.map(
+          service => ({...service}),
+        )
       }
 
       reportStatus(
@@ -1727,6 +1834,13 @@
       service => ({
         ...service,
       }),
+    )
+    communityAlertServicePubkey = originalDraftState.communityAlertServicePubkey
+    communityAlertRequestRelay = originalDraftState.communityAlertRequestRelay
+    communityAlertHandlerAddress = originalDraftState.communityAlertHandlerAddress
+    communityAlertHandlerRelay = originalDraftState.communityAlertHandlerRelay
+    additionalCommunityAlertServices = originalDraftState.additionalCommunityAlertServices.map(
+      service => ({...service}),
     )
     mints = originalDraftState.mints
     tosRef = originalDraftState.tosRef
@@ -1948,6 +2062,7 @@
     blossomServers = validated.blossomServers.join("\n")
     graspServers = validated.graspServers.join("\n")
     validateEmailDigestServiceFields({}, true)
+    validateCommunityAlertServiceFields({}, true)
     mints = validated.mints.map(mint => [mint.url, mint.type].filter(Boolean).join(" ")).join("\n")
     tosRef = validated.tos?.ref || ""
     tosRelay = validated.tos?.relay || ""
@@ -2282,6 +2397,11 @@
   let emailDigestHandlerAddress = $state("")
   let emailDigestHandlerRelay = $state("")
   let additionalEmailDigestServices = $state<CommunityEmailDigestService[]>([])
+  let communityAlertServicePubkey = $state("")
+  let communityAlertRequestRelay = $state("")
+  let communityAlertHandlerAddress = $state("")
+  let communityAlertHandlerRelay = $state("")
+  let additionalCommunityAlertServices = $state<CommunityAlertService[]>([])
   let mints = $state("")
   let tosRef = $state("")
   let tosRelay = $state("")
@@ -2398,6 +2518,11 @@
     emailDigestHandlerAddress = ""
     emailDigestHandlerRelay = ""
     additionalEmailDigestServices = []
+    communityAlertServicePubkey = ""
+    communityAlertRequestRelay = ""
+    communityAlertHandlerAddress = ""
+    communityAlertHandlerRelay = ""
+    additionalCommunityAlertServices = []
     mints = ""
     tosRef = ""
     tosRelay = ""
@@ -2986,6 +3111,73 @@
                       ? 'input-error'
                       : ''}"
                     onblur={() => validateField("emailDigestHandlerRelay")}
+                    type="url"
+                    placeholder="wss://handlers.example.com" />{/snippet}
+              </Field>
+            </div>
+          </div>
+          <div class="mt-5 rounded-2xl border border-base-300 bg-base-200/40 p-4 sm:p-5">
+            <div class="mb-4">
+              <p class="font-semibold">
+                Community alerts provider <span class="opacity-60">(optional)</span>
+              </p>
+              <p class="mt-1 text-sm leading-relaxed text-base-content/70">
+                This service declaration is a community endorsement. Only members can opt in, and
+                they share their email address directly with the provider.
+              </p>
+              {#if additionalCommunityAlertServices.length > 0}
+                <p class="mt-2 text-xs font-medium text-info">
+                  {additionalCommunityAlertServices.length} additional provider declaration{additionalCommunityAlertServices.length ===
+                  1
+                    ? " is"
+                    : "s are"} preserved unchanged.
+                </p>
+              {/if}
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <Field error={errors.communityAlertServicePubkey}>
+                {#snippet label()}<p>Service pubkey</p>{/snippet}
+                {#snippet input()}<input
+                    bind:value={communityAlertServicePubkey}
+                    class="input input-bordered w-full {errors.communityAlertServicePubkey
+                      ? 'input-error'
+                      : ''}"
+                    onblur={() => validateField("communityAlertServicePubkey")}
+                    type="text"
+                    spellcheck="false"
+                    placeholder="64-character hex pubkey" />{/snippet}
+              </Field>
+              <Field error={errors.communityAlertRequestRelay}>
+                {#snippet label()}<p>Request/status relay</p>{/snippet}
+                {#snippet input()}<input
+                    bind:value={communityAlertRequestRelay}
+                    class="input input-bordered w-full {errors.communityAlertRequestRelay
+                      ? 'input-error'
+                      : ''}"
+                    onblur={() => validateField("communityAlertRequestRelay")}
+                    type="url"
+                    placeholder="wss://alerts.example.com" />{/snippet}
+              </Field>
+              <Field error={errors.communityAlertHandlerAddress}>
+                {#snippet label()}<p>Handler address</p>{/snippet}
+                {#snippet input()}<input
+                    bind:value={communityAlertHandlerAddress}
+                    class="input input-bordered w-full {errors.communityAlertHandlerAddress
+                      ? 'input-error'
+                      : ''}"
+                    onblur={() => validateField("communityAlertHandlerAddress")}
+                    type="text"
+                    spellcheck="false"
+                    placeholder="31990:<handler pubkey>:<id>" />{/snippet}
+              </Field>
+              <Field error={errors.communityAlertHandlerRelay}>
+                {#snippet label()}<p>Handler relay</p>{/snippet}
+                {#snippet input()}<input
+                    bind:value={communityAlertHandlerRelay}
+                    class="input input-bordered w-full {errors.communityAlertHandlerRelay
+                      ? 'input-error'
+                      : ''}"
+                    onblur={() => validateField("communityAlertHandlerRelay")}
                     type="url"
                     placeholder="wss://handlers.example.com" />{/snippet}
               </Field>

@@ -172,22 +172,14 @@ const makeCommunityDefinitionAddress = (communityPubkey: string) => {
   return pubkey ? `${COMMUNITY_DEFINITION_KIND}:${pubkey}:` : ""
 }
 
-const parseCommunityDefinitionAddress = (address: string) => {
-  const [kindValue, pubkeyValue, ...identifierParts] = address.split(":")
-  const kind = Number.parseInt(kindValue || "", 10)
-  const pubkey = normalizePubkey(pubkeyValue || "")
-  const identifier = identifierParts.join(":")
+const getCommunityAddress = (event: TrustedEvent) => {
+  const hTags = event.tags.filter(tag => tag[0] === "h")
+  if (hTags.length !== 1) return undefined
+  const pubkey = normalizePubkey(hTags[0][1] || "")
+  if (!pubkey) return undefined
 
-  if (kind !== COMMUNITY_DEFINITION_KIND || !pubkey || identifier) return undefined
-
-  return {pubkey, address: `${COMMUNITY_DEFINITION_KIND}:${pubkey}:`}
+  return {pubkey, address: makeCommunityDefinitionAddress(pubkey)}
 }
-
-const getCommunityAddress = (event: TrustedEvent) =>
-  event.tags
-    .filter(tag => tag[0] === "a")
-    .map(tag => parseCommunityDefinitionAddress(tag[1] || ""))
-    .find(Boolean)
 
 const getSectionName = (event: TrustedEvent) =>
   normalizeCommunitySectionName(event.tags.find(tag => tag[0] === "content")?.[1] || "")
@@ -279,7 +271,6 @@ export const makeCommunityEventReport = ({
       COMMUNITY_REPORT_REASON,
     ]),
     ["p", normalizePubkey(eventPubkey)],
-    ["a", makeCommunityDefinitionAddress(communityPubkey)],
     ["h", normalizePubkey(communityPubkey)],
     ["content", normalizeCommunitySectionName(sectionName)],
     ...makeOptionalTag("target-kind", eventKind),
@@ -305,9 +296,8 @@ export const makeCommunityPersonReport = ({
   kind: COMMUNITY_REPORT_KIND,
   content,
   tags: [
-    ["p", normalizePubkey(pubkey), COMMUNITY_REPORT_REASON],
-    ["a", makeCommunityDefinitionAddress(communityPubkey)],
     ["h", normalizePubkey(communityPubkey)],
+    ["p", normalizePubkey(pubkey), COMMUNITY_REPORT_REASON],
   ],
 })
 
@@ -347,7 +337,6 @@ export const makeCommunityReportReviewLabel = ({
     ["L", COMMUNITY_REPORT_REVIEW_NAMESPACE],
     ["l", COMMUNITY_REPORT_REVIEWED_LABEL, COMMUNITY_REPORT_REVIEW_NAMESPACE],
     ["e", reportId],
-    ["a", makeCommunityDefinitionAddress(communityPubkey)],
     ["h", normalizePubkey(communityPubkey)],
     ...makeOptionalTag("E", targetEventId),
     ...makeOptionalTag("K", targetEventKind),

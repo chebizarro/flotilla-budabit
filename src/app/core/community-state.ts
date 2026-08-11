@@ -2215,10 +2215,8 @@ export const makeCommunityModeratorRequestDeleteFilters = (
 }
 
 export const makeCommunityReportFilters = (definition: CommunityDefinition): Filter[] => {
-  const communityAddress = makeCommunityDefinitionAddress(definition.pubkey)
-
-  return communityAddress
-    ? [{kinds: [COMMUNITY_REPORT_KIND], "#a": [communityAddress], limit: 500}]
+  return definition.pubkey
+    ? [{kinds: [COMMUNITY_REPORT_KIND], "#h": [definition.pubkey], limit: 500}]
     : []
 }
 
@@ -2232,14 +2230,13 @@ export const makeCommunityReportReviewFilters = (
   definition: CommunityDefinition,
   reportEvents: TrustedEvent[],
 ): Filter[] => {
-  const communityAddress = makeCommunityDefinitionAddress(definition.pubkey)
   const reportIds = Array.from(new Set(reportEvents.map(event => event.id).filter(Boolean)))
 
-  return communityAddress && reportIds.length
+  return definition.pubkey && reportIds.length
     ? [
         {
           kinds: [COMMUNITY_REPORT_REVIEW_LABEL_KIND],
-          "#a": [communityAddress],
+          "#h": [definition.pubkey],
           "#e": reportIds,
           "#L": [COMMUNITY_REPORT_REVIEW_NAMESPACE],
           limit: 500,

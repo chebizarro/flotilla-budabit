@@ -148,6 +148,14 @@ describe("community admin helpers", () => {
           `31990:${otherPubkey}:daily`,
           "wss://digest-handler.example.com",
         ],
+        [
+          "service",
+          "community-alerts",
+          memberPubkey,
+          "wss://alerts-requests.example.com",
+          `31990:${otherPubkey}:alerts`,
+          "wss://alerts-handler.example.com",
+        ],
         ["service", "future-provider", "opaque"],
         ["content", "Threads"],
         ["k", "11", "threads"],
@@ -176,6 +184,14 @@ describe("community admin helpers", () => {
       "wss://digest-requests.example.com/",
       `31990:${otherPubkey}:daily`,
       "wss://digest-handler.example.com/",
+    ])
+    expect(result.definitionUpdate?.tags).toContainEqual([
+      "service",
+      "community-alerts",
+      memberPubkey,
+      "wss://alerts-requests.example.com/",
+      `31990:${otherPubkey}:alerts`,
+      "wss://alerts-handler.example.com/",
     ])
     expect(result.definitionUpdate?.tags).toContainEqual(["service", "future-provider", "opaque"])
   })

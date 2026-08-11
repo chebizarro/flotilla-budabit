@@ -10,6 +10,14 @@ const profileCircleSource = readFileSync(
   new URL("../components/ProfileCircle.svelte", import.meta.url),
   "utf8",
 )
+const communityAlertSource = readFileSync(
+  new URL("../components/CommunityAlertSettings.svelte", import.meta.url),
+  "utf8",
+)
+const communityAlertCoreSource = readFileSync(
+  new URL("./community-alerts.ts", import.meta.url),
+  "utf8",
+)
 
 describe("email digest notification settings UI", () => {
   it("uses profile identity and recommendation evidence instead of pubkeys in provider options", () => {
@@ -45,5 +53,68 @@ describe("email digest notification settings UI", () => {
     expect(source).toContain("Verify your delivery email")
     expect(source).toContain("We sent a verification email")
     expect(source).toContain("I've verified, refresh status")
+  })
+
+  it("mounts independent community alerts between in-app and Git forms", () => {
+    expect(source).toContain(
+      'import CommunityAlertSettings from "@app/components/CommunityAlertSettings.svelte"',
+    )
+    expect(source).toContain("<CommunityAlertSettings />")
+    expect(source.indexOf("<CommunityAlertSettings />")).toBeGreaterThan(
+      source.indexOf("Save in-app settings"),
+    )
+    expect(source.indexOf("<CommunityAlertSettings />")).toBeLessThan(
+      source.indexOf("Git email digest"),
+    )
+    expect(communityAlertCoreSource).toContain(
+      'COMMUNITY_ALERTS_SETTINGS_DTAG = "budabit/community-alerts-settings"',
+    )
+    expect(communityAlertSource).toContain("This profile is encrypted separately from Git")
+    expect(communityAlertSource).toContain("Git providers keep their own delivery email")
+  })
+
+  it("exposes density, every Anchor boolean, statuses, and provider selection", () => {
+    expect(communityAlertSource).toContain('setDensity(group.communityPubkey, "compact")')
+    expect(communityAlertSource).toContain('setDensity(group.communityPubkey, "expanded")')
+    for (const preference of [
+      "engagement.replies",
+      "engagement.mentions",
+      "engagement.reactions",
+      "engagement.zaps",
+      "access.membership",
+      "access.publishing",
+      "access.moderatorRequests",
+      "moderation.reports",
+      "moderation.actions",
+      "highlights.rooms",
+      "highlights.threads",
+      "highlights.calendar",
+      "highlights.goals",
+    ]) {
+      expect(communityAlertSource).toContain(`draft.preferences.${preference}`)
+    }
+    for (const status of [
+      "Pending confirmation",
+      "Active",
+      "Ineligible",
+      "Suppressed",
+      "Error",
+      "Inactive",
+    ]) {
+      expect(communityAlertSource).toContain(status)
+    }
+    expect(communityAlertSource).toContain("choices.length > 1")
+  })
+
+  it("resets by identity, guards stale requests, and avoids raw orphan pubkeys", () => {
+    expect(communityAlertSource).toContain("identityKey")
+    expect(communityAlertSource).toContain("identitySigner")
+    expect(communityAlertSource).toContain("requestGeneration")
+    expect(communityAlertSource).toContain("isCurrentRequest")
+    expect(communityAlertSource).toContain("Unavailable registrations")
+    expect(communityAlertSource).toContain("<Profile pubkey={communityPubkey}")
+    expect(communityAlertSource).not.toContain("communityPubkey.slice")
+    expect(communityAlertSource).toContain("pubkey={provider.servicePubkey}")
+    expect(communityAlertSource).toContain("relays={group.definition.relays}")
   })
 })

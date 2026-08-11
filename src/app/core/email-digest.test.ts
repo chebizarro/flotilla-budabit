@@ -21,6 +21,7 @@ import {
   decryptEmailDigestSettingsEvent,
   discoverEmailDigestProviders,
   getEmailDigestHandlerFilter,
+  getEmailDigestStatusDtag,
   getNextEmailDigestCreatedAt,
   isEmailDigestVerificationPending,
   normalizeEmailDigestSettings,
@@ -91,6 +92,7 @@ const makeDigestRepository = (overrides: Record<string, unknown> = {}) => ({
     issues: {new: true, comments: false},
     prs: {new: true, comments: false, updates: true},
     status: {open: true, draft: true, applied: true, closed: true},
+    engagement: {reactions: true, zaps: true},
     assignments: true,
   },
   ...overrides,
@@ -287,6 +289,7 @@ describe("email digest repository and payload building", () => {
       ...structuredClone(defaultRepoWatchOptions),
       issues: {new: true, comments: true},
       prs: {new: false, comments: true, updates: true},
+      engagement: {reactions: true, zaps: false},
       reviews: true,
       activityFilter: "maintainers" as const,
     }
@@ -335,6 +338,7 @@ describe("email digest repository and payload building", () => {
           issues: {new: true, comments: true},
           prs: {new: false, comments: true, updates: true},
           status: {open: true, draft: true, applied: true, closed: true},
+          engagement: {reactions: true, zaps: false},
           assignments: true,
         },
       },
@@ -457,6 +461,7 @@ describe("email digest repository and payload building", () => {
               issues: {new: false, comments: false},
               prs: {new: false, comments: false, updates: false},
               status: {open: false, draft: false, applied: false, closed: false},
+              engagement: {reactions: false, zaps: false},
               assignments: false,
             },
           }),
@@ -557,7 +562,7 @@ describe("email digest event and status restrictions", () => {
         kind: EMAIL_DIGEST_STATUS_KIND,
         created_at: 10,
         tags: [
-          ["d", EMAIL_DIGEST_DTAG],
+          ["d", getEmailDigestStatusDtag(userPubkey)],
           ["p", userPubkey],
         ],
         content: "encrypted",
@@ -565,6 +570,18 @@ describe("email digest event and status restrictions", () => {
       serviceSecret,
     )
     const invalidStatus = {...status, sig: "0".repeat(128)}
+    const legacyStatus = finalizeEvent(
+      {
+        kind: EMAIL_DIGEST_STATUS_KIND,
+        created_at: 11,
+        tags: [
+          ["d", EMAIL_DIGEST_DTAG],
+          ["p", userPubkey],
+        ],
+        content: "encrypted",
+      },
+      serviceSecret,
+    )
 
     expect(
       selectEmailDigestSubscriptionEvent(
@@ -573,9 +590,11 @@ describe("email digest event and status restrictions", () => {
         provider,
       ),
     ).toEqual(subscription)
-    expect(selectEmailDigestStatusEvent([invalidStatus, status], userPubkey, provider)).toEqual(
-      status,
-    )
+    expect(
+      selectEmailDigestStatusEvent([legacyStatus, invalidStatus, status], userPubkey, provider),
+    ).toEqual(status)
+    expect(subscription.tags[0]).toEqual(["d", EMAIL_DIGEST_DTAG])
+    expect(getEmailDigestStatusDtag(userPubkey)).toBe(`${EMAIL_DIGEST_DTAG}/${userPubkey}`)
   })
 
   it("parses only version-1 email digest status payloads", () => {

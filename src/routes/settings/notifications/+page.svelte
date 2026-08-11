@@ -20,6 +20,7 @@
   import ProfileCircle from "@app/components/ProfileCircle.svelte"
   import ProfileDetail from "@app/components/ProfileDetail.svelte"
   import ProfileName from "@app/components/ProfileName.svelte"
+  import CommunityAlertSettings from "@app/components/CommunityAlertSettings.svelte"
   import {publishSettings} from "@app/core/commands"
   import {
     activeCommunityDefinition,
@@ -555,6 +556,8 @@
       </Button>
     </div>
   </form>
+
+  <CommunityAlertSettings />
 
   <form
     class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm"

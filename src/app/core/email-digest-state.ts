@@ -28,6 +28,7 @@ import {
   decryptEmailDigestSettingsEvent,
   defaultEmailDigestSettings,
   discoverEmailDigestProviders,
+  getEmailDigestStatusDtag,
   getEmailDigestSubscriptionTags,
   getNextEmailDigestCreatedAt,
   normalizeEmailDigestSettings,
@@ -307,7 +308,7 @@ export const queryEmailDigestProviderState = async (
             {
               kinds: [EMAIL_DIGEST_STATUS_KIND],
               authors: [provider.servicePubkey],
-              "#d": [EMAIL_DIGEST_DTAG],
+              "#d": [getEmailDigestStatusDtag(userPubkey)],
               "#p": [userPubkey],
               limit: 10,
             },
@@ -534,7 +535,7 @@ export const makeEmailDigestStatusFilter = (
 ) => ({
   kinds: [EMAIL_DIGEST_STATUS_KIND],
   authors: [provider.servicePubkey],
-  "#d": [EMAIL_DIGEST_DTAG],
+  "#d": [getEmailDigestStatusDtag(userPubkey)],
   "#p": [userPubkey],
 })
 

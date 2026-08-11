@@ -136,7 +136,10 @@ describe("community reports", () => {
       target: "person",
       targetPubkey,
     })
-    expect(personReport.tags).toContainEqual(["h", communityPubkey])
+    expect(personReport.tags).toEqual([
+      ["h", communityPubkey],
+      ["p", targetPubkey, "spam"],
+    ])
   })
 
   it("derives addressable report targets with Welshman address semantics", () => {
@@ -153,7 +156,7 @@ describe("community reports", () => {
     expect(getCommunityReportEventAddress(makeEvent({kind: 1, pubkey: targetPubkey}))).toBe("")
   })
 
-  it("ignores community definition a-tags as event report targets", () => {
+  it("rejects reports that use an a tag instead of h for community scope", () => {
     const report = makeEvent({
       id: "community-a-reason-report",
       kind: COMMUNITY_REPORT_KIND,
@@ -166,6 +169,19 @@ describe("community reports", () => {
     })
 
     expect(parseCommunityReport(report, communityPubkey)).toBeUndefined()
+    expect(
+      parseCommunityReport(
+        makeEvent({
+          ...report,
+          tags: [
+            ["h", communityPubkey],
+            ["h", communityPubkey],
+            ["p", targetPubkey, "spam"],
+          ],
+        }),
+        communityPubkey,
+      ),
+    ).toBeUndefined()
   })
 
   it("applies addressable event reports across replacements", () => {
@@ -230,7 +246,7 @@ describe("community reports", () => {
       tags: [
         ["e", "reported-event", "wss://relay.example.com/", "impersonation"],
         ["p", targetPubkey],
-        ["a", `${COMMUNITY_DEFINITION_KIND}:${communityPubkey}:`],
+        ["h", communityPubkey],
         ["content", "General"],
       ],
     })
@@ -240,7 +256,7 @@ describe("community reports", () => {
       pubkey: allSectionModeratorPubkey,
       tags: [
         ["p", targetPubkey, "illegal"],
-        ["a", `${COMMUNITY_DEFINITION_KIND}:${communityPubkey}:`],
+        ["h", communityPubkey],
       ],
     })
 
@@ -269,7 +285,7 @@ describe("community reports", () => {
       pubkey: sectionModeratorPubkey,
       tags: [
         ["e", targetEvent.id, "wss://relay.example.com/", "malware"],
-        ["a", `${COMMUNITY_DEFINITION_KIND}:${communityPubkey}:`],
+        ["h", communityPubkey],
         ["content", "General"],
       ],
     })

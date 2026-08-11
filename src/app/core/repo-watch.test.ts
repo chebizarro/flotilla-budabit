@@ -19,6 +19,7 @@ describe("repo-watch normalization", () => {
       issues: {new: true, comments: true},
       prs: {new: true, comments: false, updates: false},
       status: {open: true, draft: true, applied: true, closed: false},
+      engagement: {reactions: false, zaps: false},
       assignments: false,
       reviews: false,
       activityFilter: "all",
@@ -52,6 +53,7 @@ describe("repo-watch normalization", () => {
       issues: {new: false, comments: false},
       prs: {new: true, comments: true, updates: true},
       status: {open: true, draft: false, applied: false, closed: true},
+      engagement: {reactions: false, zaps: false},
       assignments: true,
       reviews: false,
       activityFilter: "maintainers",
@@ -64,6 +66,13 @@ describe("repo-watch normalization", () => {
 
   it("normalizes unknown activity filters to all activity", () => {
     expect(normalizeRepoWatchOptions({activityFilter: "unknown"}).activityFilter).toBe("all")
+  })
+
+  it("keeps engagement opt-in while preserving explicit choices", () => {
+    expect(normalizeRepoWatchOptions({engagement: {reactions: true}}).engagement).toEqual({
+      reactions: true,
+      zaps: false,
+    })
   })
 
   it("migrates legacy patch watch options to PR options", () => {

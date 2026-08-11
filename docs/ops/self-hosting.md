@@ -83,6 +83,7 @@ Self-hosting Budabit does not create a community by itself. Before setting `VITE
 - Optional `blossom` tags for community-owned media storage
 - Optional ordered `["grasp", "wss://..."]` tags for GRASP servers the community endorses or offers to members
 - Optional `["service", "email-digest", <service-pubkey>, <request-relay>, <handler-address>, <handler-relay>]` tags for community-endorsed Git email digest providers
+- Optional `["service", "community-alerts", <service-pubkey>, <request-relay>, <handler-address>, <handler-relay>]` tags for community-scoped member alert providers
 - Optional `mint` tags for community Cashu mints
 - Optional `g` tag for the community geohash; do not use `g` for GRASP servers
 
@@ -95,6 +96,10 @@ Relays are infrastructure, not identity. Do not configure a deployment as if one
 In-app badges and notification sounds are always available. Git email digest providers are not configured through deployment variables. A community administrator advertises a provider in the signed `kind:10222` definition, and each user explicitly selects one endorsed provider in Settings > Notifications.
 
 The provider receives the user's encrypted subscription on its declared request relay. Removing a service declaration does not transfer existing users to another provider; Budabit preserves their selected snapshot so they can disable the old registration.
+
+Community alert discovery is stricter and remains per-community: Budabit considers only the latest verified `kind:10222` definition for each current member, moderator, or administrator community, and never combines the same provider across communities. Provider identity is the service pubkey's signed `kind:0` profile; the handler pubkey is not provider identity.
+
+For community alerts, clients publish a NIP-44 encrypted `kind:32830` event with exact tags `d=budabit/community-alerts/<community>` and `p=<service-pubkey>` to the selected request relay. Providers return per-user encrypted `kind:32831` status at `d=budabit/community-alerts/<community>/<user>` and `p=<user>`, including an `ineligible` state when Anchor rejects eligibility. Client preferences and exact endpoint snapshots live separately from Git settings in a self-encrypted `kind:30078` event with `d=budabit/community-alerts-settings`. Switching providers deletes the old endpoint before registering the new one.
 
 ## Optional Account Service
 
@@ -283,7 +288,7 @@ Budabit is static, but it still talks to public network services from the browse
 - Git HTTP remotes, usually through a CORS proxy
 - Dufflepud at `https://dufflepud.onrender.com`, currently wired as the Welshman backend service URL and used for link preview service calls
 - Optional Burrow account service if `VITE_BURROW_URL` is set
-- Community-endorsed email digest providers selected by individual users
+- Community-endorsed Git digest and community alert providers selected by individual users
 
 Git-over-HTTP operations use a CORS proxy. If you do not set one, Budabit falls back to `https://corsproxy.budabit.club`.
 

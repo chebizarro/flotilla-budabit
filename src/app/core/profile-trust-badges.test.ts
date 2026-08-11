@@ -329,7 +329,7 @@ describe("profile trust badges", () => {
       tags: [
         ["a", targetAddress, "wss://relay.example.com", "malware"],
         ["p", targetPubkey],
-        ["a", `${COMMUNITY_DEFINITION_KIND}:${sharedCommunityPubkey}:`],
+        ["h", sharedCommunityPubkey],
         ["content", "General"],
       ],
     })

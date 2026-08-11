@@ -15,6 +15,7 @@ import {request, pull, makeLoader} from "@welshman/net"
 import {Router} from "@welshman/router"
 import {
   pubkey,
+  signer,
   loadRelay,
   tracker,
   repository,
@@ -43,6 +44,7 @@ import {
 import {applyRemoteExtensionSettings} from "@app/extensions/settings"
 import {loadRepoWatch} from "@app/core/repo-watch"
 import {hydrateEmailDigestSettings} from "@app/core/email-digest-state"
+import {hydrateCommunityAlertSettings} from "@app/core/community-alerts-state"
 import {loadBudabitProfile} from "@app/core/profile-resolver"
 
 // Utils
@@ -186,8 +188,21 @@ const syncUserData = () => {
       })
     }
   })
+  const unsubscribeCommunityAlerts = derived(
+    [userRelayList, signer],
+    ([$userRelayList, $signer]) => ({userRelayList: $userRelayList, signer: $signer}),
+  ).subscribe(({userRelayList: $userRelayList, signer: $signer}) => {
+    if (!$userRelayList || !$signer) return
 
-  return unsubscribeRelayList
+    void hydrateCommunityAlertSettings($userRelayList.event.pubkey).catch(error => {
+      console.warn("[community-alerts] Failed to hydrate encrypted settings", error)
+    })
+  })
+
+  return () => {
+    unsubscribeRelayList()
+    unsubscribeCommunityAlerts()
+  }
 }
 
 // DMs

@@ -118,6 +118,8 @@
     opts.status.draft ||
     opts.status.applied ||
     opts.status.closed ||
+    opts.engagement.reactions ||
+    opts.engagement.zaps ||
     opts.assignments
 
   const back = () => history.back()
@@ -345,6 +347,30 @@
     </div>
 
     <div class="card2 bg-alt p-4 shadow-sm">
+      <strong class="mb-2 block">Engagement</strong>
+      <div class="grid gap-2 sm:grid-cols-2">
+        <label class="flex items-center gap-2">
+          <input
+            type="checkbox"
+            class="checkbox"
+            bind:checked={options.engagement.reactions}
+            oninput={markDirty}
+            disabled={!watchEnabled} />
+          Reactions
+        </label>
+        <label class="flex items-center gap-2">
+          <input
+            type="checkbox"
+            class="checkbox"
+            bind:checked={options.engagement.zaps}
+            oninput={markDirty}
+            disabled={!watchEnabled} />
+          Zaps
+        </label>
+      </div>
+    </div>
+
+    <div class="card2 bg-alt p-4 shadow-sm">
       <strong class="mb-2 block">Assignments</strong>
       <label class="flex items-center gap-2">
         <input
@@ -360,7 +386,7 @@
 
   <p class="text-xs text-muted-foreground">
     These Watch settings control in-app notifications and, when enabled, email digests. Email
-    digests include the selected issues, PRs, comments, status changes, and assignments.
+    digests include the selected issues, PRs, comments, status changes, engagement, and assignments.
   </p>
 
   <ModalFooter>

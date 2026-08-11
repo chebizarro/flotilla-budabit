@@ -53,7 +53,7 @@ export type EmailDigestSettings = {
 
 export type EmailDigestRepositoryOptions = Pick<
   RepoWatchOptions,
-  "issues" | "prs" | "status" | "assignments"
+  "issues" | "prs" | "status" | "engagement" | "assignments"
 >
 
 export type EmailDigestRepository = {
@@ -461,6 +461,8 @@ const hasSupportedRepositoryOption = (options: EmailDigestRepositoryOptions) =>
   options.status.draft ||
   options.status.applied ||
   options.status.closed ||
+  options.engagement.reactions ||
+  options.engagement.zaps ||
   options.assignments
 
 const copyRepositoryOptions = (options: RepoWatchOptions): EmailDigestRepositoryOptions => ({
@@ -478,6 +480,10 @@ const copyRepositoryOptions = (options: RepoWatchOptions): EmailDigestRepository
     draft: Boolean(options.status.draft),
     applied: Boolean(options.status.applied),
     closed: Boolean(options.status.closed),
+  },
+  engagement: {
+    reactions: Boolean(options.engagement.reactions),
+    zaps: Boolean(options.engagement.zaps),
   },
   assignments: Boolean(options.assignments),
 })
@@ -673,6 +679,10 @@ export const buildEmailDigestPayload = ({
           applied: Boolean(repository.options.status.applied),
           closed: Boolean(repository.options.status.closed),
         },
+        engagement: {
+          reactions: Boolean(repository.options.engagement.reactions),
+          zaps: Boolean(repository.options.engagement.zaps),
+        },
         assignments: Boolean(repository.options.assignments),
       },
     }
@@ -721,8 +731,13 @@ export const getEmailDigestSubscriptionTags = (servicePubkey: string) => [
   ["p", servicePubkey],
 ]
 
+export const getEmailDigestStatusDtag = (userPubkey: string) => {
+  const user = normalizePubkey(userPubkey)
+  return user ? `${EMAIL_DIGEST_DTAG}/${user}` : ""
+}
+
 export const getEmailDigestStatusTags = (userPubkey: string) => [
-  ["d", EMAIL_DIGEST_DTAG],
+  ["d", getEmailDigestStatusDtag(userPubkey)],
   ["p", userPubkey],
 ]
 

@@ -184,6 +184,7 @@ export const getOwnerMembershipGrantProfileList = ({
       graspServers: definition.graspServers,
       mints: definition.mints,
       emailDigestServices: definition.emailDigestServices,
+      communityAlertServices: definition.communityAlertServices,
       otherServiceTags: definition.otherServiceTags,
       tos: definition.tos,
       location: definition.location,

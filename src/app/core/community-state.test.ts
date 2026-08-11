@@ -22,6 +22,7 @@ import {
   makeCommunityAdmissionFormFilters,
   makeCommunityDefinitionFilter,
   makeCommunityProfileListFilters,
+  makeCommunityReportFilters,
   makeCommunitySession,
   selectCommunityAdmissionForms,
   selectLatestCommunityDefinition,
@@ -41,6 +42,7 @@ import {
   type CommunityProfile,
 } from "./community-state"
 import {makeCommunityDefinitionAddress, type CommunityAdmissionForm} from "./community-forms"
+import {COMMUNITY_REPORT_KIND} from "./community-reports"
 
 const communityPubkey = "a".repeat(64)
 const listPubkey = "b".repeat(64)
@@ -168,6 +170,14 @@ describe("community state helpers", () => {
       authors: [communityPubkey],
       limit: 1,
     })
+  })
+
+  it("discovers h-scoped community reports", () => {
+    const definition = parseCommunityDefinition(makeCommunityDefinitionEvent(1))!
+
+    expect(makeCommunityReportFilters(definition)).toEqual([
+      {kinds: [COMMUNITY_REPORT_KIND], "#h": [communityPubkey], limit: 500},
+    ])
   })
 
   it("selects the latest valid community definition for the pubkey", () => {

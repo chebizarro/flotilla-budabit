@@ -46,6 +46,7 @@ const makeCommunityRef = ({
       graspServers,
       mints: [],
       emailDigestServices: [],
+      communityAlertServices: [],
       sections: [
         {
           name: "Repositories",

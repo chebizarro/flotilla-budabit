@@ -107,6 +107,7 @@ const watchOptions = (overrides: Partial<RepoWatchOptions> = {}): RepoWatchOptio
   issues: {...defaultRepoWatchOptions.issues, ...overrides.issues},
   prs: {...defaultRepoWatchOptions.prs, ...overrides.prs},
   status: {...defaultRepoWatchOptions.status, ...overrides.status},
+  engagement: {...defaultRepoWatchOptions.engagement, ...overrides.engagement},
   assignments: overrides.assignments ?? defaultRepoWatchOptions.assignments,
   reviews: overrides.reviews ?? false,
   activityFilter: overrides.activityFilter ?? "all",
@@ -504,6 +505,7 @@ describe("repo watch notifications", () => {
       graspServers: [],
       mints: [],
       emailDigestServices: [],
+      communityAlertServices: [],
       sections: [
         {
           name: COMMUNITY_SECTION_REPO_CURATOR,

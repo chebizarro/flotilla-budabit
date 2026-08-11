@@ -103,6 +103,7 @@ const makeCommunityRef = (): ActiveUserCommunityRef => ({
     graspServers: [],
     mints: [],
     emailDigestServices: [],
+    communityAlertServices: [],
     sections: [
       {
         name: COMMUNITY_SECTION_GENERAL,
@@ -837,7 +838,6 @@ describe("notification sources", () => {
       tags: [
         ["e", "reported-event", "spam"],
         ["p", viewer],
-        ["a", `10222:${communityPubkey}:`],
         ["h", communityPubkey],
         ["content", COMMUNITY_SECTION_GENERAL],
         ["target-kind", String(COMMENT)],
@@ -889,7 +889,6 @@ describe("notification sources", () => {
       tags: [
         ["e", "reported-event", "spam"],
         ["p", viewer],
-        ["a", `10222:${communityPubkey}:`],
         ["h", communityPubkey],
         ["content", COMMUNITY_SECTION_GENERAL],
         ["target-kind", String(COMMENT)],
@@ -904,7 +903,6 @@ describe("notification sources", () => {
       tags: [
         ["e", "reported-event", "spam"],
         ["p", viewer],
-        ["a", `10222:${communityPubkey}:`],
         ["h", communityPubkey],
         ["content", COMMUNITY_SECTION_GENERAL],
         ["target-kind", String(COMMENT)],
@@ -960,7 +958,6 @@ describe("notification sources", () => {
       tags: [
         ["e", "reported-event", "spam"],
         ["p", viewer],
-        ["a", `10222:${communityPubkey}:`],
         ["h", communityPubkey],
         ["content", COMMUNITY_SECTION_GENERAL],
         ["target-kind", String(COMMENT)],
@@ -975,7 +972,6 @@ describe("notification sources", () => {
         ["L", COMMUNITY_REPORT_REVIEW_NAMESPACE],
         ["l", COMMUNITY_REPORT_REVIEWED_LABEL, COMMUNITY_REPORT_REVIEW_NAMESPACE],
         ["e", report.id],
-        ["a", `10222:${communityPubkey}:`],
         ["h", communityPubkey],
         ["E", "reported-event"],
         ["K", String(COMMENT)],
@@ -1030,7 +1026,6 @@ describe("notification sources", () => {
       content: "banned for spam",
       tags: [
         ["p", banned, "spam"],
-        ["a", `10222:${communityPubkey}:`],
         ["h", communityPubkey],
       ],
     })

@@ -29,6 +29,7 @@ import {
 import {activeCommunityRelays} from "@app/core/community-state"
 import {getRelayPolicy, isSignerPolicyRelay} from "@app/core/relay-policy"
 import {isEmailDigestAuthRelay} from "@app/core/email-digest-auth"
+import {isOperationScopedProviderAuthSocket} from "@app/core/provider-relay-auth"
 import {graspServersStore} from "@nostr-git/ui"
 
 let guestRelaySigner: Nip01Signer | undefined
@@ -110,6 +111,7 @@ export const authPolicy = (socket: Socket) => {
 
   const retryActiveSignerAuth = async (
     activeSigner: NonNullable<ReturnType<typeof signer.get>>,
+    activePubkey: string,
   ) => {
     // Only retry with the real signer when this relay is one we'd auth to
     // in the first place. Prevents surprise bunker roundtrips against
@@ -118,9 +120,20 @@ export const authPolicy = (socket: Socket) => {
 
     inFlight = true
     try {
-      await socket.auth.retryAuth(event => activeSigner.sign(event))
+      await socket.auth.retryAuth(async event => {
+        if (signer.get() !== activeSigner || pubkey.get() !== activePubkey) {
+          throw new Error("The active signer changed during relay authentication.")
+        }
+        const signed = await activeSigner.sign(event)
+        if (signer.get() !== activeSigner || pubkey.get() !== activePubkey) {
+          throw new Error("The active signer changed during relay authentication.")
+        }
+
+        return signed
+      })
+      if (signer.get() !== activeSigner || pubkey.get() !== activePubkey) return
       authenticatedWithGuest = false
-      authenticatedPubkey = pubkey.get() || ""
+      authenticatedPubkey = activePubkey
     } finally {
       inFlight = false
     }
@@ -128,6 +141,8 @@ export const authPolicy = (socket: Socket) => {
 
   const attemptAuth = async () => {
     if (inFlight) return
+    // Provider operations authenticate explicitly on disposable sockets.
+    if (isOperationScopedProviderAuthSocket(socket)) return
     if (getRelayPolicy(socket.url).auth === "none") return
     const activeSigner = signer.get()
     const activePubkey = pubkey.get() || ""
@@ -138,7 +153,7 @@ export const authPolicy = (socket: Socket) => {
     ].includes(socket.auth.status)
 
     if (authenticatedWithGuest && activeSigner && hasCompletedAuth) {
-      await retryActiveSignerAuth(activeSigner)
+      await retryActiveSignerAuth(activeSigner, activePubkey)
       return
     }
 
@@ -149,16 +164,29 @@ export const authPolicy = (socket: Socket) => {
       authenticatedPubkey !== activePubkey &&
       hasCompletedAuth
     ) {
-      await retryActiveSignerAuth(activeSigner)
+      await retryActiveSignerAuth(activeSigner, activePubkey)
       return
     }
 
     if (socket.auth.status !== AuthStatus.Requested) return
     const relayAuthSigner = getRelayAuthSigner(socket.url)
     if (!relayAuthSigner) return
+    const expectedSigner = activeSigner
+    const expectedPubkey = activePubkey
     inFlight = true
     try {
-      await socket.auth.doAuth(event => relayAuthSigner.signer.sign(event))
+      await socket.auth.doAuth(async event => {
+        if (signer.get() !== expectedSigner || (pubkey.get() || "") !== expectedPubkey) {
+          throw new Error("The active signer changed during relay authentication.")
+        }
+        const signed = await relayAuthSigner.signer.sign(event)
+        if (signer.get() !== expectedSigner || (pubkey.get() || "") !== expectedPubkey) {
+          throw new Error("The active signer changed during relay authentication.")
+        }
+
+        return signed
+      })
+      if (signer.get() !== expectedSigner || (pubkey.get() || "") !== expectedPubkey) return
       authenticatedWithGuest = relayAuthSigner.isGuest
       authenticatedPubkey = relayAuthSigner.isGuest ? "" : activePubkey
     } finally {

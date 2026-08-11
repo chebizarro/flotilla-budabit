@@ -44,6 +44,10 @@ export type RepoWatchOptions = {
     applied: boolean
     closed: boolean
   }
+  engagement: {
+    reactions: boolean
+    zaps: boolean
+  }
   assignments: boolean
   reviews: boolean
   activityFilter: RepoWatchActivityFilter
@@ -60,6 +64,7 @@ export type RepoWatchOptionsInput = {
   patches?: Partial<RepoWatchOptions["prs"]>
   prs?: Partial<RepoWatchOptions["prs"]>
   status?: Partial<RepoWatchOptions["status"]>
+  engagement?: Partial<RepoWatchOptions["engagement"]>
   assignments?: boolean
   reviews?: boolean
   activityFilter?: RepoWatchActivityFilter | string
@@ -80,6 +85,10 @@ export const defaultRepoWatchOptions: RepoWatchOptions = {
     draft: true,
     applied: true,
     closed: true,
+  },
+  engagement: {
+    reactions: false,
+    zaps: false,
   },
   assignments: true,
   reviews: false,
@@ -120,6 +129,10 @@ export const normalizeRepoWatchOptions = (
       draft: options?.status?.draft ?? base.status.draft,
       applied: options?.status?.applied ?? base.status.applied,
       closed: options?.status?.closed ?? base.status.closed,
+    },
+    engagement: {
+      reactions: options?.engagement?.reactions ?? base.engagement.reactions,
+      zaps: options?.engagement?.zaps ?? base.engagement.zaps,
     },
     assignments: options?.assignments ?? base.assignments,
     reviews: options?.reviews ?? base.reviews,

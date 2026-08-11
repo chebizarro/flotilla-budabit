@@ -31,7 +31,6 @@ import {
   makeCommunityModeratorRequestReactionFilters,
   makeCommunityProfileListFilters,
   makeCommunityReportDeleteFilters,
-  makeCommunityReportFilters,
   makeCommunityReportReviewFilters,
 } from "@app/core/community-state"
 import {writable, type Readable} from "svelte/store"
@@ -192,7 +191,6 @@ export const buildCommunityLiveFilters = ({
       : []),
     ...makeCommunityAdmissionFormFilters(definition),
     ...makeCommunityModeratorRequestFilters(definition),
-    ...makeCommunityReportFilters(definition),
   ]
 
   pushTagChunkFilters(filters, [FORM_RESPONSE_KIND], "#a", admissionFormAddresses)

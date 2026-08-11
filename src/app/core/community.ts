@@ -126,14 +126,17 @@ export type CommunityTos = {
   relay?: string
 }
 
-export type CommunityEmailDigestService = {
+export type CommunityServiceDescriptor = {
   servicePubkey: string
   requestRelay: string
   handlerAddress: string
   handlerRelay: string
 }
 
-export type CommunityOtherServiceTag = ["service", string, ...string[]]
+export type CommunityEmailDigestService = CommunityServiceDescriptor
+export type CommunityAlertService = CommunityServiceDescriptor
+
+export type CommunityOtherServiceTag = ["service", ...string[]]
 
 export type CommunityDefinition = {
   event: TrustedEvent
@@ -143,6 +146,7 @@ export type CommunityDefinition = {
   graspServers: string[]
   mints: CommunityMint[]
   emailDigestServices: CommunityEmailDigestService[]
+  communityAlertServices: CommunityAlertService[]
   otherServiceTags?: CommunityOtherServiceTag[]
   sections: CommunitySection[]
   tos?: CommunityTos
@@ -209,6 +213,7 @@ export type BuildCommunityDefinitionParams = {
   graspServers?: string[]
   mints?: CommunityMint[]
   emailDigestServices?: CommunityEmailDigestService[]
+  communityAlertServices?: CommunityAlertService[]
   otherServiceTags?: CommunityOtherServiceTag[]
   tos?: CommunityTos
   location?: string
@@ -283,7 +288,7 @@ export const normalizeCommunityServiceRelay = (value: string) => {
   }
 }
 
-export const normalizeCommunityEmailDigestHandlerAddress = (value: string) => {
+export const normalizeCommunityServiceHandlerAddress = (value: string) => {
   const trimmed = value.trim()
   if (
     value.length > COMMUNITY_SERVICE_MAX_ADDRESS_LENGTH ||
@@ -308,13 +313,23 @@ export const normalizeCommunityEmailDigestHandlerAddress = (value: string) => {
   return `${COMMUNITY_EMAIL_DIGEST_HANDLER_KIND}:${pubkey.toLowerCase()}:${identifier}`
 }
 
-export const normalizeCommunityEmailDigestService = (
-  service: CommunityEmailDigestService,
-): CommunityEmailDigestService | undefined => {
-  const servicePubkey = service.servicePubkey.trim()
-  const requestRelay = normalizeCommunityServiceRelay(service.requestRelay)
-  const handlerAddress = normalizeCommunityEmailDigestHandlerAddress(service.handlerAddress)
-  const handlerRelay = normalizeCommunityServiceRelay(service.handlerRelay)
+export const normalizeCommunityEmailDigestHandlerAddress = normalizeCommunityServiceHandlerAddress
+export const normalizeCommunityAlertHandlerAddress = normalizeCommunityServiceHandlerAddress
+
+export const normalizeCommunityServiceDescriptor = <T extends CommunityServiceDescriptor>(
+  service: T,
+): T | undefined => {
+  const servicePubkey =
+    typeof service?.servicePubkey === "string" ? service.servicePubkey.trim() : ""
+  const requestRelay = normalizeCommunityServiceRelay(
+    typeof service?.requestRelay === "string" ? service.requestRelay : "",
+  )
+  const handlerAddress = normalizeCommunityServiceHandlerAddress(
+    typeof service?.handlerAddress === "string" ? service.handlerAddress : "",
+  )
+  const handlerRelay = normalizeCommunityServiceRelay(
+    typeof service?.handlerRelay === "string" ? service.handlerRelay : "",
+  )
 
   if (!isHexPubkey(servicePubkey) || !requestRelay || !handlerAddress || !handlerRelay) {
     return undefined
@@ -325,13 +340,19 @@ export const normalizeCommunityEmailDigestService = (
     requestRelay,
     handlerAddress,
     handlerRelay,
-  }
+  } as T
 }
 
-export const getCommunityEmailDigestServiceDescriptorKey = (
+export const normalizeCommunityEmailDigestService = (
   service: CommunityEmailDigestService,
-) => {
-  const normalized = normalizeCommunityEmailDigestService(service)
+): CommunityEmailDigestService | undefined => normalizeCommunityServiceDescriptor(service)
+
+export const normalizeCommunityAlertService = (
+  service: CommunityAlertService,
+): CommunityAlertService | undefined => normalizeCommunityServiceDescriptor(service)
+
+export const getCommunityServiceDescriptorKey = (service: CommunityServiceDescriptor) => {
+  const normalized = normalizeCommunityServiceDescriptor(service)
 
   return normalized
     ? JSON.stringify([
@@ -342,6 +363,9 @@ export const getCommunityEmailDigestServiceDescriptorKey = (
       ])
     : ""
 }
+
+export const getCommunityEmailDigestServiceDescriptorKey = getCommunityServiceDescriptorKey
+export const getCommunityAlertServiceDescriptorKey = getCommunityServiceDescriptorKey
 
 export const makeCommunityNcommunity = ({
   pubkey,
@@ -531,6 +555,7 @@ export const buildCommunityDefinition = ({
   graspServers = [],
   mints = [],
   emailDigestServices = [],
+  communityAlertServices = [],
   otherServiceTags = [],
   tos,
   location,
@@ -564,28 +589,31 @@ export const buildCommunityDefinition = ({
   const normalizedGeohash = normalizeGeohash(geohash)
   if (normalizedGeohash) tags.push(["g", normalizedGeohash])
 
-  const serviceKeys = new Set<string>()
-  for (const service of emailDigestServices) {
-    const normalized = normalizeCommunityEmailDigestService(service)
-    if (!normalized) continue
+  const appendServices = (name: string, services: CommunityServiceDescriptor[]) => {
+    const serviceKeys = new Set<string>()
 
-    const key = getCommunityEmailDigestServiceDescriptorKey(normalized)
-    if (serviceKeys.has(key)) continue
+    for (const service of services) {
+      const normalized = normalizeCommunityServiceDescriptor(service)
+      if (!normalized) continue
 
-    serviceKeys.add(key)
-    tags.push([
-      "service",
-      "email-digest",
-      normalized.servicePubkey,
-      normalized.requestRelay,
-      normalized.handlerAddress,
-      normalized.handlerRelay,
-    ])
-  }
-  for (const tag of otherServiceTags) {
-    if (tag[0] === "service" && tag[1] && (tag[1] !== "email-digest" || tag.length > 6)) {
-      tags.push([...tag])
+      const key = getCommunityServiceDescriptorKey(normalized)
+      if (serviceKeys.has(key)) continue
+
+      serviceKeys.add(key)
+      tags.push([
+        "service",
+        name,
+        normalized.servicePubkey,
+        normalized.requestRelay,
+        normalized.handlerAddress,
+        normalized.handlerRelay,
+      ])
     }
+  }
+  appendServices("email-digest", emailDigestServices)
+  appendServices("community-alerts", communityAlertServices)
+  for (const tag of otherServiceTags) {
+    if (tag[0] === "service") tags.push([...tag])
   }
 
   for (const section of sections) {
@@ -696,12 +724,10 @@ const parseRetentionPolicy = (tag: string[]): CommunityRetentionPolicy | undefin
   return {kind, value, type}
 }
 
-const parseCommunityEmailDigestService = (
-  tag: string[],
-): CommunityEmailDigestService | undefined => {
-  if (tag.length !== 6 || tag[0] !== "service" || tag[1] !== "email-digest") return undefined
+const parseCommunityService = (tag: string[], name: string) => {
+  if (tag.length !== 6 || tag[0] !== "service" || tag[1] !== name) return undefined
 
-  return normalizeCommunityEmailDigestService({
+  return normalizeCommunityServiceDescriptor({
     servicePubkey: tag[2] || "",
     requestRelay: tag[3] || "",
     handlerAddress: tag[4] || "",
@@ -728,8 +754,10 @@ export const parseCommunityDefinition = (event: TrustedEvent): CommunityDefiniti
   const graspServers: string[] = []
   const mints: CommunityMint[] = []
   const emailDigestServices: CommunityEmailDigestService[] = []
+  const communityAlertServices: CommunityAlertService[] = []
   const otherServiceTags: CommunityOtherServiceTag[] = []
   const emailDigestServiceKeys = new Set<string>()
+  const communityAlertServiceKeys = new Set<string>()
   const sections: CommunitySection[] = []
   let currentSection: CommunitySection | undefined
   let tos: CommunityTos | undefined
@@ -740,13 +768,24 @@ export const parseCommunityDefinition = (event: TrustedEvent): CommunityDefiniti
   for (const tag of event.tags || []) {
     if (tag[0] === "service") {
       if (tag[1] === "email-digest" && tag.length === 6) {
-        const service = parseCommunityEmailDigestService(tag)
+        const service = parseCommunityService(tag, "email-digest")
         const key = service ? getCommunityEmailDigestServiceDescriptorKey(service) : ""
         if (service && !emailDigestServiceKeys.has(key)) {
           emailDigestServiceKeys.add(key)
           emailDigestServices.push(service)
+        } else if (!service) {
+          otherServiceTags.push([...tag] as CommunityOtherServiceTag)
         }
-      } else if (tag[1] && (tag[1] !== "email-digest" || tag.length > 6)) {
+      } else if (tag[1] === "community-alerts" && tag.length === 6) {
+        const service = parseCommunityService(tag, "community-alerts")
+        const key = service ? getCommunityAlertServiceDescriptorKey(service) : ""
+        if (service && !communityAlertServiceKeys.has(key)) {
+          communityAlertServiceKeys.add(key)
+          communityAlertServices.push(service)
+        } else if (!service) {
+          otherServiceTags.push([...tag] as CommunityOtherServiceTag)
+        }
+      } else {
         otherServiceTags.push([...tag] as CommunityOtherServiceTag)
       }
       continue
@@ -825,6 +864,7 @@ export const parseCommunityDefinition = (event: TrustedEvent): CommunityDefiniti
     graspServers: normalizeUserGraspServerUrls(graspServers),
     mints,
     emailDigestServices,
+    communityAlertServices,
     otherServiceTags,
     sections,
     tos,

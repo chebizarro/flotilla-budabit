@@ -157,5 +157,7 @@ describe("state", () => {
     expect(NIP46_PERMS).toContain("sign_event:24242")
     expect(NIP46_PERMS).toContain("sign_event:27235")
     expect(NIP46_PERMS).toContain("sign_event:30311")
+    expect(NIP46_PERMS).toContain("sign_event:30078")
+    expect(NIP46_PERMS).toContain("sign_event:32830")
   })
 })
