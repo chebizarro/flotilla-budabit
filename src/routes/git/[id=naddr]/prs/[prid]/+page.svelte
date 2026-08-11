@@ -236,7 +236,7 @@
   <title>{repoClass.name} - {pr?.subject || "PR"}</title>
 </svelte:head>
 
-<div bind:this={pageContainerRef}>
+<div bind:this={pageContainerRef} data-event={resolvedPrEvent?.id}>
   {#if isHiddenRoot}
     <div class="p-4 text-center text-muted-foreground">This pull request was hidden as spam.</div>
   {:else if pr && resolvedPrEvent}

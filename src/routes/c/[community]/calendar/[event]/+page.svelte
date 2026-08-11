@@ -336,6 +336,9 @@
   )
 
   let showAllReplies = $state(false)
+  let hashTargetRequest = 0
+  let hashTarget = $state({id: "", request: 0})
+  let revealedHashTargetKey = ""
 
   const visibleReplies = $derived(
     showAllReplies ? replies : replies.slice(Math.max(replies.length - 4, 0)),
@@ -493,6 +496,20 @@
   let compose: RoomCompose | undefined = $state()
   let composeElement: HTMLElement | undefined = $state()
 
+  const syncHashTarget = () => {
+    const match = window.location.hash.match(/^#event-([0-9a-f]{64})$/i)
+    hashTarget = {id: match?.[1]?.toLowerCase() || "", request: ++hashTargetRequest}
+  }
+
+  $effect(() => {
+    if (typeof window === "undefined") return
+
+    syncHashTarget()
+    window.addEventListener("hashchange", syncHashTarget)
+
+    return () => window.removeEventListener("hashchange", syncHashTarget)
+  })
+
   $effect(() => {
     void historicalLoadRetryVersion
 
@@ -501,7 +518,9 @@
     const identifier = getTagValue("d", event.tags)
     if (!identifier || identifier === eventParam) return
 
-    goto(makeCommunityCalendarPath(communityPubkey, identifier), {replaceState: true})
+    goto(`${makeCommunityCalendarPath(communityPubkey, identifier)}${window.location.hash}`, {
+      replaceState: true,
+    })
   })
 
   $effect(() => {
@@ -616,6 +635,19 @@
     }
   })
 
+  $effect(() => {
+    const {id, request} = hashTarget
+    const targetKey = `${eventPath}:${request}:${id}`
+    const targetIsLoaded = approvedEvent?.id === id || replies.some(reply => reply.id === id)
+    if (!id || !targetIsLoaded || revealedHashTargetKey === targetKey) return
+
+    revealedHashTargetKey = targetKey
+    showAllReplies = true
+    void tick().then(() => {
+      if (hashTarget.request === request) void scrollToEvent(id)
+    })
+  })
+
   const retryHistoricalLoad = () => {
     if (communityBootstrapFailed || communityPermissionEvidenceIncomplete) {
       window.location.reload()
@@ -655,7 +687,7 @@
 
 <PageContent class="flex flex-col gap-3 p-2 pt-4">
   {#if approvedEvent}
-    <article class="card2 bg-alt col-3 z-feature">
+    <article class="card2 bg-alt col-3 z-feature" data-event={approvedEvent.id}>
       {#if approvedEventCensorReason}
         <ModeratedContent reason={approvedEventCensorReason} />
       {:else}

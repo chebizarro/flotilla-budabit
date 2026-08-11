@@ -1,6 +1,6 @@
 <script lang="ts">
   import type {Snippet} from "svelte"
-  import {onMount} from "svelte"
+  import {onMount, tick} from "svelte"
   import {int, sortBy, remove, formatTimestampAsDate, MINUTE} from "@welshman/lib"
   import type {TrustedEvent, EventContent, EventTemplate, Filter} from "@welshman/util"
   import {makeEvent} from "@welshman/util"
@@ -24,6 +24,7 @@
   import PageContent from "@lib/components/PageContent.svelte"
   import Divider from "@lib/components/Divider.svelte"
   import Button from "@lib/components/Button.svelte"
+  import {scrollToEvent} from "@lib/html"
   import ProfileName from "@app/components/ProfileName.svelte"
   import ProfileCircle from "@app/components/ProfileCircle.svelte"
   import ChatMessage from "@app/components/ChatMessage.svelte"
@@ -212,6 +213,11 @@
   let initialThreadLoadId = 0
   let initialThreadLoading = $state(false)
   let activeChatId = $state("")
+  let hashTargetRequest = 0
+  let hashTarget = $state({id: "", request: 0})
+  let hashTargetLoadController: AbortController | undefined
+  let loadedHashTargetKey = ""
+  let revealedHashTargetKey = ""
 
   const finishInitialThreadLoad = (loadId: number) => {
     if (loadId === initialThreadLoadId) {
@@ -281,6 +287,72 @@
       olderMessagesLoading = false
     }
   }
+
+  const syncHashTarget = () => {
+    const match = window.location.hash.match(/^#event-([0-9a-f]{64})$/i)
+    hashTargetLoadController?.abort()
+    hashTargetLoadController = undefined
+    hashTarget = {id: match?.[1]?.toLowerCase() || "", request: ++hashTargetRequest}
+  }
+
+  $effect(() => {
+    if (typeof window === "undefined") return
+
+    syncHashTarget()
+    window.addEventListener("hashchange", syncHashTarget)
+
+    return () => window.removeEventListener("hashchange", syncHashTarget)
+  })
+
+  $effect(() => {
+    const {id, request} = hashTarget
+    const messageIndex = sortedMessages.findIndex(message => message.id === id)
+    const targetKey = `${activeChatId}:${request}:${id}`
+
+    if (!id) return
+
+    if (messageIndex >= 0) {
+      hashTargetLoadController?.abort()
+      hashTargetLoadController = undefined
+      visibleMessageCount = Math.max(visibleMessageCount, sortedMessages.length - messageIndex)
+
+      if (revealedHashTargetKey !== targetKey) {
+        revealedHashTargetKey = targetKey
+        void tick().then(() => {
+          if (hashTarget.request === request) void scrollToEvent(id)
+        })
+      }
+      return
+    }
+
+    const selfPubkey = $pubkey
+    const recipient = recipientPubkey
+    const relays = getDmPublishRelays(selfInboxRelays, recipientInboxRelays)
+    const loadKey = `${targetKey}:${selfPubkey}:${recipient}:${relays.join("|")}`
+    if (
+      loadedHashTargetKey === loadKey ||
+      relayCheckPending ||
+      !selfPubkey ||
+      !recipient ||
+      relays.length === 0
+    )
+      return
+
+    loadedHashTargetKey = loadKey
+    hashTargetLoadController?.abort()
+    const controller = new AbortController()
+    hashTargetLoadController = controller
+
+    void load({
+      relays,
+      filters: makeConversationFilters(selfPubkey, recipient, {ids: [id], limit: 1}),
+      signal: controller.signal,
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        if (hashTargetLoadController === controller) hashTargetLoadController = undefined
+      })
+  })
 
   const elements = $derived.by(() => {
     const elements = [] as Array<{
@@ -466,6 +538,7 @@
     observer.observe(dynamicPadding!)
 
     return () => {
+      hashTargetLoadController?.abort()
       observer.unobserve(chatCompose!)
       observer.unobserve(dynamicPadding!)
     }

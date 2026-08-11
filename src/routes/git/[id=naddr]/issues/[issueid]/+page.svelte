@@ -896,7 +896,7 @@
     <p class="text-center text-sm sm:text-base">This issue was hidden as spam.</p>
   </div>
 {:else if issue}
-  <div class="px-2 py-2 sm:px-0 sm:py-4" transition:slide>
+  <div class="px-2 py-2 sm:px-0 sm:py-4" data-event={issueEvent?.id} transition:slide>
     <Card class="git-card p-4 transition-colors sm:p-6">
       <div class="flex items-start gap-2 sm:gap-4">
         {#if statusIcon}

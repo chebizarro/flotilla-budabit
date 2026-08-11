@@ -32,7 +32,6 @@
   import Icon from "@lib/components/Icon.svelte"
   import ImageIcon from "@lib/components/ImageIcon.svelte"
   import Button from "@lib/components/Button.svelte"
-  import {scrollToEvent} from "@lib/html"
   import ProfileCircle from "@app/components/ProfileCircle.svelte"
   import ProfileDetail from "@app/components/ProfileDetail.svelte"
   import ProfileName from "@app/components/ProfileName.svelte"
@@ -46,6 +45,7 @@
     recoverablePublicationOperations,
   } from "@app/core/publication-operations"
   import {clearModals, pushModal} from "@app/util/modal"
+  import {goToEventIdPath} from "@app/util/routes"
   import {markNotificationsRead} from "@app/util/notification-center"
   import {
     loadMoreNotificationHistory,
@@ -189,15 +189,19 @@
 
     try {
       await waitForNavigationIntentPaint()
-      await goto(target.path)
-      clearModals()
+      if (target.eventId) {
+        const navigation = goToEventIdPath(target.eventId, target.path)
+        clearModals()
+        await navigation
+      } else {
+        await goto(target.path)
+        clearModals()
+      }
     } catch (error) {
       if (pendingNavigationKey === navigationKey) pendingNavigationKey = ""
       console.error("[NotificationsModal] Failed to navigate to notification target", error)
       return
     }
-
-    if (target.eventId) await scrollToEvent(target.eventId)
   }
 
   const openProfile = (event: Event, pubkey: string) => {

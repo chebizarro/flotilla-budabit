@@ -3,7 +3,20 @@ import {Router} from "@welshman/router"
 import {repository, tracker} from "@welshman/app"
 import {Address, getTagValue, isRelayUrl, isReplaceable, normalizeRelayUrl} from "@welshman/util"
 import type {TrustedEvent} from "@welshman/util"
-import {GIT_REPO_ANNOUNCEMENT, GIT_REPO_STATE} from "@nostr-git/core/events"
+import {
+  GIT_COMMENT,
+  GIT_COVER_LETTER,
+  GIT_ISSUE,
+  GIT_LABEL,
+  GIT_PULL_REQUEST,
+  GIT_PULL_REQUEST_UPDATE,
+  GIT_REPO_ANNOUNCEMENT,
+  GIT_REPO_STATE,
+  GIT_STATUS_APPLIED,
+  GIT_STATUS_CLOSED,
+  GIT_STATUS_DRAFT,
+  GIT_STATUS_OPEN,
+} from "@nostr-git/core/events"
 import {buildRepoNaddrFromEvent} from "@nostr-git/core/utils"
 import {
   TARGETED_PUBLICATION_KIND,
@@ -173,6 +186,31 @@ export const getTargetedPublicationRelayHints = (event: Pick<TrustedEvent, "kind
 }
 
 const REPO_ADDRESS_KINDS: number[] = [GIT_REPO_ANNOUNCEMENT, GIT_REPO_STATE]
+const REPO_SCOPED_EVENT_KINDS = new Set([
+  1617,
+  GIT_PULL_REQUEST,
+  GIT_PULL_REQUEST_UPDATE,
+  GIT_ISSUE,
+  1623,
+  GIT_COVER_LETTER,
+  GIT_STATUS_OPEN,
+  GIT_STATUS_APPLIED,
+  GIT_STATUS_CLOSED,
+  GIT_STATUS_DRAFT,
+  GIT_LABEL,
+])
+const REPO_COMMENT_ROOT_KINDS = new Set([
+  GIT_REPO_ANNOUNCEMENT,
+  GIT_REPO_STATE,
+  GIT_PULL_REQUEST,
+  GIT_PULL_REQUEST_UPDATE,
+  GIT_ISSUE,
+  1623,
+  GIT_STATUS_OPEN,
+  GIT_STATUS_APPLIED,
+  GIT_STATUS_CLOSED,
+  GIT_STATUS_DRAFT,
+])
 
 const getRepoTaggedRelays = (event: Pick<TrustedEvent, "tags">) =>
   (event.tags || []).filter(tag => tag[0] === "relays").flatMap(tag => tag.slice(1))
@@ -185,36 +223,59 @@ export type RepoAddressPointer = {
   relay?: string
 }
 
-// Extract references to repo announcements (kind 30617/30618) from an event's a/A tags
+const parseRepoAddressTag = (tag: string[]): RepoAddressPointer | undefined => {
+  const address = String(tag[1] || "")
+  const [kindPart, pubkey, ...identifierParts] = address.split(":")
+  const identifier = identifierParts.join(":")
+
+  if (!/^\d+$/.test(kindPart) || !/^[0-9a-f]{64}$/i.test(pubkey) || !identifier) return undefined
+
+  const kind = Number(kindPart)
+  if (!REPO_ADDRESS_KINDS.includes(kind)) return undefined
+
+  return {
+    kind,
+    pubkey,
+    identifier,
+    address,
+    relay: tag[2] || undefined,
+  }
+}
+
+// Extract references to repo announcements/state events from address-bearing a/A/q tags.
 export const getRepoAddressPointersFromEvent = (
   event: Pick<TrustedEvent, "tags">,
 ): RepoAddressPointer[] => {
   const pointers: RepoAddressPointer[] = []
 
   for (const tag of event.tags || []) {
-    if (tag[0] !== "a" && tag[0] !== "A") continue
+    if (tag[0] !== "a" && tag[0] !== "A" && tag[0] !== "q") continue
 
-    const address = String(tag[1] || "")
-    const [kindPart, pubkey, ...identifierParts] = address.split(":")
-    const kind = normalizeKind(kindPart)
-
-    if (kind === undefined || !REPO_ADDRESS_KINDS.includes(kind) || !pubkey) continue
-
-    pointers.push({
-      kind,
-      pubkey,
-      identifier: identifierParts.join(":"),
-      address,
-      relay: tag[2] || undefined,
-    })
+    const pointer = parseRepoAddressTag(tag)
+    if (pointer) pointers.push(pointer)
   }
 
   return pointers
 }
 
+const isRepoScopedEvent = (event: Pick<TrustedEvent, "kind" | "tags">) => {
+  const kind = normalizeKind(event.kind)
+  if (kind === undefined) return false
+  if (REPO_ADDRESS_KINDS.includes(kind) || REPO_SCOPED_EVENT_KINDS.has(kind)) return true
+  if (kind !== GIT_COMMENT) return false
+
+  const rootKind = Number.parseInt(
+    getTagValue("K", event.tags) || getTagValue("k", event.tags) || "",
+    10,
+  )
+  const externalRoot = getTagValue("I", event.tags) || getTagValue("i", event.tags) || ""
+
+  return REPO_COMMENT_ROOT_KINDS.has(rootKind) || externalRoot.startsWith("git:commit:")
+}
+
 // Canonical relay hints for repo-related events: the relays declared by the
-// repo announcement the event points at (via its a/A tag). Falls back to the
-// relay hint embedded in the a/A tag when the announcement is not known locally.
+// repo announcement the event points at (via its a/A/q tag). Falls back to the
+// relay hint embedded in the reference tag when the announcement is not known locally.
 // Repo announcement/state events resolve to their own relays tag.
 export const getRepoAnnouncementRelayHints = (event: Pick<TrustedEvent, "kind" | "tags">) => {
   const kind = normalizeKind(event.kind)
@@ -222,6 +283,8 @@ export const getRepoAnnouncementRelayHints = (event: Pick<TrustedEvent, "kind" |
   if (kind !== undefined && REPO_ADDRESS_KINDS.includes(kind)) {
     return normalizeRelayHints(getRepoTaggedRelays(event))
   }
+
+  if (!isRepoScopedEvent(event)) return []
 
   const pointers = getRepoAddressPointersFromEvent(event)
   if (pointers.length === 0) return []

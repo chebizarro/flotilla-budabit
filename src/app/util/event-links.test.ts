@@ -38,8 +38,18 @@ vi.mock("@welshman/util", () => ({
 }))
 
 vi.mock("@nostr-git/core/events", () => ({
+  GIT_COMMENT: 1111,
+  GIT_COVER_LETTER: 1624,
+  GIT_ISSUE: 1621,
+  GIT_LABEL: 1985,
+  GIT_PULL_REQUEST: 1618,
+  GIT_PULL_REQUEST_UPDATE: 1619,
   GIT_REPO_ANNOUNCEMENT: 30617,
   GIT_REPO_STATE: 30618,
+  GIT_STATUS_APPLIED: 1631,
+  GIT_STATUS_CLOSED: 1632,
+  GIT_STATUS_DRAFT: 1633,
+  GIT_STATUS_OPEN: 1630,
 }))
 
 vi.mock("@nostr-git/core/utils", () => ({
@@ -281,11 +291,49 @@ describe("event link utilities", () => {
       relayMocks.trackerRelays = new Set(["wss://seen.example.com"])
 
       const {getEventRelayHints} = await import("./event-links")
-      const comment = makeEvent({kind: 1111, tags: [["A", repoAddress]]})
+      const comment = makeEvent({
+        kind: 1111,
+        tags: [
+          ["K", "30617"],
+          ["q", repoAddress, "wss://pointer.example.com"],
+        ],
+      })
 
       expect(getEventRelayHints(comment as any)).toEqual([
         "wss://repo-relay.example.com/",
         "wss://repo-relay2.example.com/",
+      ])
+    })
+
+    it("recognizes only repository addresses in q tags", async () => {
+      const {getRepoAddressPointersFromEvent} = await import("./event-links")
+      const event = makeEvent({
+        tags: [
+          ["q", "4".repeat(64), "wss://event.example.com"],
+          ["q", `1:${repoPubkey}:note`, "wss://note.example.com"],
+          ["q", `30617:${repoPubkey}:`, "wss://empty.example.com"],
+          ["q", repoAddress, "wss://repo-pointer.example.com"],
+        ],
+      })
+
+      expect(getRepoAddressPointersFromEvent(event as any)).toEqual([
+        {
+          kind: 30617,
+          pubkey: repoPubkey,
+          identifier: "my-repo",
+          address: repoAddress,
+          relay: "wss://repo-pointer.example.com",
+        },
+      ])
+    })
+
+    it("does not treat a quoted repository as relay scope for an unrelated note", async () => {
+      mockRepoLookup()
+      const {getEventRelayHints} = await import("./event-links")
+      const note = makeEvent({kind: 1, tags: [["q", repoAddress]]})
+
+      expect(getEventRelayHints(note as any, {relays: ["wss://note.example.com"]})).toEqual([
+        "wss://note.example.com/",
       ])
     })
 

@@ -77,11 +77,10 @@
 
 <script lang="ts">
   import * as nip19 from "nostr-tools/nip19"
-  import {goto} from "$app/navigation"
   import {profilesByPubkey} from "@welshman/app"
   import {Router} from "@welshman/router"
   import type {TrustedEvent} from "@welshman/util"
-  import {Address, EVENT_DATE, EVENT_TIME, MESSAGE, THREAD} from "@welshman/util"
+  import {Address, EVENT_DATE, EVENT_TIME, MESSAGE, THREAD, ZAP_GOAL} from "@welshman/util"
   import {FileCode, GitCommit} from "@lucide/svelte"
   import {githubPermalinkDiffId} from "@nostr-git/core/git"
   import Button from "@lib/components/Button.svelte"
@@ -91,11 +90,12 @@
   import ModeratedContent from "@app/components/community/ModeratedContent.svelte"
   import {deriveEvent, entityLink} from "@app/core/state"
   import {activeCommunityReportState} from "@app/core/community-state"
+  import {getRepoPublicationAddress} from "@app/core/repo-publication"
   import {
     getCommunityCensorReason,
     getCommunityReportEventAddress,
   } from "@app/core/community-reports"
-  import {goToEvent, makeGitPath} from "@app/util/routes"
+  import {goToEvent, goToEventPath, makeGitPath} from "@app/util/routes"
   import {makeRepoHrefFromEvent} from "@app/util/repo-links"
   import {pushToast} from "@app/util/toast"
   import {getQuoteRelayHints, getQuoteTagRelayHints} from "@app/util/git-quote"
@@ -128,10 +128,7 @@
   const {id, identifier, kind, pubkey, relays = []} = value
   const idOrAddress = id || new Address(kind, pubkey, identifier).toString()
   const authorRelays = pubkey ? Router.get().FromPubkey(pubkey).getUrls() : []
-  const referenceRelays = getQuoteRelayHints(
-    relays,
-    getQuoteTagRelayHints(event, idOrAddress),
-  )
+  const referenceRelays = getQuoteRelayHints(relays, getQuoteTagRelayHints(event, idOrAddress))
   const mergedRelays = getQuoteRelayHints(
     referenceRelays,
     Router.get().Quote(event, idOrAddress, relays).getUrls(),
@@ -154,9 +151,7 @@
   const fallbackEntity = id
     ? makeEventNevent({id, kind, pubkey}, {relays: referenceRelays})
     : new Address(kind, pubkey, identifier, referenceRelays).toNaddr()
-  const entity = $derived.by(() =>
-    $quote ? makeEventShareEntityForEvent($quote) : fallbackEntity,
-  )
+  const entity = $derived.by(() => ($quote ? makeEventShareEntityForEvent($quote) : fallbackEntity))
 
   const onclick = () => {
     if ($quote) {
@@ -191,11 +186,18 @@
       event.preventDefault()
       isOpenPending = true
 
-      void goto(`${target.pathname}${target.search}${target.hash}`).catch(error => {
-        console.error("Failed to open quoted git item", error)
+      if (!$quote) {
         isOpenPending = false
-        pushToast({message: "Failed to open quoted git item.", theme: "error"})
-      })
+        return
+      }
+      void goToEventPath($quote, `${target.pathname}${target.search}${target.hash}`)
+        .catch(error => {
+          console.error("Failed to open quoted git item", error)
+          pushToast({message: "Failed to open quoted git item.", theme: "error"})
+        })
+        .finally(() => {
+          isOpenPending = false
+        })
     } catch {
       isOpenPending = false
     }
@@ -213,11 +215,18 @@
       }
 
       isOpenPending = true
-      void goto(`${target.pathname}${target.search}${target.hash}`).catch(error => {
-        console.error("Failed to open quoted git item", error)
+      if (!$quote) {
         isOpenPending = false
-        pushToast({message: "Failed to open quoted git item.", theme: "error"})
-      })
+        return
+      }
+      void goToEventPath($quote, `${target.pathname}${target.search}${target.hash}`)
+        .catch(error => {
+          console.error("Failed to open quoted git item", error)
+          pushToast({message: "Failed to open quoted git item.", theme: "error"})
+        })
+        .finally(() => {
+          isOpenPending = false
+        })
     } catch {
       isOpenPending = false
     }
@@ -356,9 +365,6 @@
     }
   }
 
-  const getLineSide = (evt: TrustedEvent) =>
-    getTag(evt, "line")?.[2] === "del" ? "del" : undefined
-
   const getLineLabel = (evt: TrustedEvent) => {
     const {start, end} = getLineRange(evt)
     if (!start) return ""
@@ -405,6 +411,14 @@
     const repoAddress = repoAddressOverride || getTagValue(evt, "repo") || getTagValue(evt, "a")
     if (repoAddress) return getRepoLabelFromAddress(repoAddress)
     return ""
+  }
+
+  const getGitRepoAddress = (evt: TrustedEvent) => {
+    try {
+      return getRepoPublicationAddress(evt)
+    } catch {
+      return ""
+    }
   }
 
   const getCommitShort = (evt: TrustedEvent) => {
@@ -477,7 +491,10 @@
   }
 
   const isCommunityCommentRootKind = (rootKind: number | null) =>
-    rootKind === THREAD || rootKind === EVENT_DATE || rootKind === EVENT_TIME
+    rootKind === THREAD ||
+    rootKind === EVENT_DATE ||
+    rootKind === EVENT_TIME ||
+    rootKind === ZAP_GOAL
 
   const getCommentPreview = (evt: TrustedEvent) => {
     const text = evt?.content || ""
@@ -553,12 +570,9 @@
     if (evt.kind === GIT_COMMENT) {
       const rootKind = getCommentRootKind(evt)
       if (isCommunityCommentRootKind(rootKind)) return null
+      if (rootKind !== GIT_ISSUE && rootKind !== GIT_PULL_REQUEST) return null
 
-      const repoAddress =
-        getTagValue(evt, "A") ||
-        getTagValue(evt, "a") ||
-        getTagValue(evt, "q") ||
-        getTagValue(evt, "repo")
+      const repoAddress = getGitRepoAddress(evt)
       const repoLabel = getDisplayRepo(evt, repoAddress)
       const rootId = getCommentRootId(evt)
       const contextLabel = getCommentContextLabel(rootKind)
@@ -566,22 +580,19 @@
         repoAddress,
         getQuoteRelayHints(relays, getTagRelayHints(evt, ["A", "a", "q", "repo"], repoAddress)),
       )
+      if (!baseHref) return null
       const filePath = getFilePath(evt)
       const line = getLineRange(evt)
       const targetLine = line.end || line.start
       const inlineLocationLabel = filePath
         ? `${filePath}${targetLine ? `:${line.start && line.end && line.end !== line.start ? `${line.start}-${line.end}` : targetLine}` : ""}`
         : ""
-      const inlineDiffAnchor =
-        filePath && targetLine && diffHash
-          ? `#diff-${diffHash}${getLineSide(evt) === "del" ? "L" : "R"}${targetLine}`
-          : ""
       let href = ""
       if (baseHref) {
         if (rootKind === GIT_ISSUE) {
           href = `${baseHref}/issues/${rootId}#comment-${evt.id}`
         } else if (rootKind === GIT_PULL_REQUEST) {
-          href = `${baseHref}/prs/${rootId}${inlineDiffAnchor || `#comment-${evt.id}`}`
+          href = `${baseHref}/prs/${rootId}#comment-${evt.id}`
         } else if (rootId) {
           href = `${baseHref}#comment-${evt.id}`
         } else {
@@ -630,40 +641,13 @@
     return base
   }
 
-  const openCurrentTarget = (href: string) => {
-    if (typeof window === "undefined") return false
-
-    try {
-      const target = new URL(href, window.location.origin)
-      const current = new URL(window.location.href)
-      if (target.pathname !== current.pathname || target.search !== current.search) return false
-      if (!target.hash) return false
-
-      if (target.hash !== current.hash) {
-        window.location.hash = target.hash
-      } else {
-        window.dispatchEvent(
-          new HashChangeEvent("hashchange", {
-            oldURL: current.href,
-            newURL: target.href,
-          }),
-        )
-      }
-
-      return true
-    } catch {
-      return false
-    }
-  }
-
   let diffHash = $state("")
 
   $effect(() => {
     if (!$quote) return
     const parentCommit = getTagValue($quote, "parent-commit")
     const filePath = getFilePath($quote)
-    const inlineComment = $quote.kind === GIT_COMMENT && getTagValue($quote, "line") && filePath
-    if ((!parentCommit && !inlineComment) || !filePath) {
+    if (!parentCommit || !filePath) {
       diffHash = ""
       return
     }
@@ -697,17 +681,7 @@
   const gitCard = $derived.by(() => ($quote ? getGitShareCard($quote, mergedRelays) : null))
 
   const handlePermalinkOpen = (event: MouseEvent, href: string) => {
-    if (!openCurrentTarget(href)) {
-      openInternalHref(event, href)
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    isOpenPending = true
-    requestAnimationFrame(() => {
-      isOpenPending = false
-    })
+    openInternalHref(event, href)
   }
 </script>
 

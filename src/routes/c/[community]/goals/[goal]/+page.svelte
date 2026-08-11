@@ -20,6 +20,7 @@
   import PageContent from "@lib/components/PageContent.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
+  import {scrollToEvent} from "@lib/html"
   import Content from "@app/components/Content.svelte"
   import ChannelMessage from "@app/components/ChannelMessage.svelte"
   import NoteCard from "@app/components/NoteCard.svelte"
@@ -83,6 +84,9 @@
   let eventToEdit: TrustedEvent | undefined = $state()
   let compose: RoomCompose | undefined = $state()
   let composeElement: HTMLElement | undefined = $state()
+  let hashTargetRequest = 0
+  let hashTarget = $state({id: "", request: 0})
+  let revealedHashTargetKey = ""
 
   const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
   const communityPubkey = $derived(parsedCommunity?.pubkey || "")
@@ -378,6 +382,33 @@
 
   const canEditReply = (event: TrustedEvent) => canEditReplyEvent(event, $pubkey, canReply)
 
+  const syncHashTarget = () => {
+    const match = window.location.hash.match(/^#event-([0-9a-f]{64})$/i)
+    hashTarget = {id: match?.[1]?.toLowerCase() || "", request: ++hashTargetRequest}
+  }
+
+  $effect(() => {
+    if (typeof window === "undefined") return
+
+    syncHashTarget()
+    window.addEventListener("hashchange", syncHashTarget)
+
+    return () => window.removeEventListener("hashchange", syncHashTarget)
+  })
+
+  $effect(() => {
+    const {id, request} = hashTarget
+    const targetKey = `${goalPath}:${request}:${id}`
+    const targetIsLoaded = approvedGoal?.id === id || replies.some(reply => reply.id === id)
+    if (!id || !targetIsLoaded || revealedHashTargetKey === targetKey) return
+
+    revealedHashTargetKey = targetKey
+    showAllReplies = true
+    void tick().then(() => {
+      if (hashTarget.request === request) void scrollToEvent(id)
+    })
+  })
+
   $effect(() => {
     void historicalLoadRetryVersion
 
@@ -524,7 +555,7 @@
 
 <PageContent class="flex flex-col gap-3 p-2 pt-4">
   {#if approvedGoal}
-    <article class="card2 bg-alt z-feature w-full shadow-md">
+    <article class="card2 bg-alt z-feature w-full shadow-md" data-event={approvedGoal.id}>
       {#if approvedGoalCensorReason}
         <ModeratedContent reason={approvedGoalCensorReason} />
       {:else}
@@ -587,7 +618,7 @@
             sectionName: commentSectionName,
           })}
           {#if censorReason}
-            <div class="card2 bg-alt z-feature w-full">
+            <div class="card2 bg-alt z-feature w-full" data-event={replyEvent.id}>
               <ModeratedContent reason={censorReason} />
             </div>
           {:else}

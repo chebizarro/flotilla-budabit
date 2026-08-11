@@ -1,12 +1,26 @@
 import type {Page} from "@sveltejs/kit"
 import * as nip19 from "nostr-tools/nip19"
 import {goto} from "$app/navigation"
-import {request} from "@welshman/net"
-import {sleep} from "@welshman/lib"
+import {load, request} from "@welshman/net"
 import type {Filter, TrustedEvent} from "@welshman/util"
 import {pubkey, repository} from "@welshman/app"
-import {scrollToEvent} from "@lib/html"
+import {waitAndScrollToEvent} from "@lib/html"
 import {identity} from "@welshman/lib"
+import {
+  GIT_COMMENT,
+  GIT_COVER_LETTER,
+  GIT_ISSUE,
+  GIT_LABEL,
+  GIT_PULL_REQUEST,
+  GIT_PULL_REQUEST_UPDATE,
+  GIT_REPO_ANNOUNCEMENT,
+  GIT_REPO_STATE,
+  GIT_STATUS_APPLIED,
+  GIT_STATUS_CLOSED,
+  GIT_STATUS_DRAFT,
+  GIT_STATUS_OPEN,
+} from "@nostr-git/core/events"
+import {githubPermalinkDiffId} from "@nostr-git/core/git"
 import {
   COMMENT,
   EVENT_DATE,
@@ -24,8 +38,10 @@ import {
   parseCommunityInput,
   parseTargetedPublication,
 } from "@app/core/community"
-import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
-import {getEventRelayHints, makeEventNevent} from "@app/util/event-links"
+import {GIT_PERMALINK_KIND, SMART_WIDGET_KIND} from "@app/core/community-feeds"
+import {COMMIT_COMMENT_KIND} from "@app/core/commit-comments"
+import {getRepoPublicationAddress} from "@app/core/repo-publication"
+import {getEventRelayHints, makeEventNevent, normalizeRelayHints} from "@app/util/event-links"
 
 export const COMMUNITY_EXPLAINER_PATH = "/community-guide"
 
@@ -388,6 +404,21 @@ const getTargetedPublicationEventPath = (event: TrustedEvent) => {
   return communityPubkey ? makeTargetedPublicationPath(communityPubkey, event.kind) : undefined
 }
 
+const getTargetedPublicationDetailPath = (event: TrustedEvent) => {
+  const path = getTargetedPublicationEventPath(event)
+  if (!path) return undefined
+
+  if (event.kind === EVENT_DATE || event.kind === EVENT_TIME) {
+    const identifier = getTagValue("d", event.tags)
+
+    return identifier ? `${path}/${encodeURIComponent(identifier)}` : path
+  }
+
+  if (event.kind === ZAP_GOAL) return `${path}/${encodeURIComponent(event.id)}`
+
+  return path
+}
+
 const loadTargetedPublicationEventPath = async (event: TrustedEvent, urls: string[]) => {
   const filters = getTargetedPublicationFiltersForOriginal(event)
 
@@ -395,13 +426,13 @@ const loadTargetedPublicationEventPath = async (event: TrustedEvent, urls: strin
 
   await request({relays: urls, filters, autoClose: true}).catch(() => undefined)
 
-  return getTargetedPublicationEventPath(event)
+  return getTargetedPublicationDetailPath(event)
 }
 
 export const getCommunityEventPath = (event: TrustedEvent) => {
   const communityPubkey = getCommunityPubkeyForEvent(event)
 
-  const targetedPublicationPath = getTargetedPublicationEventPath(event)
+  const targetedPublicationPath = getTargetedPublicationDetailPath(event)
 
   if (targetedPublicationPath) return targetedPublicationPath
 
@@ -430,8 +461,14 @@ export const getCommunityEventPath = (event: TrustedEvent) => {
 
     if (rootKind === EVENT_DATE || rootKind === EVENT_TIME) {
       const calendarAddress = getTagValue("A", event.tags) || getTagValue("a", event.tags) || ""
+      const rootId = getEventRootId(event)
+      const rootEvent = rootId
+        ? (repository.getEvent(rootId) as TrustedEvent | undefined)
+        : undefined
       const calendarId =
-        getAddressIdentifierForKind(calendarAddress, rootKind) || getEventRootId(event)
+        getAddressIdentifierForKind(calendarAddress, rootKind) ||
+        (rootEvent?.kind === rootKind ? getTagValue("d", rootEvent.tags) : "") ||
+        rootId
 
       return calendarId ? makeCommunityCalendarPath(communityPubkey, calendarId) : undefined
     }
@@ -442,6 +479,190 @@ export const getCommunityEventPath = (event: TrustedEvent) => {
       return goalId ? makeCommunityGoalPath(communityPubkey, goalId) : undefined
     }
   }
+
+  return undefined
+}
+
+const GIT_STATUS_KINDS = new Set([
+  GIT_STATUS_OPEN,
+  GIT_STATUS_APPLIED,
+  GIT_STATUS_CLOSED,
+  GIT_STATUS_DRAFT,
+])
+
+const getFirstTagValue = (event: TrustedEvent, names: string[]) => {
+  for (const name of names) {
+    const value = getTagValue(name, event.tags)
+    if (value) return value
+  }
+
+  return ""
+}
+
+const getGitRootId = (event: TrustedEvent) => {
+  if (GIT_STATUS_KINDS.has(event.kind)) {
+    return (
+      event.tags.find(tag => tag[0] === "e" && tag[3] === "root")?.[1] ||
+      getFirstTagValue(event, ["E", "e"])
+    )
+  }
+
+  return getFirstTagValue(event, ["E", "e"])
+}
+
+const loadReferencedEvent = async (id: string, relays: string[]) => {
+  if (!id) return undefined
+
+  const cached = repository.getEvent(id) as TrustedEvent | undefined
+  if (cached || relays.length === 0) return cached
+
+  const events = await load({relays, filters: [{ids: [id], limit: 1}]}).catch(
+    () => [] as TrustedEvent[],
+  )
+
+  return (
+    (repository.getEvent(id) as TrustedEvent | undefined) || events.find(event => event.id === id)
+  )
+}
+
+const getSharedRepoAddress = (...events: Array<TrustedEvent | undefined>) => {
+  try {
+    const addresses = Array.from(
+      new Set(
+        events
+          .filter(Boolean)
+          .map(event => getRepoPublicationAddress(event!))
+          .filter(Boolean),
+      ),
+    )
+
+    return addresses.length === 1 ? addresses[0] : ""
+  } catch {
+    return ""
+  }
+}
+
+const makeRepoEventBasePath = (repoAddress: string, relays: string[]) => {
+  const [kindValue, owner, ...identifierParts] = repoAddress.split(":")
+  const identifier = identifierParts.join(":")
+  if (
+    kindValue !== String(GIT_REPO_ANNOUNCEMENT) ||
+    !/^[0-9a-f]{64}$/i.test(owner) ||
+    !identifier
+  ) {
+    return ""
+  }
+
+  const relayHints = normalizeRelayHints(relays)
+  const naddr = nip19.naddrEncode({
+    kind: GIT_REPO_ANNOUNCEMENT,
+    pubkey: owner,
+    identifier,
+    relays: relayHints.length > 0 ? relayHints : undefined,
+  })
+
+  return makeGitPath(undefined, naddr)
+}
+
+const getGitLineRange = (event: TrustedEvent) => {
+  const tag = event.tags.find(candidate => candidate[0] === "lines" || candidate[0] === "line")
+  const [startValue = "", dashEndValue = ""] = (tag?.[1] || "").split("-")
+  const start = Number.parseInt(startValue, 10)
+  const separateEndValue = tag?.[2] === "del" ? "" : tag?.[2] || ""
+  const end = Number.parseInt(dashEndValue || separateEndValue, 10)
+
+  return {
+    start: Number.isFinite(start) ? start : undefined,
+    end: Number.isFinite(end) ? end : Number.isFinite(start) ? start : undefined,
+  }
+}
+
+const getGitPermalinkPath = async (event: TrustedEvent, basePath: string) => {
+  const commit = getTagValue("commit", event.tags)
+  const parentCommit = getTagValue("parent-commit", event.tags)
+  const filePath = getFirstTagValue(event, ["file", "path", "f"])
+  const pullRequestId = getTagValue("e", event.tags)
+  const {start, end} = getGitLineRange(event)
+
+  if (parentCommit) {
+    const diffHash = filePath ? await githubPermalinkDiffId(filePath).catch(() => "") : ""
+    if (filePath && !diffHash) return undefined
+
+    const lineRange = start ? `R${start}${end && end !== start ? `-R${end}` : ""}` : ""
+    const anchor = diffHash ? `#diff-${diffHash}${lineRange}` : ""
+    if (commit) return `${basePath}/commits/${commit}${anchor}`
+    if (pullRequestId) return `${basePath}/prs/${pullRequestId}${anchor}`
+    return `${basePath}${anchor}`
+  }
+
+  if (filePath) {
+    const anchor = start ? `#L${start}${end && end !== start ? `-L${end}` : ""}` : ""
+
+    return `${basePath}/code?path=${encodeURIComponent(filePath)}${anchor}`
+  }
+  if (commit) return `${basePath}/commits/${commit}`
+  if (pullRequestId) return `${basePath}/prs/${pullRequestId}`
+
+  return basePath
+}
+
+export const getGitEventPath = async (event: TrustedEvent, relays: string[]) => {
+  const rootId = getGitRootId(event)
+  const eventRepoAddress = getSharedRepoAddress(event)
+  const commentRootKind = Number.parseInt(getFirstTagValue(event, ["K", "k"]), 10)
+  const needsCommentRoot =
+    event.kind === GIT_COMMENT &&
+    !!rootId &&
+    (!commentRootKind ||
+      ([GIT_ISSUE, GIT_PULL_REQUEST].includes(commentRootKind) && !eventRepoAddress))
+  const needsRoot =
+    event.kind === GIT_COVER_LETTER ||
+    event.kind === GIT_LABEL ||
+    GIT_STATUS_KINDS.has(event.kind) ||
+    needsCommentRoot
+  const root = needsRoot ? await loadReferencedEvent(rootId, relays) : undefined
+  const repoAddress = getSharedRepoAddress(event, root)
+  const basePath = makeRepoEventBasePath(repoAddress, relays)
+  if (!basePath) return undefined
+
+  if (event.kind === GIT_REPO_ANNOUNCEMENT || event.kind === GIT_REPO_STATE) return basePath
+  if (event.kind === GIT_ISSUE) return `${basePath}/issues/${event.id}`
+  if (event.kind === GIT_PULL_REQUEST) return `${basePath}/prs/${event.id}`
+  if (event.kind === GIT_PULL_REQUEST_UPDATE) {
+    return rootId ? `${basePath}/prs/${rootId}` : undefined
+  }
+
+  if (
+    event.kind === GIT_COVER_LETTER ||
+    event.kind === GIT_LABEL ||
+    GIT_STATUS_KINDS.has(event.kind)
+  ) {
+    if (!rootId || !root) return undefined
+    if (root.kind === GIT_ISSUE) return `${basePath}/issues/${rootId}`
+    if (root.kind === GIT_PULL_REQUEST) return `${basePath}/prs/${rootId}`
+    return undefined
+  }
+
+  if (event.kind === GIT_COMMENT) {
+    const rootKindValue = getFirstTagValue(event, ["K", "k"])
+    if (rootKindValue === COMMIT_COMMENT_KIND) {
+      const externalRoot = getFirstTagValue(event, ["I", "i"])
+      const commitPrefix = "git:commit:"
+      const commit = externalRoot.toLowerCase().startsWith(commitPrefix)
+        ? externalRoot.slice(commitPrefix.length)
+        : ""
+
+      return commit ? `${basePath}/commits/${commit}#comment-${event.id}` : undefined
+    }
+
+    const rootKind = root?.kind || Number.parseInt(rootKindValue, 10)
+    if (!rootId) return undefined
+    if (rootKind === GIT_ISSUE) return `${basePath}/issues/${rootId}#comment-${event.id}`
+    if (rootKind === GIT_PULL_REQUEST) return `${basePath}/prs/${rootId}#comment-${event.id}`
+    return undefined
+  }
+
+  if (event.kind === GIT_PERMALINK_KIND) return getGitPermalinkPath(event, basePath)
 
   return undefined
 }
@@ -479,18 +700,144 @@ export const getPrimaryNavItemIndex = ($page: Page) => {
   }
 }
 
+const getCanonicalRouteContext = (url: URL) => {
+  const segments = url.pathname.split("/").filter(Boolean)
+
+  if (segments[0] === "c" && segments[1]) {
+    const community = parseCommunityRouteParam(segments[1])
+    const section = segments
+      .slice(2)
+      .map(segment => decodeURIComponent(segment))
+      .join(":")
+    if (community) return `community:${community.pubkey}:${section}`
+  }
+
+  if (segments[0] === "git" && segments[1]) {
+    try {
+      const decoded = nip19.decode(decodeURIComponent(segments[1]))
+      if (decoded.type === "naddr") {
+        const data = decoded.data
+        const section = segments
+          .slice(2)
+          .map(segment => decodeURIComponent(segment))
+          .join(":")
+
+        return `git:${data.kind}:${data.pubkey}:${data.identifier}:${section}:${url.search}`
+      }
+    } catch {
+      // Fall through to literal route comparison for malformed or legacy routes.
+    }
+  }
+
+  return `${normalizeRoutePath(url.pathname)}${url.search}`
+}
+
+const isSameRouteContext = (target: URL, current: URL) =>
+  getCanonicalRouteContext(target) === getCanonicalRouteContext(current)
+
+const setCurrentTargetHash = (hash: string) => {
+  if (!hash) return
+
+  const current = new URL(window.location.href)
+  if (current.hash !== hash) {
+    window.location.hash = hash
+    return
+  }
+
+  window.dispatchEvent(
+    new HashChangeEvent("hashchange", {
+      oldURL: current.href,
+      newURL: current.href,
+    }),
+  )
+}
+
+const getLocalEventHash = (event: TrustedEvent) =>
+  window.location.pathname.startsWith("/git/") && event.kind === GIT_COMMENT
+    ? `#comment-${event.id}`
+    : `#event-${event.id}`
+
+const isEventTargetHash = (hash: string) =>
+  hash.startsWith("#event-") || hash.startsWith("#comment-")
+
+const getRenderedEventTargetId = (event: TrustedEvent) => {
+  if (
+    event.kind === GIT_PULL_REQUEST_UPDATE ||
+    event.kind === GIT_COVER_LETTER ||
+    event.kind === GIT_LABEL ||
+    GIT_STATUS_KINDS.has(event.kind)
+  ) {
+    return getGitRootId(event) || event.id
+  }
+
+  return event.id
+}
+
+const getGitDetailTargetId = (path: string) => {
+  const target = new URL(path, window.location.origin)
+  if (target.hash) return ""
+
+  const match = target.pathname.match(/\/(?:issues|prs)\/([0-9a-f]{64})$/i)
+  return match?.[1] || ""
+}
+
+const goToEventTarget = async (
+  id: string,
+  path: string,
+  {
+    defaultHash = `#event-${id}`,
+    options = {},
+  }: {defaultHash?: string; options?: Record<string, any>} = {},
+) => {
+  const target = new URL(path, window.location.origin)
+  if (target.origin !== window.location.origin) {
+    window.open(target.href, "_blank", "noopener,noreferrer")
+    return false
+  }
+
+  if (!target.hash && defaultHash) target.hash = defaultHash
+
+  const href = `${target.pathname}${target.search}${target.hash}`
+  const focusEvent = isEventTargetHash(target.hash)
+  const sameContext = isSameRouteContext(target, new URL(window.location.href))
+
+  if (sameContext) {
+    if (target.hash) setCurrentTargetHash(target.hash)
+  } else {
+    await goto(href, options)
+  }
+
+  return focusEvent ? waitAndScrollToEvent(id, {behavior: sameContext ? "auto" : "smooth"}) : true
+}
+
+export const goToEventIdPath = (id: string, path: string, options: Record<string, any> = {}) => {
+  const targetId = getGitDetailTargetId(path) || id
+  const hash = new URL(path, window.location.origin).hash || `#event-${targetId}`
+
+  return goToEventTarget(targetId, path, {defaultHash: hash, options})
+}
+
+export const goToEventPath = async (
+  event: TrustedEvent,
+  path: string,
+  options: Record<string, any> = {},
+) => {
+  const targetId = getRenderedEventTargetId(event)
+  const defaultHash =
+    event.kind === GIT_PERMALINK_KIND
+      ? ""
+      : targetId === event.id
+        ? getLocalEventHash(event)
+        : `#event-${targetId}`
+
+  return goToEventTarget(targetId, path, {defaultHash, options})
+}
+
 export const goToEvent = async (event: TrustedEvent, options: Record<string, any> = {}) => {
   const urls = getEventRelayHints(event)
   const path = await getEventPath(event, urls)
 
-  if (path.includes("://")) {
-    window.open(path)
-  } else {
-    goto(path, options)
-
-    await sleep(300)
-    await scrollToEvent(event.id)
-  }
+  return goToEventPath(event, path, options)
 }
 
 export const getEventPath = async (event: TrustedEvent, urls: string[]) => {
@@ -500,6 +847,10 @@ export const getEventPath = async (event: TrustedEvent, urls: string[]) => {
     const selfPubkey = pubkey.get()
     const participants = Array.from(new Set([event.pubkey, ...getPubkeyTagValues(event.tags)]))
     const recipients = participants.filter(pk => pk !== selfPubkey)
+
+    if (recipients.length === 0 && selfPubkey && participants.includes(selfPubkey)) {
+      return makeChatPath(selfPubkey)
+    }
 
     if (recipients.length !== 1) {
       return "/chat"
@@ -515,6 +866,10 @@ export const getEventPath = async (event: TrustedEvent, urls: string[]) => {
   const loadedCommunityPath = await loadTargetedPublicationEventPath(event, relayHints)
 
   if (loadedCommunityPath) return loadedCommunityPath
+
+  const gitPath = await getGitEventPath(event, relayHints)
+
+  if (gitPath) return gitPath
 
   return entityLink(makeEventNevent(event, {relays: relayHints}))
 }

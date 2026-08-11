@@ -1,4 +1,4 @@
-import {sleep, last, randomId} from "@welshman/lib"
+import {randomId, sleep} from "@welshman/lib"
 export {preventDefault, stopPropagation} from "svelte/legacy"
 
 const INTERACTIVE_CARD_SELECTOR = [
@@ -152,41 +152,192 @@ export const isIntersecting = async (element: Element) =>
     observer.observe(element)
   })
 
-export const scrollToEvent = async (id: string, attempts = 3): Promise<boolean> => {
-  const element = document.querySelector(`[data-event="${id}"]`) as any
-  const elements = Array.from(document.querySelectorAll("[data-event]"))
+const eventHighlightTimeouts = new WeakMap<Element, ReturnType<typeof setTimeout>>()
+type PendingEventScroll = {
+  controller: AbortController
+  consumers: number
+  promise: Promise<boolean>
+}
+const pendingEventScrolls = new WeakMap<HTMLElement, Map<string, PendingEventScroll>>()
 
-  if (element) {
-    element.scrollIntoView({behavior: "smooth", block: "center"})
-    element.style = "filter: brightness(1.5); transition-property: all; transition-duration: 400ms;"
+const getEventSelector = (id: string) => {
+  const escaped = typeof CSS === "undefined" ? id.replace(/["\\]/g, "\\$&") : CSS.escape(id)
 
-    setTimeout(() => {
-      element.style = "transition-property: all; transition-duration: 300ms;"
-    }, 800)
+  return `[data-event="${escaped}"]`
+}
 
-    setTimeout(() => {
-      element.style = ""
-    }, 800 + 400)
+export const getEventElement = (id: string, root: ParentNode = document) =>
+  root.querySelector(getEventSelector(id)) as HTMLElement | null
 
-    return true
-  } else if (elements.length > 0) {
-    const lastElement = last(elements)
+const highlightEventElement = (element: HTMLElement) => {
+  if (!element.hasAttribute("tabindex")) element.setAttribute("tabindex", "-1")
+  element.focus({preventScroll: true})
+  element.classList.remove("event-target-highlight")
+  // Restart the animation when the same quote is opened repeatedly.
+  void element.offsetWidth
+  element.classList.add("event-target-highlight")
 
-    if (lastElement && !isIntersecting(lastElement)) {
-      lastElement.scrollIntoView({behavior: "smooth", block: "center"})
-    }
+  const previousTimeout = eventHighlightTimeouts.get(element)
+  if (previousTimeout) clearTimeout(previousTimeout)
 
-    await sleep(300)
+  const timeout = setTimeout(() => {
+    element.classList.remove("event-target-highlight")
+    eventHighlightTimeouts.delete(element)
+  }, 2000)
+  eventHighlightTimeouts.set(element, timeout)
+}
 
-    if (attempts > 0) {
-      return scrollToEvent(id, attempts - 1)
+export const scrollToEventNow = (
+  id: string,
+  root: ParentNode = document,
+  behavior: ScrollBehavior = "smooth",
+): boolean => {
+  const element = getEventElement(id, root)
+  if (!element) return false
+
+  element.scrollIntoView({behavior, block: "center"})
+  highlightEventElement(element)
+
+  return true
+}
+
+const waitForAnimationFrame = () =>
+  new Promise<void>(resolve => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve())
     } else {
-      return false
+      setTimeout(resolve, 0)
     }
+  })
+
+const scrollToSettledEvent = (
+  id: string,
+  {
+    root,
+    behavior,
+    settleFrames,
+    signal,
+  }: {
+    root: ParentNode
+    behavior: ScrollBehavior
+    settleFrames: number
+    signal?: AbortSignal
+  },
+) => {
+  const element = getEventElement(id, root)
+  if (!element) return Promise.resolve(false)
+  if (signal?.aborted) return Promise.resolve(false)
+
+  const pendingKey = `${behavior}:${settleFrames}`
+  let pendingByOptions = pendingEventScrolls.get(element)
+  let pending = pendingByOptions?.get(pendingKey)
+
+  if (pending?.controller.signal.aborted) {
+    pendingByOptions?.delete(pendingKey)
+    pending = undefined
   }
 
-  return false
+  if (!pending) {
+    const controller = new AbortController()
+    const scroll = (async () => {
+      for (let frame = 0; frame < settleFrames; frame += 1) {
+        await waitForAnimationFrame()
+        if (controller.signal.aborted) return false
+      }
+
+      return scrollToEventNow(id, root, behavior)
+    })()
+    pending = {controller, consumers: 0, promise: scroll}
+    pendingByOptions ||= new Map()
+    pendingByOptions.set(pendingKey, pending)
+    pendingEventScrolls.set(element, pendingByOptions)
+
+    void scroll.finally(() => {
+      const current = pendingEventScrolls.get(element)
+      if (!current || current.get(pendingKey) !== pending) return
+
+      current.delete(pendingKey)
+      if (current.size === 0) pendingEventScrolls.delete(element)
+    })
+  }
+
+  pending.consumers += 1
+
+  return new Promise<boolean>(resolve => {
+    let settled = false
+
+    const finish = (result: boolean) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener("abort", onAbort)
+      pending.consumers -= 1
+      if (pending.consumers === 0) pending.controller.abort()
+      resolve(result)
+    }
+    const onAbort = () => finish(false)
+
+    signal?.addEventListener("abort", onAbort, {once: true})
+    void pending.promise.then(result => finish(signal?.aborted ? false : result))
+  })
 }
+
+export const waitAndScrollToEvent = (
+  id: string,
+  {
+    root = document,
+    timeoutMs = 10_000,
+    signal,
+    behavior = "smooth",
+    settleFrames = 2,
+  }: {
+    root?: ParentNode
+    timeoutMs?: number
+    signal?: AbortSignal
+    behavior?: ScrollBehavior
+    settleFrames?: number
+  } = {},
+): Promise<boolean> => {
+  if (signal?.aborted || timeoutMs <= 0) return Promise.resolve(false)
+
+  return new Promise<boolean>(resolve => {
+    let settled = false
+    const observerRoot = root instanceof Document ? root.documentElement : root
+    const requestController = new AbortController()
+
+    const finish = (result: boolean) => {
+      if (settled) return
+      settled = true
+      observer.disconnect()
+      clearTimeout(timeout)
+      signal?.removeEventListener("abort", onAbort)
+      requestController.abort()
+      resolve(result)
+    }
+    const onAbort = () => finish(false)
+    const tryScroll = () => {
+      if (!getEventElement(id, root)) return
+
+      observer.disconnect()
+      void scrollToSettledEvent(id, {
+        root,
+        behavior,
+        settleFrames,
+        signal: requestController.signal,
+      }).then(finish)
+    }
+    const observer = new MutationObserver(tryScroll)
+    const timeout = setTimeout(() => finish(false), timeoutMs)
+
+    signal?.addEventListener("abort", onAbort, {once: true})
+    if (getEventElement(id, root)) {
+      tryScroll()
+    } else {
+      observer.observe(observerRoot, {attributes: true, childList: true, subtree: true})
+    }
+  })
+}
+
+export const scrollToEvent = (id: string): Promise<boolean> => waitAndScrollToEvent(id)
 
 export const compressFile = async (
   file: File | Blob,
