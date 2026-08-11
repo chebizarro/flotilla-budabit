@@ -171,7 +171,9 @@
         content: "",
         pubkey: "",
         created_at: Math.floor(Date.now() / 1000),
-        tags: [],
+        // Preserve the installed widget event's tags so the bridge can honor
+        // manifest declarations (e.g. `nostrKinds` for query/subscribe kinds).
+        tags: extension?.tags ? [...extension.tags] : [],
         identifier,
         widgetType: "tool",
         imageUrl: "",
