@@ -97,6 +97,7 @@
   let isSubmitting = $state(false);
   let replyParent = $state<CommentEvent | null>(null);
   let editingComment = $state<CommentEvent | null>(null);
+  let threadElement = $state<HTMLElement | null>(null);
 
   const threadRootId = $derived(externalRoot?.value || issueId);
 
@@ -206,6 +207,14 @@
       .getElementById(`comment-${id}`)
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
     history.replaceState(null, "", `#comment-${id}`);
+  };
+
+  const scrollToThreadEnd = async () => {
+    if (typeof window === "undefined") return;
+    await tick();
+    window.requestAnimationFrame(() => {
+      threadElement?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
   };
 
   const commentsParsed = $derived.by(() => {
@@ -365,6 +374,7 @@
       await onCommentCreated(commentEvent);
       newComment = "";
       replyParent = null;
+      void scrollToThreadEnd();
     } catch (error) {
       console.error("Failed to post comment:", error);
       toast.push({
@@ -396,7 +406,7 @@
   }
 </script>
 
-<div transition:slide>
+<div bind:this={threadElement} transition:slide>
   <Card class="p-2 border-none shadow-none">
     <div class="space-y-4">
       {#each commentsParsed as c (c.id)}
