@@ -307,9 +307,28 @@
     sendTheme()
   })
 
+  // Re-send context when the widget signals readiness. The reactive send above
+  // can race the widget's listener setup — the iframe `load` event fires before
+  // the embedded app mounts its handlers, so the first context post may arrive
+  // unheard.
+  function handleWidgetReadyMessage(event: MessageEvent): void {
+    if (!iframeEl || event.source !== iframeEl.contentWindow) return
+    try {
+      const {kind, type, action} = (event.data || {}) as Record<string, unknown>
+      if (kind === "app-loaded" || (type === "event" && action === "widget:ready")) {
+        sendContext()
+        sendTheme()
+      }
+    } catch {
+      // Ignore malformed messages.
+    }
+  }
+
   // Cleanup bridge on destroy
   $effect(() => {
+    window.addEventListener("message", handleWidgetReadyMessage)
     return () => {
+      window.removeEventListener("message", handleWidgetReadyMessage)
       bridge?.detach()
       bridge = null
     }

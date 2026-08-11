@@ -405,6 +405,26 @@ class ExtensionRegistry {
     // Send lifecycle events after bridge is ready
     this.sendLifecycleInit(updated)
 
+    // The send above can race the widget's listener setup: the iframe `load`
+    // event fires before the embedded app mounts its handlers, so widget:init
+    // may arrive unheard. Like WidgetFrame, honor the widget's readiness
+    // signal and re-send lifecycle init when it arrives.
+    this.readyListeners.get(ext.id)?.()
+    const onWidgetReady = (event: MessageEvent) => {
+      if (event.source !== iframe.contentWindow) return
+      try {
+        const {kind, type, action} = (event.data || {}) as Record<string, unknown>
+        if (kind === "app-loaded" || (type === "event" && action === "widget:ready")) {
+          const current = this.get(ext.id)
+          if (current?.bridge) this.sendLifecycleInit(current)
+        }
+      } catch {
+        // Ignore malformed messages.
+      }
+    }
+    window.addEventListener("message", onWidgetReady)
+    this.readyListeners.set(ext.id, () => window.removeEventListener("message", onWidgetReady))
+
     // Keep registry-loaded widgets in sync with host theme changes
     this.ensureThemeWatcher()
 
@@ -413,6 +433,9 @@ class ExtensionRegistry {
 
   private themeObserver?: MutationObserver
   private lastThemeBroadcast?: string
+
+  /** Per-extension cleanup fns for widget:ready re-init listeners. */
+  private readyListeners = new Map<string, () => void>()
 
   /**
    * Watch `document.body[data-theme]` (kept in sync with the theme store by
@@ -452,6 +475,9 @@ class ExtensionRegistry {
   async unloadExtension(id: string): Promise<void> {
     const ext = this.get(id)
     if (!ext) return
+
+    this.readyListeners.get(ext.id)?.()
+    this.readyListeners.delete(ext.id)
 
     // Send unmounting lifecycle event before cleanup
     if (ext.bridge) {
