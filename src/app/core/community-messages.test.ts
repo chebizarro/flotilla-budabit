@@ -39,11 +39,14 @@ describe("community room message helpers", () => {
         ["h", communityPubkey],
         ["E", "room-root", "wss://relay.example.com/", creatorPubkey],
         ["K", "11"],
+        ["e", "room-root", "wss://relay.example.com/", creatorPubkey],
+        ["k", "11"],
+        ["p", creatorPubkey, "wss://relay.example.com/"],
       ],
     })
   })
 
-  it("builds NIP-C7 room replies with q tags", () => {
+  it("builds room replies with explicit parent and compatible q tags", () => {
     expect(
       makeCommunityRoomMessage({
         communityPubkey,
@@ -58,12 +61,15 @@ describe("community room message helpers", () => {
         ["h", communityPubkey],
         ["E", "room-root", "wss://relay.example.com/", creatorPubkey],
         ["K", "11"],
+        ["e", "parent-message", "wss://relay.example.com/", parentPubkey],
+        ["k", "9"],
+        ["p", parentPubkey, "wss://relay.example.com/"],
         ["q", "parent-message", "wss://relay.example.com/", parentPubkey],
       ],
     })
   })
 
-  it("reads room messages and parent ids", () => {
+  it("prefers explicit parent metadata over citation q tags", () => {
     const message = makeEvent({
       id: "message-id",
       kind: 9,
@@ -71,7 +77,10 @@ describe("community room message helpers", () => {
         ["h", communityPubkey],
         ["E", "room-root", "wss://relay.example.com/", creatorPubkey],
         ["K", "11"],
-        ["q", "parent-message", "wss://relay.example.com/", parentPubkey],
+        ["e", "parent-message", "wss://relay.example.com/", parentPubkey],
+        ["k", "9"],
+        ["p", parentPubkey, "wss://relay.example.com/"],
+        ["q", "shared-message", "wss://relay.example.com/", authorPubkey],
       ],
     })
     const otherRoom = makeEvent({
@@ -95,5 +104,36 @@ describe("community room message helpers", () => {
     expect(
       readCommunityRoomMessages([message, otherRoom], communityPubkey, "room-root").map(m => m.id),
     ).toEqual(["message-id"])
+  })
+
+  it("does not treat a citation-only q tag on a new top-level message as its parent", () => {
+    const message = makeEvent({
+      kind: 9,
+      tags: [
+        ["h", communityPubkey],
+        ["E", "room-root", "wss://relay.example.com/", creatorPubkey],
+        ["K", "11"],
+        ["e", "room-root", "wss://relay.example.com/", creatorPubkey],
+        ["k", "11"],
+        ["p", creatorPubkey, "wss://relay.example.com/"],
+        ["q", "shared-message", "wss://relay.example.com/", authorPubkey],
+      ],
+    })
+
+    expect(getCommunityRoomMessageParentId(message)).toBe("")
+  })
+
+  it("falls back to q tags for legacy room replies", () => {
+    const message = makeEvent({
+      kind: 9,
+      tags: [
+        ["h", communityPubkey],
+        ["E", "room-root", "wss://relay.example.com/", creatorPubkey],
+        ["K", "11"],
+        ["q", "legacy-parent", "wss://relay.example.com/", parentPubkey],
+      ],
+    })
+
+    expect(getCommunityRoomMessageParentId(message)).toBe("legacy-parent")
   })
 })

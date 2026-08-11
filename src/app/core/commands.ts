@@ -417,6 +417,9 @@ export const getPubkeyHints = (pubkey: string) => {
 const tagEventForShareQuote = (event: TrustedEvent, relays: string[]) =>
   getQuoteEventTags({id: event.id, author: event.pubkey, relays})
 
+const tagsAreEqual = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((value, index) => value === b[index])
+
 export const prependParent = (
   parent: TrustedEvent | undefined,
   {content, tags}: EventContent,
@@ -425,8 +428,11 @@ export const prependParent = (
   if (parent) {
     const relayHints = getEventRelayHints(parent, {relays})
     const nevent = makeEventNevent(parent, {relays: relayHints})
+    const quoteTags = tagEventForShareQuote(parent, relayHints).filter(
+      quoteTag => !tags.some(tag => tagsAreEqual(tag, quoteTag)),
+    )
 
-    tags = [...tags, ...tagEventForShareQuote(parent, relayHints)]
+    tags = [...tags, ...quoteTags]
     content = toNostrURI(nevent) + "\n\n" + content
   }
 

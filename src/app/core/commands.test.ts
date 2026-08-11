@@ -1378,7 +1378,10 @@ describe("commands", () => {
 
     const result = prependParent(
       parent,
-      {content: "Looks good", tags: []},
+      {
+        content: "Looks good",
+        tags: [["q", parent.id, "wss://actual.relay/", parent.pubkey]],
+      },
       {
         relays: ["wss://actual.relay", "wss://fallback.relay"],
       },
@@ -1390,6 +1393,13 @@ describe("commands", () => {
     expect((decoded.data as any).relays).toEqual(["wss://actual.relay/", "wss://fallback.relay/"])
     expect(result.tags).toContainEqual(["q", parent.id, "wss://actual.relay/", parent.pubkey])
     expect(result.tags).toContainEqual(["q", parent.id, "wss://fallback.relay/", parent.pubkey])
+    expect(
+      result.tags.filter(
+        (tag: string[]) =>
+          JSON.stringify(tag) ===
+          JSON.stringify(["q", parent.id, "wss://actual.relay/", parent.pubkey]),
+      ),
+    ).toHaveLength(1)
     expect((decoded.data as any).relays).not.toContain("wss://repo.relay/")
     expect((decoded.data as any).relays).not.toContain("wss://root.relay/")
   })

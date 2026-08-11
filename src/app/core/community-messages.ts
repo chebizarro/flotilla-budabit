@@ -25,10 +25,18 @@ export const makeCommunityRoomMessage = ({
   parent?: CommunityRoomMessageParent
   tags?: string[][]
 }): EventContent => {
+  const structuralParent = parent || {
+    id: room.id,
+    pubkey: room.creatorPubkey,
+    relay,
+  }
   const eventTags = [
     ["h", normalizePubkey(communityPubkey)],
     ["E", room.id, relay || "", room.creatorPubkey],
     ["K", String(THREAD)],
+    ["e", structuralParent.id, structuralParent.relay || "", structuralParent.pubkey],
+    ["k", String(parent ? MESSAGE : THREAD)],
+    ["p", structuralParent.pubkey, ...(structuralParent.relay ? [structuralParent.relay] : [])],
     ...tags,
   ]
 
@@ -39,8 +47,18 @@ export const makeCommunityRoomMessage = ({
   return {content, tags: eventTags}
 }
 
-export const getCommunityRoomMessageParentId = (event: TrustedEvent) =>
-  event.kind === MESSAGE ? getTagValue("q", event.tags) || "" : ""
+export const getCommunityRoomMessageParentId = (event: TrustedEvent) => {
+  if (event.kind !== MESSAGE) return ""
+
+  const explicitParentId = getTagValue("e", event.tags)
+  const explicitParentKind = getTagValue("k", event.tags)
+
+  if (explicitParentId || explicitParentKind) {
+    return explicitParentKind === String(MESSAGE) ? explicitParentId || "" : ""
+  }
+
+  return getTagValue("q", event.tags) || ""
+}
 
 export const readCommunityRoomMessage = (
   event: TrustedEvent,
