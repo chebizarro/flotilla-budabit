@@ -391,11 +391,23 @@ export const waitForThunkCompletion = (thunk: Thunk) =>
 export const waitForAnyRelayAck = (
   thunk: Thunk,
   targetRelays: string[] = thunk.options.relays,
+  {signal}: {signal?: AbortSignal} = {},
 ): Promise<PublishResult> => {
   const targets = Array.from(new Set(targetRelays))
+  const getAbortReason = () => {
+    if (signal?.reason !== undefined) return signal.reason
+
+    const error = new Error("Relay ACK wait was aborted")
+    error.name = "AbortError"
+    return error
+  }
 
   if (targets.length === 0) {
     return Promise.reject(new Error("Cannot wait for a relay ACK without target relays"))
+  }
+
+  if (signal?.aborted) {
+    return Promise.reject(getAbortReason())
   }
 
   const inspect = ($thunk: Thunk): PublishResult | Error | undefined => {
@@ -433,13 +445,23 @@ export const waitForAnyRelayAck = (
 
   return new Promise<PublishResult>((resolve, reject) => {
     let unsubscribe: (() => void) | undefined
+    const cleanup = () => {
+      unsubscribe?.()
+      signal?.removeEventListener("abort", onAbort)
+    }
+    const onAbort = () => {
+      cleanup()
+      reject(getAbortReason())
+    }
+
+    signal?.addEventListener("abort", onAbort, {once: true})
 
     unsubscribe = thunk.subscribe($thunk => {
       const outcome = inspect($thunk)
 
       if (!outcome) return
 
-      unsubscribe?.()
+      cleanup()
 
       if (outcome instanceof Error) {
         reject(outcome)

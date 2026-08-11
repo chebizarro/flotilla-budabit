@@ -248,7 +248,11 @@ describe("single-event publication operations", () => {
       optimistic: false,
       presentation: "private",
     })
-    expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(thunk, [relayTwo])
+    expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(
+      thunk,
+      [relayTwo],
+      expect.objectContaining({signal: expect.anything()}),
+    )
     expect(mocks.repositoryPublish).toHaveBeenCalledWith(event)
   })
 
@@ -269,6 +273,7 @@ describe("single-event publication operations", () => {
     expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(
       mocks.publishThunk.mock.results[0]?.value,
       [relayOne, relayTwo],
+      expect.objectContaining({signal: expect.anything()}),
     )
   })
 
@@ -316,6 +321,7 @@ describe("single-event publication operations", () => {
     expect(mocks.waitForAnyRelayAck).toHaveBeenCalledWith(
       mocks.publishThunk.mock.results[0]?.value,
       [relayOne],
+      expect.objectContaining({signal: expect.anything()}),
     )
     expect(Object.keys(getOperation(operation.operationId)?.results || {})).toEqual([relayOne])
   })
@@ -396,10 +402,19 @@ describe("single-event publication operations", () => {
   })
 
   it("uses one tracker observer and confirms from normalized late evidence", async () => {
-    mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => {}))
+    const waitSignals: AbortSignal[] = []
+    mocks.waitForAnyRelayAck.mockImplementation(
+      (_thunk: TestThunk, _relays: string[], {signal}: {signal: AbortSignal}) => {
+        waitSignals.push(signal)
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {once: true})
+        })
+      },
+    )
     const first = startPublication(makeOptions(makeEvent("b")))
     startPublication(makeOptions(makeEvent("c")))
 
+    await vi.waitFor(() => expect(waitSignals).toHaveLength(2))
     expect(mocks.trackerListeners.add.size).toBe(1)
     expect(mocks.trackerListeners.load.size).toBe(1)
 
@@ -408,6 +423,9 @@ describe("single-event publication operations", () => {
 
     await expect(first.settled).resolves.toMatchObject({phase: "confirmed"})
     expect(mocks.repositoryPublish).toHaveBeenCalledWith(makeEvent("b"))
+    expect(waitSignals[0].aborted).toBe(true)
+    expect(waitSignals[1].aborted).toBe(false)
+    expect(mocks.abortThunk).not.toHaveBeenCalled()
     expect(mocks.trackerListeners.add.size).toBe(1)
     expect(mocks.trackerListeners.load.size).toBe(1)
   })
@@ -424,15 +442,45 @@ describe("single-event publication operations", () => {
   })
 
   it("reconciles normalized tracker evidence loaded from storage", async () => {
-    mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => {}))
+    let waitSignal: AbortSignal | undefined
+    mocks.waitForAnyRelayAck.mockImplementation(
+      (_thunk: TestThunk, _relays: string[], {signal}: {signal: AbortSignal}) => {
+        waitSignal = signal
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {once: true})
+        })
+      },
+    )
     const event = makeEvent("d")
     const operation = startPublication(makeOptions(event))
+    await vi.waitFor(() => expect(waitSignal).toBeDefined())
 
     mocks.trackerRelays.set(event.id, new Set(["wss://relay-two.example"]))
     emitTrackerLoad()
     await Promise.resolve()
 
     await expect(operation.settled).resolves.toMatchObject({phase: "confirmed"})
+    expect(waitSignal?.aborted).toBe(true)
+    expect(mocks.abortThunk).not.toHaveBeenCalled()
+    expect(mocks.repositoryPublish).toHaveBeenCalledWith(event)
+  })
+
+  it("cancels the ACK wait before it subscribes when tracker evidence is already loaded", async () => {
+    let waitSignal: AbortSignal | undefined
+    const event = makeEvent("e")
+    mocks.trackerRelays.set(event.id, new Set([relayOne]))
+    mocks.waitForAnyRelayAck.mockImplementation(
+      (_thunk: TestThunk, _relays: string[], {signal}: {signal: AbortSignal}) => {
+        waitSignal = signal
+        return signal.aborted ? Promise.reject(signal.reason) : new Promise(() => {})
+      },
+    )
+
+    const operation = startPublication(makeOptions(event))
+
+    await expect(operation.settled).resolves.toMatchObject({phase: "confirmed"})
+    expect(waitSignal?.aborted).toBe(true)
+    expect(mocks.abortThunk).not.toHaveBeenCalled()
     expect(mocks.repositoryPublish).toHaveBeenCalledWith(event)
   })
 
@@ -471,7 +519,12 @@ describe("single-event publication operations", () => {
     expect(retryThunk).not.toBe(firstThunk)
     expect(retryThunk.event).toBe(firstThunk.event)
     expect(retryThunk.options.presentation).toBe("private")
-    expect(mocks.waitForAnyRelayAck).toHaveBeenNthCalledWith(2, retryThunk, [relayOne, relayTwo])
+    expect(mocks.waitForAnyRelayAck).toHaveBeenNthCalledWith(
+      2,
+      retryThunk,
+      [relayOne, relayTwo],
+      expect.objectContaining({signal: expect.anything()}),
+    )
     expect(retried).toMatchObject({
       operationId: operation.operationId,
       attempt: 2,
@@ -554,20 +607,53 @@ describe("single-event publication operations", () => {
   })
 
   it("cancels in-flight work without committing its preview", async () => {
-    const ack = deferred<typeof acknowledgement>()
-    mocks.waitForAnyRelayAck.mockReturnValue(ack.promise)
+    let waitSignal: AbortSignal | undefined
+    mocks.waitForAnyRelayAck.mockImplementation(
+      (_thunk: TestThunk, _relays: string[], {signal}: {signal: AbortSignal}) => {
+        waitSignal = signal
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {once: true})
+        })
+      },
+    )
     const operation = startPublication(makeOptions(makeEvent("3")))
     const thunk = mocks.publishThunk.mock.results[0]?.value as unknown as Thunk
+    await vi.waitFor(() => expect(waitSignal).toBeDefined())
 
     expect(get(recoverablePublicationOperations)).toHaveLength(1)
     expect(get(publicationOperationsNeedingAttention)).toEqual([])
 
     cancelPublication(operation.operationId)
 
+    await expect(operation.settled).resolves.toMatchObject({phase: "cancelled"})
+    expect(waitSignal?.aborted).toBe(true)
     expect(mocks.abortThunk).toHaveBeenCalledWith(thunk)
     expect(getOperation(operation.operationId)).toBeUndefined()
     expect(get(recoverablePublicationOperations)).toEqual([])
     expect(mocks.repositoryPublish).not.toHaveBeenCalled()
+  })
+
+  it("clears every ACK observer while aborting publishing transports", async () => {
+    const waitSignals: AbortSignal[] = []
+    mocks.waitForAnyRelayAck.mockImplementation(
+      (_thunk: TestThunk, _relays: string[], {signal}: {signal: AbortSignal}) => {
+        waitSignals.push(signal)
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {once: true})
+        })
+      },
+    )
+    const first = startPublication(makeOptions(makeEvent("b")))
+    const second = startPublication(makeOptions(makeEvent("c")))
+    await vi.waitFor(() => expect(waitSignals).toHaveLength(2))
+
+    clearPublicationOperations()
+
+    await expect(first.settled).resolves.toMatchObject({phase: "cancelled"})
+    await expect(second.settled).resolves.toMatchObject({phase: "cancelled"})
+    expect(waitSignals.every(signal => signal.aborted)).toBe(true)
+    expect(mocks.abortThunk).toHaveBeenCalledTimes(2)
+    expect(get(publicationOperations).size).toBe(0)
   })
 
   it("keeps presentation policy separate from publication and repository state", () => {

@@ -65,6 +65,7 @@ type PublicationRuntime = {
   generation: number
   committed: boolean
   unsubscribeThunk?: () => void
+  ackWaitController?: AbortController
   resolveAttempt?: (snapshot: PublicationSnapshot) => void
   retryPromise?: Promise<PublicationSnapshot>
   validateRetry?: (event: HashedEvent) => void | Promise<void>
@@ -164,9 +165,16 @@ const stopThunkSubscription = (runtime: PublicationRuntime) => {
   runtime.unsubscribeThunk = undefined
 }
 
+const stopAckWait = (runtime: PublicationRuntime) => {
+  const controller = runtime.ackWaitController
+  runtime.ackWaitController = undefined
+  controller?.abort()
+}
+
 const removeRuntime = (runtime: PublicationRuntime, removeOperationSnapshot = true) => {
   runtime.generation += 1
   stopThunkSubscription(runtime)
+  stopAckWait(runtime)
   runtimes.delete(runtime.snapshot.operationId)
   if (removeOperationSnapshot) removeSnapshot(runtime.snapshot.operationId)
   syncTrackerObserver()
@@ -322,6 +330,9 @@ const attachThunkSubscription = (runtime: PublicationRuntime, generation: number
 
 const beginAttempt = (runtime: PublicationRuntime) => {
   const generation = runtime.generation
+  stopAckWait(runtime)
+  const ackWaitController = new AbortController()
+  runtime.ackWaitController = ackWaitController
   const settled = new Promise<PublicationSnapshot>(resolve => {
     runtime.resolveAttempt = resolve
   })
@@ -334,11 +345,22 @@ const beginAttempt = (runtime: PublicationRuntime) => {
   }
 
   void Promise.resolve()
-    .then(() => waitForAnyRelayAck(runtime.thunk, runtime.confirmRelays))
+    .then(() =>
+      waitForAnyRelayAck(runtime.thunk, runtime.confirmRelays, {
+        signal: ackWaitController.signal,
+      }),
+    )
     .then(
       () => confirmOperation(runtime, {generation}),
-      error => markUnconfirmed(runtime, generation, error),
+      error => {
+        if (!ackWaitController.signal.aborted) markUnconfirmed(runtime, generation, error)
+      },
     )
+    .finally(() => {
+      if (runtime.ackWaitController === ackWaitController) {
+        runtime.ackWaitController = undefined
+      }
+    })
 
   return settled
 }

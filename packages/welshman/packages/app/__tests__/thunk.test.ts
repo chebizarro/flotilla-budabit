@@ -154,6 +154,32 @@ describe("thunk", () => {
         "Cannot wait for a relay ACK without target relays",
       )
     })
+
+    it("detaches an aborted ACK observer without aborting transport", async () => {
+      const thunk = new Thunk({...mockRequest, relays: ["relay-1"]})
+      const controller = new AbortController()
+      const ack = waitForAnyRelayAck(thunk, ["relay-1"], {signal: controller.signal})
+
+      expect(thunk._subs).toHaveLength(1)
+
+      controller.abort()
+
+      await expect(ack).rejects.toMatchObject({name: "AbortError"})
+      expect(thunk._subs).toHaveLength(0)
+      expect(thunk.controller.signal.aborted).toBe(false)
+    })
+
+    it("does not subscribe an already-aborted ACK observer", async () => {
+      const thunk = new Thunk({...mockRequest, relays: ["relay-1"]})
+      const controller = new AbortController()
+      controller.abort()
+
+      await expect(
+        waitForAnyRelayAck(thunk, ["relay-1"], {signal: controller.signal}),
+      ).rejects.toMatchObject({name: "AbortError"})
+      expect(thunk._subs).toHaveLength(0)
+      expect(thunk.controller.signal.aborted).toBe(false)
+    })
   })
 
   describe("publishThunk", () => {
