@@ -48,6 +48,7 @@
   let maintainerInput = $state('');
 
   let selectedArtifacts = $state(new Set<string>());
+  let hasLoaded = $state(false);
   let signing = $state(false);
   let signResult = $state<{ count: number; error?: string } | null>(null);
 
@@ -85,6 +86,17 @@
   // ── Actions ──────────────────────────────────────────────────────
   let releaseSub: Subscription | null = null;
   let everReceived = false;
+  let loadTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // How long to wait for matching events before concluding there are none.
+  const LOAD_TIMEOUT_MS = 10_000;
+
+  function clearLoadTimeout() {
+    if (loadTimeout) {
+      clearTimeout(loadTimeout);
+      loadTimeout = null;
+    }
+  }
 
   function loadData() {
     if (!bridge || !repo) return;
@@ -94,10 +106,22 @@
     }
 
     loading = true;
+    hasLoaded = false;
     error = null;
     artifacts = [];
     signResult = null;
     everReceived = false;
+
+    // The release stream has no EOSE signal: if no matching events ever
+    // arrive, the subscription never emits past the empty seed. Fall out of
+    // the loading state after a timeout so "no results" is distinguishable
+    // from "still loading".
+    clearLoadTimeout();
+    loadTimeout = setTimeout(() => {
+      loading = false;
+      hasLoaded = true;
+      loadTimeout = null;
+    }, LOAD_TIMEOUT_MS);
 
     releaseSub?.unsubscribe();
     releaseSub = releaseData$({repo, trustedMaintainers}).subscribe(state => {
@@ -109,6 +133,8 @@
       // that has data.
       if (state.artifacts.length > 0 || everReceived) {
         loading = false;
+        hasLoaded = true;
+        clearLoadTimeout();
       }
       everReceived = true;
     });
@@ -116,6 +142,7 @@
 
   onDestroy(() => {
     releaseSub?.unsubscribe();
+    clearLoadTimeout();
   });
 
   async function resolveNip51() {
@@ -430,7 +457,13 @@
     {/if}
   {:else if !loading && !error && artifacts.length === 0 && trustedMaintainers.length > 0}
     <div class="rounded-lg border border-border bg-card/50 p-8 text-center text-sm text-muted-foreground">
-      Click "Load Artifacts" to fetch release data from the network.
+      {#if hasLoaded}
+        No release artifacts found. This repo has no workflow runs (kind 5401)
+        triggered by the trusted maintainers, or no artifacts were published by
+        those runs' workers.
+      {:else}
+        Click "Load Artifacts" to fetch release data from the network.
+      {/if}
     </div>
   {/if}
 </div>
