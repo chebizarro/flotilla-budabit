@@ -138,6 +138,8 @@ export interface ReleaseDataState {
   workflowRuns: Map<string, NostrEvent>;
   workerNames: Map<string, string>;
   ephemeralToWorker: Map<string, string>;
+  /** sha256 hash → maintainer pubkeys that published a co-signed 1063 for it. */
+  maintainerAttestations: Map<string, string[]>;
 }
 
 const emptyReleaseState = (): ReleaseDataState => ({
@@ -145,6 +147,7 @@ const emptyReleaseState = (): ReleaseDataState => ({
   workflowRuns: new Map(),
   workerNames: new Map(),
   ephemeralToWorker: new Map(),
+  maintainerAttestations: new Map(),
 });
 
 /**
@@ -189,22 +192,26 @@ export function releaseData$(args: {
   const workerAdByPubkey = new Map<string, NostrEvent>(); // worker pubkey → latest 10100 ad
 
   const recompute = () => {
-    // Backfill publisherMap from artifact e-tags pointing at known runs.
-    for (const event of artifactEvents.values()) {
-      if (publisherMap.has(event.pubkey)) continue;
-      const eTag = event.tags.find(t => t[0] === 'e')?.[1];
-      if (eTag) {
-        const run = runIdMap.get(eTag);
-        if (run) publisherMap.set(event.pubkey, run);
-      }
-    }
-
+    // Vote eligibility is strict: a 1063 only counts toward hash consensus
+    // when its author is an ephemeral key declared in a trusted run's
+    // `publisher` tag. Maintainer-signed copies are surfaced separately as
+    // endorsements; anything else (arbitrary authors e-tagging a run) is
+    // ignored so outsiders cannot inject or flip consensus votes.
     const artifacts: ReleaseArtifact[] = [];
+    const maintainerAttestations = new Map<string, string[]>();
     for (const event of artifactEvents.values()) {
       const hash = eventTagValue(event, 'x');
       if (!hash || !validateHash(hash)) continue;
       const publisherRun = publisherMap.get(event.pubkey);
-      if (!publisherRun) continue;
+      if (!publisherRun) {
+        if (trustedSet.has(event.pubkey)) {
+          const prior = maintainerAttestations.get(hash) ?? [];
+          if (!prior.includes(event.pubkey)) {
+            maintainerAttestations.set(hash, [...prior, event.pubkey]);
+          }
+        }
+        continue;
+      }
       artifacts.push({
         event,
         hash,
@@ -234,6 +241,7 @@ export function releaseData$(args: {
       workflowRuns: new Map(publisherMap),
       workerNames,
       ephemeralToWorker: new Map(ephemeralToWorker),
+      maintainerAttestations,
     });
   };
 

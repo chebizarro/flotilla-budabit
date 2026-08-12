@@ -40,6 +40,7 @@
   let artifacts = $state<ReleaseArtifact[]>([]);
   let workerNames = $state(new Map<string, string>());
   let ephemeralToWorker = $state(new Map<string, string>());
+  let maintainerAttestations = $state(new Map<string, string[]>());
 
   let groupByTags = $state<string[]>(['filename']);
   let groupByInput = $state('filename');
@@ -57,8 +58,20 @@
 
   const FALLBACK_RELAYS = ['wss://relay.budabit.club', 'wss://nos.lol'];
 
-  // ── Derived ──────────────────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────
   const groups = $derived(groupArtifacts(artifacts, groupByTags));
+
+  // Only maintainers produce attestations downstream consumers will trust:
+  // the repo owner, announced maintainers, or the configured trusted set.
+  const canSign = $derived.by(() => {
+    const me = repo.userPubkey;
+    if (!me) return false;
+    return (
+      me === repo.repoPubkey ||
+      (repo.maintainers ?? []).includes(me) ||
+      trustedMaintainers.includes(me)
+    );
+  });
 
   const consensusIcon = (status: ConsensusStatus) => {
     switch (status) {
@@ -129,6 +142,7 @@
       artifacts = state.artifacts;
       workerNames = state.workerNames;
       ephemeralToWorker = state.ephemeralToWorker;
+      maintainerAttestations = state.maintainerAttestations;
       // First emit from a fresh subscription is the empty seed; flip out of
       // the loading state on the first event-driven emit, or on any emit
       // that has data.
@@ -425,6 +439,12 @@
                     <span class="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-400">divergent</span>
                   {/if}
                   <span class="text-xs text-muted-foreground">{hashArtifacts.length} attestation{hashArtifacts.length !== 1 ? 's' : ''}</span>
+                  {#if maintainerAttestations.get(hash)?.length}
+                    <span class="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary" title={maintainerAttestations.get(hash)!.map(pk => pk.slice(0, 8) + '…').join(', ')}>
+                      <ShieldCheck class="h-3 w-3" />
+                      co-signed by {maintainerAttestations.get(hash)!.length} maintainer{maintainerAttestations.get(hash)!.length !== 1 ? 's' : ''}
+                    </span>
+                  {/if}
                 </div>
 
                 <div class="space-y-1">
@@ -455,7 +475,13 @@
     </div>
 
     <!-- Sign Button -->
-    {#if selectedArtifacts.size > 0}
+    {#if selectedArtifacts.size > 0 && !canSign}
+      <div class="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-400">
+        Only repo maintainers can publish trusted attestations — downstream
+        consumers ignore co-signatures from other keys. Your pubkey is not in
+        this repo's maintainer set.
+      </div>
+    {:else if selectedArtifacts.size > 0}
       <div class="sticky bottom-4 flex justify-end">
         <button
           class="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-lg hover:bg-primary/90 disabled:opacity-50"
