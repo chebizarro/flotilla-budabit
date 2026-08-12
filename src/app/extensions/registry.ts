@@ -368,7 +368,13 @@ class ExtensionRegistry {
     if (existing?.iframe) return existing
 
     const iframe = document.createElement("iframe")
-    iframe.sandbox.add("allow-scripts", "allow-same-origin")
+    iframe.sandbox.add(
+      "allow-scripts",
+      "allow-same-origin",
+      "allow-popups",
+      "allow-popups-to-escape-sandbox",
+      "allow-downloads",
+    )
     iframe.classList.add("extension-frame")
 
     const container = document.getElementById("flotilla-extension-container") ?? document.body
