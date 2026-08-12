@@ -81,10 +81,9 @@ vi.mock("@nostr-git/ui", () => ({
 const {load, request} = await import("@welshman/net")
 const {tokens, graspServersStore} = await import("@nostr-git/ui")
 const {APP_DATA} = await import("@welshman/util")
-const {DEFAULT_GRASP_SET_ID, GIT_REPO_ANNOUNCEMENT, GIT_USER_GRASP_LIST, GRASP_SET_KIND} =
+const {DEFAULT_GRASP_SET_ID, GIT_USER_GRASP_LIST, GRASP_SET_KIND} =
   await import("@nostr-git/core/events")
 const {
-  loadRepositories,
   loadGraspServers,
   loadTokens,
   persistGitAuthTokens,
@@ -111,27 +110,6 @@ describe("requests", () => {
       },
     })
     storeMocks.reset()
-  })
-
-  describe("loadRepositories", () => {
-    it("calls load with expected filters", async () => {
-      await loadRepositories("pk123", ["wss://relay.example.com"])
-      expect(load).toHaveBeenCalledWith(
-        expect.objectContaining({
-          relays: ["wss://relay.example.com"],
-          filters: [{kinds: [GIT_REPO_ANNOUNCEMENT], authors: ["pk123"]}],
-        }),
-      )
-    })
-
-    it("uses empty relays when not provided", async () => {
-      await loadRepositories("pk456")
-      expect(load).toHaveBeenCalledWith(
-        expect.objectContaining({
-          relays: [],
-        }),
-      )
-    })
   })
 
   describe("loadGraspServers", () => {

@@ -55,7 +55,6 @@ const mocks = vi.hoisted(() => {
     repositoryQuery: vi.fn(() => []),
     trackerGetRelays: vi.fn(() => new Set<string>()),
     loadGraspServers: vi.fn(),
-    loadRepositories: vi.fn(),
     loadTokens: vi.fn(),
     loadExtensionSettings: vi.fn(),
     setupGraspServersSync: vi.fn(() => () => {}),
@@ -190,7 +189,6 @@ vi.mock("@app/core/grasp", () => ({
 
 vi.mock("@app/core/git-requests", () => ({
   loadGraspServers: mocks.loadGraspServers,
-  loadRepositories: mocks.loadRepositories,
   loadTokens: mocks.loadTokens,
   loadExtensionSettings: mocks.loadExtensionSettings,
   setupGraspServersSync: mocks.setupGraspServersSync,
@@ -406,6 +404,9 @@ describe("syncApplicationData", () => {
     await flush()
 
     expect(mocks.startGraspServerRecommendationsSync).not.toHaveBeenCalled()
+    expect(mocks.load.mock.calls.flatMap(call => call[0]?.filters || [])).not.toContainEqual(
+      expect.objectContaining({kinds: [30617]}),
+    )
 
     cleanup()
   })

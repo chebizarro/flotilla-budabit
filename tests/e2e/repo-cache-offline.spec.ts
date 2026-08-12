@@ -8,6 +8,7 @@ import {
   getRepoAddress,
   signTestEvent,
 } from "./fixtures/events"
+import {DEV_SECRET} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
 
 const relayUrl = "wss://repo-cache-offline.test"
@@ -89,6 +90,39 @@ const openOffline = async (page: Page, path: string) => {
   await page.goto(path)
 }
 
+const countBroadRepoListSubscriptions = (page: Page) =>
+  page.evaluate(() => {
+    const connections = (
+      window as unknown as {
+        __mockRelayConnections?: Map<
+          string,
+          {subscriptions: Map<string, Array<Record<string, unknown>>>}
+        >
+      }
+    ).__mockRelayConnections
+
+    if (!connections) return 0
+
+    let count = 0
+    for (const connection of connections.values()) {
+      for (const filters of connection.subscriptions.values()) {
+        if (
+          filters.some(
+            filter =>
+              Array.isArray(filter.kinds) &&
+              filter.kinds.includes(30617) &&
+              filter.limit === 100 &&
+              !filter.authors &&
+              !filter["#d"],
+          )
+        ) {
+          count += 1
+        }
+      }
+    }
+    return count
+  })
+
 test("renders a recent repository from verified cache while its relay is unavailable", async ({
   page,
   context,
@@ -136,4 +170,119 @@ test("retains a watched repository offline after recent eligibility expires", as
   await expect(offlinePage.getByText("Cached issue watched-offline", {exact: true})).toBeVisible({
     timeout: 10_000,
   })
+})
+
+test("uses live list replacements and cached roots during warm navigation", async ({
+  page,
+  context,
+}) => {
+  const identifier = "warm-list-navigation"
+  const repoAddress = getRepoAddress(TEST_PUBKEYS.devUser, identifier)
+  const cachedAnnouncement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "Cached warm repository",
+      relays: [relayUrl],
+      pubkey: TEST_PUBKEYS.devUser,
+      created_at: BASE_TIMESTAMP,
+    }),
+  )
+  const cachedIssue = signTestEvent(
+    createIssue({
+      repoAddress,
+      subject: "Cached warm root",
+      content: "This root renders before stalled detail history completes.",
+      pubkey: TEST_PUBKEYS.charlie,
+      created_at: BASE_TIMESTAMP + 1,
+    }),
+  )
+  const liveAnnouncement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "Live replacement repository",
+      relays: [relayUrl],
+      pubkey: TEST_PUBKEYS.devUser,
+      created_at: BASE_TIMESTAMP + 2,
+    }),
+  )
+  const warmRelay = new MockRelay({seedEvents: [cachedAnnouncement, cachedIssue]})
+  await page.addInitScript(() => localStorage.clear())
+  await warmRelay.setup(page)
+
+  const naddr = encodeRepoNaddr(TEST_PUBKEYS.devUser, identifier, [relayUrl])
+  await page.goto(`/git/${naddr}/issues/${cachedIssue.id}`)
+  await expect(page.getByText("Cached warm root", {exact: true})).toBeVisible({timeout: 10_000})
+  await expect
+    .poll(async () => {
+      const state = await getCacheState(page)
+      return {
+        repositories: state.repositories.filter(item => item.address === repoAddress).length,
+        events: state.events.filter(item => item.repositoryAddress === repoAddress).length,
+      }
+    })
+    .toEqual({repositories: 1, events: 2})
+
+  await page.close()
+  const listPage = await context.newPage()
+  await listPage.addInitScript(
+    ({pubkey, secret}) => {
+      localStorage.clear()
+      localStorage.setItem("pubkey", JSON.stringify(pubkey))
+      localStorage.setItem(
+        "sessions",
+        JSON.stringify({[pubkey]: {method: "nip01", secret, pubkey}}),
+      )
+      localStorage.setItem("git:selected-mode", JSON.stringify("personal"))
+      localStorage.setItem("git:selected-tab", JSON.stringify("my-repos"))
+    },
+    {pubkey: TEST_PUBKEYS.devUser, secret: DEV_SECRET},
+  )
+
+  let listLiveSubscriptions = 0
+  let stalledRootRequests = 0
+  const stalledRelay = new MockRelay({
+    subscriptionOutcomesByRelay: {[`${relayUrl}/`]: "stall"},
+    onSubscribe: (_id, filters, url) => {
+      if (
+        filters.some(
+          filter =>
+            filter.kinds?.includes(30617) &&
+            filter.limit === 100 &&
+            !filter.authors &&
+            !filter["#d"],
+        )
+      ) {
+        listLiveSubscriptions += 1
+      }
+      if (
+        url === `${relayUrl}/` &&
+        filters.some(
+          filter =>
+            filter.limit === 100 &&
+            filter["#a"]?.includes(repoAddress) &&
+            filter.kinds?.includes(1621) &&
+            filter.kinds?.includes(1618),
+        )
+      ) {
+        stalledRootRequests += 1
+      }
+    },
+  })
+  await stalledRelay.setup(listPage)
+  await listPage.goto("/git")
+
+  await expect(listPage.getByText("Cached warm repository", {exact: true})).toBeVisible({
+    timeout: 10_000,
+  })
+  await expect.poll(() => listLiveSubscriptions).toBeGreaterThan(0)
+
+  await stalledRelay.injectEvents([liveAnnouncement])
+  await expect(listPage.getByText("Live replacement repository", {exact: true})).toBeVisible()
+  await expect(listPage.getByText("Cached warm repository", {exact: true})).toHaveCount(0)
+
+  await listPage.getByText("Live replacement repository", {exact: true}).click()
+  await expect.poll(() => stalledRootRequests).toBeGreaterThan(0)
+  await expect.poll(() => countBroadRepoListSubscriptions(listPage)).toBe(0)
+  await expect(listPage.getByTestId("repo-topbar-home")).toHaveText("Live replacement repository")
+  await expect(listPage.getByText("Cached warm root", {exact: true})).toBeVisible()
 })

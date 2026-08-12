@@ -2040,6 +2040,8 @@
     if (needAnnouncement) {
       load({
         relays: announcementRelays,
+        priority: RELAY_REQUEST_PRIORITY.interactive,
+        owner: "repo-foreground:announcement-refresh",
         filters: [
           {
             authors: [repoPubkey],
@@ -2079,6 +2081,8 @@
         if (!currentRepoEvent) {
           load({
             relays: announcementRelaysRetry,
+            priority: RELAY_REQUEST_PRIORITY.interactive,
+            owner: "repo-foreground:announcement-refresh",
             filters: [
               {
                 authors: [repoPubkey],
@@ -2444,7 +2448,12 @@
         "#d": [repoName],
       },
     ]
-    const repoLoadPromise = load({relays: announcementRelays, filters: announcementFilters})
+    const repoLoadPromise = load({
+      relays: announcementRelays,
+      filters: announcementFilters,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: "repo-foreground:announcement-refresh",
+    })
 
     const relayListFromUrl = $repoRelaysStore
     if (relayListFromUrl.length === 0) {

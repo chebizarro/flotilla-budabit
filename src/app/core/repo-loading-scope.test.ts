@@ -131,14 +131,46 @@ describe("authoritative repository loading scope", () => {
 
   it("aborts list and repository layout finite work on route teardown", () => {
     const list = dense(readProjectFile("../../routes/git/+page.svelte"))
+    const listLayout = dense(readProjectFile("../../routes/git/+layout.svelte"))
     const layout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
 
     expect(list).toContain("constgitPageLoadController=newAbortController()")
     expect(list).toContain("gitPageLoadController.abort()")
     expect(list).toContain("loadaswelshmanLoad,typeLoadOptions")
+    expect(listLayout).toContain('constisRepositoryList=$page.route.id==="/git"')
+    expect(listLayout).toContain("controller.abort()")
     expect(layout).toContain("constlayoutLoadController=newAbortController()")
     expect(layout).toContain("layoutLoadController.abort()")
+    expect(layout).toContain('owner:"repo-foreground:announcement-refresh"')
+    expect(layout).toContain("priority:RELAY_REQUEST_PRIORITY.interactive")
     expect(layout).toContain("disposeActiveRepo(routeRepoClass)")
+  })
+
+  it("hydrates list cache before bounded background announcement coverage", () => {
+    const layout = dense(readProjectFile("../../routes/git/+layout.svelte"))
+    const preload = dense(readProjectFile("./repo-list-preload.ts"))
+    const page = dense(readProjectFile("../../routes/git/+page.svelte"))
+
+    expect(layout).toContain("preloadRepositoryList({relays,signal:controller.signal")
+    expect(layout).toContain("repoListHydrationReady.set(true)")
+    expect(preload.indexOf("awaitdependencies.hydrateEligible()")).toBeLessThan(
+      preload.indexOf("awaitdependencies.request({"),
+    )
+    expect(preload).toContain("limit:REPO_LIST_ANNOUNCEMENT_LIMIT")
+    expect(preload).toContain("priority:RELAY_REQUEST_PRIORITY.background")
+    expect(preload).toContain("owner:REPO_LIST_PRELOAD_OWNER")
+    expect(page).toContain("if(!$repoListHydrationReadyStore)")
+  })
+
+  it("keeps discovery search membership separate from canonical announcements", () => {
+    const page = dense(readProjectFile("../../routes/git/+page.svelte"))
+    const discovered = page.slice(
+      page.indexOf("constmatchedDiscoveredSearchRepos"),
+      page.indexOf("constcanContinueRepoDiscovery"),
+    )
+
+    expect(discovered).toContain("discoveredSearchRepoPool.filter")
+    expect(discovered).not.toContain("$repoAnnouncements")
   })
 
   it("hydrates the verified repository cache before route activity starts", () => {

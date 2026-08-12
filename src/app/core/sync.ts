@@ -33,7 +33,6 @@ import {GIT_RELAYS} from "@app/core/git-state"
 import {DM_KIND, getMessagingRelayHints} from "@app/core/dm"
 import {
   loadGraspServers,
-  loadRepositories,
   loadTokens,
   loadExtensionSettings,
   setupGraspServersSync,
@@ -433,7 +432,6 @@ const syncUserGitData = () => {
       console.log("[syncUserGitData] Extension settings sync setup complete")
     }
 
-    loadRepositories(pk, mergedRelays)
     loadGraspServers(pk, mergedRelays)
     loadTokens(pk, mergedRelays)
     loadExtensionSettings(pk, mergedRelays)
@@ -507,7 +505,6 @@ const syncUserGitData = () => {
           const fallbackRelays = sanitizeRelayList(GIT_RELAYS)
           if (resolvedRelays.length > 0 && !arraysEqual(resolvedRelays, fallbackRelays)) {
             console.log("[syncUserGitData] Reloading with user relays")
-            loadRepositories($pubkey, resolvedRelays)
             loadGraspServers($pubkey, resolvedRelays)
             loadTokens($pubkey, resolvedRelays)
             loadExtensionSettings($pubkey, resolvedRelays)

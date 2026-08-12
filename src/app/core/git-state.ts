@@ -69,6 +69,8 @@ export const disposeActiveRepo = (expected?: Repo) => {
 
 export const REPO_KEY = Symbol("repo")
 
+export const REPO_LIST_HYDRATION_READY_KEY = Symbol("repo-list-hydration-ready")
+
 export const REPO_RELAYS_KEY = Symbol("repo-relays")
 
 export const REPO_PROFILE_RELAYS_KEY = Symbol("repo-profile-relays")

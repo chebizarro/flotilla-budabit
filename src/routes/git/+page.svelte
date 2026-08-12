@@ -50,8 +50,8 @@
   } from "@app/core/git-commands"
   import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
   import {goto} from "$app/navigation"
-  import {onMount, onDestroy, tick, untrack} from "svelte"
-  import {derived as _derived, get as getStore} from "svelte/store"
+  import {getContext, onMount, onDestroy, tick, untrack} from "svelte"
+  import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
   import {ListFilter, X} from "@lucide/svelte"
   import {
@@ -96,6 +96,7 @@
     getRepoAnnouncementPublishRelays,
     repoAnnouncementRelaysStore,
     repoAnnouncements,
+    REPO_LIST_HYDRATION_READY_KEY,
   } from "@app/core/git-state"
   import {
     getInitializedGitWorker,
@@ -185,6 +186,7 @@
   import {peopleDiscoverySearch} from "@app/core/people-discovery-search"
 
   const url = GIT_RELAYS[0] || ""
+  const repoListHydrationReadyStore = getContext<Readable<boolean>>(REPO_LIST_HYDRATION_READY_KEY)
 
   // Derive current user's profile for git commit author info
   const userProfile = $derived($pubkey ? deriveProfile($pubkey) : null)
@@ -511,6 +513,13 @@
   let personalRepoLoadRequestId = 0
   let personalRepoAnnouncementsSettled = $state(false)
   $effect(() => {
+    if (!$repoListHydrationReadyStore) {
+      personalRepoLoadRequestId += 1
+      personalRepoAnnouncementsSettled = false
+      lastLoadedPersonalRepoKey = ""
+      return
+    }
+
     if (!$pubkey) {
       personalRepoLoadRequestId += 1
       personalRepoAnnouncementsSettled = true
@@ -1015,6 +1024,7 @@
   let settledStarredRepoLoadKey = $state("")
 
   const repos = $derived.by(() => {
+    if (!$repoListHydrationReadyStore) return undefined
     if (!hasRepoStarAddresses) return undefined
 
     const addresses = repoStarAddresses
@@ -1077,33 +1087,17 @@
       settledStarredRepoLoadKey !== starredRepoLoadKey,
   )
 
-  const myReposEvents = $derived.by(() => {
-    if (!$pubkey) return undefined
-    const filter = {kinds: [GIT_REPO_ANNOUNCEMENT], authors: [$pubkey]} as any
-    return deriveEventsDesc(deriveEventsById({repository, filters: [filter]}))
-  })
-
   const latestMyRepos = $derived.by(() => {
-    if (!$myReposEvents || !$pubkey) return []
-    const repoIds = new Set<string>()
-    for (const repo of $myReposEvents as RepoAnnouncementEvent[]) {
-      const repoId = getTagValue("d", repo.tags) || ""
-      if (repoId) repoIds.add(repoId)
-    }
-
+    if (!$pubkey) return []
     const latest: Array<{address: string; event: RepoAnnouncementEvent; relayHint: string}> = []
-    for (const repoId of repoIds) {
-      const address = `${GIT_REPO_ANNOUNCEMENT}:${$pubkey}:${repoId}`
-      const event = repository.getEvent(address) as RepoAnnouncementEvent | undefined
-      if (!event) continue
-      if (isDeletedRepoAnnouncement(event)) continue
-
+    for (const event of ($repoAnnouncements as RepoAnnouncementEvent[]) || []) {
+      if (event.pubkey !== $pubkey) continue
       let addressString = ""
       try {
         const parsedAddress = Address.fromEvent(event)
         addressString = parsedAddress.toString()
       } catch {
-        addressString = address
+        continue
       }
 
       const relayHintFromEvent = Router.get().getRelaysForPubkey(event.pubkey)?.[0]
@@ -1135,6 +1129,7 @@
   let communityRepoAnnouncementsSettled = $state(false)
   $effect(() => {
     if (
+      !$repoListHydrationReadyStore ||
       activeMode !== "community" ||
       !selectedCommunityPubkey ||
       selectedCommunityRelays.length === 0 ||

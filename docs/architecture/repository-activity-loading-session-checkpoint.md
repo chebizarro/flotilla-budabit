@@ -12,17 +12,20 @@
 
 ## Current Phase
 
-- Phase 7: Repository List Preload And Warm Navigation
+- Phase 8: Completion-Aware UI And Final Validation
 
 ## Phase Exit Criteria
 
-- `/git/+layout.svelte` hydrates eligible cached announcements before page refresh work.
-- The list has one bounded announcement refresh/live owner while mounted.
-- List preload is background priority and route-aborted.
-- Entering a repository starts fresh interactive work rather than mutating queued preload priority.
-- Duplicate personal announcement requests between root sync and list page are removed.
-- Search-session membership remains separate from global repository insertion semantics.
-- List-to-detail navigation renders the selected announcement and cached roots before network completion.
+- Cached content remains visible during refresh.
+- Loading, recent-page empty, fully exhausted empty, filtered empty, partial, failed, and relay-unavailable states are distinct.
+- Timeout, disconnect, `CLOSED`, abort, or failed cache hydration never produce authoritative absence.
+- Retry actions target only failed current route work.
+- Root growth causes zero stable-live restarts under stress.
+- Route teardown leaves no route-owned scheduler work.
+- Warm recent and watched repositories render offline within the documented budget.
+- No planned phase changed Welshman or nostr-git internals.
+- Broad main/E2E verification, typecheck, build, formatting, and whitespace checks pass, or a real blocker is recorded.
+- The checkpoint says `Current Phase: Complete`, the final phase commit is pushed, and the checkpoint is reread.
 
 ## Completed With Evidence
 
@@ -76,6 +79,13 @@
 - Route and watcher intake converge through canonical `repository`/`tracker`; the sidecar is never a UI projection source, and route hydration is bounded to 250 ms before network activity proceeds.
 - Cache writes are idempotent, watched and recent warm reloads render with relay subscriptions stalled, and logout clears the standalone database.
 - Phase 6 focused verification passed: 8 files and 125 tests; offline recent/watched E2E passed 2 tests; existing detail/list E2E passed 7 tests; `pnpm check`, `pnpm run e2e:check`, Prettier, and `git diff --check` passed.
+- Phase 7 added exact-`/git` layout ownership that independently hydrates eligible verified cache records before page announcement refreshes begin.
+- The list now starts one kind-30617 live request with a bounded `limit: 100` replay, background priority, normalized relay fan-out capped at six, one diagnostic owner, and route-generation cancellation.
+- Leaving `/git` aborts the list request even though the parent layout remains mounted; repository detail starts separate interactive announcement refresh work rather than promoting or mutating preload work.
+- Process-lifetime Git sync no longer requests the current user's repository announcements; tab-specific personal, starred, community, and search requests remain page-owned and route-cancelled.
+- Personal list projection now reuses the canonical latest announcement store, while discovery search membership remains explicitly scoped to `discoveredSearchRepoPool` rather than global canonical insertion.
+- Warm-navigation E2E proved cached personal announcement rendering, live same-address replacement, broad list-owner cleanup, selected replacement rendering, and cached-root rendering while detail history remained stalled.
+- Phase 7 focused verification passed: 5 files and 57 tests; offline/warm cache E2E passed 3 tests; existing list E2E passed 3 tests; existing detail E2E passed 4 tests; `pnpm check`, `pnpm run e2e:check`, Prettier, and `git diff --check` passed.
 
 ## Decisions
 
@@ -91,12 +101,12 @@
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev` after a clean merge of the prior divergence.
 - Unrelated dirty relay-policy/Welshman files and an optimistic-publication plan predate this workflow and must remain unstaged and unmodified.
-- Phases 1 through 6 are verified; Phase 6 is ready for scoped commit/push closeout.
+- Phases 1 through 7 are verified; Phase 7 is ready for scoped commit/push closeout.
 - The session plan remains intentionally untracked and must not be staged.
 
 ## Next Action
 
-- Add list-layout cache hydration and one bounded, route-cancelled announcement preload/live owner, then remove duplicate list announcement requests.
+- Replace issue and pull-request timer-based absence with layout-owned completion states while preserving cached rows during refresh.
 
 ## Verification
 
@@ -126,6 +136,11 @@
 - `pnpm exec playwright test tests/e2e/repo-cache-offline.spec.ts` passed: 2 tests proving recent and watched repository rendering with relay subscriptions stalled.
 - `pnpm exec playwright test tests/e2e/git-detail-resolution.spec.ts tests/e2e/git-list-resolution.spec.ts` passed: 7 existing route tests.
 - Phase 6 `pnpm check`, `pnpm run e2e:check`, owned-file Prettier, and `git diff --check` passed.
+- `pnpm exec vitest run --project=main src/app/core/repo-list-preload.test.ts src/app/core/repo-loading-scope.test.ts src/app/core/sync.test.ts src/app/core/git-requests.test.ts src/app/core/git-state.test.ts` passed: 5 files and 57 tests.
+- `pnpm exec playwright test tests/e2e/repo-cache-offline.spec.ts` passed: 3 tests, including cached list rendering, live announcement replacement, list-owner cleanup, and cached roots during stalled detail refresh.
+- `pnpm exec playwright test tests/e2e/git-list-resolution.spec.ts` passed: 3 existing list tests.
+- `pnpm exec playwright test tests/e2e/git-detail-resolution.spec.ts` passed: 4 existing detail tests.
+- Phase 7 `pnpm check`, `pnpm run e2e:check`, owned-file Prettier, and `git diff --check` passed.
 
 ## Risks Or Blockers
 
@@ -169,3 +184,10 @@
 - `src/routes/+layout.svelte`
 - `tests/e2e/helpers/mock-relay.ts`
 - `tests/e2e/repo-cache-offline.spec.ts`
+- `src/app/core/repo-list-preload.ts`
+- `src/app/core/repo-list-preload.test.ts`
+- `src/app/core/sync.ts`
+- `src/app/core/sync.test.ts`
+- `src/app/core/git-requests.ts`
+- `src/app/core/git-requests.test.ts`
+- `src/routes/git/+layout.svelte`

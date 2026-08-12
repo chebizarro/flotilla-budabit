@@ -1,4 +1,3 @@
-import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {tokens, type Token} from "@nostr-git/ui"
 import {graspServersStore} from "@nostr-git/ui"
 import {repository, ensurePlaintext, signer, pubkey, publishThunk} from "@welshman/app"
@@ -144,14 +143,6 @@ export function clearSyncedGitAuthTokens() {
 
 // D-tag for extension settings
 export const EXTENSION_SETTINGS_DTAG = "app/budabit/extensions"
-
-export const loadRepositories = async (pubkey: string, relays: string[] = []) => {
-  // Repo stars are kind-7 reactions; this only hydrates the user's own announcements.
-  load({
-    relays,
-    filters: [{kinds: [GIT_REPO_ANNOUNCEMENT], authors: [pubkey]}],
-  })
-}
 
 export const loadGraspServers = async (pubkey: string, relays: string[] = []) => {
   load({
