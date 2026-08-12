@@ -260,6 +260,29 @@ export class ExtensionSubscriptionRegistry {
       this.dispatchEose(group)
     }
 
+    const handleError = (error: unknown) => {
+      if (!candidate.controller.signal.aborted) {
+        this.onError(group.relay, group.extensionId, error)
+      }
+    }
+
+    // A finite, normal-priority request ensures the initial stored-event dump
+    // can run even when background live subscriptions are saturated.
+    void this.request({
+      relays: [group.relay],
+      filters,
+      lifetime: "finite",
+      autoClose: true,
+      priority: RELAY_REQUEST_PRIORITY.default,
+      owner: `extension:${group.extensionId}`,
+      signal: candidate.controller.signal,
+      onEose: promote,
+      onEvent: event => this.dispatch(group, event),
+      onDuplicate: event => this.dispatch(group, event),
+    }).catch(handleError)
+
+    // Keep the ongoing tail in the background budget. Its EOSE is also a
+    // promotion fallback if the finite backfill ends before receiving EOSE.
     void this.request({
       relays: [group.relay],
       filters,
@@ -271,20 +294,17 @@ export class ExtensionSubscriptionRegistry {
       onEvent: event => this.dispatch(group, event),
       onDuplicate: event => this.dispatch(group, event),
     })
-      .catch(error => {
-        if (!candidate.controller.signal.aborted) {
-          this.onError(group.relay, group.extensionId, error)
-        }
-      })
+      .catch(handleError)
       .finally(() => {
-        if (group.pending === candidate) group.pending = undefined
-        if (group.active === candidate) group.active = undefined
         const key = this.getGroupKey(group.extensionId, group.relay)
-        if (
+        const shouldRetry =
           !candidate.controller.signal.aborted &&
           this.groups.get(key) === group &&
           group.subscriptionIds.size > 0
-        ) {
+        candidate.controller.abort()
+        if (group.pending === candidate) group.pending = undefined
+        if (group.active === candidate) group.active = undefined
+        if (shouldRetry) {
           group.retryTimer = setTimeout(() => {
             group.retryTimer = undefined
             this.reconcile(group)

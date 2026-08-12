@@ -47,6 +47,22 @@ describe("extension subscription registry", () => {
       onEvent: vi.fn(),
     })
     expect(registry.getSnapshot()).toMatchObject({groups: [{active: false, pending: true}]})
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toMatchObject({
+      relays: ["wss://relay.example/"],
+      filters: [{kinds: [1]}],
+      lifetime: "finite",
+      autoClose: true,
+      priority: 0,
+      owner: "extension:extension-a",
+    })
+    expect(calls[1]).toMatchObject({
+      relays: ["wss://relay.example/"],
+      filters: [{kinds: [1]}],
+      lifetime: "live",
+      priority: -100,
+      owner: "extension:extension-a",
+    })
     calls[0].onEose?.("wss://relay.example/")
     registry.subscribe({
       extensionId: "extension-a",
@@ -55,9 +71,17 @@ describe("extension subscription registry", () => {
       onEvent: vi.fn(),
     })
 
-    expect(calls).toHaveLength(2)
-    expect(calls[0].signal?.aborted).toBe(false)
-    expect(calls[1]).toMatchObject({
+    expect(calls).toHaveLength(4)
+    expect(calls[1].signal?.aborted).toBe(false)
+    expect(calls[2]).toMatchObject({
+      relays: ["wss://relay.example/"],
+      filters: [{kinds: [1]}, {kinds: [2]}],
+      lifetime: "finite",
+      autoClose: true,
+      priority: 0,
+      owner: "extension:extension-a",
+    })
+    expect(calls[3]).toMatchObject({
       relays: ["wss://relay.example/"],
       filters: [{kinds: [1]}, {kinds: [2]}],
       lifetime: "live",
@@ -75,8 +99,9 @@ describe("extension subscription registry", () => {
         },
       ],
     })
-    calls[1].onEose?.("wss://relay.example/")
+    calls[2].onEose?.("wss://relay.example/")
     expect(calls[0].signal?.aborted).toBe(true)
+    expect(calls[1].signal?.aborted).toBe(true)
     expect(registry.getSnapshot()).toMatchObject({groups: [{active: true, pending: false}]})
 
     registry.close()
@@ -101,8 +126,8 @@ describe("extension subscription registry", () => {
     })
 
     const firstEvent = makeEvent(1, [["d", "one"]])
-    calls[0].onEvent?.(firstEvent, "wss://relay.example/")
     calls[1].onEvent?.(firstEvent, "wss://relay.example/")
+    calls[2].onEvent?.(firstEvent, "wss://relay.example/")
 
     expect(first).toHaveBeenCalledWith(firstId, expect.objectContaining({kind: 1}))
     expect(first).toHaveBeenCalledTimes(1)
@@ -110,6 +135,25 @@ describe("extension subscription registry", () => {
 
     calls.at(-1)?.onDuplicate?.(makeEvent(1, [["d", "two"]]), "wss://relay.example/")
     expect(second).toHaveBeenCalledWith(secondId, expect.objectContaining({kind: 1}))
+    registry.close()
+  })
+
+  it("dispatches logical EOSE once when either physical request reaches EOSE", () => {
+    const {calls, registry} = makeRegistry()
+    const onEose = vi.fn()
+    const subscriptionId = registry.subscribe({
+      extensionId: "extension-a",
+      relays: ["wss://relay.example"],
+      filters: [{kinds: [1]}],
+      onEvent: vi.fn(),
+      onEose,
+    })
+
+    calls[1].onEose?.("wss://relay.example/")
+    calls[0].onEose?.("wss://relay.example/")
+
+    expect(onEose).toHaveBeenCalledTimes(1)
+    expect(onEose).toHaveBeenCalledWith(subscriptionId)
     registry.close()
   })
 
@@ -128,19 +172,21 @@ describe("extension subscription registry", () => {
       filters: [{kinds: [2]}],
       onEvent: vi.fn(),
     })
-    calls[1].onEose?.("wss://relay.example/")
-
-    expect(calls).toHaveLength(2)
-    expect(calls[0].signal?.aborted).toBe(true)
-    expect(registry.unsubscribe("extension-a", secondId)).toBe(true)
-    expect(calls).toHaveLength(3)
-    expect(calls[2].filters).toEqual([{kinds: [1]}])
-    expect(calls[1].signal?.aborted).toBe(false)
     calls[2].onEose?.("wss://relay.example/")
+
+    expect(calls).toHaveLength(4)
     expect(calls[1].signal?.aborted).toBe(true)
-    expect(calls[2].signal?.aborted).toBe(false)
+    expect(registry.unsubscribe("extension-a", secondId)).toBe(true)
+    expect(calls).toHaveLength(6)
+    expect(calls[4].filters).toEqual([{kinds: [1]}])
+    expect(calls[3].signal?.aborted).toBe(false)
+    calls[4].onEose?.("wss://relay.example/")
+    expect(calls[3].signal?.aborted).toBe(true)
+    expect(calls[4].signal?.aborted).toBe(false)
+    expect(calls[5].signal?.aborted).toBe(false)
     expect(registry.unsubscribe("extension-a", firstId)).toBe(true)
-    expect(calls[2].signal?.aborted).toBe(true)
+    expect(calls[4].signal?.aborted).toBe(true)
+    expect(calls[5].signal?.aborted).toBe(true)
     registry.close()
   })
 
@@ -155,7 +201,7 @@ describe("extension subscription registry", () => {
 
     registry.cleanupExtension("extension-a")
 
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(4)
     expect(calls.every(call => call.signal?.aborted)).toBe(true)
     expect(registry.getSnapshot()).toEqual({logicalSubscriptions: 0, groups: []})
   })
@@ -179,13 +225,13 @@ describe("extension subscription registry", () => {
     })
 
     await Promise.resolve()
-    expect(calls).toHaveLength(1)
-    await vi.advanceTimersByTimeAsync(1_000)
     expect(calls).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(calls).toHaveLength(4)
 
     registry.cleanupExtension("extension-a")
     await vi.advanceTimersByTimeAsync(1_000)
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(4)
     vi.useRealTimers()
   })
 
