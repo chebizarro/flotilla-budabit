@@ -74,8 +74,10 @@
     throw new Error("Repo context not available")
   }
 
-  const extRouteSegment = $page.params.extId ?? ""
-  const naddr = $page.params.id ?? ""
+  // Reactive: SvelteKit reuses this component when navigating between
+  // /extensions/A and /extensions/B, so the params must be derived.
+  const extRouteSegment = $derived($page.params.extId ?? "")
+  const naddr = $derived($page.params.id ?? "")
   const normalizeRepoTabRouteSegment = (value: string) => value.trim().replace(/^\/+|\/+$/g, "")
 
   // Get repo-tab widget from settings
@@ -134,11 +136,29 @@
   let retryCount = $state(0)
   let iframeSrc = $state<string | undefined>(undefined)
 
-  // Initialize iframe src when the widget app URL is available.
+  // Tracks which extension entrypoint the iframe is currently bound to so
+  // switching between extensions (same route, different param) reloads it.
+  let currentEntrypoint = $state<string | undefined>(undefined)
+
+  // Initialize/refresh iframe src when the widget app URL changes.
   $effect(() => {
-    if (!hasRepoRelayAuthority) {
+    if (!hasRepoRelayAuthority || !secureExtEntrypoint) {
+      currentEntrypoint = undefined
       iframeSrc = undefined
-    } else if (secureExtEntrypoint && !iframeSrc) {
+      return
+    }
+
+    if (currentEntrypoint !== secureExtEntrypoint) {
+      // New extension (or first load): tear down the previous bridge and
+      // reset iframe state before pointing the iframe at the new app.
+      bridge?.detach()
+      bridge = null
+      extInstance = null
+      ready = false
+      error = null
+      loading = true
+      retryCount = 0
+      currentEntrypoint = secureExtEntrypoint
       iframeSrc = secureExtEntrypoint
     }
   })
@@ -171,7 +191,9 @@
         content: "",
         pubkey: "",
         created_at: Math.floor(Date.now() / 1000),
-        tags: [],
+        // Preserve the installed widget event's tags so the bridge can honor
+        // manifest declarations (e.g. `nostrKinds` for query/subscribe kinds).
+        tags: extension?.tags ? [...extension.tags] : [],
         identifier,
         widgetType: "tool",
         imageUrl: "",
@@ -305,9 +327,28 @@
     sendTheme()
   })
 
+  // Re-send context when the widget signals readiness. The reactive send above
+  // can race the widget's listener setup — the iframe `load` event fires before
+  // the embedded app mounts its handlers, so the first context post may arrive
+  // unheard.
+  function handleWidgetReadyMessage(event: MessageEvent): void {
+    if (!iframeEl || event.source !== iframeEl.contentWindow) return
+    try {
+      const {kind, type, action} = (event.data || {}) as Record<string, unknown>
+      if (kind === "app-loaded" || (type === "event" && action === "widget:ready")) {
+        sendContext()
+        sendTheme()
+      }
+    } catch {
+      // Ignore malformed messages.
+    }
+  }
+
   // Cleanup bridge on destroy
   $effect(() => {
+    window.addEventListener("message", handleWidgetReadyMessage)
     return () => {
+      window.removeEventListener("message", handleWidgetReadyMessage)
       bridge?.detach()
       bridge = null
     }

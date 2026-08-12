@@ -203,7 +203,29 @@ const requireNonEmptyStringArray = (val: unknown, name: string): string[] => {
   return out
 }
 
-const normalizeNostrFilter = (filterRaw: unknown): Record<string, unknown> => {
+/**
+ * Kinds a widget declared in its signed manifest event (via `nostrKinds` tags).
+ * These are allowed for nostr:query / nostr:subscribe in addition to the
+ * hardcoded NIP100_ALLOWED_KINDS baseline.
+ */
+const getDeclaredNostrKinds = (ext?: {widget?: {tags?: string[][]}}): Set<number> => {
+  const kinds = new Set<number>()
+  const tags = ext?.widget?.tags
+  if (Array.isArray(tags)) {
+    for (const tag of tags) {
+      if (Array.isArray(tag) && tag[0] === "nostrKinds") {
+        const k = Number(tag[1])
+        if (Number.isFinite(k)) kinds.add(k)
+      }
+    }
+  }
+  return kinds
+}
+
+const normalizeNostrFilter = (
+  filterRaw: unknown,
+  extraAllowedKinds?: Set<number>,
+): Record<string, unknown> => {
   if (!filterRaw || typeof filterRaw !== "object") {
     throw new Error("Invalid filter: expected object")
   }
@@ -219,7 +241,7 @@ const normalizeNostrFilter = (filterRaw: unknown): Record<string, unknown> => {
     if (typeof k !== "number" || !Number.isFinite(k)) {
       throw new Error("Invalid filter.kinds: expected non-empty number[]")
     }
-    if (!NIP100_ALLOWED_KINDS.has(k)) {
+    if (!NIP100_ALLOWED_KINDS.has(k) && !extraAllowedKinds?.has(k)) {
       throw new Error(`Unsupported kind: ${k}`)
     }
   }
@@ -250,6 +272,7 @@ const normalizeNostrFilter = (filterRaw: unknown): Record<string, unknown> => {
 
 const parseNostrQueryPayload = (
   payload: unknown,
+  extraAllowedKinds?: Set<number>,
 ): {relays: string[]; filter: Record<string, unknown>} => {
   if (!payload || typeof payload !== "object") {
     throw new Error("Invalid payload: expected { relays, filter }")
@@ -260,7 +283,7 @@ const parseNostrQueryPayload = (
     throw new Error("No valid relays provided")
   }
 
-  const filter = normalizeNostrFilter((payload as any).filter)
+  const filter = normalizeNostrFilter((payload as any).filter, extraAllowedKinds)
 
   return {relays, filter}
 }
@@ -616,7 +639,7 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
 registerBridgeHandler("nostr:query", async (payload, ext) => {
   if (ext) console.log(`[bridge] nostr:query from ${ext.id}`, payload)
   try {
-    const {relays, filter} = parseNostrQueryPayload(payload)
+    const {relays, filter} = parseNostrQueryPayload(payload, getDeclaredNostrKinds(ext))
     console.log(
       `[bridge] nostr:query querying ${relays.length} relays:`,
       relays,
@@ -2179,7 +2202,7 @@ export function cleanupExtensionSubscriptions(extId: string): void {
 registerBridgeHandler("nostr:subscribe", async (payload, ext) => {
   if (ext) console.log(`[bridge] nostr:subscribe from ${ext.id}`, payload)
   try {
-    const {relays, filter} = parseNostrQueryPayload(payload)
+    const {relays, filter} = parseNostrQueryPayload(payload, getDeclaredNostrKinds(ext))
 
     const subId = extensionSubscriptionRegistry.subscribe({
       extensionId: ext.id,
