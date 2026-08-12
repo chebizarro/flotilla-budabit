@@ -141,6 +141,20 @@ describe("authoritative repository loading scope", () => {
     expect(layout).toContain("disposeActiveRepo(routeRepoClass)")
   })
 
+  it("hydrates the verified repository cache before route activity starts", () => {
+    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
+    const hydration = layout.slice(
+      layout.indexOf("onMount(()=>{letcancelled=false"),
+      layout.indexOf("constrepoStatusKinds"),
+    )
+
+    expect(hydration).toContain("accessRepositoryCache(getStore(repoAddressStore))")
+    expect(hydration.indexOf("accessRepositoryCache")).toBeLessThan(
+      hydration.indexOf("repoActivityHydrationReady.set(true)"),
+    )
+    expect(layout).toContain("receiveRepositoryCacheEvent(event,relay,getStore(repoAddressStore))")
+  })
+
   it("does not initialize repository extensions without relay authority", () => {
     const extensionPage = readProjectFile(
       "../../routes/git/[id=naddr]/extensions/[extId]/+page.svelte",

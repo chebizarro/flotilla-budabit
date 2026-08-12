@@ -105,6 +105,8 @@ export interface MockRelayOptions {
   responseLatencyByKind?: Record<number, number>
   /** Optional publish ACK and retention behavior keyed by exact relay URL */
   publishResponsesByRelay?: Record<string, MockRelayPublishResponse>
+  /** Subscription behavior keyed by exact relay URL */
+  subscriptionOutcomesByRelay?: Record<string, "eose" | "stall" | "disconnect">
 }
 
 /**
@@ -124,6 +126,7 @@ export class MockRelay {
   private latency: number = 10
   private responseLatencyByKind: Record<number, number> = {}
   private publishResponsesByRelay: Record<string, MockRelayPublishResponse> = {}
+  private subscriptionOutcomesByRelay: Record<string, "eose" | "stall" | "disconnect"> = {}
   private eventWaiters: Map<
     number,
     {resolve: (event: NostrEvent) => void; reject: (error: Error) => void}[]
@@ -158,6 +161,9 @@ export class MockRelay {
     }
     if (options?.publishResponsesByRelay) {
       this.publishResponsesByRelay = {...options.publishResponsesByRelay}
+    }
+    if (options?.subscriptionOutcomesByRelay) {
+      this.subscriptionOutcomesByRelay = {...options.subscriptionOutcomesByRelay}
     }
   }
 
@@ -202,6 +208,12 @@ export class MockRelay {
         ...options.publishResponsesByRelay,
       }
     }
+    if (options?.subscriptionOutcomesByRelay) {
+      this.subscriptionOutcomesByRelay = {
+        ...this.subscriptionOutcomesByRelay,
+        ...options.subscriptionOutcomesByRelay,
+      }
+    }
 
     this.page = page
     this.isSetup = true
@@ -236,6 +248,7 @@ export class MockRelay {
         latency,
         responseLatencyByKind,
         publishResponsesByRelay,
+        subscriptionOutcomesByRelay,
       }) => {
         // Store original WebSocket
         const OriginalWebSocket = window.WebSocket
@@ -374,6 +387,13 @@ export class MockRelay {
                 ) => void
               }
             ).__mockRelaySubscribe?.(subId, filters, this.url)
+
+            const subscriptionOutcome = subscriptionOutcomesByRelay[this.url] || "eose"
+            if (subscriptionOutcome === "stall") return
+            if (subscriptionOutcome === "disconnect") {
+              setTimeout(() => this.close(1006, "offline"), latency)
+              return
+            }
 
             const responseLatency = Math.max(
               latency,
@@ -576,6 +596,7 @@ export class MockRelay {
         latency: this.latency,
         responseLatencyByKind: this.responseLatencyByKind,
         publishResponsesByRelay: this.publishResponsesByRelay,
+        subscriptionOutcomesByRelay: this.subscriptionOutcomesByRelay,
       },
     )
   }

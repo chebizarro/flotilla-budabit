@@ -35,6 +35,7 @@ const netMocks = vi.hoisted(() => ({
 const logoutMocks = vi.hoisted(() => ({
   clearCashuWalletStorage: vi.fn().mockResolvedValue(undefined),
   dbClear: vi.fn().mockResolvedValue(undefined),
+  clearRepositoryCache: vi.fn().mockResolvedValue(undefined),
   deleteIndexedDB: vi.fn().mockResolvedValue(undefined),
   kvClear: vi.fn().mockResolvedValue(undefined),
   terminateGitWorker: vi.fn(),
@@ -92,6 +93,10 @@ vi.mock("@welshman/net", async importOriginal => {
 vi.mock("@app/core/storage", () => ({
   kv: {get: vi.fn(), set: vi.fn(), clear: logoutMocks.kvClear},
   db: {clear: logoutMocks.dbClear},
+}))
+
+vi.mock("@app/core/repo-cache", () => ({
+  clearRepositoryCache: logoutMocks.clearRepositoryCache,
 }))
 
 vi.mock("@lib/util", () => ({
@@ -196,6 +201,7 @@ describe("commands", () => {
     netMocks.poolRelayAuthAttempt.mockReset()
     logoutMocks.clearCashuWalletStorage.mockReset().mockResolvedValue(undefined)
     logoutMocks.dbClear.mockReset().mockResolvedValue(undefined)
+    logoutMocks.clearRepositoryCache.mockReset().mockResolvedValue(undefined)
     logoutMocks.deleteIndexedDB.mockReset().mockResolvedValue(undefined)
     logoutMocks.kvClear.mockReset().mockResolvedValue(undefined)
     logoutMocks.terminateGitWorker.mockReset()
@@ -273,6 +279,7 @@ describe("commands", () => {
     expect(logoutMocks.terminateSharedWorkerManager).toHaveBeenCalledOnce()
     expect(logoutMocks.terminateGitWorker).toHaveBeenCalledOnce()
     expect(logoutMocks.clearCashuWalletStorage).toHaveBeenCalledOnce()
+    expect(logoutMocks.clearRepositoryCache).toHaveBeenCalledOnce()
     expect(logoutMocks.deleteIndexedDB.mock.calls.map(([name]) => name)).toEqual([
       "nostr-git",
       "nostr-git-cache",

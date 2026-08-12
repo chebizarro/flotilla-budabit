@@ -513,6 +513,8 @@ export const logout = async () => {
 
   await bestEffortWithTimeout(kv.clear(), "Preferences clear", 2500)
   await bestEffortWithTimeout(db.clear(), "Main IndexedDB clear", 3000)
+  const {clearRepositoryCache} = await import("@app/core/repo-cache")
+  await bestEffortWithTimeout(clearRepositoryCache(), "Repository cache clear", 3000)
   await bestEffortWithTimeout(clearCashuWalletStorage(), "Cashu wallet cleanup", 2500)
   await bestEffortWithTimeout(nostrGitLogoutCleanup(), "Nostr-Git DB cleanup", 2000)
 

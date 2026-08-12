@@ -224,6 +224,7 @@
     type RepoRootHistorySnapshot,
   } from "@app/core/repo-root-history"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {accessRepositoryCache, receiveRepositoryCacheEvent} from "@app/core/repo-cache"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
 
   const {id} = $page.params
@@ -330,6 +331,7 @@
   const receiveRepoLiveEvent = (event: TrustedEvent, relay: string) => {
     repository.publish(event)
     if (!tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
+    receiveRepositoryCacheEvent(event, relay, getStore(repoAddressStore))
   }
 
   const waitForPostPaintHydration = async () => {
@@ -356,9 +358,14 @@
   onMount(() => {
     let cancelled = false
 
-    void waitForPostPaintHydration().then(() => {
-      if (!cancelled) repoActivityHydrationReady.set(true)
-    })
+    void waitForPostPaintHydration()
+      .then(() => accessRepositoryCache(getStore(repoAddressStore)))
+      .catch(error => {
+        console.warn("[repo-cache] Failed to hydrate repository activity", error)
+      })
+      .finally(() => {
+        if (!cancelled) repoActivityHydrationReady.set(true)
+      })
 
     return () => {
       cancelled = true

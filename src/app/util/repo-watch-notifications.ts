@@ -1,6 +1,6 @@
 import {derived, readable, type Readable} from "svelte/store"
 import {request} from "@welshman/net"
-import {pubkey} from "@welshman/app"
+import {pubkey, repository, tracker} from "@welshman/app"
 import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
 import {now} from "@welshman/lib"
 import {
@@ -72,7 +72,7 @@ import {
   type RepoLiveOwnership,
 } from "@app/core/repo-live-ownership"
 import {notificationBackgroundEnabled} from "@app/util/notification-background"
-import {notificationEventRepository, receiveNotificationEvent} from "@app/util/notification-events"
+import {receiveRepositoryCacheEvent} from "@app/core/repo-cache"
 
 type RepoWatchAddressRef = {
   address: string
@@ -762,9 +762,7 @@ export const getRepoWatchNotificationCandidates = ({
         repo: issueRepo,
         section: "issues",
         event: label,
-        enabled: isAssignment
-          ? issueRepo.options.assignments
-          : issueRepo.options.reviews,
+        enabled: isAssignment ? issueRepo.options.assignments : issueRepo.options.reviews,
         currentPubkey,
       })
     }
@@ -793,12 +791,18 @@ const watchedRepoRefs: Readable<WatchedRepoRef[]> = derived(userRepoWatchValues,
     .filter((repo): repo is WatchedRepoRef => Boolean(repo)),
 )
 
+const receiveRepoWatchEvent = (event: TrustedEvent, relay: string) => {
+  repository.publish(event)
+  if (!tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
+  receiveRepositoryCacheEvent(event, relay)
+}
+
 const baseRelays = derived(pubkey, getBaseRelays)
 
 const repoWatchLiveCoordinator = createBackgroundLiveCoordinator({
   request,
   owner: "repo-watcher",
-  onEvent: receiveNotificationEvent,
+  onEvent: receiveRepoWatchEvent,
   onError: (relay, error) => {
     console.warn(`[repo-watch-notifications] Failed to subscribe on ${relay}`, error)
   },
@@ -839,9 +843,9 @@ const deriveLoadedEventGroups = <T extends TrustedEvent>({
         filtersKey = nextFiltersKey
 
         if (filters.length > 0) {
-          unsubscribeEvents = deriveEventsAsc(
-            deriveEventsById({repository: notificationEventRepository, filters}),
-          ).subscribe(events => set(events as T[]))
+          unsubscribeEvents = deriveEventsAsc(deriveEventsById({repository, filters})).subscribe(
+            events => set(events as T[]),
+          )
         }
       }
 
@@ -870,7 +874,7 @@ const deriveLoadedEventGroups = <T extends TrustedEvent>({
           filters: group.filters,
           liveFilters: group.liveFilters,
           signal: controller.signal,
-          onEvent: receiveNotificationEvent,
+          onEvent: receiveRepoWatchEvent,
           onError: error => {
             if (!controller.signal.aborted) {
               console.warn(`[repo-watch-notifications] Failed to load ${label}`, error)

@@ -1,6 +1,13 @@
 import {derived, readable, type Readable} from "svelte/store"
 import * as nip19 from "nostr-tools/nip19"
-import {displayProfileByPubkey, getMutes, getPlaintext, getValidZap, pubkey} from "@welshman/app"
+import {
+  displayProfileByPubkey,
+  getMutes,
+  getPlaintext,
+  getValidZap,
+  pubkey,
+  tracker,
+} from "@welshman/app"
 import {request} from "@welshman/net"
 import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
 import {
@@ -1990,6 +1997,7 @@ export const buildRepoWatchNotificationRows = ({
       const preview = getTextPreview(event, title)
       const navigationBasePath = addRepoNotificationRelayHints(candidate.path, event, [
         ...(candidate.repoRelayHints || []),
+        ...Array.from(tracker.getRelays(event.id) || []),
         ...getNotificationEventRelays(event.id),
       ])
       const path = getRepoRowPath(navigationBasePath, event)

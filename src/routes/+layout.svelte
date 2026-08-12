@@ -32,6 +32,7 @@
   import {makeProfilePath} from "@app/util/routes"
   import {userSettingsValues} from "@app/core/state"
   import {db} from "@app/core/storage"
+  import {setupRepositoryCache} from "@app/core/repo-cache"
   import {pubkeyStorage, sessionsStorage} from "@app/core/session-storage"
   import {theme} from "@app/util/theme"
   import {toast, pushToast} from "@app/util/toast"
@@ -1102,9 +1103,10 @@
     // making the whole application wait forever; the pending connection can
     // still initialize the adapters if the blocker later disappears.
     await db.connectWithTimeout()
+    const stopRepositoryCache = setupRepositoryCache()
 
     // Close the database connection on reload
-    unsubscribers.push(() => db.close())
+    unsubscribers.push(() => db.close(), stopRepositoryCache)
 
     // Remove policies when we're done
     unsubscribers.push(
