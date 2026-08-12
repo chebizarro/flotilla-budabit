@@ -1,4 +1,7 @@
 {
-  "database": "beads.db",
-  "jsonl_export": "issues.jsonl"
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "flotilla_budabit",
+  "project_id": "094e396f-b255-49cd-94bb-462df633c3cd"
 }
