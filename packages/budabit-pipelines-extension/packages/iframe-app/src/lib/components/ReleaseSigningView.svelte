@@ -147,14 +147,14 @@
   });
 
   async function resolveNip51() {
-    if (!bridge || !nip51Input.trim()) return;
+    if (!nip51Input.trim()) return;
 
     loading = true;
     error = null;
 
     try {
       const relays = [...repo.repoRelays, ...FALLBACK_RELAYS];
-      const pubkeys = await resolveNip51List(bridge, nip51Input.trim(), relays);
+      const pubkeys = await resolveNip51List(nip51Input.trim(), relays);
       if (pubkeys.length === 0) {
         error = 'NIP-51 list resolved to zero pubkeys.';
       } else {

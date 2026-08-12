@@ -1,8 +1,9 @@
 import type { WidgetBridge } from 'budabit-sdk';
-import { BehaviorSubject, type Observable } from 'rxjs';
+import { BehaviorSubject, lastValueFrom, timeout, toArray, catchError, of, type Observable } from 'rxjs';
+import { nip19 } from 'nostr-tools';
 import type { NostrEvent, RepoContextNormalized } from './types';
-import { queryEvents, eventTagValue } from './workflows';
-import { buildReleaseEvents, eventStore } from './nostr';
+import { eventTagValue } from './workflows';
+import { buildReleaseEvents, eventStore, pool } from './nostr';
 
 const FALLBACK_RELAYS = ['wss://relay.budabit.club', 'wss://nos.lol'];
 
@@ -335,19 +336,53 @@ export async function signAndPublishReleases(
 
 /**
  * Resolve a NIP-51 people list to an array of pubkeys.
+ *
+ * Queries relays directly via the extension's own RelayPool (like the rest
+ * of the Attestations tab) rather than the host bridge — the bridge only
+ * allows kinds declared in the widget manifest and rejects kind 30000.
+ *
+ * Accepts three identifier forms:
+ * - bech32 `naddr1…` pointer
+ * - `kind:pubkey:d` coordinate
+ * - bare `d` identifier (matches any author's kind 30000 list)
  */
 export async function resolveNip51List(
-  bridge: WidgetBridge,
   listAddr: string,
   relays: string[]
 ): Promise<string[]> {
-  const events = await queryEvents(bridge, relays, [
-    { kinds: [30000], '#d': [listAddr] },
-  ]);
+  let kind = 30000;
+  let identifier = listAddr;
+  let author: string | undefined;
 
-  if (events.length === 0) return [];
+  if (listAddr.startsWith('naddr1')) {
+    const decoded = nip19.decode(listAddr);
+    if (decoded.type !== 'naddr') throw new Error('Not a valid naddr');
+    kind = decoded.data.kind;
+    identifier = decoded.data.identifier;
+    author = decoded.data.pubkey;
+  } else {
+    const parts = listAddr.split(':');
+    if (parts.length === 3 && /^\d+$/.test(parts[0]!) && /^[a-f0-9]{64}$/.test(parts[1]!)) {
+      kind = Number(parts[0]);
+      author = parts[1];
+      identifier = parts[2]!;
+    }
+  }
 
-  const first = events[0];
+  const filter: Record<string, unknown> = { kinds: [kind], '#d': [identifier] };
+  if (author) filter.authors = [author];
+
+  const events = await lastValueFrom(
+    pool.request(dedupe(relays), filter as any).pipe(
+      timeout({ first: 10_000 }),
+      toArray(),
+      catchError(() => of([] as NostrEvent[]))
+    ),
+    { defaultValue: [] as NostrEvent[] }
+  );
+
+  // Addressable kind: keep the newest event.
+  const first = [...events].sort((a, b) => b.created_at - a.created_at)[0];
   if (!first) return [];
 
   return first.tags
