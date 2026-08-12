@@ -261,10 +261,10 @@
   <div>
     <div class="flex items-center gap-2">
       <FileCheck class="h-5 w-5 text-primary" />
-      <h2 class="text-xl font-semibold">Release Signing</h2>
+      <h2 class="text-xl font-semibold">Artifact Attestations</h2>
     </div>
     <p class="mt-1 text-sm text-muted-foreground">
-      Verify artifact consensus and co-sign releases from trusted workflow workers.
+      Verify artifact consensus and co-sign artifact attestations from trusted workflow workers.
     </p>
   </div>
 
@@ -367,7 +367,7 @@
         <span>Signing failed: {signResult.error}</span>
       {:else}
         <CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0" />
-        <span>Successfully signed and published {signResult.count} release attestation{signResult.count !== 1 ? 's' : ''}.</span>
+        <span>Successfully signed and published {signResult.count} artifact attestation{signResult.count !== 1 ? 's' : ''}.</span>
       {/if}
     </div>
   {/if}
@@ -475,11 +475,11 @@
   {:else if !loading && !error && artifacts.length === 0 && trustedMaintainers.length > 0}
     <div class="rounded-lg border border-border bg-card/50 p-8 text-center text-sm text-muted-foreground">
       {#if hasLoaded}
-        No release artifacts found. This repo has no workflow runs (kind 5401)
+        No artifact attestations found. This repo has no workflow runs (kind 5401)
         triggered by the trusted maintainers, or no artifacts were published by
         those runs' workers.
       {:else}
-        Click "Load Artifacts" to fetch release data from the network.
+        Click "Load Artifacts" to fetch attestation data from the network.
       {/if}
     </div>
   {/if}
