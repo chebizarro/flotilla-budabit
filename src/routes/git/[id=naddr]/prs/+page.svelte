@@ -12,11 +12,7 @@
     type StatusEvent,
   } from "@nostr-git/core/events"
   import {fade} from "@lib/transition"
-  import {
-    normalizeEffectiveLabels,
-    toNaturalArray,
-    toNaturalNonRoleLabels,
-  } from "@app/util/labels"
+  import {normalizeEffectiveLabels, toNaturalArray, toNaturalNonRoleLabels} from "@app/util/labels"
   import {getInteractiveCardTarget, isMobile} from "@src/lib/html.js"
   import {publishEvent} from "@app/core/git-commands.js"
   import {pushModal} from "@app/util/modal"
@@ -49,6 +45,8 @@
     STATUS_EVENTS_BY_ROOT_KEY,
     RESOLVED_STATUS_BY_ROOT_KEY,
     HIDDEN_ROOT_IDS_KEY,
+    REPO_ROOT_HISTORY_KEY,
+    type RepoRootHistoryContext,
     deriveAssignmentsFor,
     deriveEffectiveLabels,
     getRepoMaintainers,
@@ -927,7 +925,10 @@
   })
 
   const visiblePrs = $derived.by(() => searchedPrs.slice(0, visiblePrCount))
-  const canLoadMorePrs = $derived.by(() => visiblePrCount < searchedPrs.length)
+  const repoRootHistory = getContext<RepoRootHistoryContext>(REPO_ROOT_HISTORY_KEY)
+  const canLoadMorePrs = $derived.by(
+    () => visiblePrCount < searchedPrs.length || $repoRootHistory.hasOlder,
+  )
   const roleAssignments = $derived.by(() => {
     const ids = pullRequests?.map((pr: any) => pr.id) || []
     const repoEvent = (repoClass as any)?.repoEvent
@@ -937,8 +938,8 @@
     for (const pr of pullRequests || []) {
       const belongsToRepo = Boolean(
         repoEvent &&
-          repoAddress &&
-          (pr.tags || []).some((tag: string[]) => tag[0] === "a" && tag[1] === repoAddress),
+        repoAddress &&
+        (pr.tags || []).some((tag: string[]) => tag[0] === "a" && tag[1] === repoAddress),
       )
       authorityByRoot.set(
         pr.id,
@@ -949,8 +950,13 @@
     return deriveAssignmentsFor(ids, authorityByRoot)
   })
 
-  const loadMorePrs = () => {
-    visiblePrCount = Math.min(visiblePrCount + ITEMS_PER_PAGE, searchedPrs.length)
+  const loadMorePrs = async () => {
+    if (visiblePrCount < searchedPrs.length) {
+      visiblePrCount = Math.min(visiblePrCount + ITEMS_PER_PAGE, searchedPrs.length)
+      return
+    }
+
+    await repoRootHistory.loadOlderRoots()
   }
 </script>
 

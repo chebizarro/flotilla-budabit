@@ -107,3 +107,60 @@ test("keeps the PR list loading until cold-start activity arrives", async ({page
     timeout: 10_000,
   })
 })
+
+test("loads a bounded recent issue page before requesting older relay history", async ({page}) => {
+  const relayUrl = "wss://git-issue-pagination.test"
+  const identifier = "issue-pagination-fixture"
+  const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
+  const announcement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "Issue pagination fixture",
+      relays: [relayUrl],
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP,
+    }),
+  )
+  const issues = Array.from({length: 100}, (_, index) =>
+    signTestEvent(
+      createIssue({
+        repoAddress,
+        subject: `Paginated issue ${index + 1}`,
+        content: "Bounded repository root history.",
+        pubkey: TEST_PUBKEYS.charlie,
+        created_at: BASE_TIMESTAMP + index + 1,
+      }),
+    ),
+  )
+  const rootRequests: Array<{limit?: number; until?: number}> = []
+  const mockRelay = new MockRelay({
+    seedEvents: [announcement, ...issues],
+    onSubscribe: (_subscriptionId, filters) => {
+      for (const filter of filters) {
+        if (
+          filter["#a"]?.includes(repoAddress) &&
+          filter.kinds?.includes(1621) &&
+          filter.kinds?.includes(1618) &&
+          filter.limit === 100
+        ) {
+          rootRequests.push({limit: filter.limit, until: filter.until})
+        }
+      }
+    },
+  })
+
+  await page.addInitScript(() => localStorage.clear())
+  await mockRelay.setup(page)
+  const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [relayUrl])
+  await page.goto(`/git/${naddr}/issues`)
+
+  await expect.poll(() => rootRequests.length).toBeGreaterThan(0)
+  expect(rootRequests[0]).toEqual({limit: 100, until: undefined})
+  await expect(page.getByText("Paginated issue 100", {exact: true})).toBeVisible({timeout: 10_000})
+
+  const loadMore = page.getByRole("button", {name: "Load more", exact: true})
+  for (let index = 0; index < 5; index += 1) await loadMore.click()
+
+  await expect.poll(() => rootRequests.some(request => request.until !== undefined)).toBe(true)
+  expect(rootRequests.find(request => request.until !== undefined)?.until).toBe(BASE_TIMESTAMP + 1)
+})

@@ -149,6 +149,7 @@
     REPO_VERIFIED_MAINTAINERS_KEY,
     COMMENT_EVENTS_KEY,
     REPO_FEED_ACTIVITY_KEY,
+    REPO_ROOT_HISTORY_KEY,
     REPO_ACTIONS_KEY,
     REPO_SETTINGS_ACTIONS_KEY,
     activeRepoClass,
@@ -215,6 +216,11 @@
     getRepoLiveFilterSignature,
     startRepoLiveRequest,
   } from "@app/core/repo-live-session"
+  import {
+    createDefaultRepoRootHistory,
+    loadRepoRootGap,
+    type RepoRootHistorySnapshot,
+  } from "@app/core/repo-root-history"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
 
@@ -308,10 +314,6 @@
     )
   })
 
-  const COMMENT_LOAD_DEBOUNCE_MS = 300
-  const COMMENT_LOAD_CHUNK_SIZE = 100
-  const PR_STATUS_ROOT_LOAD_DEBOUNCE_MS = 250
-  const PR_STATUS_ROOT_LOAD_CHUNK_SIZE = 100
   const ADDRESS_LOAD_DEBOUNCE_MS = 200
   const ADDRESS_LOAD_CHUNK_SIZE = 50
   const FORK_PUBLISH_TIMEOUT_MS = 20000
@@ -362,6 +364,56 @@
     GIT_STATUS_CLOSED,
     GIT_STATUS_COMPLETE,
   ]
+  const initialRepoRootHistory: RepoRootHistorySnapshot = {
+    status: "idle",
+    relays: [],
+    hasOlder: false,
+    exhausted: false,
+  }
+  const repoRootHistoryState = writable(initialRepoRootHistory)
+  let repoRootHistory: ReturnType<typeof createDefaultRepoRootHistory> | undefined
+  let repoRootHistoryKey = ""
+  const gapFilledRootIds = new Set<string>()
+
+  const loadOlderRoots = () => repoRootHistory?.loadOlder()
+
+  $effect(() => {
+    if (!$repoActivityHydrationReady) return
+    const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
+    const addresses = normalizeScopeValues(($repoAddressesStore || []).filter(Boolean))
+    if (relays.length === 0 || addresses.length === 0) return
+
+    const key = `${relays.join("|")}::${addresses.join("|")}`
+    if (key === repoRootHistoryKey) return
+    repoRootHistoryKey = key
+    gapFilledRootIds.clear()
+    repoRootHistory = createDefaultRepoRootHistory({
+      relays,
+      addresses,
+      signal: layoutLoadController.signal,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      onEvent: receiveRepoLiveEvent,
+      onState: snapshot => repoRootHistoryState.set(snapshot),
+    })
+    void repoRootHistory.loadRecent()
+  })
+
+  $effect(() => {
+    if (!$repoActivityHydrationReady) return
+    const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
+    const rootIds = normalizeScopeValues(($allRootIdsStore || []).filter(Boolean))
+    const pendingRoots = rootIds.filter(rootId => !gapFilledRootIds.has(rootId))
+    if (relays.length === 0 || pendingRoots.length === 0) return
+
+    for (const rootId of pendingRoots) gapFilledRootIds.add(rootId)
+    void loadRepoRootGap({
+      relays,
+      rootIds: pendingRoots,
+      signal: layoutLoadController.signal,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      onEvent: receiveRepoLiveEvent,
+    })
+  })
 
   type RepoBranchUpdate = {
     repoId: string
@@ -2098,6 +2150,10 @@
   })
   setContext(COMMENT_EVENTS_KEY, commentEventsStore)
   setContext(REPO_FEED_ACTIVITY_KEY, repoFeedActivityStore)
+  setContext(REPO_ROOT_HISTORY_KEY, {
+    subscribe: repoRootHistoryState.subscribe,
+    loadOlderRoots,
+  })
   setContext(REPO_ACTIONS_KEY, {
     refreshRepo: () => refreshRepo(),
     forkRepo: () => forkRepo(),
@@ -2168,15 +2224,7 @@
   // Initialize tracking for data loading
   let unsubscribers: (() => void)[] = []
   let layoutDestroyed = false
-  let requestedCommentRootIds = new Set<string>()
-  let pendingCommentRootIds = new Set<string>()
-  let commentLoadRelaysKey = ""
-  let commentLoadFlushTimer: ReturnType<typeof setTimeout> | null = null
   let commentReportLoadKey = ""
-  let requestedPrStatusRootIds = new Set<string>()
-  let pendingPrStatusRootIds = new Set<string>()
-  let prStatusRootLoadRelaysKey = ""
-  let prStatusRootLoadFlushTimer: ReturnType<typeof setTimeout> | null = null
   let loadedRepoAddresses = new Set<string>()
   let pendingRepoAddresses = new Set<string>()
   let repoAddressLoadRelaysKey = ""
@@ -2366,14 +2414,6 @@
             "#d": [repoName],
           },
           {
-            kinds: [GIT_ISSUE],
-            "#a": addressFilter,
-          },
-          {
-            kinds: [GIT_PULL_REQUEST],
-            "#a": addressFilter,
-          },
-          {
             kinds: [GIT_PULL_REQUEST_UPDATE],
             "#a": addressFilter,
           },
@@ -2429,14 +2469,6 @@
           await load({
             relays,
             filters: [
-              {
-                kinds: [GIT_ISSUE],
-                "#a": addresses,
-              },
-              {
-                kinds: [GIT_PULL_REQUEST],
-                "#a": addresses,
-              },
               {
                 kinds: [GIT_PULL_REQUEST_UPDATE],
                 "#a": addresses,
@@ -2510,177 +2542,6 @@
         unsubscribers.push(repoAddressesUnsubscribe)
       })
       .catch(() => {})
-
-    const flushPendingPrStatusRootLoads = async (relays: string[], relaysKey: string) => {
-      if (relaysKey !== prStatusRootLoadRelaysKey) return
-
-      while (pendingPrStatusRootIds.size > 0 && relaysKey === prStatusRootLoadRelaysKey) {
-        const rootIds = Array.from(pendingPrStatusRootIds).slice(0, PR_STATUS_ROOT_LOAD_CHUNK_SIZE)
-
-        if (rootIds.length === 0) return
-
-        for (const rootId of rootIds) {
-          pendingPrStatusRootIds.delete(rootId)
-        }
-
-        try {
-          await load({
-            relays,
-            filters: [
-              {
-                kinds: [
-                  GIT_STATUS_OPEN,
-                  GIT_STATUS_DRAFT,
-                  GIT_STATUS_CLOSED,
-                  GIT_STATUS_COMPLETE,
-                  REPORT,
-                ],
-                "#e": rootIds,
-              },
-            ],
-          })
-
-          for (const rootId of rootIds) {
-            requestedPrStatusRootIds.add(rootId)
-          }
-        } catch {
-          for (const rootId of rootIds) {
-            pendingPrStatusRootIds.add(rootId)
-          }
-          break
-        }
-      }
-    }
-
-    const schedulePrStatusRootLoadFlush = (relays: string[], relaysKey: string) => {
-      if (prStatusRootLoadFlushTimer) return
-
-      prStatusRootLoadFlushTimer = setTimeout(() => {
-        prStatusRootLoadFlushTimer = null
-        void flushPendingPrStatusRootLoads(relays, relaysKey)
-      }, PR_STATUS_ROOT_LOAD_DEBOUNCE_MS)
-    }
-
-    const prStatusLoadTrigger = derived(allRootIdsStore, (rootIds: string[]) => {
-      if (rootIds.length > 0) {
-        const currentRelays = (getStore(repoRelaysStore) || []).filter(Boolean)
-        if (currentRelays.length === 0) return rootIds
-
-        const relaysKey = [...currentRelays].sort().join("|")
-
-        if (prStatusRootLoadRelaysKey !== relaysKey) {
-          prStatusRootLoadRelaysKey = relaysKey
-          requestedPrStatusRootIds = new Set<string>()
-          pendingPrStatusRootIds = new Set<string>()
-          if (prStatusRootLoadFlushTimer) {
-            clearTimeout(prStatusRootLoadFlushTimer)
-            prStatusRootLoadFlushTimer = null
-          }
-        }
-
-        for (const rootId of new Set(rootIds.filter(Boolean))) {
-          if (!requestedPrStatusRootIds.has(rootId) && !pendingPrStatusRootIds.has(rootId)) {
-            pendingPrStatusRootIds.add(rootId)
-          }
-        }
-
-        if (pendingPrStatusRootIds.size > 0) {
-          schedulePrStatusRootLoadFlush(currentRelays, relaysKey)
-        }
-      }
-
-      return rootIds
-    })
-
-    const prStatusLoadTriggerUnsubscribe = prStatusLoadTrigger.subscribe(() => {
-      // Trigger the load
-    })
-    unsubscribers.push(prStatusLoadTriggerUnsubscribe)
-
-    const flushPendingCommentLoads = async (relays: string[], relaysKey: string) => {
-      if (relaysKey !== commentLoadRelaysKey) return
-
-      while (pendingCommentRootIds.size > 0 && relaysKey === commentLoadRelaysKey) {
-        const rootIds = Array.from(pendingCommentRootIds).slice(0, COMMENT_LOAD_CHUNK_SIZE)
-        if (rootIds.length === 0) return
-
-        for (const rootId of rootIds) {
-          pendingCommentRootIds.delete(rootId)
-        }
-
-        try {
-          await load({
-            relays,
-            filters: [
-              {
-                kinds: [COMMENT],
-                "#E": rootIds,
-              },
-              {
-                kinds: [COMMENT],
-                "#e": rootIds,
-              },
-            ],
-          })
-
-          for (const rootId of rootIds) {
-            requestedCommentRootIds.add(rootId)
-          }
-        } catch {
-          for (const rootId of rootIds) {
-            pendingCommentRootIds.add(rootId)
-          }
-          break
-        }
-      }
-    }
-
-    const scheduleCommentLoadFlush = (relays: string[], relaysKey: string) => {
-      if (commentLoadFlushTimer) return
-      commentLoadFlushTimer = setTimeout(() => {
-        commentLoadFlushTimer = null
-        void flushPendingCommentLoads(relays, relaysKey)
-      }, COMMENT_LOAD_DEBOUNCE_MS)
-    }
-
-    // Load comments reactively when root IDs are available
-    const commentLoadTrigger = derived(allRootIdsStore, (rootIds: string[]) => {
-      if (rootIds.length > 0) {
-        const currentRelays = (getStore(repoRelaysStore) || []).filter(Boolean)
-        if (currentRelays.length === 0) return rootIds
-
-        const relaysKey = [...currentRelays].sort().join("|")
-
-        if (commentLoadRelaysKey !== relaysKey) {
-          commentLoadRelaysKey = relaysKey
-          requestedCommentRootIds = new Set<string>()
-          pendingCommentRootIds = new Set<string>()
-          if (commentLoadFlushTimer) {
-            clearTimeout(commentLoadFlushTimer)
-            commentLoadFlushTimer = null
-          }
-        }
-
-        for (const rootId of new Set(rootIds.filter(Boolean))) {
-          if (!requestedCommentRootIds.has(rootId) && !pendingCommentRootIds.has(rootId)) {
-            pendingCommentRootIds.add(rootId)
-          }
-        }
-
-        if (pendingCommentRootIds.size > 0) {
-          scheduleCommentLoadFlush(currentRelays, relaysKey)
-        }
-      }
-      return rootIds
-    })
-
-    const commentLoadTriggerUnsubscribe = commentLoadTrigger.subscribe(() => {
-      // Trigger the load
-    })
-    unsubscribers.push(commentLoadTriggerUnsubscribe)
-
-    // No cleanup needed - subscriptions should persist across navigation
-    // Only cleanup on component destroy (handled by onDestroy)
   })
 
   $effect(() => {
@@ -2751,20 +2612,6 @@
     stopRepoLiveSubscription()
     unsubscribers.forEach(unsub => unsub())
     unsubscribers = []
-    requestedPrStatusRootIds.clear()
-    pendingPrStatusRootIds.clear()
-    if (prStatusRootLoadFlushTimer) {
-      clearTimeout(prStatusRootLoadFlushTimer)
-      prStatusRootLoadFlushTimer = null
-    }
-    prStatusRootLoadRelaysKey = ""
-    requestedCommentRootIds.clear()
-    pendingCommentRootIds.clear()
-    if (commentLoadFlushTimer) {
-      clearTimeout(commentLoadFlushTimer)
-      commentLoadFlushTimer = null
-    }
-    commentLoadRelaysKey = ""
     loadedRepoAddresses.clear()
     pendingRepoAddresses.clear()
     if (repoAddressLoadFlushTimer) {

@@ -53,6 +53,8 @@
     STATUS_EVENTS_BY_ROOT_KEY,
     RESOLVED_STATUS_BY_ROOT_KEY,
     HIDDEN_ROOT_IDS_KEY,
+    REPO_ROOT_HISTORY_KEY,
+    type RepoRootHistoryContext,
     getRepoMaintainers,
   } from "@app/core/git-state"
   import type {Readable} from "svelte/store"
@@ -916,10 +918,18 @@
   })
 
   const visibleIssues = $derived.by(() => searchedIssues.slice(0, visibleIssueCount))
-  const canLoadMoreIssues = $derived.by(() => visibleIssueCount < searchedIssues.length)
+  const repoRootHistory = getContext<RepoRootHistoryContext>(REPO_ROOT_HISTORY_KEY)
+  const canLoadMoreIssues = $derived.by(
+    () => visibleIssueCount < searchedIssues.length || $repoRootHistory.hasOlder,
+  )
 
-  const loadMoreIssues = () => {
-    visibleIssueCount = Math.min(visibleIssueCount + ITEMS_PER_PAGE, searchedIssues.length)
+  const loadMoreIssues = async () => {
+    if (visibleIssueCount < searchedIssues.length) {
+      visibleIssueCount = Math.min(visibleIssueCount + ITEMS_PER_PAGE, searchedIssues.length)
+      return
+    }
+
+    await repoRootHistory.loadOlderRoots()
   }
 
   const LIST_RESOLVE_TIMEOUT_MS = 15_000

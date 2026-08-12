@@ -98,6 +98,13 @@ export const COMMENT_EVENTS_KEY = Symbol("comment-events")
 
 export const REPO_FEED_ACTIVITY_KEY = Symbol("repo-feed-activity")
 
+export const REPO_ROOT_HISTORY_KEY = Symbol("repo-root-history")
+
+export type RepoRootHistoryContext = {
+  subscribe: Readable<import("@app/core/repo-root-history").RepoRootHistorySnapshot>["subscribe"]
+  loadOlderRoots: () => Promise<void> | undefined
+}
+
 export const REPO_ACTIONS_KEY = Symbol("repo-actions")
 
 export type RepoActions = {

@@ -12,17 +12,17 @@
 
 ## Current Phase
 
-- Phase 4: Recent Root Pages And Legacy Gap-Fill
+- Phase 5: Deep Links And Child Ownership Convergence
 
 ## Phase Exit Criteria
 
-- Repository entry requests explicit bounded recent root pages per authoritative relay.
-- Pagination cursors and completion are per relay.
-- Inclusive timestamp overlap prevents silent same-second loss; unresolved saturated boundaries become partial.
-- Compatibility gap-fill covers comments, PR updates, labels, cover letters, statuses, reports, and repository-tagged deletes for loaded roots.
-- `loadOlderRoots()` performs real network work only when local visible rows need another page.
-- Recent-page completion is not presented as full-history exhaustion.
-- Tests cover empty EOSE, partial relay outcomes, equal timestamps, duplicate IDs, and older-page demand.
+- Layout context exposes `ensureRoot(id)` with explicit complete, partial, failed, unavailable, and aborted outcomes.
+- Exact root results are validated against accepted repository addresses before projection.
+- Issue/PR detail routes use `ensureRoot` and layout gap-fill rather than duplicate root-wide requests.
+- Issue and PR lists no longer construct repository-wide `makeFeed` instances.
+- `PRView` has no initial-load network side effect that duplicates layout ownership.
+- Same-repository overview/list/detail navigation retains exactly one activity owner.
+- Existing direct-link loading and unavailable-relay behavior remain covered.
 
 ## Completed With Evidence
 
@@ -52,6 +52,14 @@
 - Unexpected live termination retries with bounded exponential backoff and `lastReceivedAt` overlap; route abort is terminal and releases foreground ownership.
 - Initial live requests use `limit: 0` without `since`, preserving late delivery of imported events with old signed timestamps; only retries use overlap cursors.
 - Phase 3 focused verification passed: 3 files and 14 tests; repository detail E2E passed 2 tests; root `pnpm check`, Prettier, and `git diff --check` passed.
+- Phase 3 was committed and pushed to `origin/dev` as `c809a5159`.
+- Phase 4 added bounded recent issue/PR root pages with independent relay cursors and explicit recent, partial, failed, and exhausted states.
+- Empty EOSE exhausts only its relay; timeout and other non-EOSE outcomes remain partial rather than becoming empty authority.
+- Older pages retain an inclusive oldest-timestamp boundary; repeated full pages at the same boundary become explicit partial saturation instead of skipping events.
+- Finite compatibility gap-fill now has one owner and covers comments, PR updates, labels, cover letters, statuses, reports, and delete events for newly admitted roots.
+- The previous duplicate reactive comment/status root loaders and unbounded root filters were removed.
+- Issue and PR Load more reveal local rows first, then request the next relay page only when local rows are exhausted.
+- Phase 4 focused verification passed: 3 files and 16 tests; root/list/detail E2E passed 5 tests including bounded on-demand pagination; `pnpm check`, `pnpm run e2e:check`, Prettier, and `git diff --check` passed.
 
 ## Decisions
 
@@ -67,12 +75,12 @@
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev` after a clean merge of the prior divergence.
 - Unrelated dirty relay-policy/Welshman files and an optimistic-publication plan predate this workflow and must remain unstaged and unmodified.
-- Phases 1 through 3 are verified; Phase 3 is ready for scoped commit/push closeout.
+- Phases 1 through 4 are verified; Phase 4 is ready for scoped commit/push closeout.
 - The session plan remains intentionally untracked and must not be staged.
 
 ## Next Action
 
-- Add per-relay bounded recent root pages, inclusive timestamp pagination, and finite compatibility gap-fill for admitted roots.
+- Add layout-owned exact root resolution, migrate detail/list consumers, and remove child repository-wide feeds and initial-load side effects.
 
 ## Verification
 
@@ -90,6 +98,10 @@
 - Initial repository-detail E2E exposed and rejected a wall-clock `since` boundary that filtered old imported events.
 - After changing initial live to `limit: 0` and retaining `since` only on retry, `pnpm exec playwright test tests/e2e/git-detail-resolution.spec.ts` passed: 2 tests.
 - Phase 3 `pnpm check`, owned-file Prettier, and `git diff --check` passed.
+- `pnpm exec vitest run --project=main src/app/core/repo-root-history.test.ts src/app/core/repo-loading-scope.test.ts src/app/core/repo-live-session.test.ts` passed: 3 files, 16 tests.
+- `pnpm exec playwright test tests/e2e/git-list-resolution.spec.ts tests/e2e/git-detail-resolution.spec.ts` passed the existing 4 tests after integration.
+- The new bounded-pagination E2E passed and proved the first `limit: 100` request has no cursor while older demand retains the oldest timestamp in `until`.
+- Phase 4 `pnpm check`, `pnpm run e2e:check`, owned-file Prettier, and `git diff --check` passed.
 
 ## Risks Or Blockers
 
@@ -114,3 +126,8 @@
 - `src/routes/git/[id=naddr]/+layout.svelte`
 - `src/app/core/repo-live-session.ts`
 - `src/app/core/repo-live-session.test.ts`
+- `src/app/core/repo-root-history.ts`
+- `src/app/core/repo-root-history.test.ts`
+- `src/routes/git/[id=naddr]/issues/+page.svelte`
+- `src/routes/git/[id=naddr]/prs/+page.svelte`
+- `tests/e2e/git-list-resolution.spec.ts`
