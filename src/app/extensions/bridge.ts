@@ -2402,6 +2402,9 @@ registerBridgeHandler("nostr:subscribe", async (payload, ext) => {
           event,
         })
       },
+      onEose(subscriptionId) {
+        postEventToExtension(ext, "nostr:eose", {subscriptionId})
+      },
     })
 
     return {status: "ok", subscriptionId: subId}

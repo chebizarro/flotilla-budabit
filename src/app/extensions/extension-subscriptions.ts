@@ -14,6 +14,8 @@ type LogicalSubscription = {
   relays: string[]
   filters: Filter[]
   onEvent: (subscriptionId: string, event: TrustedEvent) => void
+  onEose?: (subscriptionId: string) => void
+  eoseSent?: boolean
 }
 
 type PhysicalRequest = {
@@ -82,11 +84,13 @@ export class ExtensionSubscriptionRegistry {
     relays,
     filters,
     onEvent,
+    onEose,
   }: {
     extensionId: string
     relays: string[]
     filters: Filter[]
     onEvent: (subscriptionId: string, event: TrustedEvent) => void
+    onEose?: (subscriptionId: string) => void
   }): string {
     const normalizedRelays = Array.from(new Set(relays.map(normalizeRelay).filter(Boolean)))
     const extensionIds = this.subscriptionIdsByExtension.get(extensionId)
@@ -119,6 +123,7 @@ export class ExtensionSubscriptionRegistry {
       relays: normalizedRelays,
       filters: filters.map(cloneFilter),
       onEvent,
+      onEose,
     }
     this.subscriptions.set(id, subscription)
 
@@ -252,6 +257,7 @@ export class ExtensionSubscriptionRegistry {
       group.active = candidate
       group.pending = undefined
       previous?.controller.abort()
+      this.dispatchEose(group)
     }
 
     void this.request({
@@ -285,6 +291,21 @@ export class ExtensionSubscriptionRegistry {
           }, this.retryDelayMs)
         }
       })
+  }
+
+  /**
+   * Notify each logical subscription in the group (once, ever) that a relay
+   * has finished its stored-event dump. First relay to EOSE wins — widgets use
+   * this to clear loading states, not for strict per-relay semantics.
+   */
+  private dispatchEose(group: RelayGroup) {
+    for (const id of group.subscriptionIds) {
+      const subscription = this.subscriptions.get(id)
+      if (subscription?.onEose && !subscription.eoseSent) {
+        subscription.eoseSent = true
+        subscription.onEose(subscription.id)
+      }
+    }
   }
 
   private dispatch(group: RelayGroup, event: TrustedEvent) {
