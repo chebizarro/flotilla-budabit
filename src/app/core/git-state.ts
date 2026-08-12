@@ -54,6 +54,19 @@ export const shouldReloadRepos = writable(false)
 
 export const activeRepoClass = writable<Repo | undefined>(undefined)
 
+export const disposeActiveRepo = (expected?: Repo) => {
+  const repo = get(activeRepoClass)
+  if (!repo || (expected && repo !== expected)) return false
+
+  try {
+    repo.dispose()
+  } finally {
+    activeRepoClass.set(undefined)
+  }
+
+  return true
+}
+
 export const REPO_KEY = Symbol("repo")
 
 export const REPO_RELAYS_KEY = Symbol("repo-relays")
@@ -396,13 +409,14 @@ export const repoAnnouncementsByAddress = derived(repoAnnouncements, $events => 
   return map
 })
 
-export const loadRepoAnnouncements = (relays?: string[]) => {
+export const loadRepoAnnouncements = (relays?: string[], signal?: AbortSignal) => {
   const targetRelays = (relays && relays.length > 0 ? relays : getRepoAnnouncementRelays())
     .map(u => safeNormalizeRelayUrl(u))
     .filter(isRelayUrl) as string[]
   return load({
     relays: targetRelays,
     filters: [{kinds: [30617]}],
+    signal,
   })
 }
 
@@ -444,10 +458,7 @@ export const loadRepoAnnouncementByAddress = (repoAddr: string) => {
 /**
  * Derive role assignments for a given root id.
  */
-export const deriveRoleAssignments = (
-  rootId: string,
-  authorizedPublishers?: Iterable<string>,
-) => {
+export const deriveRoleAssignments = (rootId: string, authorizedPublishers?: Iterable<string>) => {
   const authority =
     authorizedPublishers === undefined ? undefined : new Set(Array.from(authorizedPublishers))
 
@@ -467,10 +478,7 @@ export const getRoleAssignmentsByRoot = (
   rootIds: string[],
   authorizedPublishersByRoot?: Map<string, Iterable<string>>,
 ) => {
-  const assignmentsByRoot = new Map<
-    string,
-    {assignees: Set<string>; reviewers: Set<string>}
-  >()
+  const assignmentsByRoot = new Map<string, {assignees: Set<string>; reviewers: Set<string>}>()
 
   for (const rootId of rootIds) {
     const authority = authorizedPublishersByRoot

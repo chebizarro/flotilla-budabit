@@ -12,17 +12,18 @@
 
 ## Current Phase
 
-- Phase 2: Additive Storage And Route Lifecycle Safety
+- Phase 3: Stable Repository Live Ownership
 
 ## Phase Exit Criteria
 
-- Late event hydration merges verified persisted events with newer in-memory events instead of replacing repository indexes.
-- Late tracker hydration merges provenance without clearing relays learned after startup continued.
-- Event persistence observes the event before persisting its relay provenance.
-- Core `/git` and repository-layout finite requests receive route-lifetime cancellation signals.
-- Leaving a repository disposes and clears route-owned `activeRepoClass` state safely.
-- Tests prove late hydration preserves newer events/provenance and route teardown aborts owned work.
-- Existing community behavior and unrelated storage classes remain unchanged.
+- Live starts before finite history for each authoritative relay.
+- Coordinate, comment-`q`, announcement/state, and exact-open-thread lanes have explicit ownership and correct authority scope.
+- Adding roots does not restart or enlarge stable live requests.
+- Relay additions/removals affect only the changed relay.
+- Unexpected `CLOSED` or disconnect retries with bounded backoff and overlap from last received time.
+- Route abort schedules no retry and releases foreground ownership.
+- Background watched-repository ownership handoff remains covered.
+- Tests prove zero live restarts for large root growth and no use of naddr hints for activity.
 
 ## Completed With Evidence
 
@@ -38,6 +39,13 @@
 - Caller abort and timeout propagate through the existing request signal before the helper settles.
 - Accepted and duplicate events are both forwarded for provenance handling while the returned event array is deduplicated by ID.
 - Phase 1 focused verification passed: 1 file and 10 tests; root `pnpm check` passed with 0 diagnostics; Prettier and `git diff --check` passed.
+- Phase 1 was committed and pushed to `origin/dev` as `a405a1f08`.
+- Phase 2 changed generic persisted event and tracker hydration from destructive replacement to additive merge.
+- Late cached replaceables cannot displace newer in-memory winners, and cached provenance is unioned with relays learned after startup continued.
+- Eligible event persistence now establishes a pending barrier before tracker provenance is written; repository update evidence also retriggers provenance persistence.
+- `/git` and repository-detail layouts wrap their existing finite `load` calls with route-lifetime cancellation without changing filters or completion behavior.
+- Repository teardown aborts route finite work and identity-safely disposes and clears the route-owned `Repo` instance.
+- Phase 2 focused verification passed: 4 files and 39 tests; root `pnpm check` passed with 0 diagnostics; Prettier and `git diff --check` passed.
 
 ## Decisions
 
@@ -53,12 +61,12 @@
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev` after a clean merge of the prior divergence.
 - Unrelated dirty relay-policy/Welshman files and an optimistic-publication plan predate this workflow and must remain unstaged and unmodified.
-- Phase 1 is verified and ready for scoped commit/push closeout.
+- Phases 1 and 2 are verified; Phase 2 is ready for scoped commit/push closeout.
 - The session plan remains intentionally untracked and must not be staged.
 
 ## Next Action
 
-- Make generic event and tracker hydration additive, then add route-lifetime cancellation to current Git list/detail finite work.
+- Extract stable repository live filter builders and replace root-growing foreground subscriptions with route-owned per-relay loops.
 
 ## Verification
 
@@ -68,6 +76,10 @@
 - `pnpm check` passed with 0 errors and 0 warnings.
 - Phase-owned Prettier check passed.
 - Phase-owned `git diff --check` passed.
+- `pnpm exec vitest run --project=main src/app/util/storage.test.ts src/app/core/git-state.test.ts src/app/core/repo-loading-scope.test.ts src/lib/indexeddb.test.ts` passed: 4 files, 39 tests.
+- Phase 2 `pnpm check` passed with 0 errors and 0 warnings.
+- Phase 2 owned-file Prettier and `git diff --check` passed.
+- `git-state.test.ts` continues to emit its existing incomplete mocked-router warning while passing.
 
 ## Risks Or Blockers
 
@@ -83,3 +95,10 @@
 - `docs/architecture/repository-activity-loading-session-checkpoint.md`
 - `src/app/core/finite-relay-request.ts`
 - `src/app/core/finite-relay-request.test.ts`
+- `src/app/util/storage.ts`
+- `src/app/util/storage.test.ts`
+- `src/app/core/git-state.ts`
+- `src/app/core/git-state.test.ts`
+- `src/app/core/repo-loading-scope.test.ts`
+- `src/routes/git/+page.svelte`
+- `src/routes/git/[id=naddr]/+layout.svelte`

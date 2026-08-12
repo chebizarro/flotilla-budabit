@@ -118,6 +118,18 @@ describe("authoritative repository loading scope", () => {
     expect(liveFilters).toContain('"#p":[viewer]')
   })
 
+  it("aborts list and repository layout finite work on route teardown", () => {
+    const list = dense(readProjectFile("../../routes/git/+page.svelte"))
+    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
+
+    expect(list).toContain("constgitPageLoadController=newAbortController()")
+    expect(list).toContain("gitPageLoadController.abort()")
+    expect(list).toContain("loadaswelshmanLoad,typeLoadOptions")
+    expect(layout).toContain("constlayoutLoadController=newAbortController()")
+    expect(layout).toContain("layoutLoadController.abort()")
+    expect(layout).toContain("disposeActiveRepo(routeRepoClass)")
+  })
+
   it("does not initialize repository extensions without relay authority", () => {
     const extensionPage = readProjectFile(
       "../../routes/git/[id=naddr]/extensions/[extId]/+page.svelte",

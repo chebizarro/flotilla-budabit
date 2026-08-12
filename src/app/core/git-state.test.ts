@@ -10,6 +10,7 @@ import {
   GRASP_SET_KIND,
 } from "@nostr-git/core/events"
 import {repository, pubkey} from "@welshman/app"
+import {get} from "svelte/store"
 
 const relayMocks = vi.hoisted(() => ({
   userOutboxRelays: ["wss://outbox.example"],
@@ -41,6 +42,8 @@ vi.mock("@app/core/state", () => ({
 import {
   getRepoAnnouncementPublishRelays,
   getRepoAnnouncementRelays,
+  activeRepoClass,
+  disposeActiveRepo,
   getRepoDeclaredMaintainers,
   getRepoMaintainers,
   getOwnedRepoStateLoadScopes,
@@ -135,6 +138,21 @@ describe("budabit state", () => {
     eventCounter = 0
     repository.load([])
     pubkey.set(undefined)
+  })
+
+  describe("active repository lifecycle", () => {
+    it("disposes and clears only the expected route repository", () => {
+      const first = {dispose: vi.fn()} as any
+      const second = {dispose: vi.fn()} as any
+      activeRepoClass.set(first)
+
+      expect(disposeActiveRepo(second)).toBe(false)
+      expect(first.dispose).not.toHaveBeenCalled()
+
+      expect(disposeActiveRepo(first)).toBe(true)
+      expect(first.dispose).toHaveBeenCalledOnce()
+      expect(get(activeRepoClass)).toBeUndefined()
+    })
   })
 
   describe("getRepoAnnouncementRelays", () => {

@@ -22,7 +22,7 @@
   } from "@welshman/app"
   import {deriveEventsById, deriveEventsDesc} from "@welshman/store"
   import {Router} from "@welshman/router"
-  import {load} from "@welshman/net"
+  import {load as welshmanLoad, type LoadOptions} from "@welshman/net"
   import {fly, staggeredFade} from "@lib/transition"
   import {fade} from "svelte/transition"
   import Icon from "@lib/components/Icon.svelte"
@@ -368,6 +368,14 @@
 
   const repoLoadSettleTimers = new Set<ReturnType<typeof setTimeout>>()
   const repoLoadTimeoutTimers = new Set<ReturnType<typeof setTimeout>>()
+  const gitPageLoadController = new AbortController()
+  const load = (options: LoadOptions) =>
+    welshmanLoad({
+      ...options,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, gitPageLoadController.signal])
+        : gitPageLoadController.signal,
+    })
   let gitPageDestroyed = false
 
   const afterRepoLoadSettle = (callback: () => void) => {
@@ -1033,7 +1041,7 @@
           const loadPromise =
             relaysToQuery.length > 0
               ? load({relays: relaysToQuery, filters})
-              : loadRepoAnnouncements()
+              : loadRepoAnnouncements(undefined, gitPageLoadController.signal)
           settleRepoLoad({
             promise: loadPromise.catch(error => {
               console.warn("[git/+page] Failed to load starred repos", error)
@@ -2881,6 +2889,7 @@
 
   onDestroy(() => {
     gitPageDestroyed = true
+    gitPageLoadController.abort()
     for (const transport of activeRepoPublishTransports) transport.dispose()
     activeRepoPublishTransports.clear()
     cardsComputeRequestId += 1

@@ -115,7 +115,7 @@
     abortThunk,
   } from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById, deriveEventsDesc, throttled} from "@welshman/store"
-  import {load, request, PublishStatus} from "@welshman/net"
+  import {load as welshmanLoad, request, PublishStatus, type LoadOptions} from "@welshman/net"
   import {Router} from "@welshman/router"
   import {goto, beforeNavigate} from "$app/navigation"
   import {
@@ -152,6 +152,7 @@
     REPO_ACTIONS_KEY,
     REPO_SETTINGS_ACTIONS_KEY,
     activeRepoClass,
+    disposeActiveRepo,
     GIT_RELAYS,
     getRepoAnnouncementPublishRelays,
     getRepoAnnouncementRelays,
@@ -214,6 +215,14 @@
   const {id} = $page.params
 
   const {data, children} = $props()
+  const layoutLoadController = new AbortController()
+  const load = (options: LoadOptions) =>
+    welshmanLoad({
+      ...options,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, layoutLoadController.signal])
+        : layoutLoadController.signal,
+    })
   // Type assertion needed because TypeScript infers old layout return type
   const layoutData = data as unknown as {
     repoId: string
@@ -2040,6 +2049,7 @@
     }
     // Repo instance reused when navigating within same repo
   }
+  const routeRepoClass = $activeRepoClass
 
   const activeRepoPublishTransports = new Set<RepoPublishTransport>()
   let repoSettingsPagePublishTransport: RepoPublishTransport | undefined
@@ -2068,7 +2078,7 @@
   }
 
   // Set context for child components (only once, not in effect)
-  setContext(REPO_KEY, $activeRepoClass)
+  setContext(REPO_KEY, routeRepoClass)
   setContext(REPO_RELAYS_KEY, repoRelaysStore)
   setContext(REPO_PROFILE_RELAYS_KEY, () => repoCommunityProfileRelays)
   setContext(REPO_CLONE_URLS_KEY, repoCloneUrlsStore)
@@ -2724,6 +2734,8 @@
   // Cleanup on component destroy
   onDestroy(() => {
     layoutDestroyed = true
+    layoutLoadController.abort()
+    if (routeRepoClass) disposeActiveRepo(routeRepoClass)
     for (const transport of activeRepoPublishTransports) transport.dispose()
     activeRepoPublishTransports.clear()
 

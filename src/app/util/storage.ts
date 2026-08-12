@@ -96,39 +96,68 @@ const rankEvent = (event: TrustedEvent) => {
   return 0
 }
 
-const eventsAdapter = {
+export const mergePersistedEvents = (events: TrustedEvent[]) => {
+  for (const event of events) {
+    // Persisted events were verified before storage. Keep newer in-memory
+    // replaceable events when IndexedDB finishes opening after network startup.
+    event[verifiedSymbol] = true
+    if (!repository.hasEvent(event)) repository.publish(event)
+  }
+}
+
+export const mergePersistedRelayProvenance = (items: TrackerItem[]) => {
+  for (const {id, relays} of items) {
+    for (const relay of relays) tracker.addRelay(id, relay)
+  }
+}
+
+const pendingEventPersistence = new Map<string, Promise<boolean>>()
+const resolveEventPersistence = new Map<string, (persisted: boolean) => void>()
+
+const markEventPersistencePending = (id: string) => {
+  if (pendingEventPersistence.has(id)) return
+
+  pendingEventPersistence.set(
+    id,
+    new Promise<boolean>(resolve => {
+      resolveEventPersistence.set(id, resolve)
+    }),
+  )
+}
+
+const markEventPersistenceSettled = (ids: Iterable<string>, persisted: boolean) => {
+  for (const id of ids) {
+    resolveEventPersistence.get(id)?.(persisted)
+    resolveEventPersistence.delete(id)
+    pendingEventPersistence.delete(id)
+  }
+}
+
+export const eventsAdapter = {
   name: "events",
   keyPath: "id",
   init: async (table: IDBTable<TrustedEvent>) => {
-    const initialEvents = await table.getAll()
+    mergePersistedEvents(await table.getAll())
 
-    // Mark events verified to avoid re-verification of signatures
-    for (const event of initialEvents) {
-      event[verifiedSymbol] = true
-    }
+    const persistUpdates = batch(3000, async (updates: RepositoryUpdate[]) => {
+      const add: TrustedEvent[] = []
+      const remove = new Set<string>()
 
-    repository.load(initialEvents)
-
-    return on(
-      repository,
-      "update",
-      batch(3000, async (updates: RepositoryUpdate[]) => {
-        const add: TrustedEvent[] = []
-        const remove = new Set<string>()
-
-        for (const update of updates) {
-          for (const event of update.added) {
-            if (rankEvent(event) > 0) {
-              add.push(event)
-              remove.delete(event.id)
-            }
-          }
-
-          for (const id of update.removed) {
-            remove.add(id)
+      for (const update of updates) {
+        for (const event of update.added) {
+          if (rankEvent(event) > 0) {
+            add.push(event)
+            remove.delete(event.id)
           }
         }
 
+        for (const id of update.removed) {
+          remove.add(id)
+        }
+      }
+
+      let addPersisted = true
+      try {
         if (add.length > 0) {
           await table.bulkPut(add)
         }
@@ -136,29 +165,43 @@ const eventsAdapter = {
         if (remove.size > 0) {
           await table.bulkDelete(remove)
         }
-      }),
-    )
+      } catch (error) {
+        addPersisted = false
+        throw error
+      } finally {
+        markEventPersistenceSettled(
+          add.map(event => event.id),
+          addPersisted,
+        )
+      }
+    })
+    const unsubscribe = on(repository, "update", (update: RepositoryUpdate) => {
+      for (const event of update.added) {
+        if (rankEvent(event) > 0) markEventPersistencePending(event.id)
+      }
+      persistUpdates(update)
+    })
+
+    return () => {
+      unsubscribe()
+      markEventPersistenceSettled(pendingEventPersistence.keys(), false)
+    }
   },
 }
 
-type TrackerItem = {id: string; relays: string[]}
+export type TrackerItem = {id: string; relays: string[]}
 
-const trackerAdapter = {
+export const trackerAdapter = {
   name: "tracker",
   keyPath: "id",
   init: async (table: IDBTable<TrackerItem>) => {
-    const relaysById = new Map<string, Set<string>>()
-
-    for (const {id, relays} of await table.getAll()) {
-      relaysById.set(id, new Set(relays))
-    }
-
-    tracker.load(relaysById)
+    mergePersistedRelayProvenance(await table.getAll())
 
     const _onAdd = async (ids: Iterable<string>) => {
       const items: TrackerItem[] = []
 
       for (const id of ids) {
+        if ((await pendingEventPersistence.get(id)) === false) continue
         const event = repository.getEvent(id)
 
         if (!event || rankEvent(event) === 0) continue
@@ -185,16 +228,25 @@ const trackerAdapter = {
 
     const onClear = () => _onRemove(tracker.relaysById.keys())
 
+    // Relay intake records provenance before publishing to the repository.
+    // Persist again from repository evidence so a short batch cannot observe
+    // provenance before its eligible event exists.
+    const onRepositoryUpdate = batch(3000, (updates: RepositoryUpdate[]) =>
+      _onAdd(updates.flatMap(update => Array.from(update.added, event => event.id))),
+    )
+
     tracker.on("add", onAdd)
     tracker.on("remove", onRemove)
     tracker.on("load", onLoad)
     tracker.on("clear", onClear)
+    repository.on("update", onRepositoryUpdate)
 
     return () => {
       tracker.off("add", onAdd)
       tracker.off("remove", onRemove)
       tracker.off("load", onLoad)
       tracker.off("clear", onClear)
+      repository.off("update", onRepositoryUpdate)
     }
   },
 }
