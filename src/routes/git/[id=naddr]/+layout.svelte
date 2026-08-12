@@ -209,6 +209,12 @@
   import {randomId} from "@welshman/lib"
   import {makeCommunityInputValue} from "@app/util/community-stars"
   import {registerRepoLiveOwnership} from "@app/core/repo-live-ownership"
+  import {
+    buildRepoExactThreadLiveFilters,
+    buildRepoStableLiveFilters,
+    getRepoLiveFilterSignature,
+    startRepoLiveRequest,
+  } from "@app/core/repo-live-session"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
 
@@ -2176,65 +2182,129 @@
   let repoAddressLoadRelaysKey = ""
   let repoAddressLoadFlushTimer: ReturnType<typeof setTimeout> | null = null
   let dataLoadInitialized = $state(false)
-  // The live subscription is split per-relay so that an announcement replacement
-  // can add declared relays without tearing down streams that remain authoritative.
-  // `repoLiveSubscriptionFiltersKey` still forces a full restart when the
-  // filters themselves change (addresses/root ids/viewer differ).
-  let repoLiveSubscriptionFiltersKey = ""
-  const repoLiveSubscriptionsByRelay = new Map<
-    string,
-    {controller: AbortController; releaseOwnership: () => void}
-  >()
+  type RepoLiveLane = {
+    signature: string
+    stop: () => void
+    releaseOwnership: () => void
+  }
+  const repoAnnouncementLiveByRelay = new Map<string, RepoLiveLane>()
+  const repoActivityLiveByRelay = new Map<string, RepoLiveLane>()
+  const repoExactThreadLiveByRelay = new Map<string, RepoLiveLane>()
   let viewerScopedLoadKey = ""
 
   const stopRepoLiveSubscription = () => {
-    for (const subscription of repoLiveSubscriptionsByRelay.values()) {
-      subscription.controller.abort()
-      subscription.releaseOwnership()
+    for (const lanes of [
+      repoAnnouncementLiveByRelay,
+      repoActivityLiveByRelay,
+      repoExactThreadLiveByRelay,
+    ]) {
+      for (const lane of lanes.values()) {
+        lane.stop()
+        lane.releaseOwnership()
+      }
+      lanes.clear()
     }
-    repoLiveSubscriptionsByRelay.clear()
-    repoLiveSubscriptionFiltersKey = ""
   }
 
-  const buildRepoLiveFilters = ({
-    addresses,
-    rootIds,
-    viewer,
+  const receiveRepoLiveEvent = (event: TrustedEvent, relay: string) => {
+    repository.publish(event)
+    if (!tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
+  }
+
+  const reconcileRepoLiveLane = ({
+    lanes,
+    relays,
+    filters,
+    owner,
+    ownedAddresses = [],
   }: {
-    addresses: string[]
-    rootIds: string[]
-    viewer: string
+    lanes: Map<string, RepoLiveLane>
+    relays: string[]
+    filters: Filter[]
+    owner: string
+    ownedAddresses?: string[]
   }) => {
-    const filters: Filter[] = []
+    const targetRelays = new Set(relays)
+    const signature = getRepoLiveFilterSignature(filters)
 
-    for (const addressChunk of chunkBySize(addresses, ADDRESS_DERIVE_FILTER_CHUNK_SIZE)) {
-      filters.push({
-        kinds: [GIT_ISSUE, GIT_PULL_REQUEST, GIT_PULL_REQUEST_UPDATE, ...repoStatusKinds],
-        "#a": addressChunk,
-        limit: 0,
+    for (const [relay, lane] of lanes) {
+      if (targetRelays.has(relay) && lane.signature === signature) continue
+      lane.stop()
+      lane.releaseOwnership()
+      lanes.delete(relay)
+    }
+
+    if (filters.length === 0) return
+
+    for (const relay of targetRelays) {
+      if (lanes.has(relay)) continue
+
+      const releases = ownedAddresses.map(address => registerRepoLiveOwnership(address, relay))
+      lanes.set(relay, {
+        signature,
+        stop: startRepoLiveRequest({
+          relay,
+          filters,
+          signal: layoutLoadController.signal,
+          priority: RELAY_REQUEST_PRIORITY.live,
+          owner,
+          onEvent: receiveRepoLiveEvent,
+        }),
+        releaseOwnership: () => releases.forEach(release => release()),
       })
     }
-
-    for (const rootChunk of chunkBySize(rootIds, REPO_LIVE_FILTER_CHUNK_SIZE)) {
-      filters.push(
-        {kinds: [COMMENT], "#E": rootChunk, limit: 0},
-        {kinds: [COMMENT], "#e": rootChunk, limit: 0},
-        {kinds: [GIT_LABEL, GIT_COVER_LETTER_KIND], "#e": rootChunk, limit: 0},
-        {kinds: repoStatusKinds, "#e": rootChunk, limit: 0},
-        {kinds: [REPORT], "#e": rootChunk, limit: 0},
-      )
-    }
-
-    if (viewer) {
-      filters.push({
-        kinds: [GIT_ISSUE, GIT_PULL_REQUEST, GIT_PULL_REQUEST_UPDATE],
-        "#p": [viewer],
-        limit: 0,
-      })
-    }
-
-    return filters
   }
+
+  // Stable live lanes start before batched finite history below. Root discovery
+  // never changes these filters; legacy root-only activity uses the exact lane.
+  $effect(() => {
+    if (!$repoActivityHydrationReady) {
+      stopRepoLiveSubscription()
+      return
+    }
+
+    const announcementRelays = normalizeScopeValues(announcementDiscoveryRelays)
+    const activityRelays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
+    const addresses = normalizeScopeValues(($repoAddressesStore || []).filter(Boolean))
+    const owners = normalizeScopeValues(($repoOwnerStore || []).filter(Boolean))
+    const viewer = $pubkey || ""
+    const exactRootId = $page.params.issueid || $page.params.prid || ""
+
+    reconcileRepoLiveLane({
+      lanes: repoAnnouncementLiveByRelay,
+      relays: announcementRelays,
+      filters: buildRepoStableLiveFilters({
+        addresses: [],
+        repoPubkey,
+        repoName,
+        ownerPubkeys: [],
+        includeAnnouncement: true,
+        includeActivity: false,
+      }),
+      owner: "repo-foreground:announcement",
+    })
+    reconcileRepoLiveLane({
+      lanes: repoActivityLiveByRelay,
+      relays: activityRelays,
+      filters: buildRepoStableLiveFilters({
+        addresses,
+        repoPubkey,
+        repoName,
+        ownerPubkeys: owners,
+        viewer,
+        includeAnnouncement: false,
+        includeActivity: true,
+      }),
+      owner: "repo-foreground:stable",
+      ownedAddresses: addresses,
+    })
+    reconcileRepoLiveLane({
+      lanes: repoExactThreadLiveByRelay,
+      relays: activityRelays,
+      filters: buildRepoExactThreadLiveFilters(exactRootId),
+      owner: "repo-foreground:exact-thread",
+    })
+  })
 
   // Use effect only for data loading, not for store/context creation
   // Only run once when component mounts, not on every navigation
@@ -2656,79 +2726,6 @@
         },
       ],
     }).catch(() => {})
-  })
-
-  $effect(() => {
-    if (!$repoActivityHydrationReady) {
-      stopRepoLiveSubscription()
-      return
-    }
-    const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
-    const addresses = normalizeScopeValues(($repoAddressesStore || []).filter(Boolean))
-    const rootIds = normalizeScopeValues(($allRootIdsStore || []).filter(Boolean))
-    const viewer = $pubkey || ""
-    const filters = buildRepoLiveFilters({addresses, rootIds, viewer})
-
-    if (relays.length === 0 || filters.length === 0) {
-      stopRepoLiveSubscription()
-      return
-    }
-
-    // Key on the filter shape only. If it changes we tear down and rebuild.
-    // If only the relay set changes we compute the diff below and adjust
-    // additively.
-    const filtersKey = [addresses.join("|"), rootIds.join("|"), viewer].join("::")
-    if (repoLiveSubscriptionFiltersKey !== filtersKey) {
-      stopRepoLiveSubscription()
-      repoLiveSubscriptionFiltersKey = filtersKey
-    }
-
-    const targetRelays = new Set(relays)
-
-    // Remove relays that dropped off the target list.
-    for (const [url, subscription] of repoLiveSubscriptionsByRelay) {
-      if (!targetRelays.has(url)) {
-        subscription.controller.abort()
-        subscription.releaseOwnership()
-        repoLiveSubscriptionsByRelay.delete(url)
-      }
-    }
-
-    // Add subscriptions for newly-present relays without touching the rest.
-    for (const url of targetRelays) {
-      if (repoLiveSubscriptionsByRelay.has(url)) continue
-      const controller = new AbortController()
-      const releases = addresses.map(address => registerRepoLiveOwnership(address, url))
-      const releaseOwnership = () => releases.forEach(release => release())
-      const subscription = {controller, releaseOwnership}
-      repoLiveSubscriptionsByRelay.set(url, subscription)
-      void request({
-        relays: [url],
-        signal: controller.signal,
-        filters,
-        lifetime: "live",
-        priority: RELAY_REQUEST_PRIORITY.live,
-        owner: "repo-foreground",
-        onEvent: (event, relay) => {
-          repository.publish(event)
-          if (!tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
-        },
-        onDuplicate: (event, relay) => {
-          repository.publish(event)
-          if (!tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
-        },
-      })
-        .catch(error => {
-          if (!controller.signal.aborted) {
-            console.warn("[repo-live] Failed to subscribe to repo activity", error)
-          }
-        })
-        .finally(() => {
-          if (repoLiveSubscriptionsByRelay.get(url) !== subscription) return
-          repoLiveSubscriptionsByRelay.delete(url)
-          releaseOwnership()
-        })
-    }
   })
 
   // Cleanup on component destroy

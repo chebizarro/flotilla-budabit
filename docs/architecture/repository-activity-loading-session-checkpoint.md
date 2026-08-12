@@ -12,18 +12,17 @@
 
 ## Current Phase
 
-- Phase 3: Stable Repository Live Ownership
+- Phase 4: Recent Root Pages And Legacy Gap-Fill
 
 ## Phase Exit Criteria
 
-- Live starts before finite history for each authoritative relay.
-- Coordinate, comment-`q`, announcement/state, and exact-open-thread lanes have explicit ownership and correct authority scope.
-- Adding roots does not restart or enlarge stable live requests.
-- Relay additions/removals affect only the changed relay.
-- Unexpected `CLOSED` or disconnect retries with bounded backoff and overlap from last received time.
-- Route abort schedules no retry and releases foreground ownership.
-- Background watched-repository ownership handoff remains covered.
-- Tests prove zero live restarts for large root growth and no use of naddr hints for activity.
+- Repository entry requests explicit bounded recent root pages per authoritative relay.
+- Pagination cursors and completion are per relay.
+- Inclusive timestamp overlap prevents silent same-second loss; unresolved saturated boundaries become partial.
+- Compatibility gap-fill covers comments, PR updates, labels, cover letters, statuses, reports, and repository-tagged deletes for loaded roots.
+- `loadOlderRoots()` performs real network work only when local visible rows need another page.
+- Recent-page completion is not presented as full-history exhaustion.
+- Tests cover empty EOSE, partial relay outcomes, equal timestamps, duplicate IDs, and older-page demand.
 
 ## Completed With Evidence
 
@@ -46,6 +45,13 @@
 - `/git` and repository-detail layouts wrap their existing finite `load` calls with route-lifetime cancellation without changing filters or completion behavior.
 - Repository teardown aborts route finite work and identity-safely disposes and clears the route-owned `Repo` instance.
 - Phase 2 focused verification passed: 4 files and 39 tests; root `pnpm check` passed with 0 diagnostics; Prettier and `git diff --check` passed.
+- Phase 2 was committed and pushed to `origin/dev` as `8222a752e`.
+- Phase 3 replaced root-growing live filters with stable announcement, coordinate/state/comment-`q`, and exact-open-thread lanes.
+- Stable lanes reconcile independently per relay; unchanged relays and lanes retain their current request.
+- Root discovery is absent from stable filter identity, while legacy root-only activity is isolated to the currently open exact thread.
+- Unexpected live termination retries with bounded exponential backoff and `lastReceivedAt` overlap; route abort is terminal and releases foreground ownership.
+- Initial live requests use `limit: 0` without `since`, preserving late delivery of imported events with old signed timestamps; only retries use overlap cursors.
+- Phase 3 focused verification passed: 3 files and 14 tests; repository detail E2E passed 2 tests; root `pnpm check`, Prettier, and `git diff --check` passed.
 
 ## Decisions
 
@@ -61,12 +67,12 @@
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev` after a clean merge of the prior divergence.
 - Unrelated dirty relay-policy/Welshman files and an optimistic-publication plan predate this workflow and must remain unstaged and unmodified.
-- Phases 1 and 2 are verified; Phase 2 is ready for scoped commit/push closeout.
+- Phases 1 through 3 are verified; Phase 3 is ready for scoped commit/push closeout.
 - The session plan remains intentionally untracked and must not be staged.
 
 ## Next Action
 
-- Extract stable repository live filter builders and replace root-growing foreground subscriptions with route-owned per-relay loops.
+- Add per-relay bounded recent root pages, inclusive timestamp pagination, and finite compatibility gap-fill for admitted roots.
 
 ## Verification
 
@@ -80,6 +86,10 @@
 - Phase 2 `pnpm check` passed with 0 errors and 0 warnings.
 - Phase 2 owned-file Prettier and `git diff --check` passed.
 - `git-state.test.ts` continues to emit its existing incomplete mocked-router warning while passing.
+- `pnpm exec vitest run --project=main src/app/core/repo-live-session.test.ts src/app/core/repo-loading-scope.test.ts src/app/core/repo-live-ownership.test.ts` passed: 3 files, 14 tests.
+- Initial repository-detail E2E exposed and rejected a wall-clock `since` boundary that filtered old imported events.
+- After changing initial live to `limit: 0` and retaining `since` only on retry, `pnpm exec playwright test tests/e2e/git-detail-resolution.spec.ts` passed: 2 tests.
+- Phase 3 `pnpm check`, owned-file Prettier, and `git diff --check` passed.
 
 ## Risks Or Blockers
 
@@ -102,3 +112,5 @@
 - `src/app/core/repo-loading-scope.test.ts`
 - `src/routes/git/+page.svelte`
 - `src/routes/git/[id=naddr]/+layout.svelte`
+- `src/app/core/repo-live-session.ts`
+- `src/app/core/repo-live-session.test.ts`

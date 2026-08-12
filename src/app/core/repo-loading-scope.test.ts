@@ -100,22 +100,18 @@ describe("authoritative repository loading scope", () => {
     expect(ownedStateLoad).not.toContain("GIT_RELAYS")
   })
 
-  it("preserves one per-relay live owner and the existing filter topology", () => {
+  it("uses stable per-relay live lanes without root-set dependencies", () => {
     const source = readProjectFile("../../routes/git/[id=naddr]/+layout.svelte")
     const layout = dense(source)
-    const liveFilters = layout.slice(
-      layout.indexOf("constbuildRepoLiveFilters"),
-      layout.indexOf("//Useeffectonlyfordataloading"),
-    )
 
-    expect(source.match(/lifetime:\s*"live"/g)).toHaveLength(1)
-    expect(source.match(/owner:\s*"repo-foreground"/g)).toHaveLength(1)
-    expect(layout).toContain("registerRepoLiveOwnership(address,url)")
-    expect(layout).toContain("relays:[url],signal:controller.signal,filters")
-    expect(liveFilters).toContain('"#a":addressChunk')
-    expect(liveFilters).toContain('"#E":rootChunk')
-    expect(liveFilters).toContain('"#e":rootChunk')
-    expect(liveFilters).toContain('"#p":[viewer]')
+    expect(layout).toContain("buildRepoStableLiveFilters")
+    expect(layout).toContain("buildRepoExactThreadLiveFilters(exactRootId)")
+    expect(layout).toContain("registerRepoLiveOwnership(address,relay)")
+    expect(layout).toContain('owner:"repo-foreground:stable"')
+    expect(layout).toContain('owner:"repo-foreground:announcement"')
+    expect(layout).toContain('owner:"repo-foreground:exact-thread"')
+    expect(layout).not.toContain("repoLiveSubscriptionFiltersKey")
+    expect(layout).not.toContain("buildRepoLiveFilters({addresses,rootIds,viewer})")
   })
 
   it("aborts list and repository layout finite work on route teardown", () => {
