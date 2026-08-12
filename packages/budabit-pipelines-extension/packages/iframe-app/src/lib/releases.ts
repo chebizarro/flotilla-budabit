@@ -163,17 +163,17 @@ export function releaseData$(args: {
   filterKinds?: number[];
 }): Observable<ReleaseDataState> {
   const filterKinds = args.filterKinds ?? [1063];
-  // `repoNaddr` is read off the host context shape — the type doesn't (yet)
-  // declare it but the host is known to set it. Pre-existing convention.
-  const repoNaddr = (args.repo as unknown as {repoNaddr?: string}).repoNaddr;
+  // Coordinate form (`30617:pubkey:d`), resolved by `normalizeRepo` /
+  // `resolveRepoAddress` from whatever shape the host provided.
+  const repoAddress = args.repo.repoAddress;
   const trustedNpubs = [...new Set(args.trustedMaintainers)].sort();
   const relays = dedupe([...args.repo.repoRelays, ...FALLBACK_RELAYS]);
 
-  if (!repoNaddr || trustedNpubs.length === 0) {
+  if (!repoAddress || trustedNpubs.length === 0) {
     return new BehaviorSubject(emptyReleaseState());
   }
 
-  const cacheKey = [repoNaddr, trustedNpubs.join(','), filterKinds.join(','), relays.slice().sort().join(',')].join('|');
+  const cacheKey = [repoAddress, trustedNpubs.join(','), filterKinds.join(','), relays.slice().sort().join(',')].join('|');
   const existing = releaseDataCache.get(cacheKey);
   if (existing) return existing;
 
@@ -236,7 +236,7 @@ export function releaseData$(args: {
     });
   };
 
-  buildReleaseEvents({repoNaddr, trustedMaintainers: trustedNpubs, relays, filterKinds, viewerPubkey: args.repo.userPubkey}).subscribe(event => {
+  buildReleaseEvents({repoAddress, trustedMaintainers: trustedNpubs, relays, filterKinds, viewerPubkey: args.repo.userPubkey}).subscribe(event => {
     eventStore.add(event as Parameters<typeof eventStore.add>[0]);
 
     if (event.kind === 5401) {

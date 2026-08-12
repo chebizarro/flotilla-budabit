@@ -23,6 +23,7 @@
     resolveNip51List,
   } from '../releases';
   import {onDestroy} from 'svelte';
+  import {nip19} from 'nostr-tools';
   import type {Subscription} from 'rxjs';
   import ReleaseSankey from './ReleaseSankey.svelte';
 
@@ -167,10 +168,26 @@
   }
 
   function addMaintainer() {
-    const pk = maintainerInput.trim();
-    if (pk.length === 64 && /^[a-f0-9]+$/.test(pk)) {
+    const input = maintainerInput.trim();
+    let pk: string | null = null;
+
+    if (/^[a-f0-9]{64}$/.test(input)) {
+      pk = input;
+    } else if (input.startsWith('npub1')) {
+      try {
+        const decoded = nip19.decode(input);
+        if (decoded.type === 'npub') pk = decoded.data;
+      } catch {
+        // fall through to error below
+      }
+    }
+
+    if (pk) {
       trustedMaintainers = [...new Set([...trustedMaintainers, pk])];
       maintainerInput = '';
+      error = null;
+    } else {
+      error = 'Maintainer must be a 64-char hex pubkey or an npub.';
     }
   }
 

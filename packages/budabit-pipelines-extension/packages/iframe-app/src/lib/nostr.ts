@@ -278,11 +278,11 @@ export function buildWorkerEvents(relays: string[]): Observable<NostrEvent> {
 
 /**
  * Layered event stream for the Releases tab. Mirrors `buildRepoEvents` but
- * keyed on `repoNaddr` (the address pointer), with trust scoped to the
- * provided maintainer set, and a configurable artifact-kind filter.
+ * keyed on `repoAddress` (the `kind:pubkey:d` coordinate), with trust scoped
+ * to the provided maintainer set, and a configurable artifact-kind filter.
  *
  * Layers:
- * - **Workflow runs (5401)** scoped by `#a: repoNaddr`, filtered to runs
+ * - **Workflow runs (5401)** scoped by `#a: repoAddress`, filtered to runs
  *   triggered by trusted maintainers.
  * - **Artifacts (filterKinds)** via two parallel paths: by `authors:
  *   publishers` and by `#e: runIds`. Downstream code dedupes.
@@ -291,13 +291,13 @@ export function buildWorkerEvents(relays: string[]): Observable<NostrEvent> {
  *   worker names.
  */
 export function buildReleaseEvents(args: {
-  repoNaddr: string;
+  repoAddress: string;
   trustedMaintainers: string[];
   relays: string[];
   filterKinds: number[];
   viewerPubkey?: string;
 }): Observable<NostrEvent> {
-  const {repoNaddr, trustedMaintainers, relays, filterKinds, viewerPubkey} = args;
+  const {repoAddress, trustedMaintainers, relays, filterKinds, viewerPubkey} = args;
   const maintainers = [...new Set(trustedMaintainers)];
   if (maintainers.length === 0) return EMPTY;
 
@@ -313,18 +313,18 @@ export function buildReleaseEvents(args: {
 
   return relays$.pipe(
     switchMap(activeRelays =>
-      buildReleaseEventGraph({repoNaddr, trustedMaintainers: maintainers, relays: activeRelays, filterKinds}),
+      buildReleaseEventGraph({repoAddress, trustedMaintainers: maintainers, relays: activeRelays, filterKinds}),
     ),
   );
 }
 
 function buildReleaseEventGraph(args: {
-  repoNaddr: string;
+  repoAddress: string;
   trustedMaintainers: string[];
   relays: string[];
   filterKinds: number[];
 }): Observable<NostrEvent> {
-  const {repoNaddr, trustedMaintainers, relays, filterKinds} = args;
+  const {repoAddress, trustedMaintainers, relays, filterKinds} = args;
   const trusted = new Set(trustedMaintainers);
   if (trusted.size === 0) return EMPTY;
 
@@ -337,7 +337,9 @@ function buildReleaseEventGraph(args: {
   const trustedRuns$ = pool
     .subscription(relays, {
       kinds: [KIND_WORKFLOW_RUN],
-      '#a': [repoNaddr],
+      // Older runs reference the repo by its 30618 state address, newer by
+      // the 30617 announcement — match both.
+      '#a': repoAddressVariants(repoAddress),
     })
     .pipe(
       onlyEvents(),
