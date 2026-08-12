@@ -118,7 +118,6 @@ export const buildRepoStableLiveFilters = ({
 export const buildRepoExactThreadLiveFilters = (rootId: string): Filter[] =>
   rootId
     ? [
-        {ids: [rootId]},
         {kinds: [COMMENT], "#E": [rootId]},
         {kinds: [COMMENT], "#e": [rootId]},
         {kinds: [GIT_PULL_REQUEST_UPDATE], "#E": [rootId]},

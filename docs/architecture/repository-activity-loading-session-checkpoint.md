@@ -12,17 +12,19 @@
 
 ## Current Phase
 
-- Phase 5: Deep Links And Child Ownership Convergence
+- Phase 6: Verified Bounded Repository Cache
 
 ## Phase Exit Criteria
 
-- Layout context exposes `ensureRoot(id)` with explicit complete, partial, failed, unavailable, and aborted outcomes.
-- Exact root results are validated against accepted repository addresses before projection.
-- Issue/PR detail routes use `ensureRoot` and layout gap-fill rather than duplicate root-wide requests.
-- Issue and PR lists no longer construct repository-wide `makeFeed` instances.
-- `PRView` has no initial-load network side effect that duplicates layout ownership.
-- Same-repository overview/list/detail navigation retains exactly one activity owner.
-- Existing direct-link loading and unavailable-relay behavior remain covered.
+- Cache records use canonical repository addresses and retain bounded relay provenance.
+- Every event is independently signature-verified before write and before hydration.
+- Recent eligibility is bounded by count and age; watched eligibility is retained within its own hard limit.
+- Per-repository and global event/byte limits prune deterministically.
+- Delete evidence is retained at least as long as its cached target.
+- Cache hydration publishes into the canonical repository/tracker and never creates a second projection source.
+- Pruning persistent records does not remove active in-memory events.
+- Route and watched-repository writes are idempotent by repository/event key.
+- Offline warm reload works for recent and watched repositories.
 
 ## Completed With Evidence
 
@@ -60,6 +62,13 @@
 - The previous duplicate reactive comment/status root loaders and unbounded root filters were removed.
 - Issue and PR Load more reveal local rows first, then request the next relay page only when local rows are exhausted.
 - Phase 4 focused verification passed: 3 files and 16 tests; root/list/detail E2E passed 5 tests including bounded on-demand pagination; `pnpm check`, `pnpm run e2e:check`, Prettier, and `git diff --check` passed.
+- Phase 5 added a layout-owned `ensureRoot(id)` action with complete, partial, failed, unavailable, and aborted outcomes; concurrent exact demand coalesces while retryable outcomes remain retryable.
+- Exact issue, pull-request, and pull-request-update results are checked against the accepted canonical repository address before entering canonical projections; conflicting and foreign coordinates are rejected.
+- PR-update deep links resolve their accepted root before compatibility gap-fill and switch the exact legacy live lane from the requested update to its root.
+- Automatic and exact-demand compatibility gap-fill now share in-flight work and mark roots complete only after all relay requests reach EOSE.
+- Issue and PR details consume `ensureRoot`; issue and PR lists no longer create `makeFeed` instances or issue-edit prefetch ownership; `PRView` initial comment/update/status/cover-letter loads were removed.
+- Same-repository detail/list/overview navigation retained one stable activity owner in E2E coverage, while late direct-link delivery and unavailable relay states continued to pass.
+- Phase 5 focused verification passed: 4 files and 31 tests; root/list/detail E2E passed 7 tests; 4 affected detail regressions passed; `pnpm check`, `pnpm run e2e:check`, Prettier, and `git diff --check` passed.
 
 ## Decisions
 
@@ -75,12 +84,12 @@
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev` after a clean merge of the prior divergence.
 - Unrelated dirty relay-policy/Welshman files and an optimistic-publication plan predate this workflow and must remain unstaged and unmodified.
-- Phases 1 through 4 are verified; Phase 4 is ready for scoped commit/push closeout.
+- Phases 1 through 5 are verified; Phase 5 is ready for scoped commit/push closeout.
 - The session plan remains intentionally untracked and must not be staged.
 
 ## Next Action
 
-- Add layout-owned exact root resolution, migrate detail/list consumers, and remove child repository-wide feeds and initial-load side effects.
+- Add the application-owned verified repository cache with deterministic eligibility, event, provenance, and byte bounds.
 
 ## Verification
 
@@ -102,6 +111,10 @@
 - `pnpm exec playwright test tests/e2e/git-list-resolution.spec.ts tests/e2e/git-detail-resolution.spec.ts` passed the existing 4 tests after integration.
 - The new bounded-pagination E2E passed and proved the first `limit: 100` request has no cursor while older demand retains the oldest timestamp in `until`.
 - Phase 4 `pnpm check`, `pnpm run e2e:check`, owned-file Prettier, and `git diff --check` passed.
+- `pnpm exec vitest run --project=main src/app/core/repo-root-history.test.ts src/app/core/repo-live-session.test.ts src/app/core/repo-loading-scope.test.ts src/app/core/event-activity-io.test.ts` passed: 4 files, 31 tests.
+- `pnpm exec playwright test tests/e2e/git-detail-resolution.spec.ts tests/e2e/git-list-resolution.spec.ts` passed: 7 tests covering late exact delivery, unavailable relays, foreign-root rejection, PR-update deep links, single navigation ownership, cold lists, and bounded pagination.
+- `pnpm exec playwright test tests/e2e/pr-spam-hiding.spec.ts tests/e2e/issue-deletion.spec.ts tests/e2e/git-quote-navigation.spec.ts` passed: 4 affected detail regressions.
+- Phase 5 `pnpm check`, `pnpm run e2e:check`, owned-file Prettier, and `git diff --check` passed.
 
 ## Risks Or Blockers
 
@@ -131,3 +144,8 @@
 - `src/routes/git/[id=naddr]/issues/+page.svelte`
 - `src/routes/git/[id=naddr]/prs/+page.svelte`
 - `tests/e2e/git-list-resolution.spec.ts`
+- `src/app/core/event-activity-io.test.ts`
+- `src/app/components/PRView.svelte`
+- `src/routes/git/[id=naddr]/issues/[issueid]/+page.svelte`
+- `src/routes/git/[id=naddr]/prs/[prid]/+page.svelte`
+- `tests/e2e/git-detail-resolution.spec.ts`

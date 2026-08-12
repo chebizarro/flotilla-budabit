@@ -103,6 +103,7 @@ export const REPO_ROOT_HISTORY_KEY = Symbol("repo-root-history")
 export type RepoRootHistoryContext = {
   subscribe: Readable<import("@app/core/repo-root-history").RepoRootHistorySnapshot>["subscribe"]
   loadOlderRoots: () => Promise<void> | undefined
+  ensureRoot: (id: string) => Promise<import("@app/core/repo-root-history").EnsureRepoRootResult>
 }
 
 export const REPO_ACTIONS_KEY = Symbol("repo-actions")

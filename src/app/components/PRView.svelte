@@ -379,8 +379,6 @@
   const prThreadComments = $derived.by(() => {
     if (!prEvent) return undefined
     const filters = prThreadCommentFilters
-    const relays = strictRepoRelays
-    load({relays: relays as string[], filters})
     return deriveEventsAsc(deriveEventsById({repository, filters}))
   })
 
@@ -425,8 +423,6 @@
 
   const prUpdatesDerived = $derived.by(() => {
     if (!prEvent || prUpdatesFilter.length === 0) return undefined
-    const relays = (repoRelays || []).map((u: string) => normalizeRelayUrl(u)).filter(Boolean)
-    load({relays: relays as string[], filters: prUpdatesFilter})
     return deriveEventsAsc(deriveEventsById({repository, filters: prUpdatesFilter}))
   })
 
@@ -439,42 +435,6 @@
         return a.id.localeCompare(b.id)
       })
       .map((e: TrustedEvent) => parsePullRequestUpdateEvent(e as any))
-  })
-
-  let lastPrStatusLoadKey: string | null = null
-  let lastPrCoverLetterLoadKey: string | null = null
-
-  $effect(() => {
-    if (!prEvent) return
-
-    const relays = (repoRelays || []).map((u: string) => normalizeRelayUrl(u)).filter(Boolean)
-    if (relays.length === 0) return
-
-    const updatesCount = prUpdatesArray.length
-    const key = `${prEvent.id}|${relays.slice().sort().join(",")}|${updatesCount}`
-    if (lastPrStatusLoadKey === key) return
-    lastPrStatusLoadKey = key
-
-    void load({
-      relays: relays as string[],
-      filters: [getPrStatusFilter()],
-    }).catch(() => {})
-  })
-
-  $effect(() => {
-    if (!prEvent) return
-
-    const relays = strictPrEditRelays
-    if (relays.length === 0) return
-
-    const key = `${prEvent.id}|${relays.slice().sort().join(",")}`
-    if (lastPrCoverLetterLoadKey === key) return
-    lastPrCoverLetterLoadKey = key
-
-    void load({
-      relays: relays as string[],
-      filters: [getPrCoverLetterFilter()],
-    }).catch(() => {})
   })
 
   const prEffectiveTipOid = $derived.by(() => {

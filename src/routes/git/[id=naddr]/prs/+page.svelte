@@ -2,10 +2,9 @@
   import {Button as GitButton, NewPRForm, toast} from "@nostr-git/ui"
   import {GitPullRequest, SearchX, SlidersHorizontal} from "@lucide/svelte"
   import {createSearch, pubkey} from "@welshman/app"
-  import {GIT_STATUS_OPEN, getTagValue, type TrustedEvent} from "@welshman/util"
+  import {GIT_STATUS_OPEN, getTagValue} from "@welshman/util"
   import {
     createStatusEvent,
-    GIT_PULL_REQUEST,
     parsePullRequestEvent,
     type CommentEvent,
     type PullRequestEvent,
@@ -35,7 +34,6 @@
   import {page} from "$app/stores"
   import {beforeNavigate, goto} from "$app/navigation"
   import {normalizeRelays} from "@app/core/community"
-  import {makeFeed} from "@src/app/core/requests"
   import {
     PULL_REQUESTS_KEY,
     COMMENT_EVENTS_KEY,
@@ -412,9 +410,6 @@
   let restoreAttemptCount = 0
   let restoreInProgress = $state(false)
   const maxRestoreAttempts = 12
-  let feedInitialized = $state(false)
-  let feedCleanup: (() => void) | undefined = $state(undefined)
-  let feedInitTimer: ReturnType<typeof setTimeout> | null = null
 
   $effect(() => {
     const container = element
@@ -801,41 +796,6 @@
     return nextStatus
   })
 
-  const pullRequestFilter = $derived.by(() => ({
-    kinds: [GIT_PULL_REQUEST],
-    "#a": repoAddresses,
-  }))
-
-  $effect(() => {
-    const currentElement = element
-
-    if (feedInitialized || feedCleanup) return
-    if (!currentElement || !repoRelays.length || repoAddresses.length === 0) return
-
-    feedInitTimer = setTimeout(() => {
-      feedInitTimer = null
-      if (feedInitialized || feedCleanup) return
-      if (!element || !repoRelays.length || repoAddresses.length === 0) return
-      feedInitialized = true
-      const feed = makeFeed({
-        element,
-        relays: repoRelays,
-        feedFilters: [pullRequestFilter],
-        subscriptionFilters: [pullRequestFilter],
-        initialEvents: prList.map(pr => pr.event as TrustedEvent),
-        onExhausted: () => {},
-      })
-      feedCleanup = feed.cleanup
-    }, 100)
-
-    return () => {
-      if (feedInitTimer) {
-        clearTimeout(feedInitTimer)
-        feedInitTimer = null
-      }
-    }
-  })
-
   onDestroy(() => {
     const seenAt = getPrsSeenAt()
     setCheckedAt(prsSeenKey, seenAt)
@@ -854,15 +814,6 @@
         },
         seenAt,
       )
-    }
-
-    feedCleanup?.()
-    feedCleanup = undefined
-    feedInitialized = false
-
-    if (feedInitTimer) {
-      clearTimeout(feedInitTimer)
-      feedInitTimer = null
     }
   })
 

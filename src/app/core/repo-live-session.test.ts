@@ -53,11 +53,11 @@ describe("repository live session", () => {
 
     expect(filters).toEqual(
       expect.arrayContaining([
-        {ids: [event.id]},
         {kinds: [1111], "#E": [event.id]},
         {kinds: [1111], "#e": [event.id]},
       ]),
     )
+    expect(filters.some(filter => "ids" in filter)).toBe(false)
   })
 
   it("retries an unexpectedly closed relay with overlap from the last event", async () => {

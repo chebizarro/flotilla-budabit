@@ -47,7 +47,7 @@ describe("authoritative repository loading scope", () => {
     expect(testRoute).not.toContain("wss://relay.budabit.club")
   })
 
-  it("keeps issue and pull request not-found states behind their detail deadlines", () => {
+  it("delegates exact detail resolution to the layout while retaining UI deadlines", () => {
     const issueDetail = dense(
       readProjectFile("../../routes/git/[id=naddr]/issues/[issueid]/+page.svelte"),
     )
@@ -58,17 +58,32 @@ describe("authoritative repository loading scope", () => {
     )
 
     expect(issueDetail).toContain('constissueId=$derived($page.params.issueid??"")')
-    expect(issueResolution).toContain("timeout:ISSUE_RESOLVE_TIMEOUT_MS")
-    expect(issueResolution).toContain("signal:controller.signal")
-    expect(issueResolution).not.toContain(".finally(")
+    expect(issueResolution).toContain("repoRootHistory.ensureRoot(currentIssueId)")
+    expect(issueResolution).toContain("},ISSUE_RESOLVE_TIMEOUT_MS)")
+    expect(issueDetail).not.toContain("makeLoader")
+    expect(issueDetail).not.toContain("RepoCore.buildRepoSubscriptions")
     expect(issueDetail).toContain("RepositoryRelaysUnavailable")
 
-    expect(prDetail).toContain("timeout:LOAD_TIMEOUT_MS")
-    expect(prDetail).toContain(
-      "awaitloadDetail({relays,filters:[{ids:[rootId]}],signal:controller.signal})",
-    )
-    expect(prDetail).toContain("resolveController?.abort()")
+    expect(prDetail).toContain("repoRootHistory.ensureRoot(currentPrId)")
+    expect(prDetail).toContain("},LOAD_TIMEOUT_MS)")
+    expect(prDetail).not.toContain("makeLoader")
+    expect(prDetail).not.toContain("deriveEventsById")
     expect(prDetail).toContain("RepositoryRelaysUnavailable")
+  })
+
+  it("keeps child lists and PRView free of initial repository activity ownership", () => {
+    const issueList = readProjectFile("../../routes/git/[id=naddr]/issues/+page.svelte")
+    const prList = readProjectFile("../../routes/git/[id=naddr]/prs/+page.svelte")
+    const prView = readProjectFile("../components/PRView.svelte")
+    const initialPrView = prView.slice(
+      prView.indexOf("// PR-specific status and comments"),
+      prView.indexOf("const prEffectiveTipOid"),
+    )
+
+    expect(issueList).not.toContain("makeFeed")
+    expect(prList).not.toContain("makeFeed")
+    expect(issueList).not.toContain("// Prefetch recent issue edit events")
+    expect(initialPrView).not.toContain("load({")
   })
 
   it("keeps issue and pull request list empty states behind a cold-start deadline", () => {

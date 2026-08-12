@@ -217,7 +217,9 @@
     startRepoLiveRequest,
   } from "@app/core/repo-live-session"
   import {
+    createDefaultRepoRootResolver,
     createDefaultRepoRootHistory,
+    isAcceptedRepoRootEvent,
     loadRepoRootGap,
     type RepoRootHistorySnapshot,
   } from "@app/core/repo-root-history"
@@ -325,6 +327,11 @@
   const REPO_LIVE_FILTER_CHUNK_SIZE = 100
   const repoActivityHydrationReady = writable(false)
 
+  const receiveRepoLiveEvent = (event: TrustedEvent, relay: string) => {
+    repository.publish(event)
+    if (!tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
+  }
+
   const waitForPostPaintHydration = async () => {
     await tick()
     if (typeof requestAnimationFrame !== "function") return
@@ -373,9 +380,69 @@
   const repoRootHistoryState = writable(initialRepoRootHistory)
   let repoRootHistory: ReturnType<typeof createDefaultRepoRootHistory> | undefined
   let repoRootHistoryKey = ""
-  const gapFilledRootIds = new Set<string>()
+  const completedGapRootIds = new Set<string>()
+  const gapFillByRootId = new Map<
+    string,
+    Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>
+  >()
+  let ensuredRoot = $state({requestedId: "", rootId: ""})
 
   const loadOlderRoots = () => repoRootHistory?.loadOlder()
+
+  const loadRootGaps = (rootIds: string[]) => {
+    const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
+    const roots = normalizeScopeValues(rootIds.filter(rootId => !completedGapRootIds.has(rootId)))
+    if (relays.length === 0 || roots.length === 0) return Promise.resolve([])
+
+    const pending = new Set<Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>>()
+    const missing = roots.filter(rootId => {
+      const existing = gapFillByRootId.get(rootId)
+      if (existing) pending.add(existing)
+      return !existing
+    })
+
+    if (missing.length > 0) {
+      const promise = loadRepoRootGap({
+        relays,
+        rootIds: missing,
+        signal: layoutLoadController.signal,
+        priority: RELAY_REQUEST_PRIORITY.interactive,
+        onEvent: receiveRepoLiveEvent,
+      })
+        .then(results => {
+          if (results.length > 0 && results.every(result => result.outcome === "eose")) {
+            for (const rootId of missing) completedGapRootIds.add(rootId)
+          }
+          return results
+        })
+        .finally(() => {
+          for (const rootId of missing) {
+            if (gapFillByRootId.get(rootId) === promise) gapFillByRootId.delete(rootId)
+          }
+        })
+      for (const rootId of missing) gapFillByRootId.set(rootId, promise)
+      pending.add(promise)
+    }
+
+    return Promise.all(pending).then(resultGroups => resultGroups.flat())
+  }
+
+  const ensureRootResolution = createDefaultRepoRootResolver({
+    getRelays: () => getStore(repoRelaysStore),
+    getAddresses: () => getStore(repoAddressesStore),
+    signal: layoutLoadController.signal,
+    priority: RELAY_REQUEST_PRIORITY.interactive,
+    getEvent: id => repository.getEvent(id) as TrustedEvent | undefined,
+    isDeleted: event => isDeletedRepositoryEvent(event),
+    onEvent: receiveRepoLiveEvent,
+    loadGap: rootId => loadRootGaps([rootId]),
+  })
+
+  const ensureRoot = async (id: string) => {
+    const result = await ensureRootResolution(id)
+    if (result.rootId) ensuredRoot = {requestedId: id, rootId: result.rootId}
+    return result
+  }
 
   $effect(() => {
     if (!$repoActivityHydrationReady) return
@@ -386,7 +453,8 @@
     const key = `${relays.join("|")}::${addresses.join("|")}`
     if (key === repoRootHistoryKey) return
     repoRootHistoryKey = key
-    gapFilledRootIds.clear()
+    completedGapRootIds.clear()
+    gapFillByRootId.clear()
     repoRootHistory = createDefaultRepoRootHistory({
       relays,
       addresses,
@@ -402,17 +470,12 @@
     if (!$repoActivityHydrationReady) return
     const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
     const rootIds = normalizeScopeValues(($allRootIdsStore || []).filter(Boolean))
-    const pendingRoots = rootIds.filter(rootId => !gapFilledRootIds.has(rootId))
+    const pendingRoots = rootIds.filter(
+      rootId => !completedGapRootIds.has(rootId) && !gapFillByRootId.has(rootId),
+    )
     if (relays.length === 0 || pendingRoots.length === 0) return
 
-    for (const rootId of pendingRoots) gapFilledRootIds.add(rootId)
-    void loadRepoRootGap({
-      relays,
-      rootIds: pendingRoots,
-      signal: layoutLoadController.signal,
-      priority: RELAY_REQUEST_PRIORITY.interactive,
-      onEvent: receiveRepoLiveEvent,
-    })
+    void loadRootGaps(pendingRoots)
   })
 
   type RepoBranchUpdate = {
@@ -1357,7 +1420,9 @@
     return derived(
       [scopedIssueEvents, repoAddresses],
       ([events, addresses]: [TrustedEvent[], string[]]) => {
-        return (events || []) as IssueEvent[]
+        return (events || []).filter(event =>
+          isAcceptedRepoRootEvent(event, addresses),
+        ) as IssueEvent[]
       },
     ) as Readable<IssueEvent[]>
   }
@@ -1368,7 +1433,9 @@
     return derived(
       [scopedPullRequestEvents, repoAddresses],
       ([events, addresses]: [TrustedEvent[], string[]]) => {
-        return (events || []) as PullRequestEvent[]
+        return (events || []).filter(event =>
+          isAcceptedRepoRootEvent(event, addresses),
+        ) as PullRequestEvent[]
       },
     ) as Readable<PullRequestEvent[]>
   }
@@ -2153,6 +2220,7 @@
   setContext(REPO_ROOT_HISTORY_KEY, {
     subscribe: repoRootHistoryState.subscribe,
     loadOlderRoots,
+    ensureRoot,
   })
   setContext(REPO_ACTIONS_KEY, {
     refreshRepo: () => refreshRepo(),
@@ -2254,11 +2322,6 @@
     }
   }
 
-  const receiveRepoLiveEvent = (event: TrustedEvent, relay: string) => {
-    repository.publish(event)
-    if (!tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
-  }
-
   const reconcileRepoLiveLane = ({
     lanes,
     relays,
@@ -2316,7 +2379,11 @@
     const addresses = normalizeScopeValues(($repoAddressesStore || []).filter(Boolean))
     const owners = normalizeScopeValues(($repoOwnerStore || []).filter(Boolean))
     const viewer = $pubkey || ""
-    const exactRootId = $page.params.issueid || $page.params.prid || ""
+    const requestedRootId = $page.params.issueid || $page.params.prid || ""
+    const exactRootId =
+      ensuredRoot.requestedId === requestedRootId
+        ? ensuredRoot.rootId || requestedRootId
+        : requestedRootId
 
     reconcileRepoLiveLane({
       lanes: repoAnnouncementLiveByRelay,

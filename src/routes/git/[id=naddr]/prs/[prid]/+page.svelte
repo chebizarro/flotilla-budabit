@@ -1,18 +1,9 @@
 <script lang="ts">
   import {page} from "$app/stores"
-  import {getContext, onDestroy} from "svelte"
+  import {getContext} from "svelte"
   import {fade} from "svelte/transition"
-  import {
-    parsePullRequestEvent,
-    GIT_PULL_REQUEST,
-    GIT_PULL_REQUEST_UPDATE,
-  } from "@nostr-git/core/events"
+  import {parsePullRequestEvent} from "@nostr-git/core/events"
   import type {PullRequestEvent} from "@nostr-git/core/events"
-  import {makeLoader} from "@welshman/net"
-  import {repository} from "@welshman/app"
-  import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
-  import {type TrustedEvent} from "@welshman/util"
-  import {uniq} from "@welshman/lib"
   import type {Repo} from "@nostr-git/ui"
   import type {Readable} from "svelte/store"
   import {
@@ -20,6 +11,8 @@
     REPO_RELAYS_KEY,
     PULL_REQUESTS_KEY,
     HIDDEN_ROOT_IDS_KEY,
+    REPO_ROOT_HISTORY_KEY,
+    type RepoRootHistoryContext,
   } from "@app/core/git-state"
   import Button from "@lib/components/Button.svelte"
   import Icon from "@lib/components/Icon.svelte"
@@ -30,6 +23,7 @@
   const repoRelaysStore = getContext<Readable<string[]>>(REPO_RELAYS_KEY)
   const pullRequestsStore = getContext<Readable<PullRequestEvent[]>>(PULL_REQUESTS_KEY)
   const hiddenRootIdsStore = getContext<Readable<Set<string>>>(HIDDEN_ROOT_IDS_KEY)
+  const repoRootHistory = getContext<RepoRootHistoryContext>(REPO_ROOT_HISTORY_KEY)
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -44,14 +38,12 @@
   const repoRelaysUnavailable = $derived(hasRepoAnnouncement && repoRelays.length === 0)
   const LOAD_TIMEOUT_MS = 15_000
   const SCROLL_TO_TOP_THRESHOLD = 300
-  const loadDetail = makeLoader({delay: 100, timeout: LOAD_TIMEOUT_MS, threshold: 0.5})
 
   let isResolving = $state(true)
   let didTimeout = $state(false)
-  let hasStartedResolve = $state(false)
   let resolvingPrId = $state("")
   let resolveTimeout: ReturnType<typeof setTimeout> | null = null
-  let resolveController: AbortController | null = null
+  let resolvedRoot = $state({requestedId: "", rootId: ""})
   let showScrollButton = $state(false)
   let pageContainerRef: HTMLElement | undefined = $state()
   let scrollParent: HTMLElement | null = $state(null)
@@ -60,67 +52,18 @@
   const hiddenRootIds = $derived.by(() =>
     hiddenRootIdsStore ? $hiddenRootIdsStore : new Set<string>(),
   )
-  const isDeletedRepositoryEvent = (event?: TrustedEvent) =>
-    Boolean(event && (repository as any).isDeleted?.(event))
-  const getFirstTagValue = (event: {tags?: string[][]} | undefined, tagName: string) =>
-    event?.tags?.find(tag => tag[0] === tagName)?.[1] || ""
+  const resolvedRootId = $derived(
+    resolvedRoot.requestedId === prId ? resolvedRoot.rootId || prId : prId,
+  )
 
   const prEvent = $derived.by(
     () =>
-      (pullRequests || []).find((pr: PullRequestEvent) => pr.id === prId) as
+      (pullRequests || []).find((pr: PullRequestEvent) => pr.id === resolvedRootId) as
         | PullRequestEvent
         | undefined,
   )
-  const directEventStore = $derived.by(() => {
-    if (!prId) return undefined
-    return deriveEventsAsc(
-      deriveEventsById({
-        repository,
-        filters: [{ids: [prId]}],
-      }),
-    )
-  })
-  const directEvent = $derived.by(() =>
-    directEventStore &&
-    !isDeletedRepositoryEvent($directEventStore?.[0] as TrustedEvent | undefined)
-      ? ($directEventStore?.[0] as TrustedEvent | undefined)
-      : undefined,
-  )
-  const directPrEvent = $derived.by(() =>
-    directEvent && directEvent.kind === GIT_PULL_REQUEST
-      ? (directEvent as PullRequestEvent)
-      : undefined,
-  )
-  const updateRootId = $derived.by(() => {
-    if (!directEvent || directEvent.kind !== GIT_PULL_REQUEST_UPDATE) return ""
-    return getFirstTagValue(directEvent, "E") || getFirstTagValue(directEvent, "e") || ""
-  })
-  const isHiddenRoot = $derived.by(() => hiddenRootIds.has(updateRootId || prId))
-  const updateRootEventStore = $derived.by(() => {
-    if (!updateRootId) return undefined
-    return deriveEventsAsc(
-      deriveEventsById({
-        repository,
-        filters: [{ids: [updateRootId]}],
-      }),
-    )
-  })
-  const updateRootEvent = $derived.by(() =>
-    updateRootEventStore &&
-    !isDeletedRepositoryEvent($updateRootEventStore?.[0] as TrustedEvent | undefined)
-      ? ($updateRootEventStore?.[0] as TrustedEvent | undefined)
-      : undefined,
-  )
-  const updateRootPrEvent = $derived.by(() => {
-    if (!updateRootId) return undefined
-    return (
-      (pullRequests || []).find((pr: PullRequestEvent) => pr.id === updateRootId) ||
-      (updateRootEvent?.kind === GIT_PULL_REQUEST
-        ? (updateRootEvent as PullRequestEvent)
-        : undefined)
-    )
-  })
-  const resolvedPrEvent = $derived.by(() => prEvent || directPrEvent || updateRootPrEvent)
+  const isHiddenRoot = $derived.by(() => hiddenRootIds.has(resolvedRootId))
+  const resolvedPrEvent = $derived(prEvent)
   const pr = $derived.by(() =>
     resolvedPrEvent ? parsePullRequestEvent(resolvedPrEvent) : undefined,
   )
@@ -130,69 +73,41 @@
       clearTimeout(resolveTimeout)
       resolveTimeout = null
     }
-    resolveController?.abort()
-    resolveController = null
   }
 
   const resolveCurrentPr = async () => {
     const currentPrId = prId
-    const relays = uniq(repoRelays.filter(Boolean))
-    if (!currentPrId || relays.length === 0) return
+    if (!currentPrId || repoRelays.length === 0) return
 
     cancelResolve()
     isResolving = true
     didTimeout = false
-    hasStartedResolve = true
     resolvingPrId = currentPrId
-    const controller = new AbortController()
-    resolveController = controller
 
     resolveTimeout = setTimeout(() => {
-      if (resolveController !== controller) return
+      if (resolvingPrId !== currentPrId) return
       resolveTimeout = null
       didTimeout = true
       isResolving = false
-      controller.abort()
-      resolveController = null
     }, LOAD_TIMEOUT_MS)
 
-    const primaryEvents = await loadDetail({
-      relays,
-      filters: [{ids: [currentPrId]}],
-      signal: controller.signal,
-    }).catch(() => [] as TrustedEvent[])
-    if (controller.signal.aborted) return
-
-    const primaryEvent =
-      primaryEvents.find(event => event.id === currentPrId && !isDeletedRepositoryEvent(event)) ||
-      (() => {
-        const event = repository.getEvent(currentPrId) as TrustedEvent | undefined
-        return isDeletedRepositoryEvent(event) ? undefined : event
-      })()
-
-    if (primaryEvent?.kind === GIT_PULL_REQUEST_UPDATE) {
-      const rootId =
-        getFirstTagValue(primaryEvent as {tags?: string[][]}, "E") ||
-        getFirstTagValue(primaryEvent as {tags?: string[][]}, "e")
-      if (rootId) {
-        await loadDetail({relays, filters: [{ids: [rootId]}], signal: controller.signal}).catch(
-          () => [] as TrustedEvent[],
-        )
-      }
-    }
+    const result = await repoRootHistory.ensureRoot(currentPrId)
+    if (prId !== currentPrId || result.status === "aborted") return
+    if (result.rootId) resolvedRoot = {requestedId: currentPrId, rootId: result.rootId}
   }
 
   $effect(() => {
     void prId
     void repoRelays
-    hasStartedResolve = false
     isResolving = true
     didTimeout = false
+    resolvingPrId = ""
+    resolvedRoot = {requestedId: "", rootId: ""}
     cancelResolve()
   })
 
   $effect(() => {
-    if (hasStartedResolve || !isResolving || !prId || repoRelays.length === 0) return
+    if (resolvingPrId === prId || !isResolving || !prId || repoRelays.length === 0) return
     void resolveCurrentPr()
   })
 
@@ -225,11 +140,6 @@
   const scrollToTop = () => {
     scrollParent?.scrollTo({top: 0, behavior: "smooth"})
   }
-
-  onDestroy(() => {
-    hasStartedResolve = false
-    cancelResolve()
-  })
 </script>
 
 <svelte:head>

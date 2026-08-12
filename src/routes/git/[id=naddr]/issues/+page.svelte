@@ -2,7 +2,6 @@
   import {NewIssueForm, Button as GitButton, toast, pushRepoAlert} from "@nostr-git/ui"
   import {
     createStatusEvent,
-    GIT_ISSUE,
     type CommentEvent,
     type IssueEvent,
     type LabelEvent,
@@ -20,14 +19,12 @@
   } from "@welshman/util"
   import {createSearch, pubkey, repository} from "@welshman/app"
   import {sortBy} from "@welshman/lib"
-  import {request} from "@welshman/net"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import Spinner from "@lib/components/Spinner.svelte"
   import Button from "@lib/components/Button.svelte"
   import Icon from "@lib/components/Icon.svelte"
   import Magnifer from "@assets/icons/magnifer.svg?dataurl"
   import AltArrowUp from "@assets/icons/alt-arrow-up.svg?dataurl"
-  import {makeFeed} from "@app/core/requests"
   import {pushModal} from "@app/util/modal"
   import {
     checked,
@@ -39,7 +36,7 @@
   import IssueListRow from "@app/components/IssueListRow.svelte"
   import LogIn from "@app/components/LogIn.svelte"
   import {getInteractiveCardTarget, isMobile} from "@lib/html"
-  import {onMount, onDestroy, tick} from "svelte"
+  import {onDestroy, tick} from "svelte"
   import {pushToast} from "@src/app/util/toast"
   import {toNaturalArray} from "@app/util/labels"
   import {page} from "$app/stores"
@@ -65,7 +62,6 @@
   import {normalizeRelays} from "@app/core/community"
   import {editedTargetIds, filterVisibleAfterDeletesAndEdits} from "@app/core/event-edits"
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
-  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {postIssue, postStatus} from "@app/core/git-commands"
 
   let showScrollButton = $state(false)
@@ -171,9 +167,6 @@
     draft: 0,
   })
 
-  const LABEL_PREFETCH_LIMIT = 200
-  const LABEL_PREFETCH_IDLE_MS = 2000
-  const LABEL_PREFETCH_DELAY_MS = 150
   const LABEL_PREFETCH_CHUNK_SIZE = 50
   const GIT_COVER_LETTER_KIND = 1624
 
@@ -491,8 +484,6 @@
   const hiddenRootIds = $derived.by(() =>
     hiddenRootIdsStore ? $hiddenRootIdsStore : new Set<string>(),
   )
-  const repoRelays = $derived.by(() => (repoRelaysStore ? $repoRelaysStore : []))
-
   const allIssues = $derived.by(() => repoClass.issues || [])
   const issues = $derived.by(() => allIssues.filter(issue => !hiddenRootIds.has(issue.id)))
 
@@ -517,10 +508,6 @@
   // Label filters (NIP-32 normalized labels)
   let selectedLabels = $state<string[]>([])
   let matchAllLabels = $state(false)
-
-  let labelsPrefetchKey = ""
-  let labelsPrefetchTimeout: ReturnType<typeof setTimeout> | null = null
-  let labelsPrefetchController: AbortController | null = null
 
   const chunkIds = (ids: string[], size: number) => {
     const chunks: string[][] = []
@@ -600,74 +587,6 @@
   })
 
   let searchTerm = $state("")
-
-  // Prefetch recent issue edit events (1985 labels + 1624 cover letters)
-  $effect(() => {
-    const currentIssues = issues || []
-    const currentRepoRelays = repoRelays.filter(Boolean)
-    if (currentRepoRelays.length === 0) return
-    const relayList = (
-      currentRepoRelays.length ? currentRepoRelays : repoClass?.relays || []
-    ).filter(Boolean)
-
-    if (!relayList.length || currentIssues.length === 0) {
-      if (labelsPrefetchTimeout) {
-        clearTimeout(labelsPrefetchTimeout)
-        labelsPrefetchTimeout = null
-      }
-      labelsPrefetchController?.abort()
-      labelsPrefetchController = null
-      labelsPrefetchKey = ""
-      return
-    }
-
-    const sortedIssues = [...currentIssues].sort((a, b) => {
-      if (b.created_at !== a.created_at) return b.created_at - a.created_at
-      return a.id.localeCompare(b.id)
-    })
-    const selectedIssues = sortedIssues.slice(0, LABEL_PREFETCH_LIMIT)
-    const ids = selectedIssues.map(issue => issue.id).filter(Boolean)
-
-    if (ids.length === 0) return
-
-    const key = `${relayList.slice().sort().join("|")}::${ids.join(",")}`
-    if (labelsPrefetchKey === key) return
-
-    if (labelsPrefetchTimeout) {
-      clearTimeout(labelsPrefetchTimeout)
-      labelsPrefetchTimeout = null
-    }
-    labelsPrefetchController?.abort()
-    labelsPrefetchController = new AbortController()
-    labelsPrefetchKey = key
-
-    const delayMs =
-      currentIssues.length >= LABEL_PREFETCH_LIMIT
-        ? LABEL_PREFETCH_DELAY_MS
-        : LABEL_PREFETCH_IDLE_MS
-
-    labelsPrefetchTimeout = setTimeout(() => {
-      const controller = labelsPrefetchController
-      if (!controller) return
-
-      const filters = chunkIds(ids, LABEL_PREFETCH_CHUNK_SIZE).map(chunk => ({
-        kinds: [1985, GIT_COVER_LETTER_KIND],
-        "#e": chunk,
-      }))
-
-      request({
-        relays: relayList,
-        autoClose: true,
-        lifetime: "finite",
-        priority: RELAY_REQUEST_PRIORITY.background,
-        signal: controller.signal,
-        filters,
-        onEvent: event => {
-          repository.publish(event)
-        },
-      })
-    }, delayMs)
-  })
 
   // Persist filters per repo (delegated to FilterPanel)
   const storageKey = repoClass ? `issuesFilters:${repoClass.key}` : ""
@@ -970,54 +889,6 @@
     issueListResolution.routeId !== issueListRouteId ||
       (issueListResolution.status === "loading" && searchedIssues.length === 0),
   )
-  let feedInitialized = $state(false)
-  let feedCleanup: (() => void) | undefined = $state(undefined)
-
-  // Create combined filter for issues and status events
-  const combinedFilter = $derived.by(() => ({
-    kinds: [GIT_ISSUE, GIT_STATUS_OPEN, GIT_STATUS_DRAFT, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE],
-    "#a": repoAddresses,
-  }))
-
-  // Initialize feed asynchronously - don't block render
-  onMount(() => {
-    if (repoClass && repoClass.issues && !feedInitialized) {
-      // Defer makeFeed to avoid blocking initial render
-      const timeout = setTimeout(() => {
-        const tryStart = () => {
-          if (pageContainerRef && !feedInitialized) {
-            const currentRepoRelays = repoRelays
-            const currentRepoAddresses = repoAddresses
-            const currentIssueEvents = issueList.map(issue => issue.event as TrustedEvent)
-            if (!currentRepoRelays.length || currentRepoAddresses.length === 0) {
-              requestAnimationFrame(tryStart)
-              return
-            }
-            feedInitialized = true
-            const feed = makeFeed({
-              element: pageContainerRef,
-              relays: currentRepoRelays,
-              feedFilters: [combinedFilter],
-              subscriptionFilters: [combinedFilter],
-              initialEvents: currentIssueEvents,
-              onExhausted: () => {
-                // Feed exhausted, but we already showed content
-              },
-            })
-            feedCleanup = feed.cleanup
-          } else if (!pageContainerRef) {
-            requestAnimationFrame(tryStart)
-          }
-        }
-        tryStart()
-      }, 100)
-
-      return () => {
-        clearTimeout(timeout)
-      }
-    }
-  })
-
   // CRITICAL: Cleanup on destroy to prevent memory leaks and blocking navigation
   onDestroy(() => {
     const seenAt = getIssuesSeenAt()
@@ -1038,16 +909,6 @@
         seenAt,
       )
     }
-    // Cleanup makeFeed (aborts network requests, stops scroll observers, unsubscribes)
-    feedCleanup?.()
-
-    if (labelsPrefetchTimeout) {
-      clearTimeout(labelsPrefetchTimeout)
-      labelsPrefetchTimeout = null
-    }
-    labelsPrefetchController?.abort()
-    labelsPrefetchController = null
-    labelsPrefetchKey = ""
   })
 
   const onIssueCreated = async (issue: IssueEvent) => {

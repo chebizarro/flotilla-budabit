@@ -16,6 +16,7 @@ import {
   type FiniteRelayRequestOptions,
   type FiniteRelayResult,
 } from "@app/core/finite-relay-request"
+import {getRepoPublicationAddress} from "@app/core/repo-publication"
 
 const GIT_COVER_LETTER = 1624
 const STATUS_KINDS = [GIT_STATUS_OPEN, GIT_STATUS_DRAFT, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE]
@@ -58,6 +59,27 @@ export type RepoRootHistoryDependencies = {
   requestFiniteRelay: (options: FiniteRelayRequestOptions) => Promise<FiniteRelayResult>
 }
 
+export type EnsureRepoRootStatus = "complete" | "partial" | "failed" | "unavailable" | "aborted"
+
+export type EnsureRepoRootResult = {
+  status: EnsureRepoRootStatus
+  requestedId: string
+  rootId?: string
+  rootKind?: typeof GIT_ISSUE | typeof GIT_PULL_REQUEST
+}
+
+export type RepoRootResolverOptions = {
+  getRelays: () => string[]
+  getAddresses: () => string[]
+  signal: AbortSignal
+  priority: number
+  getEvent: (id: string) => TrustedEvent | undefined
+  isDeleted: (event: TrustedEvent) => boolean
+  onEvent: (event: TrustedEvent, relay: string) => void
+  loadGap: (rootId: string) => Promise<FiniteRelayResult[]>
+  timeoutMs?: number
+}
+
 const chunkValues = (values: string[], size: number) => {
   const chunks: string[][] = []
   for (let index = 0; index < values.length; index += size) {
@@ -93,6 +115,179 @@ export const buildRepoRootGapFilters = (rootIds: string[]): Filter[] =>
         {kinds: [DELETE], "#e": roots},
       ] as Filter[],
   )
+
+const getPullRequestRootId = (event: TrustedEvent) =>
+  event.tags.find(tag => tag[0] === "e" && tag[3] === "root")?.[1] ||
+  event.tags.find(tag => tag[0] === "E")?.[1] ||
+  event.tags.find(tag => tag[0] === "e")?.[1] ||
+  ""
+
+export const isAcceptedRepoRootEvent = (
+  event: TrustedEvent,
+  addresses: string[],
+): event is TrustedEvent & {kind: typeof GIT_ISSUE | typeof GIT_PULL_REQUEST} => {
+  if (event.kind !== GIT_ISSUE && event.kind !== GIT_PULL_REQUEST) return false
+
+  try {
+    const address = getRepoPublicationAddress(event)
+    return Boolean(address && new Set(addresses).has(address))
+  } catch {
+    return false
+  }
+}
+
+const isAcceptedRepoRootLookupEvent = (event: TrustedEvent, addresses: string[]) => {
+  if (
+    event.kind !== GIT_ISSUE &&
+    event.kind !== GIT_PULL_REQUEST &&
+    event.kind !== GIT_PULL_REQUEST_UPDATE
+  ) {
+    return false
+  }
+
+  try {
+    const address = getRepoPublicationAddress(event)
+    return Boolean(address && new Set(addresses).has(address))
+  } catch {
+    return false
+  }
+}
+
+export const summarizeRepoRootResults = (
+  results: FiniteRelayResult[],
+  signal?: AbortSignal,
+): EnsureRepoRootStatus => {
+  if (
+    signal?.aborted ||
+    (results.length > 0 && results.every(result => result.outcome === "aborted"))
+  ) {
+    return "aborted"
+  }
+  if (results.length === 0 || results.every(result => result.outcome === "eose")) return "complete"
+  if (results.every(result => result.outcome === "error")) return "failed"
+  return "partial"
+}
+
+export const createRepoRootResolver =
+  (dependencies: RepoRootHistoryDependencies) => (options: RepoRootResolverOptions) => {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_REPO_ROOT_TIMEOUT_MS
+    const inFlight = new Map<string, Promise<EnsureRepoRootResult>>()
+
+    const requestExact = async (id: string, relays: string[], addresses: string[]) => {
+      const results = await Promise.all(
+        relays.map(relay =>
+          dependencies.requestFiniteRelay({
+            relay,
+            filters: [{ids: [id], limit: 1}],
+            signal: options.signal,
+            timeoutMs,
+            priority: options.priority,
+            owner: "repo-roots:exact",
+          }),
+        ),
+      )
+      let accepted: TrustedEvent | undefined
+
+      for (const result of results) {
+        for (const event of result.events) {
+          if (
+            event.id !== id ||
+            options.isDeleted(event) ||
+            !isAcceptedRepoRootLookupEvent(event, addresses)
+          ) {
+            continue
+          }
+          accepted ||= event
+          options.onEvent(event, result.relay)
+        }
+      }
+
+      return {event: accepted, results}
+    }
+
+    const resolve = async (requestedId: string): Promise<EnsureRepoRootResult> => {
+      if (options.signal.aborted) return {status: "aborted", requestedId}
+
+      const relays = Array.from(new Set(options.getRelays().filter(Boolean)))
+      const addresses = Array.from(new Set(options.getAddresses().filter(Boolean)))
+      if (relays.length === 0 || addresses.length === 0) {
+        return {status: "unavailable", requestedId}
+      }
+
+      const results: FiniteRelayResult[] = []
+      let event = options.getEvent(requestedId)
+      if (!event || options.isDeleted(event) || !isAcceptedRepoRootLookupEvent(event, addresses)) {
+        const exact = await requestExact(requestedId, relays, addresses)
+        event = exact.event
+        results.push(...exact.results)
+      }
+
+      if (options.signal.aborted) return {status: "aborted", requestedId}
+      if (!event) return {status: summarizeRepoRootResults(results, options.signal), requestedId}
+
+      let root = event
+      if (event.kind === GIT_PULL_REQUEST_UPDATE) {
+        const rootId = getPullRequestRootId(event)
+        if (!rootId || rootId === event.id) {
+          return {status: summarizeRepoRootResults(results, options.signal), requestedId}
+        }
+
+        const cachedRoot = options.getEvent(rootId)
+        if (
+          cachedRoot &&
+          !options.isDeleted(cachedRoot) &&
+          isAcceptedRepoRootEvent(cachedRoot, addresses)
+        ) {
+          root = cachedRoot
+        } else {
+          const exactRoot = await requestExact(rootId, relays, addresses)
+          results.push(...exactRoot.results)
+          if (!exactRoot.event || !isAcceptedRepoRootEvent(exactRoot.event, addresses)) {
+            return {status: summarizeRepoRootResults(results, options.signal), requestedId}
+          }
+          root = exactRoot.event
+        }
+      }
+
+      if (!isAcceptedRepoRootEvent(root, addresses)) {
+        return {status: summarizeRepoRootResults(results, options.signal), requestedId}
+      }
+
+      try {
+        results.push(...(await options.loadGap(root.id)))
+      } catch {
+        return {
+          status: options.signal.aborted ? "aborted" : "failed",
+          requestedId,
+          rootId: root.id,
+          rootKind: root.kind,
+        }
+      }
+
+      return {
+        status: summarizeRepoRootResults(results, options.signal),
+        requestedId,
+        rootId: root.id,
+        rootKind: root.kind,
+      }
+    }
+
+    return (id: string): Promise<EnsureRepoRootResult> => {
+      const requestedId = String(id || "").trim()
+      if (!requestedId) {
+        return Promise.resolve({status: "complete", requestedId} as EnsureRepoRootResult)
+      }
+
+      const pending = inFlight.get(requestedId)
+      if (pending) return pending
+
+      const promise = resolve(requestedId).finally(() => {
+        if (inFlight.get(requestedId) === promise) inFlight.delete(requestedId)
+      })
+      inFlight.set(requestedId, promise)
+      return promise
+    }
+  }
 
 const getSnapshot = (states: Map<string, RepoRootRelayState>): RepoRootHistorySnapshot => {
   const relays = Array.from(states.values()).sort((left, right) =>
@@ -205,6 +400,7 @@ export const createRepoRootHistory =
   }
 
 export const createDefaultRepoRootHistory = createRepoRootHistory({requestFiniteRelay})
+export const createDefaultRepoRootResolver = createRepoRootResolver({requestFiniteRelay})
 
 export const loadRepoRootGap = async ({
   relays,

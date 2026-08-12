@@ -210,16 +210,11 @@ describe("activity request ownership", () => {
     expect(menu).toContain("deriveEventsById({repository, filters: roomFilters})")
   })
 
-  it("keeps issue-label prefetch finite, background, and repository-published", () => {
+  it("leaves issue edit hydration with the layout-owned root gap", () => {
     const page = readProjectFile("../../routes/git/[id=naddr]/issues/+page.svelte")
-    const prefetch = page.slice(
-      page.indexOf("// Prefetch recent issue edit events"),
-      page.indexOf("// Persist filters per repo"),
-    )
+    const rootHistory = readProjectFile("./repo-root-history.ts")
 
-    expect(prefetch).toContain("autoClose: true")
-    expect(prefetch).toContain('lifetime: "finite"')
-    expect(prefetch).toContain("priority: RELAY_REQUEST_PRIORITY.background")
-    expect(prefetch).toContain("repository.publish(event)")
+    expect(page).not.toContain("// Prefetch recent issue edit events")
+    expect(rootHistory).toContain('{kinds: [GIT_LABEL, GIT_COVER_LETTER], "#e": roots}')
   })
 })

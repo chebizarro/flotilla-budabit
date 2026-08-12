@@ -35,8 +35,6 @@
     type TrustedEvent,
   } from "@welshman/util"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
-  import {load, makeLoader} from "@welshman/net"
-  import {RepoCore} from "@nostr-git/core/git"
   import {pubkey, repository} from "@welshman/app"
   import {profilesByPubkey} from "@welshman/app"
   import ProfileLink from "@app/components/ProfileLink.svelte"
@@ -57,6 +55,8 @@
     getRepoMaintainers,
     REPO_PROFILE_RELAYS_KEY,
     REPO_RELAYS_KEY,
+    REPO_ROOT_HISTORY_KEY,
+    type RepoRootHistoryContext,
     repoAnnouncementsByAddress,
   } from "@app/core/git-state"
   import {toNaturalArray} from "@app/util/labels"
@@ -83,6 +83,7 @@
   const repoProfileRelays = getContext<() => string[]>(REPO_PROFILE_RELAYS_KEY)
   const repoRelaysStore = getContext<Readable<string[]>>(REPO_RELAYS_KEY)
   const hiddenRootIdsStore = getContext<Readable<Set<string>>>(HIDDEN_ROOT_IDS_KEY)
+  const repoRootHistory = getContext<RepoRootHistoryContext>(REPO_ROOT_HISTORY_KEY)
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -107,37 +108,17 @@
   )
   const isHiddenRoot = $derived.by(() => hiddenRootIds.has(issueId))
   const GIT_COVER_LETTER_KIND = 1624
-  const isDeletedRepositoryEvent = (event?: {id?: string}) =>
-    Boolean(event && (repository as any).isDeleted?.(event))
   const getIssueRepoAddress = (event?: {tags?: string[][]}) =>
     (event?.tags || []).find((tag: string[]) => tag[0] === "a")?.[1] || ""
 
-  const directIssueEventStore = $derived.by(() => {
-    if (!issueId) return undefined
-    return deriveEventsAsc(
-      deriveEventsById({
-        repository,
-        filters: [{ids: [issueId]}],
-      }),
-    )
-  })
-  const directIssueEvent = $derived.by(() => {
-    const event = directIssueEventStore ? $directIssueEventStore?.[0] : undefined
-    if (!event || isDeletedRepositoryEvent(event as any)) return undefined
-    return event.kind === GIT_ISSUE ? (event as any) : undefined
-  })
-  const issueEvent = $derived.by(
-    () => repoClass.issues.find(i => i.id === issueId) || (directIssueEvent as any),
-  )
+  const issueEvent = $derived.by(() => repoClass.issues.find(i => i.id === issueId))
   const hasRepoAnnouncement = $derived.by(() => Boolean(repoClass.repoEvent))
 
   const ISSUE_RESOLVE_TIMEOUT_MS = 15_000
-  const loadIssueDetail = makeLoader({
-    delay: 100,
-    timeout: ISSUE_RESOLVE_TIMEOUT_MS,
-    threshold: 0.5,
-  })
-  let issueResolution = $state<{issueId: string; status: "loading" | "not-found"}>({
+  let issueResolution = $state<{
+    issueId: string
+    status: "loading" | "complete" | "partial" | "failed" | "unavailable" | "aborted"
+  }>({
     issueId: "",
     status: "loading",
   })
@@ -150,7 +131,7 @@
     const currentIssueId = issueId
 
     if (!currentIssueId) {
-      issueResolution = {issueId: currentIssueId, status: "not-found"}
+      issueResolution = {issueId: currentIssueId, status: "complete"}
       return
     }
 
@@ -159,26 +140,26 @@
       return
     }
 
-    const relays = normalizeRelays(repoBoundRelays)
     issueResolution = {issueId: currentIssueId, status: "loading"}
-    if (relays.length === 0) {
-      return
-    }
+    if (!hasRepoAnnouncement || repoBoundRelays.length === 0) return
 
-    const controller = new AbortController()
     const timeout = setTimeout(() => {
-      issueResolution = {issueId: currentIssueId, status: "not-found"}
-      controller.abort()
+      if (issueResolution.issueId === currentIssueId && issueResolution.status === "loading") {
+        issueResolution = {issueId: currentIssueId, status: "complete"}
+      }
     }, ISSUE_RESOLVE_TIMEOUT_MS)
 
-    const {filters} = RepoCore.buildRepoSubscriptions({rootEventId: currentIssueId})
-    void loadIssueDetail({relays, filters: filters as Filter[], signal: controller.signal}).catch(
-      () => [],
-    )
+    void repoRootHistory.ensureRoot(currentIssueId).then(result => {
+      if (issueId !== currentIssueId || result.status === "aborted") return
+      if (result.rootId) clearTimeout(timeout)
+      issueResolution = {
+        issueId: currentIssueId,
+        status: result.rootId ? result.status : "loading",
+      }
+    })
 
     return () => {
       clearTimeout(timeout)
-      controller.abort()
     }
   })
 
@@ -639,34 +620,6 @@
       savingDescription = false
     }
   }
-
-  let issueMetaLoadKey = ""
-  $effect(() => {
-    if (!issueEvent) return
-    const relays = getPublishRelays()
-    if (relays.length === 0) return
-    const key = `${issueEvent.id}::${[...relays].sort().join(",")}`
-    if (issueMetaLoadKey === key) return
-    issueMetaLoadKey = key
-    load({relays, filters: [getLabelFilter(), getCoverLetterFilter()]})
-  })
-
-  let threadCommentsLoadKey = ""
-  $effect(() => {
-    if (!issue) return
-    const relays = getPublishRelays()
-    if (relays.length === 0) return
-    const key = `${issue.id}::${[...relays].sort().join(",")}`
-    if (threadCommentsLoadKey === key) return
-    threadCommentsLoadKey = key
-    load({
-      relays: relays as string[],
-      filters: [
-        {kinds: [COMMENT], "#E": [issue.id]},
-        {kinds: [COMMENT], "#e": [issue.id]},
-      ],
-    })
-  })
 
   const threadComments = $derived.by(() => {
     if (issue) {
