@@ -370,8 +370,10 @@ const getActiveRepo = () => {
   return repo
 }
 
-const getRepoBranchesPayload = () => {
-  const repo = getActiveRepo()
+const getRepoBranchesPayload = (
+  repo = getActiveRepo(),
+  resolvedBranch = repo.selectedBranch || repo.mainBranch || "main",
+) => {
   const branches = Array.isArray(repo.branches)
     ? repo.branches
         .map((branch: any) => ({
@@ -385,11 +387,15 @@ const getRepoBranchesPayload = () => {
     : []
 
   return {
+    resolvedBranch,
     defaultBranch: repo.mainBranch || "main",
     selectedBranch: repo.selectedBranch || "",
     branches,
   }
 }
+
+const normalizeRepoPath = (path: unknown) =>
+  typeof path === "string" ? path.replace(/^\/+|\/+$/g, "") : ""
 
 const listRepoWorkflowFiles = async () => {
   const repo = getActiveRepo()
@@ -479,7 +485,9 @@ export class ExtensionBridge {
     const privileged =
       action.startsWith("nostr:") ||
       action.startsWith("storage:") ||
-      action.startsWith("community:")
+      action.startsWith("community:") ||
+      action === "repo:listFiles" ||
+      action === "repo:getFile"
     return privileged
   }
 
@@ -2338,6 +2346,58 @@ registerBridgeHandler("storage:keys", (payload, ext) => {
     return {status: "ok", keys: Array.from(keys).sort()}
   } catch (err: any) {
     console.error("Error in storage:keys bridge handler:", err)
+    return {error: err.message}
+  }
+})
+
+registerBridgeHandler("repo:listFiles", async (payload, ext) => {
+  if (ext) console.log(`[bridge] repo:listFiles from ${ext.id}`)
+  try {
+    const repo = getActiveRepo()
+    const path = normalizeRepoPath(payload?.path)
+    const resolvedBranch = payload?.branch || repo.selectedBranch || repo.mainBranch || "main"
+    const filesResult = await repo.listRepoFiles({path, branch: resolvedBranch})
+    const files = Array.isArray(filesResult?.files)
+      ? filesResult.files
+          .filter(
+            (file: any) =>
+              typeof file?.path === "string" &&
+              (file?.type === "file" || file?.type === "directory"),
+          )
+          .map((file: any) => ({path: file.path, type: file.type}))
+      : []
+
+    return {
+      status: "ok",
+      files,
+      ...getRepoBranchesPayload(repo, resolvedBranch),
+    }
+  } catch (err: any) {
+    console.error("Error in repo:listFiles bridge handler:", err)
+    return {error: err.message}
+  }
+})
+
+registerBridgeHandler("repo:getFile", async (payload, ext) => {
+  if (ext) console.log(`[bridge] repo:getFile from ${ext.id}`)
+  try {
+    const repo = getActiveRepo()
+    const path = normalizeRepoPath(payload?.path)
+    if (!path) {
+      throw new Error("Invalid repository file path")
+    }
+
+    const resolvedBranch = payload?.branch || repo.selectedBranch || repo.mainBranch || "main"
+    const fileResult = await repo.getFileContent({path, branch: resolvedBranch})
+
+    return {
+      status: "ok",
+      path,
+      content: typeof fileResult?.content === "string" ? fileResult.content : "",
+      resolvedBranch,
+    }
+  } catch (err: any) {
+    console.error("Error in repo:getFile bridge handler:", err)
     return {error: err.message}
   }
 })
