@@ -484,7 +484,8 @@ export class ExtensionBridge {
       action.startsWith("storage:") ||
       action.startsWith("community:") ||
       action === "repo:listFiles" ||
-      action === "repo:getFile"
+      action === "repo:getFile" ||
+      action === "ui:notify"
     return privileged
   }
 
@@ -2051,6 +2052,31 @@ registerBridgeHandler("ui:toast", (payload, ext) => {
     return {status: "ok"}
   } catch (err: any) {
     console.error("Error in ui:toast bridge handler:", err)
+    return {error: err.message}
+  }
+})
+
+registerBridgeHandler("ui:notify", async (payload, ext) => {
+  if (ext) console.log(`[bridge] ui:notify from ${ext.id}`)
+  try {
+    const {title, body, tag} = payload || {}
+    if (!title || typeof title !== "string") return {error: "title is required"}
+    const bodyText = typeof body === "string" ? body : undefined
+    const tagText = typeof tag === "string" ? tag : undefined
+    if (typeof Notification !== "undefined") {
+      let permission = Notification.permission
+      if (permission === "default") {
+        permission = await Notification.requestPermission().catch(() => "denied" as const)
+      }
+      if (permission === "granted") {
+        new Notification(title, {body: bodyText, tag: tagText})
+        return {status: "ok", delivery: "notification"}
+      }
+    }
+    pushToast({theme: "info", message: bodyText ? `${title} — ${bodyText}` : title})
+    return {status: "ok", delivery: "toast"}
+  } catch (err: any) {
+    console.error("Error in ui:notify bridge handler:", err)
     return {error: err.message}
   }
 })
