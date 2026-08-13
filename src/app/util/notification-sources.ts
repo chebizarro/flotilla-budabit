@@ -163,6 +163,7 @@ import {
 import {getTrimmedReplyPreview} from "@app/util/git-quote"
 import {
   buildNotificationSearchText,
+  dedupeNotificationRowsById,
   getNotificationSourceLabel,
   sortNotificationRows,
   type NotificationRow,
@@ -2818,56 +2819,60 @@ export const addRepoNotificationRelayHints = (
 export const buildRepoWatchNotificationRows = ({
   candidates,
 }: BuildRepoWatchNotificationRowsOptions): NotificationRow[] => {
+  // Multiple watch candidates (e.g. the same repo watched under different paths)
+  // can share a latestEvent — dedupe so row ids stay unique.
   return sortNotificationRows(
-    candidates.flatMap(candidate => {
-      const event = candidate.latestEvent
-      if (!event) return []
+    dedupeNotificationRowsById(
+      candidates.flatMap(candidate => {
+        const event = candidate.latestEvent
+        if (!event) return []
 
-      const title = getRepoEventTitle(event)
-      const preview = getTextPreview(event, title)
-      const navigationBasePath = addRepoNotificationRelayHints(candidate.path, event, [
-        ...(candidate.repoRelayHints || []),
-        ...Array.from(tracker.getRelays(event.id) || []),
-        ...getNotificationEventRelays(event.id),
-      ])
-      const path = getRepoRowPath(navigationBasePath, event)
-      const contextLabel = getRepoContextLabel(candidate.path, event)
+        const title = getRepoEventTitle(event)
+        const preview = getTextPreview(event, title)
+        const navigationBasePath = addRepoNotificationRelayHints(candidate.path, event, [
+          ...(candidate.repoRelayHints || []),
+          ...Array.from(tracker.getRelays(event.id) || []),
+          ...getNotificationEventRelays(event.id),
+        ])
+        const path = getRepoRowPath(navigationBasePath, event)
+        const contextLabel = getRepoContextLabel(candidate.path, event)
 
-      return [
-        {
-          id: `event:${event.id}`,
-          eventId: event.id,
-          actorPubkey: event.pubkey,
-          source: "git",
-          sourceLabel: getNotificationSourceLabel("git"),
-          type: "repo",
-          title,
-          preview,
-          action: getRepoAction(event),
-          actionLabel: "Open git item",
-          contextLabel,
-          path,
-          readPath: candidate.path,
-          repoWatchSeenPath: candidate.path,
-          navigationEventId: event.id,
-          target: makeEventDisplayTarget({
-            label: contextLabel,
-            event,
-            path,
-            actionLabel: "Open git item",
-            fallback: preview,
-          }),
-          createdAt: event.created_at,
-          searchText: buildNotificationSearchText(
-            "git",
+        return [
+          {
+            id: `event:${event.id}`,
+            eventId: event.id,
+            actorPubkey: event.pubkey,
+            source: "git",
+            sourceLabel: getNotificationSourceLabel("git"),
+            type: "repo",
             title,
             preview,
-            event.pubkey,
-            candidate.path,
-          ),
-        } satisfies NotificationRow,
-      ]
-    }),
+            action: getRepoAction(event),
+            actionLabel: "Open git item",
+            contextLabel,
+            path,
+            readPath: candidate.path,
+            repoWatchSeenPath: candidate.path,
+            navigationEventId: event.id,
+            target: makeEventDisplayTarget({
+              label: contextLabel,
+              event,
+              path,
+              actionLabel: "Open git item",
+              fallback: preview,
+            }),
+            createdAt: event.created_at,
+            searchText: buildNotificationSearchText(
+              "git",
+              title,
+              preview,
+              event.pubkey,
+              candidate.path,
+            ),
+          } satisfies NotificationRow,
+        ]
+      }),
+    ),
   )
 }
 
@@ -5148,15 +5153,17 @@ export const notificationCenterRows = derived(
 
     if (chatRows.length > 0) excludedPaths.add("/chat")
 
-    return sortNotificationRows([
-      ...sourceRows,
-      ...buildRouteNotificationRows({
-        paths: $notifications,
-        excludedPaths,
-        candidates: $notificationCandidates,
-        currentPubkey: $pubkey || undefined,
-      }),
-    ])
+    return sortNotificationRows(
+      dedupeNotificationRowsById([
+        ...sourceRows,
+        ...buildRouteNotificationRows({
+          paths: $notifications,
+          excludedPaths,
+          candidates: $notificationCandidates,
+          currentPubkey: $pubkey || undefined,
+        }),
+      ]),
+    )
   },
 )
 

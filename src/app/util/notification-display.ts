@@ -316,6 +316,23 @@ export const sortNotificationRows = (rows: NotificationRow[]) =>
     return a.id.localeCompare(b.id)
   })
 
+// Rows from different notification sources (and multiple watch candidates within a
+// source) can reference the same underlying event, producing duplicate `event:<id>`
+// row ids. Duplicate ids crash Svelte's keyed each blocks (each_key_duplicate), which
+// tears down the app's reactive root and leaves the UI unresponsive — so any merged
+// row list must be deduped by id before rendering.
+export const dedupeNotificationRowsById = (rows: NotificationRow[]) => {
+  const rowsById = new Map<string, NotificationRow>()
+
+  for (const row of rows) {
+    const current = rowsById.get(row.id)
+
+    if (!current || row.createdAt > current.createdAt) rowsById.set(row.id, row)
+  }
+
+  return Array.from(rowsById.values())
+}
+
 export const searchNotificationRows = (rows: NotificationRow[], term: string) => {
   const normalizedTerm = term.trim()
   if (!normalizedTerm) return rows

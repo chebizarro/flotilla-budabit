@@ -1,5 +1,6 @@
 import {describe, expect, it} from "vitest"
 import {
+  dedupeNotificationRowsById,
   getNotificationRowDisplay,
   getNotificationSourceLabel,
   NOTIFICATION_ROW_FILTERS,
@@ -12,6 +13,33 @@ const longId = "a".repeat(64)
 const shareEntity = ["ne", "vent1"].join("")
 
 describe("notification display", () => {
+  it("dedupes rows sharing an id so keyed each blocks never see duplicates", () => {
+    const makeRow = (id: string, createdAt: number, title: string): NotificationRow => ({
+      id,
+      source: "git",
+      sourceLabel: getNotificationSourceLabel("git"),
+      type: "repo",
+      title,
+      preview: title,
+      path: "/git/repo",
+      readPath: "/git/repo",
+      createdAt,
+      searchText: title,
+    })
+
+    const rows = [
+      makeRow(`event:${longId}`, 100, "older duplicate"),
+      makeRow(`event:${longId}`, 200, "newer duplicate"),
+      makeRow("event:other", 150, "unique"),
+    ]
+
+    const deduped = dedupeNotificationRowsById(rows)
+
+    expect(deduped.map(row => row.id).sort()).toEqual([`event:${longId}`, "event:other"].sort())
+    expect(deduped.find(row => row.id === `event:${longId}`)?.title).toBe("newer duplicate")
+    expect(new Set(deduped.map(row => row.id)).size).toBe(deduped.length)
+  })
+
   it("sanitizes raw event links, paths, and long ids from visible text", () => {
     const display = getNotificationRowDisplay({
       id: `event:${longId}`,
