@@ -15,6 +15,10 @@
     Globe,
     Lock,
     Unlock,
+    Shield,
+    ShieldCheck,
+    Search,
+    ScanSearch,
     Bell,
     Star,
     Heart,
@@ -96,6 +100,14 @@
     <Lock class={className} {size} />
   {:else if iconName === "Unlock"}
     <Unlock class={className} {size} />
+  {:else if iconName === "Shield"}
+    <Shield class={className} {size} />
+  {:else if iconName === "ShieldCheck"}
+    <ShieldCheck class={className} {size} />
+  {:else if iconName === "Search"}
+    <Search class={className} {size} />
+  {:else if iconName === "ScanSearch"}
+    <ScanSearch class={className} {size} />
   {:else if iconName === "Bell"}
     <Bell class={className} {size} />
   {:else if iconName === "Star"}
