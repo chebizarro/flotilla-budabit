@@ -16,6 +16,7 @@
   import { useRegistry } from "../../useRegistry";
   import {
     getReferenceRelayHints,
+    makeGitIssueHref,
     makeNaddrFromAddress,
   } from "../../utils/eventLink";
 
@@ -60,19 +61,6 @@
     return { kind, pubkey, identifier };
   };
 
-  const deriveCommunityFromLocation = () => {
-    if (typeof window === "undefined") return "";
-    const match = window.location.pathname.match(/\/c\/([^/]+)/);
-    if (!match) return "";
-    return match[1];
-  };
-
-  const basePathFromLocation = () => {
-    if (typeof window === "undefined") return "";
-    const match = window.location.pathname.match(/(\/c\/[^/]+\/git\/[^/]+)/);
-    return match ? match[1] : "";
-  };
-
   const repoRelayHints = $derived.by(() => {
     return getReferenceRelayHints(event, "a", repoAddress);
   });
@@ -82,18 +70,7 @@
     return makeNaddrFromAddress(repoAddress, repoRelayHints);
   });
 
-  const basePath = $derived.by(() => {
-    const communityValue = deriveCommunityFromLocation();
-    if (repoNaddr && communityValue) {
-      return `/c/${communityValue}/git/${repoNaddr}`;
-    }
-    return basePathFromLocation();
-  });
-
-  const issueHref = $derived.by(() => {
-    if (basePath) return `${basePath}/issues/${event.id}`;
-    return `issues/${event.id}`;
-  });
+  const issueHref = $derived(makeGitIssueHref(repoAddress, event.id, repoRelayHints));
 
   const repoDisplay = $derived.by(() => {
     if (!repoAddress) return "";
@@ -194,14 +171,23 @@
     <div class="flex-1">
       <div class="flex items-center justify-between">
         <div class="flex-1">
-          <a href={issueHref} class="block">
+          {#if issueHref}
+            <a href={issueHref} class="block">
+              <h3
+                class="text-base font-semibold mb-0.5 leading-tight hover:text-foreground transition-colors"
+                title={displayTitle}
+              >
+                {displayTitle}
+              </h3>
+            </a>
+          {:else}
             <h3
-              class="text-base font-semibold mb-0.5 leading-tight hover:text-foreground transition-colors"
+              class="text-base font-semibold mb-0.5 leading-tight"
               title={displayTitle}
             >
               {displayTitle}
             </h3>
-          </a>
+          {/if}
         </div>
 
         <div class="flex items-center gap-2">

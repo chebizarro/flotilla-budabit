@@ -156,6 +156,27 @@ describe("notification display", () => {
     ).toBe(false)
   })
 
+  it("uses only explicit event focus targets for row navigation", () => {
+    const display = getNotificationRowDisplay({
+      id: "event:decision",
+      eventId: "decision",
+      source: "community",
+      sourceLabel: "Communities",
+      title: "Application reviewed",
+      preview: "Your application was approved.",
+      path: "/c/community/access",
+      readPath: "/c/community/access",
+      createdAt: 100,
+      searchText: "application",
+    })
+
+    expect(display.primaryAction).toEqual({
+      label: "Open community",
+      path: "/c/community/access",
+      eventId: undefined,
+    })
+  })
+
   it("supports widget update notification rows", () => {
     const row: NotificationRow = {
       id: "widget-update:weather:weather-2",

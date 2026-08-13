@@ -34,6 +34,17 @@ export const makeNaddrFromAddress = (address: string, relays: string[] = []) => 
   }
 };
 
+export const makeGitIssueHref = (
+  repoAddress: string,
+  issueId: string,
+  relays: string[] = []
+) => {
+  if (!issueId) return "";
+
+  const repoNaddr = makeNaddrFromAddress(repoAddress, relays);
+  return repoNaddr ? `/git/${repoNaddr}/issues/${issueId}` : "";
+};
+
 export const makeEventNevent = (
   event: Pick<NostrEvent, "id" | "kind" | "pubkey" | "tags">,
   relays: string[] = []

@@ -29,14 +29,18 @@ export const emitter = new Emitter()
 
 export const modals = writable<Record<string, Modal>>({})
 export const modalIds = writable<string[]>([])
+const retainedModalId = writable("")
 
-export const modalStack = derived([page, modals, modalIds], ([$page, $modals, $modalIds]) => {
-  const activeId = $page.url.hash.slice(1)
+export const modalStack = derived(
+  [page, modals, modalIds, retainedModalId],
+  ([$page, $modals, $modalIds, $retainedModalId]) => {
+    const activeId = $modals[$retainedModalId] ? $retainedModalId : $page.url.hash.slice(1)
 
-  return getModalStackForActiveId($modalIds, activeId)
-    .map(id => $modals[id])
-    .filter((modal): modal is Modal => Boolean(modal))
-})
+    return getModalStackForActiveId($modalIds, activeId)
+      .map(id => $modals[id])
+      .filter((modal): modal is Modal => Boolean(modal))
+  },
+)
 
 export const modal = derived(modalStack, $modalStack => $modalStack.at(-1))
 
@@ -76,6 +80,8 @@ const retainModalIds = (retainedIds: string[]) => {
 }
 
 export const syncModalStoresToActiveId = (activeId: string) => {
+  if (get(retainedModalId)) return
+
   const currentIds = get(modalIds)
   const currentModals = get(modals)
   const plan =
@@ -105,6 +111,8 @@ export const pushModal = (
   props: Record<string, any> = {},
   options: ModalOptions = {},
 ) => {
+  if (get(retainedModalId)) return null
+
   const id = randomId()
   const path = options.path || ""
 
@@ -139,6 +147,8 @@ export const pushDrawer = (
 ) => pushModal(component, props, {...options, drawer: true})
 
 export const closeTopModal = () => {
+  if (get(retainedModalId)) return
+
   const currentId = getCurrentModalId()
   const currentModals = get(modals)
   const currentIds = get(modalIds)
@@ -167,6 +177,17 @@ export const closeTopModal = () => {
   clearModalHash()
 }
 
+export const retainTopModal = (modalId = getCurrentModalId()) => {
+  const currentId = modalId
+  if (!currentId || !get(modals)[currentId]) return () => undefined
+
+  retainedModalId.set(currentId)
+
+  return () => {
+    if (get(retainedModalId) === currentId) retainedModalId.set("")
+  }
+}
+
 export const clearModals = () => {
   const currentPage = get(page)
   const liveUrl = typeof window === "undefined" ? undefined : new URL(window.location.href)
@@ -176,6 +197,7 @@ export const clearModals = () => {
 
   modals.update(always({}))
   modalIds.set([])
+  retainedModalId.set("")
   emitter.emit("close")
 
   if (currentModalId && currentModals[currentModalId]) {

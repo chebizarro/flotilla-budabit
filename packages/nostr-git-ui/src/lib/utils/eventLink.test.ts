@@ -4,6 +4,7 @@ import {
   getEventRelayHints,
   getReferenceRelayHints,
   makeEventNevent,
+  makeGitIssueHref,
   makeNaddrFromAddress,
 } from "./eventLink";
 
@@ -61,5 +62,25 @@ describe("event links", () => {
       identifier: "repo",
       relays: ["wss://repo.example.com"],
     });
+  });
+
+  it("builds canonical root-relative issue links from repository metadata", () => {
+    const href = makeGitIssueHref(
+      event.tags[0][1],
+      event.id,
+      getReferenceRelayHints(event, "a", event.tags[0][1])
+    );
+
+    expect(href).toMatch(/^\/git\/naddr1/);
+    expect(href).toMatch(new RegExp(`/issues/${event.id}$`));
+    expect(new URL(href, "https://example.com/git/another-repo/issues/current").pathname).toBe(
+      href
+    );
+  });
+
+  it("omits issue links without valid repository metadata", () => {
+    expect(makeGitIssueHref("", event.id)).toBe("");
+    expect(makeGitIssueHref("not-an-address", event.id)).toBe("");
+    expect(makeGitIssueHref(event.tags[0][1], "")).toBe("");
   });
 });

@@ -371,17 +371,19 @@ const makeEventDisplayTarget = ({
   path,
   actionLabel,
   fallback,
+  focusEvent = true,
 }: {
   label: string
   event?: TrustedEvent
   path?: string
   actionLabel?: string
   fallback?: string
+  focusEvent?: boolean
 }): NotificationRowTarget => ({
   label,
   preview: event ? getTextPreview(event, fallback || label) : fallback || label,
   path,
-  eventId: event?.id,
+  eventId: focusEvent ? event?.id : undefined,
   event,
   actionLabel,
 })
@@ -1153,6 +1155,7 @@ export const buildCommunityNotificationRows = ({
     targetLabel,
     detailLabel,
     actionLabel,
+    focusEvent = true,
   }: {
     ref: ActiveUserCommunityRef
     event: TrustedEvent
@@ -1169,6 +1172,7 @@ export const buildCommunityNotificationRows = ({
     targetLabel?: string
     detailLabel?: string
     actionLabel?: string
+    focusEvent?: boolean
   }) => {
     if (!path) return
     if (normalizedCurrentPubkey && normalizePubkey(event.pubkey) === normalizedCurrentPubkey) return
@@ -1221,7 +1225,7 @@ export const buildCommunityNotificationRows = ({
       contextLabel: contextLabel || resolvedSectionName || "Community activity",
       path,
       readPath,
-      navigationEventId: event.id,
+      navigationEventId: focusEvent ? event.id : undefined,
       target: targetEvent
         ? makeEventDisplayTarget({
             label: targetLabel || getCommunityEventLabel(targetEvent),
@@ -1236,6 +1240,7 @@ export const buildCommunityNotificationRows = ({
         path,
         actionLabel: actionLabel || "Open community",
         fallback: preview,
+        focusEvent,
       }),
       createdAt: event.created_at,
       searchText: buildNotificationSearchText(
@@ -1414,6 +1419,7 @@ export const buildCommunityNotificationRows = ({
         contextLabel: "your community membership",
         detailLabel: "Access update",
         actionLabel: "Open access settings",
+        focusEvent: false,
       })
     }
 
@@ -1434,6 +1440,7 @@ export const buildCommunityNotificationRows = ({
           contextLabel: "Community moderation",
           detailLabel: "Ban notice",
           actionLabel: "Open access settings",
+          focusEvent: false,
         })
       }
 
@@ -1459,6 +1466,7 @@ export const buildCommunityNotificationRows = ({
           contextLabel: "Community moderation",
           detailLabel: "Moderation notice",
           actionLabel: "Open moderated content",
+          focusEvent: false,
         })
       }
     }
@@ -1544,7 +1552,6 @@ export const buildCommunityApplicationNotificationRows = ({
       contextLabel,
       path,
       readPath,
-      navigationEventId: event.id,
       target: targetEvent
         ? makeEventDisplayTarget({
             label: targetLabel || "Application form",
@@ -1761,7 +1768,6 @@ export const buildCommunityModerationNotificationRows = ({
       contextLabel,
       path,
       readPath: path,
-      navigationEventId: event.id,
       detail: makeEventDisplayTarget({
         label: detailLabel,
         event,
@@ -2596,12 +2602,10 @@ export const buildRouteNotificationRows = ({
       path,
       readPath: path === "/chat" ? "/chat/*" : path,
       actorPubkey: candidateEvent?.pubkey,
-      navigationEventId: candidateEvent?.id,
       detail: {
         label: title,
         preview,
         path,
-        eventId: candidateEvent?.id,
         event: candidateEvent,
         actionLabel,
       },

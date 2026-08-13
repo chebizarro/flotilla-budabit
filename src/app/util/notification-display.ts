@@ -257,7 +257,7 @@ export const getNotificationRowDisplay = (row: NotificationRow): NotificationRow
   const primaryAction = {
     label: sanitizeNotificationText(actionLabel, "Open notification"),
     path: row.path,
-    eventId: row.navigationEventId || row.eventId,
+    eventId: row.navigationEventId,
   }
   const sections = [
     ...toDisplaySection(row.target, preview),

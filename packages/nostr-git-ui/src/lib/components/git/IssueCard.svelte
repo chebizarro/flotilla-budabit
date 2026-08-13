@@ -17,6 +17,7 @@
   import { fly } from "svelte/transition";
   const { ProfileLink, Card, EventActions, ReactionSummary, Markdown } = useRegistry();
   import BaseItemCard from "../BaseItemCard.svelte";
+  import { makeGitIssueHref } from "../../utils/eventLink";
 
   interface Props {
     event: IssueEvent;
@@ -92,6 +93,7 @@
   const parsed = parseIssueEvent(event);
 
   const { id, subject: title, content: description, labels, createdAt } = parsed;
+  const issueHref = $derived(makeGitIssueHref(repoAddress, id, commentRelays));
 
   // Mirrored issues (from import) have "imported" and "original_date" tags — show original date
   const isMirrored = $derived(
@@ -196,7 +198,7 @@
 </script>
 
 <div in:fly>
-  <BaseItemCard clickable={true} href={`issues/${id}`} variant="issue">
+  <BaseItemCard clickable={Boolean(issueHref)} href={issueHref || undefined} variant="issue">
     <!-- title -->
     {#snippet slotTitle()}
       {title || "No title"}

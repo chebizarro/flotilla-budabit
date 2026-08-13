@@ -44,8 +44,12 @@
     publicationOperationsNeedingAttention,
     recoverablePublicationOperations,
   } from "@app/core/publication-operations"
-  import {clearModals, pushModal} from "@app/util/modal"
+  import {clearModals, pushModal, retainTopModal} from "@app/util/modal"
   import {goToEventIdPath} from "@app/util/routes"
+  import {
+    getNotificationNavigationKey,
+    navigateNotificationTarget,
+  } from "@app/util/notification-navigation"
   import {markNotificationsRead} from "@app/util/notification-center"
   import {
     loadMoreNotificationHistory,
@@ -154,18 +158,29 @@
     expandedRowId = expandedRowId === row.id ? undefined : row.id
   }
 
-  const isExternalPath = (path: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(path)
-
-  const getNavigationKey = (target: NotificationRowNavigation | NotificationRowDisplaySection) =>
-    `${target.path || ""}:${target.eventId || ""}`
-
   const isNavigationPending = (target: NotificationRowNavigation | NotificationRowDisplaySection) =>
-    pendingNavigationKey === getNavigationKey(target)
+    pendingNavigationKey === getNotificationNavigationKey(target)
 
   const waitForNavigationIntentPaint = async () => {
     await tick()
     if (typeof requestAnimationFrame !== "function") return
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  }
+
+  const scrollDestinationToTop = async () => {
+    await tick()
+    if (typeof requestAnimationFrame === "function") {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    }
+
+    for (const element of document.querySelectorAll<HTMLElement>(
+      '[data-component="PageContent"], [data-component="Page"]',
+    )) {
+      element.scrollTo({top: 0, left: 0, behavior: "auto"})
+    }
+
+    document.scrollingElement?.scrollTo({top: 0, left: 0, behavior: "auto"})
+    window.scrollTo({top: 0, left: 0, behavior: "auto"})
   }
 
   const openNavigationTarget = async (
@@ -178,29 +193,22 @@
     if (!target.path) return
     if (navigationPending) return
 
-    if (isExternalPath(target.path)) {
-      window.open(target.path, "_blank", "noopener")
-      clearModals()
-      return
-    }
-
-    const navigationKey = getNavigationKey(target)
+    const navigationKey = getNotificationNavigationKey(target)
     pendingNavigationKey = navigationKey
 
     try {
-      await waitForNavigationIntentPaint()
-      if (target.eventId) {
-        const navigation = goToEventIdPath(target.eventId, target.path)
-        clearModals()
-        await navigation
-      } else {
-        await goto(target.path)
-        clearModals()
-      }
+      await navigateNotificationTarget(target, {
+        goto,
+        goToEventIdPath,
+        openExternal: path => window.open(path, "_blank", "noopener,noreferrer"),
+        waitForIntentPaint: waitForNavigationIntentPaint,
+        scrollToTop: scrollDestinationToTop,
+        retainModal: retainTopModal,
+        clearModals,
+      })
     } catch (error) {
       if (pendingNavigationKey === navigationKey) pendingNavigationKey = ""
       console.error("[NotificationsModal] Failed to navigate to notification target", error)
-      return
     }
   }
 
@@ -213,7 +221,6 @@
 
   const activateRow = (
     event: Event | undefined,
-    row: NotificationRow,
     display: ReturnType<typeof getNotificationRowDisplay>,
   ) => {
     if (navigationPending) {
@@ -222,28 +229,26 @@
       return
     }
 
-    if (display.canExpand) {
-      event?.preventDefault()
-      event?.stopPropagation()
-      toggleRow(row)
-      return
-    }
-
     void openNavigationTarget(event, display.primaryAction)
   }
 
   const activateRowFromKeyboard = (
     event: KeyboardEvent,
-    row: NotificationRow,
     display: ReturnType<typeof getNotificationRowDisplay>,
   ) => {
     if (event.key !== "Enter" && event.key !== " ") return
 
     event.preventDefault()
-    activateRow(event, row, display)
+    activateRow(event, display)
   }
 
   const stopKeyboardPropagation = (event: KeyboardEvent) => event.stopPropagation()
+
+  const toggleRowFromControl = (event: Event, row: NotificationRow) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!navigationPending) toggleRow(row)
+  }
 
   const loadMoreRows = () => {
     if (loadMoreHistoryPending) return
@@ -374,14 +379,13 @@
               <div
                 role="button"
                 tabindex="0"
-                aria-expanded={display.canExpand ? isExpanded : undefined}
                 aria-busy={rowNavigating}
                 aria-disabled={navigationPending}
                 class="flex items-start gap-2.5 p-3 sm:gap-3 {navigationPending
                   ? 'cursor-wait'
                   : 'cursor-pointer'}"
-                onclick={event => activateRow(event, row, display)}
-                onkeydown={event => activateRowFromKeyboard(event, row, display)}>
+                onclick={event => activateRow(event, display)}
+                onkeydown={event => activateRowFromKeyboard(event, display)}>
                 <div
                   class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-base-200 text-primary">
                   <Icon icon={getTypeIcon(display.type)} size={4.5} />
@@ -430,20 +434,30 @@
                         {/if}
                       </div>
                     </div>
-                    {#if display.canExpand}
-                      <Icon
-                        icon={RoundAltArrowDown}
-                        size={4}
-                        class={isExpanded
-                          ? "mt-1 rotate-180 transition-transform"
-                          : "mt-1 transition-transform"} />
-                    {:else if rowNavigating}
+                    {#if rowNavigating}
                       <span
                         class="mt-1 flex shrink-0 items-center gap-1.5 text-xs font-medium text-primary">
                         <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
                         <span class="hidden sm:inline">Opening...</span>
                         <span class="sr-only sm:hidden">Opening notification</span>
                       </span>
+                    {:else if display.canExpand}
+                      <Button
+                        class="btn btn-circle btn-ghost btn-xs shrink-0"
+                        aria-label={isExpanded
+                          ? "Collapse notification details"
+                          : "Expand notification details"}
+                        aria-expanded={isExpanded}
+                        disabled={navigationPending}
+                        onkeydown={stopKeyboardPropagation}
+                        onclick={event => toggleRowFromControl(event, row)}>
+                        <Icon
+                          icon={RoundAltArrowDown}
+                          size={4}
+                          class={isExpanded
+                            ? "rotate-180 transition-transform"
+                            : "transition-transform"} />
+                      </Button>
                     {:else}
                       <Icon icon={ArrowRightUp} size={3.5} class="mt-1 text-muted-foreground" />
                     {/if}
