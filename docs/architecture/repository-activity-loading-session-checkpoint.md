@@ -12,7 +12,7 @@
 
 ## Current Phase
 
-- Phase 8: Completion-Aware UI And Final Validation
+- Complete
 
 ## Phase Exit Criteria
 
@@ -86,6 +86,18 @@
 - Personal list projection now reuses the canonical latest announcement store, while discovery search membership remains explicitly scoped to `discoveredSearchRepoPool` rather than global canonical insertion.
 - Warm-navigation E2E proved cached personal announcement rendering, live same-address replacement, broad list-owner cleanup, selected replacement rendering, and cached-root rendering while detail history remained stalled.
 - Phase 7 focused verification passed: 5 files and 57 tests; offline/warm cache E2E passed 3 tests; existing list E2E passed 3 tests; existing detail E2E passed 4 tests; `pnpm check`, `pnpm run e2e:check`, Prettier, and `git diff --check` passed.
+- Phase 8 replaced timer-based issue and pull-request absence with completion-aware loading, recent-page empty, exhausted empty, filtered empty, hidden empty, partial, failed, cache-pending/cache-failed, live-limited, and relay-unavailable states.
+- Cached rows remain visible during refresh, and retry actions target failed announcement, cache, root-history, exact-root, or compatibility-gap work without treating timeout, disconnect, abort, or failed hydration as absence.
+- Repository announcement refresh now owns bounded NIP-65 outbox discovery and per-relay outcomes; announcement, activity, and exact-thread live lanes are stable, independently capped at six relays, and disclose limited live coverage while finite work still covers every relay.
+- Recent root history uses six-way bounded relay concurrency, independent inclusive relay cursors, saturation growth, empty-EOSE exhaustion, serialized per-root compatibility gap-fill, and older-page pagination that remains available after gap-fill failure.
+- Detail exact demand is route-cancellable and reference-counted when coalesced; obsolete same-repository child demand aborts without cancelling another active caller, while route teardown clears all route-owned scheduler work.
+- Cache hydration starts immediately, yields to network startup after 250 ms, distinguishes pending from rejected hydration, and never establishes empty authority while hydration remains unresolved.
+- Warm recent and watched cache rendering is measured in the browser from navigation start and remains within the documented 3,000 ms budget.
+- Final static signoff reported no high- or medium-severity findings.
+- Final focused verification passed: 5 files and 45 tests; list E2E passed 4 tests; detail E2E passed 6 tests; cache/offline E2E passed 3 tests.
+- Final broad verification passed: 168 files and 1,580 main tests with a 10-second host-variance ceiling; `pnpm run build`; `pnpm check`; `pnpm run e2e:check`; Prettier; and `git diff --check`.
+- Final runnable Chromium regression coverage passed 53 tests sequentially. Full Playwright remains blocked only by the pre-existing auth setup expectation and the separate huddle server requirement recorded below.
+- No Phase 8 changes were made under `packages/welshman`, `packages/nostr-git-core`, or `packages/nostr-git-ui`.
 
 ## Decisions
 
@@ -101,12 +113,12 @@
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev` after a clean merge of the prior divergence.
 - Unrelated dirty relay-policy/Welshman files and an optimistic-publication plan predate this workflow and must remain unstaged and unmodified.
-- Phases 1 through 7 are verified; Phase 7 is ready for scoped commit/push closeout.
+- Phases 1 through 8 are implemented and verified; Phase 8 is ready for scoped commit/push closeout.
 - The session plan remains intentionally untracked and must not be staged.
 
 ## Next Action
 
-- Replace issue and pull-request timer-based absence with layout-owned completion states while preserving cached rows during refresh.
+- Commit and push the verified Phase 8 files while leaving the session plan and unrelated worktree changes unstaged.
 
 ## Verification
 
@@ -141,10 +153,19 @@
 - `pnpm exec playwright test tests/e2e/git-list-resolution.spec.ts` passed: 3 existing list tests.
 - `pnpm exec playwright test tests/e2e/git-detail-resolution.spec.ts` passed: 4 existing detail tests.
 - Phase 7 `pnpm check`, `pnpm run e2e:check`, owned-file Prettier, and `git diff --check` passed.
+- `pnpm exec vitest run --project=main --testTimeout=10000` passed: 168 files and 1,580 tests. The raised ceiling accommodates existing host-sensitive route/git-command cases that pass standalone but can cross the default five-second timeout in a loaded full run.
+- `pnpm exec playwright test tests/e2e/git-list-resolution.spec.ts` passed: 4 tests.
+- `pnpm exec playwright test tests/e2e/git-detail-resolution.spec.ts` passed: 6 tests.
+- `pnpm exec playwright test tests/e2e/repo-cache-offline.spec.ts` passed: 3 tests, with browser-side render timing enforcing the 3,000 ms budget.
+- `pnpm exec playwright test --project=chromium --workers=1 --grep-invert "Huddle Multi-Participant|identity bootstrap|identity persistence|NIP-46 login"` passed: 53 tests.
+- `pnpm run build` passed, including the service-worker contract.
+- Final `pnpm check`, `pnpm run e2e:check`, owned-file Prettier, and `git diff --check` passed.
 
 ## Risks Or Blockers
 
 - No current implementation blocker.
+- Full `pnpm exec playwright test --workers=1` remains blocked by unrelated harness requirements: auth setup expects a missing `data-testid="login-screen"`, identity/widget projects depend on that setup, and three huddle tests require a separate server at `http://localhost:5173`.
+- Direct push must account for the unrelated local commit `a381f168f feat: adapt relay subscription capacity`, which predates Phase 8 and is not on `origin/dev`.
 - The worktree contains unrelated changes in relay policy, Welshman, probe scripts, and an optimistic-publication plan; they must never be staged by this workflow.
 - The session plan is intentionally uncommitted and will remain dirty/untracked across all phase commits.
 - Live relay fan-out and exact cache bounds require measurement during later phases.

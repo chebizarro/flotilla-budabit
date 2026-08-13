@@ -12,6 +12,7 @@ import {DEV_SECRET} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
 
 const relayUrl = "wss://repo-cache-offline.test"
+const WARM_CACHE_RENDER_BUDGET_MS = 3_000
 
 const getCacheState = (page: Page) =>
   page.evaluate(async () => {
@@ -82,13 +83,25 @@ const populateCache = async (page: Page, identifier: string) => {
   return {...fixture, path}
 }
 
-const openOffline = async (page: Page, path: string) => {
+const openOffline = async (page: Page, path: string, expectedText: string) => {
   const relay = new MockRelay({
     subscriptionOutcomesByRelay: {[`${relayUrl}/`]: "stall"},
   })
   await relay.setup(page)
+  await page.addInitScript(text => {
+    const startedAt = performance.now()
+    const observer = new MutationObserver(() => {
+      if (!document.body?.innerText.includes(text)) return
+      ;(window as any).__repoCacheRenderDuration = performance.now() - startedAt
+      observer.disconnect()
+    })
+    observer.observe(document, {subtree: true, childList: true, characterData: true})
+  }, expectedText)
   await page.goto(path)
 }
+
+const getCacheRenderDuration = (page: Page) =>
+  page.evaluate(() => (window as any).__repoCacheRenderDuration as number | undefined)
 
 const countBroadRepoListSubscriptions = (page: Page) =>
   page.evaluate(() => {
@@ -129,11 +142,12 @@ test("renders a recent repository from verified cache while its relay is unavail
 }) => {
   const fixture = await populateCache(page, "recent-offline")
   const offlinePage = await context.newPage()
-  await openOffline(offlinePage, fixture.path)
+  await openOffline(offlinePage, fixture.path, "Cached issue recent-offline")
 
   await expect(offlinePage.getByText("Cached issue recent-offline", {exact: true})).toBeVisible({
     timeout: 10_000,
   })
+  expect(await getCacheRenderDuration(offlinePage)).toBeLessThanOrEqual(WARM_CACHE_RENDER_BUDGET_MS)
 })
 
 test("retains a watched repository offline after recent eligibility expires", async ({
@@ -165,11 +179,12 @@ test("retains a watched repository offline after recent eligibility expires", as
   }, fixture.repoAddress)
 
   const offlinePage = await context.newPage()
-  await openOffline(offlinePage, fixture.path)
+  await openOffline(offlinePage, fixture.path, "Cached issue watched-offline")
 
   await expect(offlinePage.getByText("Cached issue watched-offline", {exact: true})).toBeVisible({
     timeout: 10_000,
   })
+  expect(await getCacheRenderDuration(offlinePage)).toBeLessThanOrEqual(WARM_CACHE_RENDER_BUDGET_MS)
 })
 
 test("uses live list replacements and cached roots during warm navigation", async ({

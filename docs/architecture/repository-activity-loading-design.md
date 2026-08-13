@@ -285,6 +285,10 @@ Configured trusted relays can bypass ordinary ingress signature verification. Du
 - At most six relay provenance entries per event.
 - Reject oversized individual records.
 
+Route cache hydration yields to network startup after 250 ms. On the Playwright reference
+environment, cached recent and watched issue detail must become visible within 3,000 ms of starting
+an offline navigation; the final validation suite enforces that end-to-end budget.
+
 Pruning removes IndexedDB records only. It must never remove events from an active canonical repository.
 
 ### Existing Storage Safety

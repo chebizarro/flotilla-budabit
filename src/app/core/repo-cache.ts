@@ -841,16 +841,20 @@ export const setupRepositoryCache = () => {
 
 export const accessRepositoryCache = async (address: string) => {
   const hydration = repositoryCache.hydrateRepository(address)
+  let timedOut = false
   const hydrated = await Promise.race([
     hydration,
     new Promise<undefined>(resolve =>
-      setTimeout(() => resolve(undefined), REPO_CACHE_ROUTE_HYDRATION_BUDGET_MS),
+      setTimeout(() => {
+        timedOut = true
+        resolve(undefined)
+      }, REPO_CACHE_ROUTE_HYDRATION_BUDGET_MS),
     ),
   ])
   void repositoryCache
     .accessRepository(address)
     .catch(error => console.warn("[repo-cache] Failed to record repository access", error))
-  return hydrated
+  return {hydrated: hydrated ?? 0, timedOut, completion: hydration}
 }
 
 export const clearRepositoryCache = () => repositoryCache.clear()

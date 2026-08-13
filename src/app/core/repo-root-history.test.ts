@@ -6,6 +6,8 @@ import {
   buildRepoRootPageFilter,
   createRepoRootResolver,
   createRepoRootHistory,
+  getIncompleteRepoRootGapScopes,
+  mapRepoRelayWork,
 } from "./repo-root-history"
 
 const address = `30617:${"a".repeat(64)}:repo`
@@ -88,7 +90,11 @@ describe("repository root history", () => {
     const full = history.getSnapshot().relays.find(item => item.relay === "wss://full")
     expect(empty).toMatchObject({exhausted: true, outcome: "eose"})
     expect(full).toMatchObject({until: 10, exhausted: false})
-    expect(history.getSnapshot()).toMatchObject({status: "complete", hasOlder: true})
+    expect(history.getSnapshot()).toMatchObject({
+      status: "complete",
+      operation: "recent",
+      hasOlder: true,
+    })
     expect(calls).toHaveLength(2)
   })
 
@@ -109,11 +115,99 @@ describe("repository root history", () => {
     expect(history.getSnapshot()).toMatchObject({status: "partial", exhausted: false})
   })
 
-  it("keeps the inclusive boundary and marks a saturated timestamp partial", async () => {
-    const requestFiniteRelay = vi.fn(async options =>
-      result(options.relay, "eose", [makeEvent("1", 10), makeEvent("2", 10)]),
-    )
+  it("honors relay page limits below the default without claiming exhaustion", async () => {
+    const events = Array.from({length: 50}, (_, index) => makeEvent(String(index + 1), 100 - index))
+    const requestFiniteRelay = vi.fn(async options => result(options.relay, "eose", events))
+    const history = createRepoRootHistory({requestFiniteRelay, getRelayPageLimit: () => 50})({
+      relays: ["wss://limited"],
+      addresses: [address],
+      signal: new AbortController().signal,
+      priority: 100,
+      onEvent: vi.fn(),
+      onState: vi.fn(),
+    })
+
+    await history.loadRecent()
+
+    expect(requestFiniteRelay.mock.calls[0][0].filters[0].limit).toBe(50)
+    expect(history.getSnapshot()).toMatchObject({status: "complete", hasOlder: true})
+  })
+
+  it("starts idle and retries only relays that did not complete", async () => {
+    const requestFiniteRelay = vi.fn(async options => {
+      if (options.relay === "wss://healthy") return result(options.relay, "eose")
+      if (
+        requestFiniteRelay.mock.calls.filter(call => call[0].relay === options.relay).length === 1
+      ) {
+        return result(options.relay, "timeout")
+      }
+      return result(options.relay, "eose")
+    })
     const history = createRepoRootHistory({requestFiniteRelay})({
+      relays: ["wss://healthy", "wss://retry"],
+      addresses: [address],
+      signal: new AbortController().signal,
+      priority: 100,
+      onEvent: vi.fn(),
+      onState: vi.fn(),
+    })
+
+    expect(history.getSnapshot()).toMatchObject({status: "idle", operation: null})
+    await history.loadRecent()
+    expect(history.getSnapshot()).toMatchObject({status: "partial", operation: "recent"})
+    await history.retry()
+
+    expect(requestFiniteRelay.mock.calls.map(call => call[0].relay)).toEqual([
+      "wss://healthy",
+      "wss://retry",
+      "wss://retry",
+    ])
+    expect(history.getSnapshot()).toMatchObject({status: "complete", operation: "recent"})
+  })
+
+  it("coalesces concurrent retry requests", async () => {
+    let finishRetry: ((value: FiniteRelayResult) => void) | undefined
+    const requestFiniteRelay = vi
+      .fn()
+      .mockResolvedValueOnce(result("wss://retry", "timeout"))
+      .mockImplementationOnce(
+        options =>
+          new Promise<FiniteRelayResult>(resolve => {
+            finishRetry = value => resolve({...value, relay: options.relay})
+          }),
+      )
+    const history = createRepoRootHistory({requestFiniteRelay})({
+      relays: ["wss://retry"],
+      addresses: [address],
+      signal: new AbortController().signal,
+      priority: 100,
+      onEvent: vi.fn(),
+      onState: vi.fn(),
+    })
+
+    await history.loadRecent()
+    const first = history.retry()
+    const second = history.retry()
+    await vi.waitFor(() => expect(requestFiniteRelay).toHaveBeenCalledTimes(2))
+    expect(requestFiniteRelay).toHaveBeenCalledTimes(2)
+
+    finishRetry?.(result("wss://retry", "eose"))
+    await Promise.all([first, second])
+    expect(requestFiniteRelay).toHaveBeenCalledTimes(2)
+  })
+
+  it("grows a full inclusive boundary to the relay limit before marking it partial", async () => {
+    const requestFiniteRelay = vi.fn(async options => {
+      const limit = options.filters[0].limit
+      return result(
+        options.relay,
+        "eose",
+        limit === 4
+          ? [makeEvent("1", 10), makeEvent("2", 10), makeEvent("3", 10), makeEvent("4", 10)]
+          : [makeEvent("1", 10), makeEvent("2", 10)],
+      )
+    })
+    const history = createRepoRootHistory({requestFiniteRelay, getRelayPageLimit: () => 4})({
       relays: ["wss://same-time"],
       addresses: [address],
       signal: new AbortController().signal,
@@ -126,12 +220,83 @@ describe("repository root history", () => {
     await history.loadRecent()
     await history.loadOlder()
 
-    expect(requestFiniteRelay.mock.calls[1][0].filters[0].until).toBe(10)
+    expect(requestFiniteRelay.mock.calls.slice(1).map(call => call[0].filters[0])).toEqual([
+      expect.objectContaining({limit: 2, until: 10}),
+      expect.objectContaining({limit: 4, until: 10}),
+    ])
     expect(history.getSnapshot().relays[0]).toMatchObject({
       until: 10,
       boundarySaturated: true,
+      pageSize: 4,
       status: "partial",
     })
+  })
+
+  it("advances past a short inclusive boundary before empty EOSE proves exhaustion", async () => {
+    const requestFiniteRelay = vi
+      .fn()
+      .mockResolvedValueOnce(result("wss://short", "eose", [makeEvent("1", 10)]))
+      .mockResolvedValueOnce(result("wss://short", "eose", [makeEvent("1", 10)]))
+      .mockResolvedValueOnce(result("wss://short", "eose"))
+    const history = createRepoRootHistory({requestFiniteRelay})({
+      relays: ["wss://short"],
+      addresses: [address],
+      signal: new AbortController().signal,
+      pageSize: 2,
+      priority: 100,
+      onEvent: vi.fn(),
+      onState: vi.fn(),
+    })
+
+    await history.loadRecent()
+    expect(history.getSnapshot()).toMatchObject({hasOlder: true, exhausted: false})
+    await history.loadOlder()
+    expect(history.getSnapshot().relays[0]).toMatchObject({until: 9, exhausted: false})
+    await history.loadOlder()
+    expect(history.getSnapshot()).toMatchObject({hasOlder: false, exhausted: true})
+  })
+})
+
+describe("repository relay work", () => {
+  it("bounds concurrent relay work while preserving result order", async () => {
+    let active = 0
+    let maxActive = 0
+    const results = await mapRepoRelayWork(
+      Array.from({length: 10}, (_, index) => index),
+      async value => {
+        active += 1
+        maxActive = Math.max(maxActive, active)
+        await Promise.resolve()
+        active -= 1
+        return value * 2
+      },
+      3,
+    )
+
+    expect(maxActive).toBe(3)
+    expect(results).toEqual(Array.from({length: 10}, (_, index) => index * 2))
+  })
+})
+
+describe("repository root gap scopes", () => {
+  it("preserves exact failed relay and root pairs", () => {
+    const outcomes = new Map([
+      ["root-a::relay-1", "timeout"],
+      ["root-a::relay-2", "eose"],
+      ["root-b::relay-1", "eose"],
+      ["root-b::relay-2", "error"],
+    ])
+
+    expect(
+      getIncompleteRepoRootGapScopes({
+        relays: ["relay-1", "relay-2"],
+        rootIds: ["root-a", "root-b"],
+        getOutcome: (rootId, relay) => outcomes.get(`${rootId}::${relay}`) as any,
+      }),
+    ).toEqual([
+      {relay: "relay-1", rootIds: ["root-a"]},
+      {relay: "relay-2", rootIds: ["root-b"]},
+    ])
   })
 })
 
@@ -274,5 +439,79 @@ describe("repository root resolution", () => {
 
     await harness.ensureRoot(id)
     expect(requestFiniteRelay).toHaveBeenCalledTimes(2)
+  })
+
+  it("cancels obsolete exact demand without reusing its aborted request", async () => {
+    const firstController = new AbortController()
+    const requestFiniteRelay = vi.fn(
+      options =>
+        new Promise<FiniteRelayResult>(resolve => {
+          options.signal?.addEventListener(
+            "abort",
+            () => resolve(result(options.relay, "aborted")),
+            {once: true},
+          )
+          if (requestFiniteRelay.mock.calls.length > 1) {
+            resolve(result(options.relay, "eose"))
+          }
+        }),
+    )
+    const harness = makeResolver({requestFiniteRelay})
+    const id = "e".repeat(64)
+    const first = harness.ensureRoot(id, firstController.signal)
+
+    firstController.abort()
+    await expect(first).resolves.toMatchObject({status: "aborted"})
+    await expect(harness.ensureRoot(id)).resolves.toMatchObject({status: "complete"})
+    expect(requestFiniteRelay).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps shared exact work alive while another demand remains", async () => {
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+    let resolveRequest: ((value: FiniteRelayResult) => void) | undefined
+    let requestSignal: AbortSignal | undefined
+    const requestFiniteRelay = vi.fn(
+      options =>
+        new Promise<FiniteRelayResult>(resolve => {
+          requestSignal = options.signal
+          resolveRequest = resolve
+        }),
+    )
+    const harness = makeResolver({requestFiniteRelay})
+    const id = "f".repeat(64)
+    const first = harness.ensureRoot(id, firstController.signal)
+    const second = harness.ensureRoot(id, secondController.signal)
+
+    firstController.abort()
+    await expect(first).resolves.toMatchObject({status: "aborted"})
+    expect(requestSignal?.aborted).toBe(false)
+    resolveRequest?.(result(relay, "eose"))
+    await expect(second).resolves.toMatchObject({status: "complete"})
+    expect(requestFiniteRelay).toHaveBeenCalledTimes(1)
+  })
+
+  it("retries exact lookup only on relays that did not reach EOSE", async () => {
+    const requestFiniteRelay = vi.fn(async options => {
+      const relayCalls = requestFiniteRelay.mock.calls.filter(
+        call => call[0].relay === options.relay,
+      )
+      if (options.relay === "wss://healthy") return result(options.relay, "eose")
+      return result(options.relay, relayCalls.length === 1 ? "timeout" : "eose")
+    })
+    const harness = makeResolver({
+      requestFiniteRelay,
+      relays: ["wss://healthy", "wss://retry"],
+    })
+    const id = "d".repeat(64)
+
+    await expect(harness.ensureRoot(id)).resolves.toMatchObject({status: "partial"})
+    await expect(harness.ensureRoot(id)).resolves.toMatchObject({status: "complete"})
+
+    expect(requestFiniteRelay.mock.calls.map(call => call[0].relay)).toEqual([
+      "wss://healthy",
+      "wss://retry",
+      "wss://retry",
+    ])
   })
 })

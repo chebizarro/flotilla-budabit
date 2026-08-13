@@ -1,8 +1,8 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
 import {nip19} from "nostr-tools"
 
-const {refreshPubkeyOutboxRelaysMock} = vi.hoisted(() => ({
-  refreshPubkeyOutboxRelaysMock: vi.fn(async () => ["wss://author.relay.example.com"]),
+const {getPubkeyOutboxRelaysMock} = vi.hoisted(() => ({
+  getPubkeyOutboxRelaysMock: vi.fn(() => ["wss://author.relay.example.com"]),
 }))
 
 type LayoutResult = {
@@ -37,7 +37,7 @@ vi.mock("@app/core/git-state", () => ({
 }))
 
 vi.mock("@app/core/community-state", () => ({
-  refreshPubkeyOutboxRelays: refreshPubkeyOutboxRelaysMock,
+  getPubkeyOutboxRelays: getPubkeyOutboxRelaysMock,
 }))
 
 vi.mock("@nostr-git/core/utils", () => ({
@@ -54,7 +54,8 @@ const VALID_IDENTIFIER = "flotilla-budabit"
 
 describe("git [id=naddr] layout load", () => {
   beforeEach(() => {
-    refreshPubkeyOutboxRelaysMock.mockClear()
+    getPubkeyOutboxRelaysMock.mockClear()
+    getPubkeyOutboxRelaysMock.mockReturnValue(["wss://author.relay.example.com"])
   })
 
   it("returns broad announcement discovery relays separately from naddr hints", async () => {
@@ -79,9 +80,22 @@ describe("git [id=naddr] layout load", () => {
       "wss://fallback.relay.example.com",
     ])
     expect(result.naddrRelays).toEqual([])
-    expect(refreshPubkeyOutboxRelaysMock).toHaveBeenCalledWith(VALID_PUBKEY, [
-      "wss://fallback.relay.example.com",
-    ])
+  })
+
+  it("does not start detached owner outbox refresh before entering the repository", async () => {
+    getPubkeyOutboxRelaysMock.mockReturnValue([])
+    const naddr = nip19.naddrEncode({
+      kind: 30617,
+      pubkey: VALID_PUBKEY,
+      identifier: VALID_IDENTIFIER,
+      relays: [],
+    })
+
+    const {load} = await import("./+layout")
+    await expect(load(mkLoadEvent({id: naddr}))).resolves.toMatchObject({
+      url: "wss://fallback.relay.example.com",
+      announcementDiscoveryRelays: ["wss://fallback.relay.example.com"],
+    })
   })
 
   it("populates naddrRelays when naddr has relay hints", async () => {
@@ -98,7 +112,6 @@ describe("git [id=naddr] layout load", () => {
       "wss://hint.relay.example.com",
       "wss://other.relay.example.com",
     ])
-    expect(refreshPubkeyOutboxRelaysMock).not.toHaveBeenCalled()
   })
 
   it("filters out invalid relay URLs from naddrRelays", async () => {

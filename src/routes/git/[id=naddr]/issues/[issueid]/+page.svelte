@@ -84,6 +84,11 @@
   const repoRelaysStore = getContext<Readable<string[]>>(REPO_RELAYS_KEY)
   const hiddenRootIdsStore = getContext<Readable<Set<string>>>(HIDDEN_ROOT_IDS_KEY)
   const repoRootHistory = getContext<RepoRootHistoryContext>(REPO_ROOT_HISTORY_KEY)
+  const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
+  const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
+  const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
+  const repoLiveCoveragePartialStore = repoRootHistory.liveCoveragePartial
+  const repoAnnouncementLiveCoveragePartialStore = repoRootHistory.announcementLiveCoveragePartial
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -113,11 +118,14 @@
 
   const issueEvent = $derived.by(() => repoClass.issues.find(i => i.id === issueId))
   const hasRepoAnnouncement = $derived.by(() => Boolean(repoClass.repoEvent))
+  const announcementStatus = $derived($repoAnnouncementStatusStore)
+  const liveCoveragePartial = $derived($repoLiveCoveragePartialStore)
+  const announcementLiveCoveragePartial = $derived($repoAnnouncementLiveCoveragePartialStore)
 
-  const ISSUE_RESOLVE_TIMEOUT_MS = 15_000
   let issueResolution = $state<{
     issueId: string
     status: "loading" | "complete" | "partial" | "failed" | "unavailable" | "aborted"
+    rootId?: string
   }>({
     issueId: "",
     status: "loading",
@@ -125,43 +133,102 @@
   const issueResolutionStatus = $derived(
     issueResolution.issueId === issueId ? issueResolution.status : "loading",
   )
-  const repoRelaysUnavailable = $derived(hasRepoAnnouncement && repoBoundRelays.length === 0)
+  const repoRelaysUnavailable = $derived(
+    hasRepoAnnouncement &&
+      announcementStatus === "complete" &&
+      !$repoCacheHydrationPendingStore &&
+      !$repoCacheHydrationFailedStore &&
+      repoBoundRelays.length === 0,
+  )
+  let issueResolutionNonce = $state(0)
 
   $effect(() => {
     const currentIssueId = issueId
+    const announcementAvailable = hasRepoAnnouncement
+    const currentAnnouncementStatus = announcementStatus
+    const cacheHydrationPending = $repoCacheHydrationPendingStore
+    const cacheHydrationFailed = $repoCacheHydrationFailedStore
+    const liveCoveragePartial = $repoLiveCoveragePartialStore
+    const relays = repoBoundRelays
+    void issueEvent
+    void issueResolutionNonce
 
     if (!currentIssueId) {
       issueResolution = {issueId: currentIssueId, status: "complete"}
       return
     }
 
-    if (issueEvent) {
-      issueResolution = {issueId: currentIssueId, status: "loading"}
+    if (!announcementAvailable) {
+      issueResolution = {
+        issueId: currentIssueId,
+        status: cacheHydrationPending
+          ? "loading"
+          : currentAnnouncementStatus === "complete" && cacheHydrationFailed
+            ? "failed"
+            : currentAnnouncementStatus === "complete"
+              ? "unavailable"
+              : currentAnnouncementStatus === "aborted"
+                ? "partial"
+                : currentAnnouncementStatus,
+      }
+      return
+    }
+
+    if (relays.length === 0) {
+      issueResolution = {
+        issueId: currentIssueId,
+        status: cacheHydrationPending
+          ? "loading"
+          : currentAnnouncementStatus === "complete" && cacheHydrationFailed
+            ? "failed"
+            : currentAnnouncementStatus === "complete"
+              ? "unavailable"
+              : currentAnnouncementStatus === "aborted"
+                ? "partial"
+                : currentAnnouncementStatus,
+      }
       return
     }
 
     issueResolution = {issueId: currentIssueId, status: "loading"}
-    if (!hasRepoAnnouncement || repoBoundRelays.length === 0) return
+    const controller = new AbortController()
+    let cancelled = false
 
-    const timeout = setTimeout(() => {
-      if (issueResolution.issueId === currentIssueId && issueResolution.status === "loading") {
-        issueResolution = {issueId: currentIssueId, status: "complete"}
-      }
-    }, ISSUE_RESOLVE_TIMEOUT_MS)
-
-    void repoRootHistory.ensureRoot(currentIssueId).then(result => {
-      if (issueId !== currentIssueId || result.status === "aborted") return
-      if (result.rootId) clearTimeout(timeout)
+    void repoRootHistory.ensureRoot(currentIssueId, controller.signal).then(result => {
+      if (cancelled || issueId !== currentIssueId || result.status === "aborted") return
       issueResolution = {
         issueId: currentIssueId,
-        status: result.rootId ? result.status : "loading",
+        status:
+          result.status === "complete" &&
+          (currentAnnouncementStatus !== "complete" ||
+            cacheHydrationPending ||
+            cacheHydrationFailed)
+            ? currentAnnouncementStatus === "loading" || cacheHydrationPending
+              ? "loading"
+              : currentAnnouncementStatus === "partial"
+                ? "partial"
+                : "failed"
+            : result.status,
+        rootId: result.rootId,
       }
     })
 
     return () => {
-      clearTimeout(timeout)
+      cancelled = true
+      controller.abort()
     }
   })
+  const retryIssueResolution = async () => {
+    if ($repoCacheHydrationFailedStore) await repoRootHistory.retryCacheHydration()
+    if (
+      announcementStatus === "partial" ||
+      announcementStatus === "failed" ||
+      announcementStatus === "aborted"
+    ) {
+      await repoRootHistory.retryAnnouncement()
+    }
+    issueResolutionNonce += 1
+  }
 
   // Filter helpers used when refreshing labels/description updates after publishing
   const getLabelFilter = (): Filter => ({kinds: [1985], "#e": [issueEvent?.id ?? ""]})
@@ -843,13 +910,46 @@
   <title>{repoClass.name} - {issue?.subject}</title>
 </svelte:head>
 
-{#if isHiddenRoot}
+{#if liveCoveragePartial || announcementLiveCoveragePartial}
+  <div
+    class="mb-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+    role="status">
+    {liveCoveragePartial && announcementLiveCoveragePartial
+      ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
+      : liveCoveragePartial
+        ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
+        : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."}
+  </div>
+{/if}
+
+{#if isHiddenRoot && issueEvent}
   <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12">
     <SearchX class="mb-2 h-6 w-6 sm:h-8 sm:w-8" />
     <p class="text-center text-sm sm:text-base">This issue was hidden as spam.</p>
   </div>
 {:else if issue}
   <div class="px-2 py-2 sm:px-0 sm:py-4" data-event={issueEvent?.id} transition:slide>
+    {#if issueResolutionStatus !== "complete"}
+      <div
+        class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite">
+        <span>
+          {issueResolutionStatus === "loading"
+            ? "Refreshing issue activity…"
+            : issueResolutionStatus === "unavailable"
+              ? "Repository relays are unavailable. Showing saved issue content."
+              : issueResolutionStatus === "failed"
+                ? "Issue activity refresh failed. Showing saved issue content."
+                : "Some repository relays did not finish. Issue activity may be incomplete."}
+        </span>
+        {#if issueResolutionStatus === "partial" || issueResolutionStatus === "failed"}
+          <button
+            class="rounded-md border border-border px-3 py-1 text-sm"
+            onclick={retryIssueResolution}>Retry</button>
+        {/if}
+      </div>
+    {/if}
     <Card class="git-card p-4 transition-colors sm:p-6">
       <div class="flex items-start gap-2 sm:gap-4">
         {#if statusIcon}
@@ -1151,7 +1251,7 @@
         enableReplies />
     </Card>
   </div>
-{:else if repoRelaysUnavailable}
+{:else if repoRelaysUnavailable || issueResolutionStatus === "unavailable"}
   <div class="flex flex-col items-center justify-center px-4 py-8 text-center sm:py-12">
     <SearchX class="mb-2 h-6 w-6 sm:h-8 sm:w-8" />
     <p class="text-sm font-medium sm:text-base">Repository Relays Unavailable</p>
@@ -1161,11 +1261,32 @@
   </div>
 {:else if issueResolutionStatus === "loading"}
   <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12">
-    <p class="text-center text-sm text-muted-foreground sm:text-base">Loading issue...</p>
+    <p class="text-center text-sm text-muted-foreground sm:text-base" role="status">
+      Loading issue...
+    </p>
+  </div>
+{:else if issueResolutionStatus === "partial" || issueResolutionStatus === "failed"}
+  <div class="flex flex-col items-center justify-center gap-3 px-4 py-8 text-center sm:py-12">
+    <SearchX class="h-6 w-6 sm:h-8 sm:w-8" />
+    <p class="max-w-lg text-sm text-muted-foreground sm:text-base">
+      {issueResolutionStatus === "failed"
+        ? "This issue could not be loaded from the repository relays."
+        : "This issue could not be checked completely because some repository relays did not finish."}
+    </p>
+    <button class="rounded-md border border-border px-3 py-1 text-sm" onclick={retryIssueResolution}
+      >Retry issue lookup</button>
+  </div>
+{:else if issueResolution.rootId}
+  <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12" role="status">
+    <p class="text-center text-sm text-muted-foreground sm:text-base">
+      This repository item is not an issue.
+    </p>
   </div>
 {:else}
   <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12">
     <SearchX class="mb-2 h-6 w-6 sm:h-8 sm:w-8" />
-    <p class="text-center text-sm sm:text-base">No issue found.</p>
+    <p class="text-center text-sm sm:text-base">
+      Issue not found in the current repository history.
+    </p>
   </div>
 {/if}

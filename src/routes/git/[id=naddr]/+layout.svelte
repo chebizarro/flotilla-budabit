@@ -1,11 +1,3 @@
-<script module lang="ts">
-  import {LRUCache} from "@welshman/lib"
-
-  // Bounded LRU so completed initial-load promises (and the filter arrays their
-  // closures retain) do not accumulate for every repo/relay-list permutation.
-  const repoInitialLoads = new LRUCache<string, Promise<void>>(16)
-</script>
-
 <script lang="ts">
   import {
     RepoHeader,
@@ -129,6 +121,7 @@
     GIT_STATUS_CLOSED,
     GIT_STATUS_COMPLETE,
     getTagValue,
+    RELAYS,
     makeEvent,
     REACTION,
     COMMENT,
@@ -219,10 +212,15 @@
   import {
     createDefaultRepoRootResolver,
     createDefaultRepoRootHistory,
+    getIncompleteRepoRootGapScopes,
     isAcceptedRepoRootEvent,
     loadRepoRootGap,
+    mapRepoRelayWork,
+    summarizeRepoRootResults,
     type RepoRootHistorySnapshot,
+    type RepoRootHistoryStatus,
   } from "@app/core/repo-root-history"
+  import {requestFiniteRelay} from "@app/core/finite-relay-request"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {accessRepositoryCache, receiveRepositoryCacheEvent} from "@app/core/repo-cache"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
@@ -247,7 +245,7 @@
     naddrRelays: string[]
     url: string
   }
-  const {repoId, repoName, repoPubkey, announcementDiscoveryRelays, url} = layoutData
+  const {repoId, repoName, repoPubkey, announcementDiscoveryRelays, naddrRelays, url} = layoutData
   const safeNormalizeRelayUrl = (relay: unknown) => {
     try {
       return normalizeRelayUrl(String(relay || "").trim())
@@ -317,8 +315,6 @@
     )
   })
 
-  const ADDRESS_LOAD_DEBOUNCE_MS = 200
-  const ADDRESS_LOAD_CHUNK_SIZE = 50
   const FORK_PUBLISH_TIMEOUT_MS = 20000
   const FORK_BRANCH_FILTER_THRESHOLD = 20
   const ADDRESS_DERIVE_FILTER_CHUNK_SIZE = 50
@@ -327,6 +323,11 @@
   const GIT_COVER_LETTER_KIND = 1624
   const REPO_LIVE_FILTER_CHUNK_SIZE = 100
   const repoActivityHydrationReady = writable(false)
+  const repoCacheHydrationPending = writable(true)
+  const repoCacheHydrationFailed = writable(false)
+  const repoAnnouncementStatus = writable<
+    "loading" | "complete" | "partial" | "failed" | "aborted"
+  >("loading")
 
   const receiveRepoLiveEvent = (event: TrustedEvent, relay: string) => {
     repository.publish(event)
@@ -334,11 +335,31 @@
     receiveRepositoryCacheEvent(event, relay, getStore(repoAddressStore))
   }
 
-  const waitForPostPaintHydration = async () => {
-    await tick()
-    if (typeof requestAnimationFrame !== "function") return
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  const hydrateRepoActivityCache = async () => {
+    repoCacheHydrationPending.set(true)
+    try {
+      const result = await accessRepositoryCache(getStore(repoAddressStore))
+      if (result.timedOut) {
+        void result.completion.then(
+          () => {
+            repoCacheHydrationPending.set(false)
+            repoCacheHydrationFailed.set(false)
+          },
+          error => {
+            repoCacheHydrationPending.set(false)
+            repoCacheHydrationFailed.set(true)
+            console.warn("[repo-cache] Failed to hydrate repository activity", error)
+          },
+        )
+      } else {
+        repoCacheHydrationPending.set(false)
+        repoCacheHydrationFailed.set(false)
+      }
+    } catch (error) {
+      repoCacheHydrationPending.set(false)
+      repoCacheHydrationFailed.set(true)
+      console.warn("[repo-cache] Failed to hydrate repository activity", error)
+    }
   }
 
   const deferUntilRepoActivityHydrated = <T,>(initialValue: T, createStore: () => Readable<T>) =>
@@ -358,18 +379,15 @@
   onMount(() => {
     let cancelled = false
 
-    void waitForPostPaintHydration()
-      .then(() => accessRepositoryCache(getStore(repoAddressStore)))
-      .catch(error => {
-        console.warn("[repo-cache] Failed to hydrate repository activity", error)
-      })
-      .finally(() => {
-        if (!cancelled) repoActivityHydrationReady.set(true)
-      })
+    void hydrateRepoActivityCache().finally(() => {
+      if (!cancelled) repoActivityHydrationReady.set(true)
+    })
 
     return () => {
       cancelled = true
       repoActivityHydrationReady.set(false)
+      repoCacheHydrationPending.set(false)
+      repoCacheHydrationFailed.set(false)
     }
   })
   const repoStatusKinds = [
@@ -380,23 +398,86 @@
   ]
   const initialRepoRootHistory: RepoRootHistorySnapshot = {
     status: "idle",
+    operation: null,
     relays: [],
     hasOlder: false,
     exhausted: false,
   }
   const repoRootHistoryState = writable(initialRepoRootHistory)
+  const repoLiveReadyKey = writable("")
+  const repoLiveCoveragePartial = writable(false)
+  const repoAnnouncementLiveCoveragePartial = writable(false)
+  const repoRootGapStatus = writable<RepoRootHistoryStatus>("idle")
+  const repoActivityHistoryState = derived(
+    [repoRootHistoryState, repoRootGapStatus],
+    ([history, gapStatus]) => {
+      if (history.status !== "complete" || gapStatus === "idle" || gapStatus === "complete") {
+        return history
+      }
+      return {...history, status: gapStatus, rootStatus: history.status}
+    },
+  )
   let repoRootHistory: ReturnType<typeof createDefaultRepoRootHistory> | undefined
+  let repoRootResolver: ReturnType<typeof createDefaultRepoRootResolver> | undefined
+  const repoRootResolverWaiters = new Set<() => void>()
+  let repoRootHistoryController: AbortController | undefined
   let repoRootHistoryKey = ""
   const completedGapRootIds = new Set<string>()
+  const gapResultsByRootId = new Map<
+    string,
+    Map<string, import("@app/core/finite-relay-request").FiniteRelayResult>
+  >()
   const gapFillByRootId = new Map<
     string,
     Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>
   >()
+  let gapFillQueue = Promise.resolve()
+  const getGapResults = (rootId: string, relays: string[]) =>
+    relays.flatMap(relay => {
+      const result = gapResultsByRootId.get(rootId)?.get(relay)
+      return result ? [result] : []
+    })
   let ensuredRoot = $state({requestedId: "", rootId: ""})
 
-  const loadOlderRoots = () => repoRootHistory?.loadOlder()
+  const loadOlderRoots = () => repoRootHistory?.loadOlder() ?? Promise.resolve()
+  const retryRootHistory = async () => {
+    await repoRootHistory?.retry()
+    const retryRoots = normalizeScopeValues(
+      ($allRootIdsStore || []).filter(rootId => !completedGapRootIds.has(rootId)),
+    )
+    if (retryRoots.length > 0) await loadRootGaps(retryRoots)
+  }
+
+  const publishGapStatus = () => {
+    if (gapFillByRootId.size > 0) {
+      repoRootGapStatus.set("loading")
+      return
+    }
+    const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
+    const roots = normalizeScopeValues(($allRootIdsStore || []).filter(Boolean))
+    if (relays.length === 0 || roots.length === 0) {
+      repoRootGapStatus.set("idle")
+      return
+    }
+    const results = roots.flatMap(rootId =>
+      relays.flatMap(relay => {
+        const result = gapResultsByRootId.get(rootId)?.get(relay)
+        return result ? [result] : []
+      }),
+    )
+    if (results.length < roots.length * relays.length) {
+      repoRootGapStatus.set("partial")
+      return
+    }
+    const status = summarizeRepoRootResults(results, repoRootHistoryController?.signal)
+    repoRootGapStatus.set(
+      status === "unavailable" ? "failed" : status === "aborted" ? "partial" : status,
+    )
+  }
 
   const loadRootGaps = (rootIds: string[]) => {
+    const controller = repoRootHistoryController
+    if (!controller || controller.signal.aborted) return Promise.resolve([])
     const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
     const roots = normalizeScopeValues(rootIds.filter(rootId => !completedGapRootIds.has(rootId)))
     if (relays.length === 0 || roots.length === 0) return Promise.resolve([])
@@ -404,73 +485,154 @@
     const pending = new Set<Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>>()
     const missing = roots.filter(rootId => {
       const existing = gapFillByRootId.get(rootId)
-      if (existing) pending.add(existing)
+      if (existing) {
+        pending.add(existing.then(() => getGapResults(rootId, relays)))
+      }
       return !existing
     })
 
     if (missing.length > 0) {
-      const promise = loadRepoRootGap({
+      const rootPromises = new Map<
+        string,
+        Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>
+      >()
+      const scopes = getIncompleteRepoRootGapScopes({
         relays,
         rootIds: missing,
-        signal: layoutLoadController.signal,
-        priority: RELAY_REQUEST_PRIORITY.interactive,
-        onEvent: receiveRepoLiveEvent,
+        getOutcome: (rootId, relay) => gapResultsByRootId.get(rootId)?.get(relay)?.outcome,
       })
-        .then(results => {
-          if (results.length > 0 && results.every(result => result.outcome === "eose")) {
-            for (const rootId of missing) completedGapRootIds.add(rootId)
+      const promise = gapFillQueue
+        .catch(() => undefined)
+        .then(() =>
+          mapRepoRelayWork(scopes, scope =>
+            loadRepoRootGap({
+              relays: [scope.relay],
+              rootIds: scope.rootIds,
+              signal: controller.signal,
+              priority: RELAY_REQUEST_PRIORITY.interactive,
+              onEvent: receiveRepoLiveEvent,
+            }).then(results => ({scope, results})),
+          ),
+        )
+        .then(scopeResults => {
+          const results = scopeResults.flatMap(group => group.results)
+          if (repoRootHistoryController !== controller || controller.signal.aborted) return results
+          for (const {scope, results: scopeRelayResults} of scopeResults) {
+            for (const rootId of scope.rootIds) {
+              const resultsByRelay = gapResultsByRootId.get(rootId) || new Map()
+              for (const result of scopeRelayResults) resultsByRelay.set(result.relay, result)
+              gapResultsByRootId.set(rootId, resultsByRelay)
+              if (relays.every(relay => resultsByRelay.get(relay)?.outcome === "eose")) {
+                completedGapRootIds.add(rootId)
+              }
+            }
           }
-          return results
+          return missing.flatMap(rootId => getGapResults(rootId, relays))
         })
+      gapFillQueue = promise
+        .then(
+          () => undefined,
+          () => undefined,
+        )
         .finally(() => {
           for (const rootId of missing) {
-            if (gapFillByRootId.get(rootId) === promise) gapFillByRootId.delete(rootId)
+            if (gapFillByRootId.get(rootId) === rootPromises.get(rootId)) {
+              gapFillByRootId.delete(rootId)
+            }
+          }
+          if (repoRootHistoryController === controller && !controller.signal.aborted) {
+            publishGapStatus()
           }
         })
-      for (const rootId of missing) gapFillByRootId.set(rootId, promise)
+      for (const rootId of missing) {
+        const rootPromise = promise.then(() => getGapResults(rootId, relays))
+        rootPromises.set(rootId, rootPromise)
+        gapFillByRootId.set(rootId, rootPromise)
+      }
+      publishGapStatus()
       pending.add(promise)
     }
 
     return Promise.all(pending).then(resultGroups => resultGroups.flat())
   }
 
-  const ensureRootResolution = createDefaultRepoRootResolver({
-    getRelays: () => getStore(repoRelaysStore),
-    getAddresses: () => getStore(repoAddressesStore),
-    signal: layoutLoadController.signal,
-    priority: RELAY_REQUEST_PRIORITY.interactive,
-    getEvent: id => repository.getEvent(id) as TrustedEvent | undefined,
-    isDeleted: event => isDeletedRepositoryEvent(event),
-    onEvent: receiveRepoLiveEvent,
-    loadGap: rootId => loadRootGaps([rootId]),
-  })
-
-  const ensureRoot = async (id: string) => {
-    const result = await ensureRootResolution(id)
-    if (result.rootId) ensuredRoot = {requestedId: id, rootId: result.rootId}
+  const ensureRoot = async (id: string, signal?: AbortSignal) => {
+    if (!repoRootResolver && !layoutLoadController.signal.aborted) {
+      await new Promise<void>(resolve => {
+        const finish = () => {
+          repoRootResolverWaiters.delete(finish)
+          layoutLoadController.signal.removeEventListener("abort", finish)
+          resolve()
+        }
+        repoRootResolverWaiters.add(finish)
+        layoutLoadController.signal.addEventListener("abort", finish, {once: true})
+      })
+    }
+    const controller = repoRootHistoryController
+    const resolver = repoRootResolver
+    if (!controller || !resolver) return {status: "unavailable", requestedId: id} as const
+    const result = await resolver(id, signal)
+    if (repoRootHistoryController === controller && result.rootId) {
+      ensuredRoot = {requestedId: id, rootId: result.rootId}
+    }
     return result
   }
 
   $effect(() => {
-    if (!$repoActivityHydrationReady) return
+    const ready = $repoActivityHydrationReady
     const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
     const addresses = normalizeScopeValues(($repoAddressesStore || []).filter(Boolean))
-    if (relays.length === 0 || addresses.length === 0) return
-
-    const key = `${relays.join("|")}::${addresses.join("|")}`
+    const key =
+      ready && relays.length > 0 && addresses.length > 0
+        ? `${relays.join("|")}::${addresses.join("|")}`
+        : ""
     if (key === repoRootHistoryKey) return
+
+    repoRootHistoryController?.abort()
+    repoRootHistoryController = undefined
     repoRootHistoryKey = key
     completedGapRootIds.clear()
+    gapResultsByRootId.clear()
     gapFillByRootId.clear()
-    repoRootHistory = createDefaultRepoRootHistory({
+    repoRootGapStatus.set("idle")
+    repoRootHistory = undefined
+    repoRootResolver = undefined
+    repoRootHistoryState.set(initialRepoRootHistory)
+    if (!key) return
+
+    const controller = new AbortController()
+    repoRootHistoryController = controller
+    const history = createDefaultRepoRootHistory({
       relays,
       addresses,
-      signal: layoutLoadController.signal,
+      signal: AbortSignal.any([layoutLoadController.signal, controller.signal]),
       priority: RELAY_REQUEST_PRIORITY.interactive,
       onEvent: receiveRepoLiveEvent,
-      onState: snapshot => repoRootHistoryState.set(snapshot),
+      onState: snapshot => {
+        if (repoRootHistoryController === controller && !controller.signal.aborted) {
+          repoRootHistoryState.set(snapshot)
+        }
+      },
     })
-    void repoRootHistory.loadRecent()
+    repoRootHistory = history
+    repoRootResolver = createDefaultRepoRootResolver({
+      getRelays: () => getStore(repoRelaysStore),
+      getAddresses: () => getStore(repoAddressesStore),
+      signal: AbortSignal.any([layoutLoadController.signal, controller.signal]),
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      getEvent: eventId => repository.getEvent(eventId) as TrustedEvent | undefined,
+      isDeleted: event => isDeletedRepositoryEvent(event),
+      onEvent: receiveRepoLiveEvent,
+      loadGap: rootId => loadRootGaps([rootId]),
+    })
+    repoRootResolverWaiters.forEach(resolve => resolve())
+    if (getStore(repoLiveReadyKey) === key) void history.loadRecent()
+  })
+
+  $effect(() => {
+    const liveKey = $repoLiveReadyKey
+    if (!liveKey || liveKey !== repoRootHistoryKey) return
+    void repoRootHistory?.loadRecent()
   })
 
   $effect(() => {
@@ -480,9 +642,31 @@
     const pendingRoots = rootIds.filter(
       rootId => !completedGapRootIds.has(rootId) && !gapFillByRootId.has(rootId),
     )
-    if (relays.length === 0 || pendingRoots.length === 0) return
+    if (relays.length === 0 || pendingRoots.length === 0) {
+      publishGapStatus()
+      return
+    }
 
     void loadRootGaps(pendingRoots)
+  })
+
+  const refreshLegacyRootGaps = () => {
+    if (gapFillByRootId.size > 0) return
+    completedGapRootIds.clear()
+    gapResultsByRootId.clear()
+    void loadRootGaps(normalizeScopeValues(($allRootIdsStore || []).filter(Boolean)))
+  }
+
+  onMount(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshLegacyRootGaps()
+    }
+    window.addEventListener("focus", refreshLegacyRootGaps)
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => {
+      window.removeEventListener("focus", refreshLegacyRootGaps)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+    }
   })
 
   type RepoBranchUpdate = {
@@ -1611,6 +1795,7 @@
 
   const normalizeScopeValues = (values: string[]) =>
     [...new Set((values || []).filter(Boolean))].sort()
+  const uniqueScopeValues = (values: string[]) => [...new Set((values || []).filter(Boolean))]
 
   function deriveAddressScopedEvents(repoAddresses: Readable<string[]>, kinds: number[]) {
     return readable<TrustedEvent[]>([], set => {
@@ -2018,9 +2203,9 @@
   })
 
   $effect(() => {
+    if (!$repoActivityHydrationReady) return
     const relays = $repoRelaysStore || []
-    const announcementRelays = announcementDiscoveryRelays
-    if (relays.length === 0 || announcementRelays.length === 0) return
+    if (relays.length === 0) return
     const owners = $repoOwnerStore || []
     const ownerList = owners.length > 0 ? owners : [repoPubkey]
     const key = `${ownerList.slice().sort().join(",")}::${relays.slice().sort().join(",")}`
@@ -2032,28 +2217,13 @@
     // A background staleness refresh is not needed because the reactive
     // subscriptions further down (issues, PRs, live, etc.) will pick up any
     // newer versions that arrive from other sources.
-    const cachedAnnouncement = getStore(repoEventStore)
     const cachedState = getStore(repoStateEventStore)
-    const needAnnouncement = !cachedAnnouncement
     const needState = !cachedState
 
-    if (needAnnouncement) {
-      load({
-        relays: announcementRelays,
-        priority: RELAY_REQUEST_PRIORITY.interactive,
-        owner: "repo-foreground:announcement-refresh",
-        filters: [
-          {
-            authors: [repoPubkey],
-            kinds: [GIT_REPO_ANNOUNCEMENT],
-            "#d": [repoName],
-          },
-        ],
-      }).catch(() => {})
-    }
     if (needState) {
       load({
         relays,
+        signal: layoutLoadController.signal,
         filters: [
           {
             authors: ownerList,
@@ -2067,34 +2237,19 @@
     // Only arm the retry timer if we actually issued a network load - the
     // retry exists to cover slow relays, and a fully-cached repo has nothing
     // to retry.
-    if ((needAnnouncement || needState) && !repoLoadRetryTimer) {
+    if (needState && !repoLoadRetryTimer) {
       repoLoadRetryTimer = setTimeout(() => {
         repoLoadRetryTimer = null
-        const currentRepoEvent = getStore(repoEventStore)
         const currentRepoStateEvent = getStore(repoStateEventStore)
-        if (currentRepoEvent && currentRepoStateEvent) return
-        const announcementRelaysRetry = getRepoAnnouncementRelays(announcementDiscoveryRelays)
+        if (currentRepoStateEvent) return
         const relaysRetry = getStore(repoRelaysStore)
-        if (announcementRelaysRetry.length === 0 || relaysRetry.length === 0) return
+        if (relaysRetry.length === 0) return
         const ownersRetry = getStore(repoOwnerStore)
         const ownerListRetry = ownersRetry && ownersRetry.length > 0 ? ownersRetry : [repoPubkey]
-        if (!currentRepoEvent) {
-          load({
-            relays: announcementRelaysRetry,
-            priority: RELAY_REQUEST_PRIORITY.interactive,
-            owner: "repo-foreground:announcement-refresh",
-            filters: [
-              {
-                authors: [repoPubkey],
-                kinds: [GIT_REPO_ANNOUNCEMENT],
-                "#d": [repoName],
-              },
-            ],
-          }).catch(() => {})
-        }
         if (!currentRepoStateEvent) {
           load({
             relays: relaysRetry,
+            signal: layoutLoadController.signal,
             filters: [
               {
                 authors: ownerListRetry,
@@ -2229,8 +2384,16 @@
   setContext(COMMENT_EVENTS_KEY, commentEventsStore)
   setContext(REPO_FEED_ACTIVITY_KEY, repoFeedActivityStore)
   setContext(REPO_ROOT_HISTORY_KEY, {
-    subscribe: repoRootHistoryState.subscribe,
+    subscribe: repoActivityHistoryState.subscribe,
+    announcementStatus: repoAnnouncementStatus,
+    cacheHydrationPending: repoCacheHydrationPending,
+    cacheHydrationFailed: repoCacheHydrationFailed,
+    liveCoveragePartial: repoLiveCoveragePartial,
+    announcementLiveCoveragePartial: repoAnnouncementLiveCoveragePartial,
     loadOlderRoots,
+    retryAnnouncement: () => refreshRepoAnnouncement(),
+    retryCacheHydration: hydrateRepoActivityCache,
+    retryRootHistory,
     ensureRoot,
   })
   setContext(REPO_ACTIONS_KEY, {
@@ -2304,11 +2467,16 @@
   let unsubscribers: (() => void)[] = []
   let layoutDestroyed = false
   let commentReportLoadKey = ""
-  let loadedRepoAddresses = new Set<string>()
-  let pendingRepoAddresses = new Set<string>()
-  let repoAddressLoadRelaysKey = ""
-  let repoAddressLoadFlushTimer: ReturnType<typeof setTimeout> | null = null
-  let dataLoadInitialized = $state(false)
+  let announcementRefreshInFlight: Promise<void> | undefined
+  const announcementOutboxResultsByRelay = new Map<
+    string,
+    import("@app/core/finite-relay-request").FiniteRelayResult
+  >()
+  const announcementResultsByRelay = new Map<
+    string,
+    import("@app/core/finite-relay-request").FiniteRelayResult
+  >()
+  const discoveredAnnouncementRelays = writable<string[]>([])
   type RepoLiveLane = {
     signature: string
     stop: () => void
@@ -2382,11 +2550,17 @@
   $effect(() => {
     if (!$repoActivityHydrationReady) {
       stopRepoLiveSubscription()
+      repoLiveReadyKey.set("")
       return
     }
 
-    const announcementRelays = normalizeScopeValues(announcementDiscoveryRelays)
+    const announcementRelays = uniqueScopeValues([
+      ...announcementDiscoveryRelays,
+      ...$discoveredAnnouncementRelays,
+    ])
+    const liveAnnouncementRelays = announcementRelays.slice(0, 6)
     const activityRelays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
+    const liveActivityRelays = activityRelays.slice(0, 6)
     const addresses = normalizeScopeValues(($repoAddressesStore || []).filter(Boolean))
     const owners = normalizeScopeValues(($repoOwnerStore || []).filter(Boolean))
     const viewer = $pubkey || ""
@@ -2395,10 +2569,11 @@
       ensuredRoot.requestedId === requestedRootId
         ? ensuredRoot.rootId || requestedRootId
         : requestedRootId
+    const exactThreadIds = uniqueScopeValues([requestedRootId, exactRootId])
 
     reconcileRepoLiveLane({
       lanes: repoAnnouncementLiveByRelay,
-      relays: announcementRelays,
+      relays: liveAnnouncementRelays,
       filters: buildRepoStableLiveFilters({
         addresses: [],
         repoPubkey,
@@ -2411,7 +2586,7 @@
     })
     reconcileRepoLiveLane({
       lanes: repoActivityLiveByRelay,
-      relays: activityRelays,
+      relays: liveActivityRelays,
       filters: buildRepoStableLiveFilters({
         addresses,
         repoPubkey,
@@ -2424,207 +2599,109 @@
       owner: "repo-foreground:stable",
       ownedAddresses: addresses,
     })
+    repoLiveReadyKey.set(
+      liveActivityRelays.length > 0 &&
+        addresses.length > 0 &&
+        repoActivityLiveByRelay.size === liveActivityRelays.length
+        ? `${activityRelays.join("|")}::${addresses.join("|")}`
+        : "",
+    )
+    repoLiveCoveragePartial.set(activityRelays.length > liveActivityRelays.length)
+    repoAnnouncementLiveCoveragePartial.set(
+      announcementRelays.length > liveAnnouncementRelays.length,
+    )
     reconcileRepoLiveLane({
       lanes: repoExactThreadLiveByRelay,
-      relays: activityRelays,
-      filters: buildRepoExactThreadLiveFilters(exactRootId),
+      relays: liveActivityRelays,
+      filters: exactThreadIds.flatMap(rootId => buildRepoExactThreadLiveFilters(rootId)),
       owner: "repo-foreground:exact-thread",
     })
   })
 
-  // Use effect only for data loading, not for store/context creation
-  // Only run once when component mounts, not on every navigation
+  const refreshRepoAnnouncement = async () => {
+    if (announcementRefreshInFlight) return announcementRefreshInFlight
+
+    announcementRefreshInFlight = (async () => {
+      const relayListResults =
+        naddrRelays.length === 0
+          ? await mapRepoRelayWork(
+              announcementDiscoveryRelays.filter(
+                relay => announcementOutboxResultsByRelay.get(relay)?.outcome !== "eose",
+              ),
+              relay =>
+                requestFiniteRelay({
+                  relay,
+                  filters: [{kinds: [RELAYS], authors: [repoPubkey], limit: 1}],
+                  signal: layoutLoadController.signal,
+                  timeoutMs: 3000,
+                  priority: RELAY_REQUEST_PRIORITY.interactive,
+                  owner: "repo-foreground:announcement-outbox",
+                  onEvent: receiveRepoLiveEvent,
+                }),
+            )
+          : []
+      for (const result of relayListResults) {
+        announcementOutboxResultsByRelay.set(result.relay, result)
+      }
+      const outboxResults = announcementDiscoveryRelays.flatMap(relay => {
+        const result = announcementOutboxResultsByRelay.get(relay)
+        return result ? [result] : []
+      })
+      const outboxRelays = outboxResults
+        .flatMap(result => result.events)
+        .flatMap(event =>
+          event.tags
+            .filter(tag => tag[0] === "r" && (!tag[2] || tag[2] === "write"))
+            .map(tag => safeNormalizeRelayUrl(tag[1])),
+        )
+        .filter(Boolean)
+      discoveredAnnouncementRelays.set(uniqueScopeValues(outboxRelays))
+      const relays = uniqueScopeValues([...announcementDiscoveryRelays, ...outboxRelays])
+      const targets = relays.filter(
+        relay => announcementResultsByRelay.get(relay)?.outcome !== "eose",
+      )
+      repoAnnouncementStatus.set("loading")
+      const results = await mapRepoRelayWork(targets, relay =>
+        requestFiniteRelay({
+          relay,
+          filters: [
+            {
+              authors: [repoPubkey],
+              kinds: [GIT_REPO_ANNOUNCEMENT],
+              "#d": [repoName],
+              limit: 1,
+            },
+          ],
+          signal: layoutLoadController.signal,
+          timeoutMs: 10_000,
+          priority: RELAY_REQUEST_PRIORITY.interactive,
+          owner: "repo-foreground:announcement-refresh",
+          onEvent: receiveRepoLiveEvent,
+        }),
+      )
+      for (const result of results) announcementResultsByRelay.set(result.relay, result)
+      const status = summarizeRepoRootResults(
+        [
+          ...outboxResults,
+          ...relays.flatMap(relay => {
+            const result = announcementResultsByRelay.get(relay)
+            return result ? [result] : []
+          }),
+        ],
+        layoutLoadController.signal,
+      )
+      repoAnnouncementStatus.set(status === "unavailable" ? "failed" : status)
+    })().finally(() => {
+      announcementRefreshInFlight = undefined
+    })
+    return announcementRefreshInFlight
+  }
+
+  // Refresh the exact announcement without delaying route rendering. Bounded
+  // roots and compatibility activity are owned by repoRootHistory above.
   $effect(() => {
     if (!$repoActivityHydrationReady) return
-    if (dataLoadInitialized) return
-
-    const announcementRelays = announcementDiscoveryRelays
-    if (announcementRelays.length === 0) return
-
-    const announcementFilters = [
-      {
-        authors: [repoPubkey],
-        kinds: [GIT_REPO_ANNOUNCEMENT],
-        "#d": [repoName],
-      },
-    ]
-    const repoLoadPromise = load({
-      relays: announcementRelays,
-      filters: announcementFilters,
-      priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: "repo-foreground:announcement-refresh",
-    })
-
-    const relayListFromUrl = $repoRelaysStore
-    if (relayListFromUrl.length === 0) {
-      void repoLoadPromise.catch(() => {})
-      return
-    }
-
-    // State and activity only start after the matching announcement establishes authority.
-    dataLoadInitialized = true
-
-    const allReposFilter = {
-      kinds: [GIT_REPO_ANNOUNCEMENT],
-      "#d": [repoName],
-    }
-
-    const initialAddresses = getStore(repoAddressesStore)
-    const addressFilter =
-      initialAddresses.length > 0
-        ? initialAddresses
-        : [`${GIT_REPO_ANNOUNCEMENT}:${repoPubkey}:${repoName}`]
-
-    const sortedRelayListFromUrl = [...(relayListFromUrl || []).filter(Boolean)].sort()
-    const sortedAnnouncementRelays = [...(announcementRelays || []).filter(Boolean)].sort()
-    const initialLoadKey = [
-      repoId,
-      repoPubkey,
-      repoName,
-      sortedAnnouncementRelays.join(","),
-      sortedRelayListFromUrl.join(","),
-    ].join("::")
-
-    let initialLoadsPromise = repoInitialLoads.get(initialLoadKey)
-
-    if (!initialLoadsPromise) {
-      const issuePrStatusLoad = load({
-        relays: relayListFromUrl,
-        filters: [
-          {
-            authors: [repoPubkey],
-            kinds: [GIT_REPO_STATE],
-            "#d": [repoName],
-          },
-          {
-            kinds: [GIT_PULL_REQUEST_UPDATE],
-            "#a": addressFilter,
-          },
-          {
-            kinds: [GIT_STATUS_OPEN, GIT_STATUS_DRAFT, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE],
-            "#a": addressFilter,
-          },
-          ...($pubkey
-            ? [
-                {
-                  kinds: [GIT_ISSUE, GIT_PULL_REQUEST, GIT_PULL_REQUEST_UPDATE],
-                  "#p": [$pubkey],
-                },
-              ]
-            : []),
-        ],
-      })
-
-      initialLoadsPromise = Promise.all([
-        repoLoadPromise,
-        load({
-          relays: announcementRelays,
-          filters: [allReposFilter],
-        }),
-        issuePrStatusLoad,
-      ])
-        .then(() => {})
-        .catch(error => {
-          repoInitialLoads.pop(initialLoadKey)
-          throw error
-        })
-
-      repoInitialLoads.set(initialLoadKey, initialLoadsPromise)
-    }
-
-    loadedRepoAddresses = new Set(addressFilter.filter(Boolean))
-    pendingRepoAddresses = new Set<string>()
-    repoAddressLoadRelaysKey = sortedRelayListFromUrl.join("|")
-
-    const flushPendingRepoAddressLoads = async (relays: string[], relaysKey: string) => {
-      if (relaysKey !== repoAddressLoadRelaysKey) return
-
-      while (pendingRepoAddresses.size > 0 && relaysKey === repoAddressLoadRelaysKey) {
-        const addresses = Array.from(pendingRepoAddresses).slice(0, ADDRESS_LOAD_CHUNK_SIZE)
-
-        if (addresses.length === 0) return
-
-        for (const address of addresses) {
-          pendingRepoAddresses.delete(address)
-        }
-
-        try {
-          await load({
-            relays,
-            filters: [
-              {
-                kinds: [GIT_PULL_REQUEST_UPDATE],
-                "#a": addresses,
-              },
-              {
-                kinds: [GIT_STATUS_OPEN, GIT_STATUS_DRAFT, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE],
-                "#a": addresses,
-              },
-            ],
-          })
-
-          for (const address of addresses) {
-            loadedRepoAddresses.add(address)
-          }
-        } catch {
-          for (const address of addresses) {
-            pendingRepoAddresses.add(address)
-          }
-          break
-        }
-      }
-    }
-
-    const scheduleRepoAddressLoadFlush = (relays: string[], relaysKey: string) => {
-      if (repoAddressLoadFlushTimer) return
-
-      repoAddressLoadFlushTimer = setTimeout(() => {
-        repoAddressLoadFlushTimer = null
-        void flushPendingRepoAddressLoads(relays, relaysKey)
-      }, ADDRESS_LOAD_DEBOUNCE_MS)
-    }
-
-    if (!initialLoadsPromise) {
-      initialLoadsPromise = Promise.resolve()
-    }
-
-    initialLoadsPromise
-      .then(() => {
-        // Guard against installing the subscription after this layout has been
-        // destroyed: initial loads can resolve later than route teardown.
-        if (layoutDestroyed) return
-
-        // Reactively load data when repo addresses change
-        const repoAddressesUnsubscribe = repoAddressesStore.subscribe((addresses: string[]) => {
-          if (addresses.length === 0) return
-
-          const currentRelays = (getStore(repoRelaysStore) || []).filter(Boolean)
-          if (currentRelays.length === 0) return
-
-          const relaysKey = [...currentRelays].sort().join("|")
-          if (repoAddressLoadRelaysKey !== relaysKey) {
-            repoAddressLoadRelaysKey = relaysKey
-            loadedRepoAddresses = new Set<string>()
-            pendingRepoAddresses = new Set<string>()
-            if (repoAddressLoadFlushTimer) {
-              clearTimeout(repoAddressLoadFlushTimer)
-              repoAddressLoadFlushTimer = null
-            }
-          }
-
-          for (const address of new Set(addresses.filter(Boolean))) {
-            if (!loadedRepoAddresses.has(address) && !pendingRepoAddresses.has(address)) {
-              pendingRepoAddresses.add(address)
-            }
-          }
-
-          if (pendingRepoAddresses.size > 0) {
-            scheduleRepoAddressLoadFlush(currentRelays, relaysKey)
-          }
-        })
-        unsubscribers.push(repoAddressesUnsubscribe)
-      })
-      .catch(() => {})
+    void refreshRepoAnnouncement()
   })
 
   $effect(() => {
@@ -2644,7 +2721,11 @@
     commentReportLoadKey = key
 
     for (const ids of chunkBySize(commentIds, REPO_LIVE_FILTER_CHUNK_SIZE)) {
-      load({relays, filters: [{kinds: [REPORT], "#e": ids}]}).catch(() => {})
+      load({
+        relays,
+        filters: [{kinds: [REPORT], "#e": ids}],
+        signal: layoutLoadController.signal,
+      }).catch(() => {})
     }
   })
 
@@ -2663,6 +2744,7 @@
 
     load({
       relays,
+      signal: layoutLoadController.signal,
       filters: [
         {
           kinds: [GIT_ISSUE, GIT_PULL_REQUEST, GIT_PULL_REQUEST_UPDATE],
@@ -2676,6 +2758,7 @@
   onDestroy(() => {
     layoutDestroyed = true
     layoutLoadController.abort()
+    repoRootResolverWaiters.forEach(resolve => resolve())
     if (routeRepoClass) disposeActiveRepo(routeRepoClass)
     for (const transport of activeRepoPublishTransports) transport.dispose()
     activeRepoPublishTransports.clear()
@@ -2693,16 +2776,12 @@
     autoAppliedRepoCommunityPubkey = ""
 
     stopRepoLiveSubscription()
+    repoRootHistoryController?.abort()
+    repoRootHistoryController = undefined
+    repoRootHistory = undefined
+    repoRootResolver = undefined
     unsubscribers.forEach(unsub => unsub())
     unsubscribers = []
-    loadedRepoAddresses.clear()
-    pendingRepoAddresses.clear()
-    if (repoAddressLoadFlushTimer) {
-      clearTimeout(repoAddressLoadFlushTimer)
-      repoAddressLoadFlushTimer = null
-    }
-    repoAddressLoadRelaysKey = ""
-
     if (repoLoadRetryTimer) {
       clearTimeout(repoLoadRetryTimer)
       repoLoadRetryTimer = null

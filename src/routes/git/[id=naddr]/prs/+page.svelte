@@ -52,6 +52,7 @@
   import type {Readable} from "svelte/store"
   import type {Repo} from "@nostr-git/ui"
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
+  import {getRepoRootListPresentation} from "@app/core/repo-root-presentation"
 
   type PrStatusKey = "open" | "merged" | "closed" | "draft"
 
@@ -98,6 +99,12 @@
   const repoRelaysStore = getContext<Readable<string[]>>(REPO_RELAYS_KEY)
   const pullRequestsStore = getContext<Readable<PullRequestEvent[]>>(PULL_REQUESTS_KEY)
   const commentEventsStore = getContext<Readable<CommentEvent[]>>(COMMENT_EVENTS_KEY)
+  const repoRootHistory = getContext<RepoRootHistoryContext>(REPO_ROOT_HISTORY_KEY)
+  const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
+  const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
+  const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
+  const repoLiveCoveragePartialStore = repoRootHistory.liveCoveragePartial
+  const repoAnnouncementLiveCoveragePartialStore = repoRootHistory.announcementLiveCoveragePartial
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -113,6 +120,19 @@
     hiddenRootIdsStore ? $hiddenRootIdsStore : new Set<string>(),
   )
   const repoRelays = $derived.by(() => (repoRelaysStore ? $repoRelaysStore : []))
+  const repoActivityAuthority = $derived.by(() =>
+    $repoAnnouncementStatusStore === "loading"
+      ? "pending"
+      : $repoAnnouncementStatusStore === "partial"
+        ? "partial"
+        : $repoAnnouncementStatusStore === "failed" || $repoAnnouncementStatusStore === "aborted"
+          ? "failed"
+          : repoClass?.repoEvent && repoRelays.length > 0
+            ? $repoLiveCoveragePartialStore || $repoAnnouncementLiveCoveragePartialStore
+              ? "limited"
+              : "available"
+            : "unavailable",
+  )
   const allPullRequests = $derived.by(() => (pullRequestsStore ? $pullRequestsStore : []))
   const pullRequests = $derived.by(() => allPullRequests.filter(pr => !hiddenRootIds.has(pr.id)))
   const prsPath = $derived.by(() => `/git/${$page.params.id}/prs`)
@@ -354,40 +374,6 @@
     }, 100)
 
     return () => clearTimeout(timeout)
-  })
-
-  const LIST_RESOLVE_TIMEOUT_MS = 15_000
-  const prListRouteId = $derived($page.params.id ?? "")
-  let prListResolution = $state<{routeId: string; status: "loading" | "resolved"}>({
-    routeId: "",
-    status: "loading",
-  })
-  let prListResolveTimeout: ReturnType<typeof setTimeout> | null = null
-  const hasProcessedPrItems = $derived(
-    allPullRequests.length > 0 && (pullRequests.length === 0 || allPrItems.length > 0),
-  )
-  const clearPrListResolveTimeout = () => {
-    if (!prListResolveTimeout) return
-    clearTimeout(prListResolveTimeout)
-    prListResolveTimeout = null
-  }
-
-  $effect(() => {
-    const routeId = prListRouteId
-    clearPrListResolveTimeout()
-    prListResolution = {routeId, status: "loading"}
-    prListResolveTimeout = setTimeout(() => {
-      prListResolveTimeout = null
-      prListResolution = {routeId, status: "resolved"}
-    }, LIST_RESOLVE_TIMEOUT_MS)
-
-    return clearPrListResolveTimeout
-  })
-
-  $effect(() => {
-    if (!hasProcessedPrItems) return
-    clearPrListResolveTimeout()
-    prListResolution = {routeId: prListRouteId, status: "resolved"}
   })
 
   const ITEMS_PER_PAGE = 20
@@ -851,10 +837,29 @@
           : selectedLabels.some(label => labels.includes(label))
       })
   })
-  const loading = $derived(
-    prListResolution.routeId !== prListRouteId ||
-      (prListResolution.status === "loading" && searchedPrs.length === 0),
+  const prProjectionPending = $derived(pullRequests.length > 0 && allPrItems.length === 0)
+  const prListPresentation = $derived.by(() =>
+    getRepoRootListPresentation({
+      authority: repoActivityAuthority,
+      history: $repoRootHistory,
+      rawCount: allPullRequests.length,
+      sourceCount: allPrItems.length,
+      resultCount: searchedPrs.length,
+      projectionPending: prProjectionPending,
+      cacheHydrationPending: $repoCacheHydrationPendingStore,
+      cacheHydrationFailed: $repoCacheHydrationFailedStore,
+    }),
   )
+  const retryPrHistory = () =>
+    Promise.all([
+      $repoCacheHydrationFailedStore ? repoRootHistory.retryCacheHydration() : Promise.resolve(),
+      repoRootHistory.retryRootHistory(),
+      $repoAnnouncementStatusStore === "partial" ||
+      $repoAnnouncementStatusStore === "failed" ||
+      $repoAnnouncementStatusStore === "aborted"
+        ? repoRootHistory.retryAnnouncement()
+        : Promise.resolve(),
+    ]).then(() => undefined)
 
   $effect(() => {
     void [searchTerm, statusFilter, authorFilter, selectedLabels, matchAllLabels, sortBy]
@@ -876,9 +881,8 @@
   })
 
   const visiblePrs = $derived.by(() => searchedPrs.slice(0, visiblePrCount))
-  const repoRootHistory = getContext<RepoRootHistoryContext>(REPO_ROOT_HISTORY_KEY)
   const canLoadMorePrs = $derived.by(
-    () => visiblePrCount < searchedPrs.length || $repoRootHistory.hasOlder,
+    () => visiblePrCount < searchedPrs.length || prListPresentation.canLoadOlder,
   )
   const roleAssignments = $derived.by(() => {
     const ids = pullRequests?.map((pr: any) => pr.id) || []
@@ -966,20 +970,77 @@
       showReset={true} />
   {/if}
 
-  {#if loading}
-    <div class="flex flex-col items-center justify-center py-12">
-      <Spinner {loading}>
-        {#if loading}
-          Loading PRs....
+  {#if prListPresentation.notice && prListPresentation.content !== "incomplete" && prListPresentation.content !== "loading"}
+    <div
+      class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+      role="status"
+      aria-live="polite">
+      <span>
+        {#if prListPresentation.notice === "loading"}
+          {$repoRootHistory.operation === "older"
+            ? "Loading older pull request history…"
+            : "Refreshing recent pull request history…"}
+        {:else if prListPresentation.notice === "partial"}
+          Some repository relays did not finish. Showing the pull requests loaded so far.
+        {:else if prListPresentation.notice === "limited"}
+          {$repoLiveCoveragePartialStore && $repoAnnouncementLiveCoveragePartialStore
+            ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
+            : $repoLiveCoveragePartialStore
+              ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
+              : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."}
+        {:else if prListPresentation.notice === "failed"}
+          Pull request history refresh failed. Showing saved pull requests.
         {:else}
-          End of PR history
+          Repository relays are unavailable. Showing saved pull requests.
         {/if}
-      </Spinner>
+      </span>
+      {#if prListPresentation.canRetry}
+        <GitButton variant="outline" size="sm" onclick={retryPrHistory}>Retry</GitButton>
+      {/if}
     </div>
-  {:else if searchedPrs.length === 0}
+  {/if}
+
+  {#if prListPresentation.content === "loading" || prListPresentation.content === "incomplete"}
+    <div
+      class="flex flex-col items-center justify-center gap-3 py-12 text-center"
+      role="status"
+      aria-live="polite">
+      {#if prListPresentation.notice === "loading"}
+        <Spinner loading>Loading recent pull request history…</Spinner>
+      {:else}
+        <SearchX class="h-8 w-8 text-muted-foreground" />
+        <p class="max-w-lg text-sm text-muted-foreground">
+          {prListPresentation.notice === "unavailable"
+            ? "Repository relays are unavailable, so pull request history cannot be checked."
+            : prListPresentation.notice === "failed"
+              ? "Pull request history could not be loaded from the repository relays."
+              : prListPresentation.notice === "limited"
+                ? $repoLiveCoveragePartialStore && $repoAnnouncementLiveCoveragePartialStore
+                  ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
+                  : $repoLiveCoveragePartialStore
+                    ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
+                    : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."
+                : "Some repository relays did not finish. Pull request history may be incomplete."}
+        </p>
+        {#if prListPresentation.canRetry}
+          <GitButton variant="outline" size="sm" onclick={retryPrHistory}>
+            Retry pull request history
+          </GitButton>
+        {/if}
+      {/if}
+    </div>
+  {:else if prListPresentation.content !== "rows"}
     <div class="flex flex-col items-center justify-center py-12 text-muted-foreground">
       <SearchX class="mb-2 h-8 w-8" />
-      No PRs found.
+      <p class="text-center">
+        {prListPresentation.content === "filtered-empty"
+          ? "No loaded pull requests match the current search and filters."
+          : prListPresentation.content === "hidden-empty"
+            ? "No visible pull requests in the loaded history."
+            : prListPresentation.content === "recent-empty"
+              ? "No pull requests were found in the recent history page. Older history may still contain pull requests."
+              : "No pull requests exist in the fully loaded repository history."}
+      </p>
       {#if suggestedUnreadStatus}
         <p class="mt-2 max-w-md text-center text-sm text-muted-foreground">
           {unreadStatusCounts[suggestedUnreadStatus]}
@@ -992,6 +1053,11 @@
           class="mt-3 gap-2"
           onclick={() => (statusFilter = suggestedUnreadStatus)}>
           Show {PR_STATUS_LABELS[suggestedUnreadStatus]}
+        </GitButton>
+      {/if}
+      {#if prListPresentation.canLoadOlder}
+        <GitButton variant="outline" size="sm" class="mt-3" onclick={loadMorePrs}>
+          Load older history
         </GitButton>
       {/if}
     </div>

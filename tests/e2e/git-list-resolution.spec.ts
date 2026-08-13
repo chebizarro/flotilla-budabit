@@ -13,7 +13,7 @@ import {
 } from "./fixtures/events"
 import {MockRelay} from "./helpers/mock-relay"
 
-test("keeps the issue list loading until cold-start activity arrives", async ({page}) => {
+test("replaces an EOSE-backed empty issue list when late live activity arrives", async ({page}) => {
   const relayUrl = "wss://git-issue-list-resolution.test"
   const identifier = "issue-list-resolution-fixture"
   const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
@@ -51,15 +51,21 @@ test("keeps the issue list loading until cold-start activity arrives", async ({p
   await page.goto(`/git/${naddr}/issues`)
 
   await expect.poll(() => activitySubscriptions).toBeGreaterThan(0)
-  await expect(page.getByText(/Loading issues/)).toBeVisible()
-  await expect(page.getByText("No issues found.", {exact: true})).toHaveCount(0)
+  await expect(
+    page.getByText(
+      "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay.",
+      {
+        exact: true,
+      },
+    ),
+  ).toBeVisible()
 
   await mockRelay.injectEvents([issue])
 
   await expect(page.getByText("Cold-start issue", {exact: true})).toBeVisible({timeout: 10_000})
 })
 
-test("keeps the PR list loading until cold-start activity arrives", async ({page}) => {
+test("replaces an EOSE-backed empty PR list when late live activity arrives", async ({page}) => {
   const relayUrl = "wss://git-pr-list-resolution.test"
   const identifier = "pr-list-resolution-fixture"
   const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
@@ -98,8 +104,12 @@ test("keeps the PR list loading until cold-start activity arrives", async ({page
   await page.goto(`/git/${naddr}/prs`)
 
   await expect.poll(() => activitySubscriptions).toBeGreaterThan(0)
-  await expect(page.getByText(/Loading PRs/)).toBeVisible()
-  await expect(page.getByText("No PRs found.", {exact: true})).toHaveCount(0)
+  await expect(
+    page.getByText(
+      "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay.",
+      {exact: true},
+    ),
+  ).toBeVisible()
 
   await mockRelay.injectEvents([pullRequest])
 
@@ -163,4 +173,56 @@ test("loads a bounded recent issue page before requesting older relay history", 
 
   await expect.poll(() => rootRequests.some(request => request.until !== undefined)).toBe(true)
   expect(rootRequests.find(request => request.until !== undefined)?.until).toBe(BASE_TIMESTAMP + 1)
+})
+
+test("shows partial issue history and retries only current root work", async ({page}) => {
+  const discoveryRelay = "wss://git-issue-partial-discovery.test"
+  const activityRelay = "wss://git-issue-partial-activity.test"
+  const identifier = "issue-partial-fixture"
+  const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
+  const announcement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "Issue partial fixture",
+      relays: [activityRelay],
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP,
+    }),
+  )
+  let rootRequests = 0
+  let stableSubscriptions = 0
+  const mockRelay = new MockRelay({
+    seedEvents: [announcement],
+    subscriptionOutcomesByRelay: {[`${activityRelay}/`]: "stall"},
+    onSubscribe: (_subscriptionId, filters, relay) => {
+      if (relay !== `${activityRelay}/`) return
+      for (const filter of filters) {
+        if (
+          filter["#a"]?.includes(repoAddress) &&
+          filter.kinds?.includes(1621) &&
+          filter.kinds?.includes(1618)
+        ) {
+          if (filter.limit === 100) rootRequests += 1
+          if (filter.limit === 0) stableSubscriptions += 1
+        }
+      }
+    },
+  })
+
+  await page.addInitScript(() => localStorage.clear())
+  await mockRelay.setup(page)
+  const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [discoveryRelay])
+  await page.goto(`/git/${naddr}/issues`)
+
+  await expect(
+    page.getByText("Some repository relays did not finish. Issue history may be incomplete.", {
+      exact: true,
+    }),
+  ).toBeVisible({timeout: 15_000})
+  await expect(page.getByText(/No issues exist/)).toHaveCount(0)
+  expect(rootRequests).toBe(1)
+
+  await page.getByRole("button", {name: "Retry issue history"}).click()
+  await expect.poll(() => rootRequests).toBeGreaterThan(1)
+  expect(stableSubscriptions).toBe(1)
 })

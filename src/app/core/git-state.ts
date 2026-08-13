@@ -102,10 +102,23 @@ export const REPO_FEED_ACTIVITY_KEY = Symbol("repo-feed-activity")
 
 export const REPO_ROOT_HISTORY_KEY = Symbol("repo-root-history")
 
+export type RepoAnnouncementStatus = "loading" | "complete" | "partial" | "failed" | "aborted"
+
 export type RepoRootHistoryContext = {
   subscribe: Readable<import("@app/core/repo-root-history").RepoRootHistorySnapshot>["subscribe"]
-  loadOlderRoots: () => Promise<void> | undefined
-  ensureRoot: (id: string) => Promise<import("@app/core/repo-root-history").EnsureRepoRootResult>
+  announcementStatus: Readable<RepoAnnouncementStatus>
+  cacheHydrationPending: Readable<boolean>
+  cacheHydrationFailed: Readable<boolean>
+  liveCoveragePartial: Readable<boolean>
+  announcementLiveCoveragePartial: Readable<boolean>
+  loadOlderRoots: () => Promise<void>
+  retryAnnouncement: () => Promise<void>
+  retryCacheHydration: () => Promise<void>
+  retryRootHistory: () => Promise<void>
+  ensureRoot: (
+    id: string,
+    signal?: AbortSignal,
+  ) => Promise<import("@app/core/repo-root-history").EnsureRepoRootResult>
 }
 
 export const REPO_ACTIONS_KEY = Symbol("repo-actions")
