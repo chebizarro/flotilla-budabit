@@ -1,8 +1,9 @@
 import type { WidgetBridge } from 'budabit-sdk';
-import { BehaviorSubject, type Observable } from 'rxjs';
+import { BehaviorSubject, lastValueFrom, timeout, toArray, catchError, of, type Observable } from 'rxjs';
+import { nip19 } from 'nostr-tools';
 import type { NostrEvent, RepoContextNormalized } from './types';
-import { queryEvents, eventTagValue } from './workflows';
-import { buildReleaseEvents, eventStore } from './nostr';
+import { eventTagValue } from './workflows';
+import { buildReleaseEvents, eventStore, pool } from './nostr';
 
 const FALLBACK_RELAYS = ['wss://relay.budabit.club', 'wss://nos.lol'];
 
@@ -137,6 +138,8 @@ export interface ReleaseDataState {
   workflowRuns: Map<string, NostrEvent>;
   workerNames: Map<string, string>;
   ephemeralToWorker: Map<string, string>;
+  /** sha256 hash → maintainer pubkeys that published a co-signed 1063 for it. */
+  maintainerAttestations: Map<string, string[]>;
 }
 
 const emptyReleaseState = (): ReleaseDataState => ({
@@ -144,6 +147,7 @@ const emptyReleaseState = (): ReleaseDataState => ({
   workflowRuns: new Map(),
   workerNames: new Map(),
   ephemeralToWorker: new Map(),
+  maintainerAttestations: new Map(),
 });
 
 /**
@@ -163,17 +167,17 @@ export function releaseData$(args: {
   filterKinds?: number[];
 }): Observable<ReleaseDataState> {
   const filterKinds = args.filterKinds ?? [1063];
-  // `repoNaddr` is read off the host context shape — the type doesn't (yet)
-  // declare it but the host is known to set it. Pre-existing convention.
-  const repoNaddr = (args.repo as unknown as {repoNaddr?: string}).repoNaddr;
+  // Coordinate form (`30617:pubkey:d`), resolved by `normalizeRepo` /
+  // `resolveRepoAddress` from whatever shape the host provided.
+  const repoAddress = args.repo.repoAddress;
   const trustedNpubs = [...new Set(args.trustedMaintainers)].sort();
   const relays = dedupe([...args.repo.repoRelays, ...FALLBACK_RELAYS]);
 
-  if (!repoNaddr || trustedNpubs.length === 0) {
+  if (!repoAddress || trustedNpubs.length === 0) {
     return new BehaviorSubject(emptyReleaseState());
   }
 
-  const cacheKey = [repoNaddr, trustedNpubs.join(','), filterKinds.join(','), relays.slice().sort().join(',')].join('|');
+  const cacheKey = [repoAddress, trustedNpubs.join(','), filterKinds.join(','), relays.slice().sort().join(',')].join('|');
   const existing = releaseDataCache.get(cacheKey);
   if (existing) return existing;
 
@@ -188,22 +192,26 @@ export function releaseData$(args: {
   const workerAdByPubkey = new Map<string, NostrEvent>(); // worker pubkey → latest 10100 ad
 
   const recompute = () => {
-    // Backfill publisherMap from artifact e-tags pointing at known runs.
-    for (const event of artifactEvents.values()) {
-      if (publisherMap.has(event.pubkey)) continue;
-      const eTag = event.tags.find(t => t[0] === 'e')?.[1];
-      if (eTag) {
-        const run = runIdMap.get(eTag);
-        if (run) publisherMap.set(event.pubkey, run);
-      }
-    }
-
+    // Vote eligibility is strict: a 1063 only counts toward hash consensus
+    // when its author is an ephemeral key declared in a trusted run's
+    // `publisher` tag. Maintainer-signed copies are surfaced separately as
+    // endorsements; anything else (arbitrary authors e-tagging a run) is
+    // ignored so outsiders cannot inject or flip consensus votes.
     const artifacts: ReleaseArtifact[] = [];
+    const maintainerAttestations = new Map<string, string[]>();
     for (const event of artifactEvents.values()) {
       const hash = eventTagValue(event, 'x');
       if (!hash || !validateHash(hash)) continue;
       const publisherRun = publisherMap.get(event.pubkey);
-      if (!publisherRun) continue;
+      if (!publisherRun) {
+        if (trustedSet.has(event.pubkey)) {
+          const prior = maintainerAttestations.get(hash) ?? [];
+          if (!prior.includes(event.pubkey)) {
+            maintainerAttestations.set(hash, [...prior, event.pubkey]);
+          }
+        }
+        continue;
+      }
       artifacts.push({
         event,
         hash,
@@ -233,10 +241,11 @@ export function releaseData$(args: {
       workflowRuns: new Map(publisherMap),
       workerNames,
       ephemeralToWorker: new Map(ephemeralToWorker),
+      maintainerAttestations,
     });
   };
 
-  buildReleaseEvents({repoNaddr, trustedMaintainers: trustedNpubs, relays, filterKinds, viewerPubkey: args.repo.userPubkey}).subscribe(event => {
+  buildReleaseEvents({repoAddress, trustedMaintainers: trustedNpubs, relays, filterKinds, viewerPubkey: args.repo.userPubkey}).subscribe(event => {
     eventStore.add(event as Parameters<typeof eventStore.add>[0]);
 
     if (event.kind === 5401) {
@@ -335,19 +344,53 @@ export async function signAndPublishReleases(
 
 /**
  * Resolve a NIP-51 people list to an array of pubkeys.
+ *
+ * Queries relays directly via the extension's own RelayPool (like the rest
+ * of the Attestations tab) rather than the host bridge — the bridge only
+ * allows kinds declared in the widget manifest and rejects kind 30000.
+ *
+ * Accepts three identifier forms:
+ * - bech32 `naddr1…` pointer
+ * - `kind:pubkey:d` coordinate
+ * - bare `d` identifier (matches any author's kind 30000 list)
  */
 export async function resolveNip51List(
-  bridge: WidgetBridge,
   listAddr: string,
   relays: string[]
 ): Promise<string[]> {
-  const events = await queryEvents(bridge, relays, [
-    { kinds: [30000], '#d': [listAddr] },
-  ]);
+  let kind = 30000;
+  let identifier = listAddr;
+  let author: string | undefined;
 
-  if (events.length === 0) return [];
+  if (listAddr.startsWith('naddr1')) {
+    const decoded = nip19.decode(listAddr);
+    if (decoded.type !== 'naddr') throw new Error('Not a valid naddr');
+    kind = decoded.data.kind;
+    identifier = decoded.data.identifier;
+    author = decoded.data.pubkey;
+  } else {
+    const parts = listAddr.split(':');
+    if (parts.length === 3 && /^\d+$/.test(parts[0]!) && /^[a-f0-9]{64}$/.test(parts[1]!)) {
+      kind = Number(parts[0]);
+      author = parts[1];
+      identifier = parts[2]!;
+    }
+  }
 
-  const first = events[0];
+  const filter: Record<string, unknown> = { kinds: [kind], '#d': [identifier] };
+  if (author) filter.authors = [author];
+
+  const events = await lastValueFrom(
+    pool.request(dedupe(relays), filter as any).pipe(
+      timeout({ first: 10_000 }),
+      toArray(),
+      catchError(() => of([] as NostrEvent[]))
+    ),
+    { defaultValue: [] as NostrEvent[] }
+  );
+
+  // Addressable kind: keep the newest event.
+  const first = [...events].sort((a, b) => b.created_at - a.created_at)[0];
   if (!first) return [];
 
   return first.tags

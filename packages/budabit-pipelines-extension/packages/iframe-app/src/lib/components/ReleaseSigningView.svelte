@@ -23,6 +23,7 @@
     resolveNip51List,
   } from '../releases';
   import {onDestroy} from 'svelte';
+  import {nip19} from 'nostr-tools';
   import type {Subscription} from 'rxjs';
   import ReleaseSankey from './ReleaseSankey.svelte';
 
@@ -39,6 +40,7 @@
   let artifacts = $state<ReleaseArtifact[]>([]);
   let workerNames = $state(new Map<string, string>());
   let ephemeralToWorker = $state(new Map<string, string>());
+  let maintainerAttestations = $state(new Map<string, string[]>());
 
   let groupByTags = $state<string[]>(['filename']);
   let groupByInput = $state('filename');
@@ -48,6 +50,7 @@
   let maintainerInput = $state('');
 
   let selectedArtifacts = $state(new Set<string>());
+  let hasLoaded = $state(false);
   let signing = $state(false);
   let signResult = $state<{ count: number; error?: string } | null>(null);
 
@@ -55,8 +58,20 @@
 
   const FALLBACK_RELAYS = ['wss://relay.budabit.club', 'wss://nos.lol'];
 
-  // ── Derived ──────────────────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────
   const groups = $derived(groupArtifacts(artifacts, groupByTags));
+
+  // Only maintainers produce attestations downstream consumers will trust:
+  // the repo owner, announced maintainers, or the configured trusted set.
+  const canSign = $derived.by(() => {
+    const me = repo.userPubkey;
+    if (!me) return false;
+    return (
+      me === repo.repoPubkey ||
+      (repo.maintainers ?? []).includes(me) ||
+      trustedMaintainers.includes(me)
+    );
+  });
 
   const consensusIcon = (status: ConsensusStatus) => {
     switch (status) {
@@ -85,6 +100,17 @@
   // ── Actions ──────────────────────────────────────────────────────
   let releaseSub: Subscription | null = null;
   let everReceived = false;
+  let loadTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // How long to wait for matching events before concluding there are none.
+  const LOAD_TIMEOUT_MS = 10_000;
+
+  function clearLoadTimeout() {
+    if (loadTimeout) {
+      clearTimeout(loadTimeout);
+      loadTimeout = null;
+    }
+  }
 
   function loadData() {
     if (!bridge || !repo) return;
@@ -94,21 +120,36 @@
     }
 
     loading = true;
+    hasLoaded = false;
     error = null;
     artifacts = [];
     signResult = null;
     everReceived = false;
+
+    // The release stream has no EOSE signal: if no matching events ever
+    // arrive, the subscription never emits past the empty seed. Fall out of
+    // the loading state after a timeout so "no results" is distinguishable
+    // from "still loading".
+    clearLoadTimeout();
+    loadTimeout = setTimeout(() => {
+      loading = false;
+      hasLoaded = true;
+      loadTimeout = null;
+    }, LOAD_TIMEOUT_MS);
 
     releaseSub?.unsubscribe();
     releaseSub = releaseData$({repo, trustedMaintainers}).subscribe(state => {
       artifacts = state.artifacts;
       workerNames = state.workerNames;
       ephemeralToWorker = state.ephemeralToWorker;
+      maintainerAttestations = state.maintainerAttestations;
       // First emit from a fresh subscription is the empty seed; flip out of
       // the loading state on the first event-driven emit, or on any emit
       // that has data.
       if (state.artifacts.length > 0 || everReceived) {
         loading = false;
+        hasLoaded = true;
+        clearLoadTimeout();
       }
       everReceived = true;
     });
@@ -116,17 +157,18 @@
 
   onDestroy(() => {
     releaseSub?.unsubscribe();
+    clearLoadTimeout();
   });
 
   async function resolveNip51() {
-    if (!bridge || !nip51Input.trim()) return;
+    if (!nip51Input.trim()) return;
 
     loading = true;
     error = null;
 
     try {
       const relays = [...repo.repoRelays, ...FALLBACK_RELAYS];
-      const pubkeys = await resolveNip51List(bridge, nip51Input.trim(), relays);
+      const pubkeys = await resolveNip51List(nip51Input.trim(), relays);
       if (pubkeys.length === 0) {
         error = 'NIP-51 list resolved to zero pubkeys.';
       } else {
@@ -140,10 +182,26 @@
   }
 
   function addMaintainer() {
-    const pk = maintainerInput.trim();
-    if (pk.length === 64 && /^[a-f0-9]+$/.test(pk)) {
+    const input = maintainerInput.trim();
+    let pk: string | null = null;
+
+    if (/^[a-f0-9]{64}$/.test(input)) {
+      pk = input;
+    } else if (input.startsWith('npub1')) {
+      try {
+        const decoded = nip19.decode(input);
+        if (decoded.type === 'npub') pk = decoded.data;
+      } catch {
+        // fall through to error below
+      }
+    }
+
+    if (pk) {
       trustedMaintainers = [...new Set([...trustedMaintainers, pk])];
       maintainerInput = '';
+      error = null;
+    } else {
+      error = 'Maintainer must be a 64-char hex pubkey or an npub.';
     }
   }
 
@@ -217,10 +275,10 @@
   <div>
     <div class="flex items-center gap-2">
       <FileCheck class="h-5 w-5 text-primary" />
-      <h2 class="text-xl font-semibold">Release Signing</h2>
+      <h2 class="text-xl font-semibold">Artifact Attestations</h2>
     </div>
     <p class="mt-1 text-sm text-muted-foreground">
-      Verify artifact consensus and co-sign releases from trusted workflow workers.
+      Verify artifact consensus and co-sign artifact attestations from trusted workflow workers.
     </p>
   </div>
 
@@ -323,7 +381,7 @@
         <span>Signing failed: {signResult.error}</span>
       {:else}
         <CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0" />
-        <span>Successfully signed and published {signResult.count} release attestation{signResult.count !== 1 ? 's' : ''}.</span>
+        <span>Successfully signed and published {signResult.count} artifact attestation{signResult.count !== 1 ? 's' : ''}.</span>
       {/if}
     </div>
   {/if}
@@ -381,6 +439,12 @@
                     <span class="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-400">divergent</span>
                   {/if}
                   <span class="text-xs text-muted-foreground">{hashArtifacts.length} attestation{hashArtifacts.length !== 1 ? 's' : ''}</span>
+                  {#if maintainerAttestations.get(hash)?.length}
+                    <span class="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary" title={maintainerAttestations.get(hash)!.map(pk => pk.slice(0, 8) + '…').join(', ')}>
+                      <ShieldCheck class="h-3 w-3" />
+                      co-signed by {maintainerAttestations.get(hash)!.length} maintainer{maintainerAttestations.get(hash)!.length !== 1 ? 's' : ''}
+                    </span>
+                  {/if}
                 </div>
 
                 <div class="space-y-1">
@@ -411,7 +475,13 @@
     </div>
 
     <!-- Sign Button -->
-    {#if selectedArtifacts.size > 0}
+    {#if selectedArtifacts.size > 0 && !canSign}
+      <div class="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-400">
+        Only repo maintainers can publish trusted attestations — downstream
+        consumers ignore co-signatures from other keys. Your pubkey is not in
+        this repo's maintainer set.
+      </div>
+    {:else if selectedArtifacts.size > 0}
       <div class="sticky bottom-4 flex justify-end">
         <button
           class="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-lg hover:bg-primary/90 disabled:opacity-50"
@@ -430,7 +500,13 @@
     {/if}
   {:else if !loading && !error && artifacts.length === 0 && trustedMaintainers.length > 0}
     <div class="rounded-lg border border-border bg-card/50 p-8 text-center text-sm text-muted-foreground">
-      Click "Load Artifacts" to fetch release data from the network.
+      {#if hasLoaded}
+        No artifact attestations found. This repo has no workflow runs (kind 5401)
+        triggered by the trusted maintainers, or no artifacts were published by
+        those runs' workers.
+      {:else}
+        Click "Load Artifacts" to fetch attestation data from the network.
+      {/if}
     </div>
   {/if}
 </div>

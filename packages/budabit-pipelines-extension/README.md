@@ -1,6 +1,6 @@
 # Budabit Workflows Extension
 
-A Flotilla Smart Widget extension that provides a full workflow management interface and release-signing workflow for Nostr-native Git repositories. Users can view workflow run history, inspect live job status, trigger new runs, and co-sign release artifacts — all powered by Nostr events and the Loom compute protocol.
+A Flotilla Smart Widget extension that provides a full workflow management interface and artifact-attestation workflow for Nostr-native Git repositories. Users can view workflow run history, inspect live job status, trigger new runs, and co-sign artifact attestations — all powered by Nostr events and the Loom compute protocol.
 
 ## How It Works
 
@@ -20,7 +20,7 @@ The workflows extension is built entirely on Nostr events. There is no central C
 │  4. Sees updates    │◀──────│  30100 status    │       │     30100 status│
 │     in real time    │       │  5402 wf result  │       │     5402 result │
 │     via WebSocket   │       │  5101 loom result│       │     5101 result │
-│                     │       │  1063 artifacts  │       │     1063 release│
+│                     │       │  1063 artifacts  │       │    1063 artifact│
 └─────────────────────┘       └─────────────────┘       └─────────────────┘
 ```
 
@@ -34,8 +34,8 @@ The workflows extension is built entirely on Nostr events. There is no central C
 | **5101** | Loom Result | Worker → Relay → User | The Loom worker's own result event. Contains exit code, stdout/stderr Blossom URLs, and optionally a Cashu change token (refund for unused compute time). |
 | **30100** | Loom Status | Worker → Relay → User | Replaceable status updates from the worker during execution (e.g., `queued`, `running`, `success`). |
 | **10100** | Worker Advertisement | Worker → Relay | Workers advertise themselves with name, architecture, pricing, supported mints, and queue depth. The extension queries these to populate the worker picker. |
-| **1063** | File Metadata (NIP-94) | Worker → Relay | Release artifacts with SHA-256 hashes. Used by the release-signing feature to verify artifact consensus across workers. |
-| **30000** | People List (NIP-51) | User → Relay | Used to resolve trusted maintainer lists for release signing. |
+| **1063** | File Metadata (NIP-94) | Worker → Relay | Artifact attestations with SHA-256 hashes. Used by the attestation feature to verify artifact consensus across workers. |
+| **30000** | People List (NIP-51) | User → Relay | Used to resolve trusted maintainer lists for artifact attestation co-signing. |
 
 ### Event Chain
 
@@ -52,9 +52,9 @@ When a user triggers a run, the extension creates two events in sequence:
 
 The worker picks up the 5100 event, executes the command, and publishes status/result events back to the same relays.
 
-### Release Signing Trust Chain
+### Artifact Attestation Trust Chain
 
-The release-signing feature establishes a trust chain from maintainers to build artifacts:
+The artifact-attestation feature establishes a trust chain from maintainers to build artifacts:
 
 ```
 Maintainer (trusted pubkey)
@@ -135,7 +135,7 @@ The extension runs as an iframe and communicates with Flotilla via the **Widget 
 |--------------|---------|
 | `nostr:query` | Fetch existing events from relays |
 | `nostr:publish` | Sign unsigned events with the host's signer and publish to relays. Also publishes pre-signed events. Returns the signed event's `id`. |
-| `nostr:sign` | Sign an event without publishing it. Used for release co-signing where the extension controls when to publish. Returns the full signed event. |
+| `nostr:sign` | Sign an event without publishing it. Used for attestation co-signing where the extension controls when to publish. Returns the full signed event. |
 | `nostr:subscribe` | Open persistent WebSocket subscriptions. Events stream back via `nostr:subscription:event` bridge events. |
 | `nostr:unsubscribe` | Close a previously opened subscription. |
 | `nostr:nip44Encrypt` | Encrypt plaintext to a recipient pubkey using the host's NIP-44 signer. |
@@ -175,13 +175,15 @@ Flotilla enforces these — bridge requests for undeclared actions are rejected.
 - **Cashu payments** — Wallet-aware mint selection, auto-token generation prompts
 - **Search and filter** — Find runs by name, status, branch, commit, or actor
 
-### Releases Tab
-- **Load release artifacts** — Two-phase data loading via trusted maintainer → ephemeral key → NIP-94 artifacts
+### Attestations Tab
+- **Load artifact attestations** — Two-phase data loading via trusted maintainer → ephemeral key → NIP-94 artifacts
 - **Consensus verification** — Artifacts grouped by configurable tags, SHA-256 hash comparison across workers (unanimous / majority / split)
 - **Trust flow visualization** — Sankey-style SVG diagram showing Maintainers → Workers → Signing Keys → Hashes
 - **NIP-51 list resolution** — Resolve trusted maintainer lists from NIP-51 people list events
-- **Co-sign releases** — Select artifacts and sign attestations via the host's event signer, then publish to relays
+- **Co-sign attestations** — Select artifacts and sign attestations via the host's event signer, then publish to relays
 - **Auto-seed maintainers** — Automatically populates trusted maintainers from the repository's maintainer list
+
+NIP-82 software releases (kinds 32267/30063/3063) are handled by `budabit-releases-extension`.
 
 ## Quick Start
 
@@ -221,11 +223,11 @@ budabit-pipelines-extension/
 │   ├── shared/          # Framework-agnostic bridge types + signaling helpers
 │   ├── iframe-app/      # Svelte 5 iframe app (the actual widget UI)
 │   │   └── src/
-│   │       ├── App.svelte           # Main component: tab switcher (Workflows / Releases),
+│   │       ├── App.svelte           # Main component: tab switcher (Workflows / Attestations),
 │   │       │                        #   run list, detail panel, submission forms
 │   │       └── lib/
 │   │           ├── workflows.ts     # Nostr event querying, parsing, and real-time merge logic
-│   │           ├── releases.ts      # Release artifact loading, grouping, consensus, signing
+│   │           ├── releases.ts      # Artifact attestation loading, grouping, consensus, signing
 │   │           ├── nip07.ts         # Event construction, bridge-delegated signing + encryption
 │   │           ├── subscriptions.ts # Persistent Nostr WebSocket subscriptions via bridge
 │   │           ├── controllers.ts   # Orchestrates bridge calls for each user action
@@ -244,7 +246,7 @@ budabit-pipelines-extension/
 │   │           ├── cicd.ts          # YAML workflow parser, act log parser
 │   │           ├── repo.ts          # Repo metadata loading (workflows, branches)
 │   │           └── components/
-│   │               ├── ReleaseSigningView.svelte  # Release signing UI (maintainers, groups, sign)
+│   │               ├── ReleaseSigningView.svelte  # Artifact attestation UI (maintainers, groups, sign)
 │   │               ├── ReleaseSankey.svelte        # SVG trust flow visualization
 │   │               ├── RunSubmissionForm.svelte    # Run submission form
 │   │               ├── WorkflowJobs.svelte         # Horizontal YAML job flow diagram

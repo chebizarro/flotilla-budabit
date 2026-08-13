@@ -1364,7 +1364,7 @@
         onclick={() => (currentView = 'releases')}
       >
         <FileCheck class="h-4 w-4" />
-        Releases
+        Attestations
       </button>
     </div>
 
