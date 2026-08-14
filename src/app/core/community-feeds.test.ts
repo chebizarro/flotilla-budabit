@@ -8,11 +8,13 @@ import {
   filterThreadRoots,
   getRoomRootIdForMessage,
   isRoomMessage,
+  makeCommunityContentFilterPlan,
   makeCommunityExclusiveFilter,
   makeCommunityRoomMessagesFilter,
   makeCommunityThreadRepliesFilter,
   makeCommunityTargetingFilter,
   makeTargetedPublicationOriginalFilters,
+  makeTargetedPublicationOriginalFilterPlan,
 } from "./community-feeds"
 
 const communityPubkey = "a".repeat(64)
@@ -37,6 +39,20 @@ describe("community feed helpers", () => {
       kinds: [9],
       "#h": [communityPubkey],
       since: 10,
+    })
+  })
+
+  it("separates structural relay filters from current-writer admission", () => {
+    const writers = Array.from({length: 1001}, (_, index) => index.toString(16).padStart(64, "0"))
+    const structuralFilter = makeCommunityExclusiveFilter(communityPubkey, [9])
+
+    expect(makeCommunityContentFilterPlan([structuralFilter], writers)).toEqual({
+      relayFilters: [{kinds: [9], "#h": [communityPubkey]}],
+      localFilters: [{kinds: [9], "#h": [communityPubkey], authors: writers}],
+    })
+    expect(makeCommunityContentFilterPlan([structuralFilter], [])).toEqual({
+      relayFilters: [],
+      localFilters: [],
     })
   })
 
@@ -200,5 +216,41 @@ describe("community feed helpers", () => {
       {kinds: [1623], ids: ["permalink-event-id"], authors: [authorPubkey], limit: 1},
       {kinds: [9041], "#h": ["target-goal"], authors: [authorPubkey], limit: 1},
     ])
+
+    expect(
+      makeTargetedPublicationOriginalFilterPlan([
+        allDayCalendarTarget,
+        permalinkTarget,
+        goalTarget,
+      ]),
+    ).toEqual({
+      relayFilters: [
+        {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
+        {kinds: [1623], ids: ["permalink-event-id"], limit: 1},
+        {kinds: [9041], authors: [authorPubkey], "#h": ["target-goal"], limit: 1},
+      ],
+      localFilters: [
+        {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
+        {kinds: [1623], ids: ["permalink-event-id"], limit: 1},
+        {kinds: [9041], authors: [authorPubkey], "#h": ["target-goal"], limit: 1},
+      ],
+    })
+  })
+
+  it("rejects targeted address references whose coordinate kind contradicts the wrapper", () => {
+    const mismatchedTarget = makeEvent({
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: buildTargetedPublication({
+        id: "mismatched-target",
+        kind: EVENT_TIME,
+        ref: {type: "a", value: `${EVENT_DATE}:${authorPubkey}:calendar-1`},
+        communities: [{pubkey: communityPubkey}],
+      }).tags,
+    })
+
+    expect(makeTargetedPublicationOriginalFilterPlan([mismatchedTarget])).toEqual({
+      relayFilters: [],
+      localFilters: [],
+    })
   })
 })

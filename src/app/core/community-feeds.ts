@@ -32,6 +32,28 @@ export const COMMUNITY_TARGETABLE_KINDS = [
   SMART_WIDGET_KIND,
 ] as const
 
+export type CommunityContentFilterPlan = {
+  relayFilters: Filter[]
+  localFilters: Filter[]
+}
+
+export const makeCommunityContentFilterPlan = (
+  structuralFilters: Filter[],
+  allowedAuthors: string[],
+): CommunityContentFilterPlan => {
+  if (allowedAuthors.length === 0) return {relayFilters: [], localFilters: []}
+
+  return {
+    relayFilters: structuralFilters.map(filter => {
+      const {authors: _policyAuthors, ...structuralFilter} = filter
+      void _policyAuthors
+
+      return structuralFilter
+    }),
+    localFilters: structuralFilters.map(filter => ({...filter, authors: allowedAuthors})),
+  }
+}
+
 export const makeCommunityExclusiveFilter = (
   communityPubkey: string,
   kinds: number[] = COMMUNITY_EXCLUSIVE_KINDS,
@@ -160,4 +182,47 @@ export const makeTargetedPublicationOriginalFilters = (
   }
 
   return filters
+}
+
+export const makeTargetedPublicationOriginalFilterPlan = (
+  authorizedTargetingEvents: TrustedEvent[],
+): CommunityContentFilterPlan => {
+  const relayFilters: Filter[] = []
+  const localFilters: Filter[] = []
+
+  for (const event of authorizedTargetingEvents) {
+    const targeting = parseTargetedPublication(event)
+    if (!targeting) continue
+
+    if (!targeting.ref) {
+      const filter = {
+        kinds: [targeting.kind],
+        authors: [event.pubkey],
+        "#h": [targeting.id],
+        limit: 1,
+      }
+      relayFilters.push(filter)
+      localFilters.push(filter)
+      continue
+    }
+
+    if (targeting.ref.type === "e") {
+      const filter = {kinds: [targeting.kind], ids: [targeting.ref.value], limit: 1}
+      relayFilters.push(filter)
+      localFilters.push(filter)
+      continue
+    }
+
+    const [kindValue, author, ...identifierParts] = targeting.ref.value.split(":")
+    const kind = Number.parseInt(kindValue || "", 10)
+    const identifier = identifierParts.join(":")
+
+    if (!Number.isInteger(kind) || kind !== targeting.kind || !author || !identifier) continue
+
+    const filter = {kinds: [kind], authors: [author], "#d": [identifier], limit: 1}
+    relayFilters.push(filter)
+    localFilters.push(filter)
+  }
+
+  return {relayFilters, localFilters}
 }

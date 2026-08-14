@@ -28,6 +28,7 @@ import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 
 const INITIAL_FEED_LOAD_TIMEOUT = 3000
 const CALENDAR_REQUEST_TIMEOUT = 3000
+const MAX_EMPTY_ADMISSION_SCAN_PAGES = 3
 
 const filterIncludesKind = (filter: Filter, kind: number) =>
   filter.kinds
@@ -56,7 +57,7 @@ export const makeCalendarTimeBasedFilters = (
   )
 }
 
-export type InitialLoadResult = {complete: boolean; timedOut: boolean}
+export type InitialLoadResult = {complete: boolean; timedOut: boolean; saturated?: boolean}
 
 const waitForSettled = (promise: Promise<unknown>, timeoutMs: number) =>
   Promise.race<InitialLoadResult>([
@@ -71,6 +72,7 @@ export interface FeedOptions {
   element: HTMLElement
   relays: string[]
   feedFilters: Filter[]
+  relayFilters?: Filter[]
   subscriptionFilters?: Filter[]
   initialEvents?: TrustedEvent[]
   initialLoadTimeoutMs?: number
@@ -84,6 +86,7 @@ export const makeFeed = ({
   element,
   relays,
   feedFilters,
+  relayFilters,
   subscriptionFilters,
   initialEvents,
   initialLoadTimeoutMs = INITIAL_FEED_LOAD_TIMEOUT,
@@ -130,6 +133,9 @@ export const makeFeed = ({
 
   const relaysSet = new Set(relays)
   const liveFilters = subscriptionFilters || feedFilters
+  const networkFilters = relayFilters || feedFilters
+  let admittedEventCount = 0
+  let receivedEventCount = 0
 
   const flushBuffer = (limit = 30) => {
     const $buffer = get(buffer)
@@ -151,7 +157,7 @@ export const makeFeed = ({
     let handled = false
 
     if (seen.has(event.id) || !isVisibleAfterDeletesAndEdits(event)) {
-      return
+      return false
     }
 
     events.update($events => {
@@ -183,6 +189,8 @@ export const makeFeed = ({
     }
 
     seen.add(event.id)
+    admittedEventCount += 1
+    return true
   }
 
   const unsubscribeSuppressedEdits = editedTargetIds.subscribe(ids => {
@@ -228,7 +236,7 @@ export const makeFeed = ({
     }
   })
 
-  let exhausted = 0
+  const exhaustedRelays = new Set<string>()
 
   // One tracker shared across the per-relay controllers and their pages, so an
   // event returned by several relays or overlapping windows is verified and
@@ -242,10 +250,14 @@ export const makeFeed = ({
       tracker: feedTracker,
       priority,
       owner,
-      feed: makeIntersectionFeed(makeRelayFeed(url), feedFromFilters(feedFilters)),
+      feed: makeIntersectionFeed(makeRelayFeed(url), feedFromFilters(networkFilters)),
+      onEvent: event => {
+        receivedEventCount += 1
+        if (matchFilters(feedFilters, event)) insertEvent(event)
+      },
       onExhausted: () => {
-        exhausted += 1
-        if (exhausted >= relays.length) {
+        exhaustedRelays.add(url)
+        if (exhaustedRelays.size >= relays.length) {
           markExhausted()
         }
       },
@@ -266,9 +278,24 @@ export const makeFeed = ({
       const $buffer = get(buffer)
 
       if ($buffer.length < 100) {
-        const result = await waitForSettled(
-          Promise.all(controllers.map(ctrl => ctrl.load(100))),
-          initialLoadTimeoutMs,
+        const admittedBeforeLoad = admittedEventCount
+        const receivedBeforeLoad = receivedEventCount
+        let result: InitialLoadResult = {complete: true, timedOut: false}
+        let scannedPages = 0
+
+        do {
+          const receivedBeforePage = receivedEventCount
+          result = await waitForSettled(
+            Promise.all(controllers.map(ctrl => ctrl.load(100))),
+            initialLoadTimeoutMs,
+          )
+          scannedPages += 1
+          if (receivedEventCount === receivedBeforePage) break
+        } while (
+          result.complete &&
+          admittedEventCount === admittedBeforeLoad &&
+          exhaustedRelays.size < relays.length &&
+          scannedPages < MAX_EMPTY_ADMISSION_SCAN_PAGES
         )
 
         if (flushBuffer() > 0) {
@@ -276,7 +303,21 @@ export const makeFeed = ({
           return
         }
 
-        markInitialLoadComplete(result)
+        const broadScanIncomplete =
+          Boolean(relayFilters) &&
+          admittedEventCount === admittedBeforeLoad &&
+          exhaustedRelays.size < relays.length &&
+          result.complete
+
+        markInitialLoadComplete(
+          broadScanIncomplete
+            ? {
+                complete: false,
+                timedOut: false,
+                ...(receivedEventCount > receivedBeforeLoad ? {saturated: true} : {}),
+              }
+            : result,
+        )
         return
       }
 
@@ -286,12 +327,12 @@ export const makeFeed = ({
 
   if (initialEvents && initialEvents.length > 0) {
     for (const event of [...initialEvents].sort((a, b) => b.created_at - a.created_at)) {
-      insertEvent(event)
+      if (matchFilters(feedFilters, event)) insertEvent(event)
     }
   } else {
     for (const url of relays) {
       for (const event of getEventsForUrl(url, feedFilters)) {
-        insertEvent(event)
+        if (matchFilters(feedFilters, event)) insertEvent(event)
       }
     }
   }
