@@ -6,7 +6,7 @@
   import {deriveEventsAsc, deriveEventsById, throttled} from "@welshman/store"
   import {formatTimestampAsDate, int, MINUTE, now} from "@welshman/lib"
   import type {EventContent, TrustedEvent} from "@welshman/util"
-  import {makeEvent, MESSAGE, THREAD} from "@welshman/util"
+  import {makeEvent, matchFilters, MESSAGE, THREAD} from "@welshman/util"
   import {fade, fly} from "@lib/transition"
   import AltArrowDown from "@assets/icons/alt-arrow-down.svg?dataurl"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
@@ -43,6 +43,7 @@
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
   import {
+    makeCommunityContentFilterPlan,
     makeCommunityExclusiveFilter,
     makeCommunityRoomMessagesFilter,
   } from "@app/core/community-feeds"
@@ -157,6 +158,36 @@
         })
       : [],
   )
+  const commentAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.comment,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reactionAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reportAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.report,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
@@ -236,20 +267,16 @@
   const roomMessageAccessMessage = $derived(
     `Request ${roomMessageSectionName} access to message this room.`,
   )
-  const roomFilters = $derived(
-    communityBootstrapReady &&
-      communityPermissionReady &&
-      communityPubkey &&
-      roomId &&
-      roomAuthorPubkeys.length
-      ? [
-          makeCommunityExclusiveFilter(communityPubkey, [THREAD], {
-            ids: [roomId],
-            authors: roomAuthorPubkeys,
-          }),
-        ]
-      : [],
+  const roomFilterPlan = $derived(
+    communityBootstrapReady && communityPermissionReady && communityPubkey && roomId
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityExclusiveFilter(communityPubkey, [THREAD], {ids: [roomId]})],
+          roomAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
+  const roomFilters = $derived(roomFilterPlan.localFilters)
+  const roomRelayFilters = $derived(roomFilterPlan.relayFilters)
   const roomEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: roomFilters})))
   const room = $derived(
     $roomEvents[0] ? readCommunityRoomRoot($roomEvents[0], communityPubkey) : undefined,
@@ -265,15 +292,16 @@
         })
       : undefined,
   )
-  const messageFilters = $derived(
-    communityBootstrapReady &&
-      communityPubkey &&
-      room &&
-      !roomCensorReason &&
-      messageAuthorPubkeys.length
-      ? [makeCommunityRoomMessagesFilter(communityPubkey, room.id, {authors: messageAuthorPubkeys})]
-      : [],
+  const messageFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey && room && !roomCensorReason
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityRoomMessagesFilter(communityPubkey, room.id)],
+          messageAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
+  const messageFilters = $derived(messageFilterPlan.localFilters)
+  const messageRelayFilters = $derived(messageFilterPlan.relayFilters)
   const canSendMessage = $derived(
     Boolean(
       room &&
@@ -501,7 +529,13 @@
   }
 
   const startFeed = (key: string) => {
-    if (!element || !key || messageFilters.length === 0 || $activeCommunityRelays.length === 0)
+    if (
+      !element ||
+      !key ||
+      messageFilters.length === 0 ||
+      messageRelayFilters.length === 0 ||
+      $activeCommunityRelays.length === 0
+    )
       return
 
     loadingEvents = true
@@ -517,13 +551,14 @@
       element,
       relays: $activeCommunityRelays,
       feedFilters: messageFilters,
+      relayFilters: messageRelayFilters,
       subscriptionFilters: messageFilters,
       initialLoadTimeoutMs: FEED_EMPTY_SETTLE_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.foreground,
       owner: `active-room:${roomId}`,
-      onInitialLoad: ({complete, timedOut}) => {
+      onInitialLoad: ({complete}) => {
         loadingEvents = false
-        feedLoadStatus = complete ? "complete" : timedOut ? "incomplete" : "failed"
+        feedLoadStatus = complete ? "complete" : "incomplete"
         if (complete) clearMessageAutoRetry()
       },
       onExhausted: () => {
@@ -648,6 +683,7 @@
 
     for (const operation of $publicationOperations.values()) {
       if (operation.ownerPubkey !== $pubkey || !isPublicationPreviewVisible(operation)) continue
+      if (!messageAuthorPubkeys.includes(operation.event.pubkey)) continue
       if (!readCommunityRoomMessages([operation.event], communityPubkey, roomId).length) continue
 
       eventsById.set(operation.event.id, operation.event as TrustedEvent)
@@ -667,6 +703,7 @@
 
     for (const operation of $publicationOperations.values()) {
       if (operation.ownerPubkey !== $pubkey || !isPublicationPreviewVisible(operation)) continue
+      if (!messageAuthorPubkeys.includes(operation.event.pubkey)) continue
       if (!readCommunityRoomMessages([operation.event], communityPubkey, roomId).length) continue
 
       operationIds.set(operation.event.id, operation.operationId)
@@ -774,14 +811,16 @@
 
     if (!id) return
 
+    const localFilters = messageFilters.map(filter => ({...filter, ids: [id], limit: 1}))
+    const relayFilters = messageRelayFilters.map(filter => ({...filter, ids: [id], limit: 1}))
     const cachedTarget = repository.getEvent(id) as TrustedEvent | undefined
     if (
       !targetIsLoaded &&
       cachedTarget &&
       room &&
-      messageFilters.length > 0 &&
+      localFilters.length > 0 &&
       communityPermissionReady &&
-      messageAuthorPubkeys.includes(cachedTarget.pubkey) &&
+      matchFilters(localFilters, cachedTarget) &&
       !hashTargetEvents.some(event => event.id === id) &&
       readCommunityRoomMessages([cachedTarget], communityPubkey, roomId).length > 0
     ) {
@@ -820,9 +859,8 @@
     }
 
     const relays = $activeCommunityRelays
-    const filters = messageFilters.map(filter => ({...filter, ids: [id], limit: 1}))
-    const loadKey = `${targetKey}:${relays.join("|")}:${JSON.stringify(filters)}`
-    if (relays.length === 0 || filters.length === 0) {
+    const loadKey = `${targetKey}:${relays.join("|")}:${JSON.stringify({localFilters, relayFilters})}`
+    if (relays.length === 0 || localFilters.length === 0 || relayFilters.length === 0) {
       hashTargetLoadController?.abort()
       hashTargetLoadController = undefined
       return
@@ -838,7 +876,7 @@
     void hydrateCommunityEventsWithStatus({
       key: `room-hash-target:${loadKey}`,
       relays,
-      filters,
+      filters: relayFilters,
       authenticate: true,
       timeout: FEED_EMPTY_SETTLE_TIMEOUT_MS,
       authTimeout: COMMUNITY_PRIORITY_RELAY_AUTH_TIMEOUT,
@@ -859,7 +897,7 @@
           event.id === id &&
           room &&
           communityPermissionReady &&
-          messageAuthorPubkeys.includes(event.pubkey) &&
+          matchFilters(localFilters, event) &&
           readCommunityRoomMessages([event], communityPubkey, roomId).length > 0,
       )
       if (targetEvents.length > 0) {
@@ -913,7 +951,13 @@
     void roomLoadRetryVersion
 
     const relays = $activeCommunityRelays
-    if (!communityPubkey || !roomId || relays.length === 0 || roomFilters.length === 0) {
+    if (
+      !communityPubkey ||
+      !roomId ||
+      relays.length === 0 ||
+      roomFilters.length === 0 ||
+      roomRelayFilters.length === 0
+    ) {
       loadingRoom = false
       roomLoadStatus = "idle"
       return
@@ -929,9 +973,9 @@
     loadingRoom = true
     roomLoadStatus = "queued"
     void hydrateCommunityEventsWithStatus({
-      key: `room:${roomPath}:${roomLoadRetryVersion}:${JSON.stringify(roomFilters)}`,
+      key: `room:${roomPath}:${roomLoadRetryVersion}:${JSON.stringify({localFilters: roomFilters, relayFilters: roomRelayFilters})}`,
       relays,
-      filters: roomFilters,
+      filters: roomRelayFilters,
       authenticate: true,
       timeout: FEED_EMPTY_SETTLE_TIMEOUT_MS,
       authTimeout: COMMUNITY_PRIORITY_RELAY_AUTH_TIMEOUT,
@@ -951,7 +995,9 @@
 
     clearMessageAutoRetry()
     loadingEvents = false
-    feedLoadStatus = "complete"
+    if (feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed") {
+      feedLoadStatus = "complete"
+    }
     feedEmptySettled = true
     clearFeedEmptySettleTimer()
   })
@@ -1230,7 +1276,9 @@
             profileRelays={$activeCommunityRelays}
             interactionRelays={$activeCommunityRelays}
             actionRelays={$activeCommunityPublishRelays}
-            interactionAuthorPubkeys={messageAuthorPubkeys}
+            allowedAuthors={commentAuthorPubkeys}
+            reactionAllowedAuthors={reactionAuthorPubkeys}
+            reportAllowedAuthors={reportAuthorPubkeys}
             scopeH={communityPubkey}
             communitySectionName={roomMessageSectionName}
             operationId={item.operationId}

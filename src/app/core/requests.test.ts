@@ -3,6 +3,7 @@
 import {describe, expect, it, vi} from "vitest"
 import {get} from "svelte/store"
 import {DAY} from "@welshman/lib"
+import type {RequestOptions} from "@welshman/net"
 import {EVENT_DATE, EVENT_TIME, type Filter, type TrustedEvent} from "@welshman/util"
 
 vi.mock("@app/core/storage", () => ({
@@ -380,5 +381,191 @@ describe("requests", () => {
     } finally {
       feed.cleanup()
     }
+  })
+
+  it("continues past an outsider-only page and admits an authorized older page", async () => {
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://bounded-community-history.test"
+    const allowedAuthor = "1".repeat(64)
+    const makeEvent = (id: string, pubkey: string, createdAt: number): TrustedEvent => ({
+      id: id.repeat(64),
+      pubkey,
+      created_at: createdAt,
+      kind: 9,
+      tags: [["h", "community"]],
+      content: "message",
+      sig: "f".repeat(128),
+    })
+    const outsiderPage = [makeEvent("2", "3".repeat(64), 200), makeEvent("4", "5".repeat(64), 200)]
+    const allowed = makeEvent("6", allowedAuthor, 180)
+    const request = vi.fn(async (options: RequestOptions) => {
+      const events = options.filters[0].until === undefined ? outsiderPage : [allowed]
+      for (const event of events) options.onEvent?.(event, relay)
+      options.onEose?.(relay)
+      return events
+    })
+    const publish = vi.fn()
+    const track = vi.fn()
+    const loadHistory = createBoundedCommunityHistoryLoader({request, publish, track})
+
+    const result = await loadHistory({
+      relays: [relay],
+      relayFilters: [{kinds: [9], "#h": ["community"]}],
+      localFilters: [{kinds: [9], "#h": ["community"], authors: [allowedAuthor]}],
+      pageSize: 2,
+      maxPages: 3,
+      timeoutMs: 1000,
+    })
+
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls[0][0].filters[0]).toMatchObject({limit: 2})
+    expect(request.mock.calls[0][0].filters[0]).not.toHaveProperty("authors")
+    expect(request.mock.calls[1][0].filters[0]).toMatchObject({limit: 2, until: 199})
+    expect(result).toEqual({events: [allowed], complete: false, timedOut: false, saturated: true})
+    expect(track).toHaveBeenCalledWith(allowed.id, relay)
+    expect(publish).toHaveBeenCalledWith(allowed)
+  })
+
+  it("stops at the broad history page budget and reports saturation", async () => {
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://saturated-bounded-history.test"
+    let page = 0
+    const request = vi.fn(async (options: RequestOptions) => {
+      const events = [0, 1].map(index => ({
+        id: `${page}${index}`.padEnd(64, "0"),
+        pubkey: "7".repeat(64),
+        created_at: 1000 - page * 10 - index,
+        kind: 9,
+        tags: [["h", "community"]],
+        content: "outsider",
+        sig: "8".repeat(128),
+      })) as TrustedEvent[]
+      page += 1
+      for (const event of events) options.onEvent?.(event, relay)
+      options.onEose?.(relay)
+      return events
+    })
+    const loadHistory = createBoundedCommunityHistoryLoader({
+      request,
+      publish: vi.fn(),
+      track: vi.fn(),
+    })
+
+    const result = await loadHistory({
+      relays: [relay],
+      relayFilters: [{kinds: [9], "#h": ["community"]}],
+      localFilters: [{kinds: [9], "#h": ["community"], authors: ["9".repeat(64)]}],
+      pageSize: 2,
+      maxPages: 2,
+      timeoutMs: 1000,
+    })
+
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(result).toEqual({events: [], complete: false, timedOut: false, saturated: true})
+  })
+
+  it("does not report complete history when a relay disconnects", async () => {
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://disconnected-bounded-history.test"
+    const request = vi.fn(async (options: RequestOptions) => {
+      options.onDisconnect?.(relay)
+      return []
+    })
+    const loadHistory = createBoundedCommunityHistoryLoader({
+      request,
+      publish: vi.fn(),
+      track: vi.fn(),
+    })
+
+    await expect(
+      loadHistory({
+        relays: [relay],
+        relayFilters: [{kinds: [9], "#h": ["community"]}],
+        localFilters: [{kinds: [9], "#h": ["community"], authors: ["a".repeat(64)]}],
+        timeoutMs: 1000,
+      }),
+    ).resolves.toEqual({events: [], complete: false, timedOut: false, saturated: false})
+  })
+
+  it("admits a writer beyond one thousand without putting the ACL on the wire", async () => {
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://large-community-history.test"
+    const allowedAuthors = Array.from({length: 1001}, (_, index) =>
+      index.toString(16).padStart(64, "0"),
+    )
+    const event: TrustedEvent = {
+      id: "b".repeat(64),
+      pubkey: allowedAuthors[1000],
+      created_at: 100,
+      kind: 9,
+      tags: [["h", "community"]],
+      content: "authorized",
+      sig: "c".repeat(128),
+    }
+    const request = vi.fn(async (options: RequestOptions) => {
+      expect(options.filters[0]).not.toHaveProperty("authors")
+      options.onEvent?.(event, relay)
+      options.onEose?.(relay)
+      return [event]
+    })
+    const publish = vi.fn()
+    const track = vi.fn()
+    const loadHistory = createBoundedCommunityHistoryLoader({request, publish, track})
+
+    const result = await loadHistory({
+      relays: [relay],
+      relayFilters: [{kinds: [9], "#h": ["community"]}],
+      localFilters: [{kinds: [9], "#h": ["community"], authors: allowedAuthors}],
+      timeoutMs: 1000,
+    })
+
+    expect(result).toEqual({events: [event], complete: true, timedOut: false, saturated: false})
+    expect(track).toHaveBeenCalledWith(event.id, relay)
+    expect(publish).toHaveBeenCalledWith(event)
+  })
+
+  it("builds exact same-author delete filters without requiring a community tag", async () => {
+    const {makeSameAuthorDeleteFilters} = await import("./requests")
+    const author = "d".repeat(64)
+    const otherAuthor = "e".repeat(64)
+    const makeTarget = (id: string, pubkey: string, kind: number): TrustedEvent => ({
+      id,
+      pubkey,
+      created_at: 100,
+      kind,
+      tags: [["h", "community"]],
+      content: "",
+      sig: "f".repeat(128),
+    })
+
+    const filters = makeSameAuthorDeleteFilters([
+      makeTarget("reaction", author, 7),
+      makeTarget("report", author, 1984),
+      makeTarget("other-report", otherAuthor, 1984),
+    ])
+
+    expect(filters).toEqual([
+      {kinds: [5], authors: [author], "#e": ["reaction", "report"]},
+      {kinds: [5], authors: [otherAuthor], "#e": ["other-report"]},
+    ])
+    expect(filters.every(filter => !("#h" in filter))).toBe(true)
+  })
+
+  it("chunks exact delete targets without splitting author identity", async () => {
+    const {makeSameAuthorDeleteFilters} = await import("./requests")
+    const author = "1".repeat(64)
+    const events = Array.from({length: 201}, (_, index) => ({
+      id: `event-${index}`,
+      pubkey: author,
+      created_at: index,
+      kind: 7,
+      tags: [],
+      content: "",
+      sig: "2".repeat(128),
+    })) as TrustedEvent[]
+
+    expect(makeSameAuthorDeleteFilters(events).map(filter => filter["#e"]?.length)).toEqual([
+      100, 100, 1,
+    ])
   })
 })

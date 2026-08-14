@@ -1,6 +1,17 @@
 import {repository, tracker} from "@welshman/app"
 import {request} from "@welshman/net"
-import {isRelayUrl, normalizeRelayUrl, type Filter, type TrustedEvent} from "@welshman/util"
+import {
+  DELETE,
+  isRelayUrl,
+  matchFilters,
+  normalizeRelayUrl,
+  type Filter,
+  type TrustedEvent,
+} from "@welshman/util"
+import {
+  createBoundedCommunityHistoryLoader,
+  type BoundedCommunityHistoryResult,
+} from "@app/core/requests"
 
 const ACTIVITY_BATCH_MS = 75
 const ACTIVITY_HISTORY_TIMEOUT_MS = 30_000
@@ -33,7 +44,9 @@ export type EventActivityRegistration = {
   relays: string[]
   scopeH?: string
   filters: Filter[]
+  relayFilters?: Filter[]
   coreCommunityLiveCovered?: boolean
+  onHistoryResult?: (result: BoundedCommunityHistoryResult) => void
 }
 
 type EventActivityIODependencies = {
@@ -51,7 +64,10 @@ type EventActivityIODependencies = {
 }
 
 type ActivityTarget = {
-  filters: Filter[]
+  relayFilters: Filter[]
+  localFilters: Filter[]
+  historyListeners: Set<(result: BoundedCommunityHistoryResult) => void>
+  historyResult?: BoundedCommunityHistoryResult
   historyPending: boolean
   refs: number
 }
@@ -121,7 +137,8 @@ const chunkValues = (values: string[], size: number) => {
 
 class ActivityCoordinator {
   private readonly targets = new Map<string, ActivityTarget>()
-  private readonly historyRequests = new Map<AbortController, Timer>()
+  private readonly historyRequests = new Map<AbortController, Timer | undefined>()
+  private readonly loadBoundedHistory
   private flushTimer?: Timer
   private retryTimer?: Timer
   private currentLive?: LiveRequest
@@ -144,28 +161,50 @@ class ActivityCoordinator {
     private readonly baseFilter: Filter,
     private readonly liveSince: number,
     private readonly liveCovered: boolean,
-  ) {}
+    private readonly broadHistory: boolean,
+  ) {
+    this.loadBoundedHistory = createBoundedCommunityHistoryLoader({
+      request: options => dependencies.request(options as EventActivityRequestOptions),
+      publish: dependencies.publish,
+      track: dependencies.track,
+      setTimer: dependencies.setTimer,
+      clearTimer: dependencies.clearTimer,
+    })
+  }
 
-  register(filters: Filter[]) {
-    const key = getTargetKey(filters)
+  register(
+    relayFilters: Filter[],
+    localFilters: Filter[],
+    onHistoryResult?: (result: BoundedCommunityHistoryResult) => void,
+  ) {
+    const key = `${getTargetKey(relayFilters)}::${getTargetKey(localFilters)}`
     const existing = this.targets.get(key)
+    const listener = onHistoryResult
+      ? (result: BoundedCommunityHistoryResult) => onHistoryResult(result)
+      : undefined
 
     this.registrationCount += 1
     if (existing) {
       existing.refs += 1
+      if (listener) {
+        existing.historyListeners.add(listener)
+        if (existing.historyResult) listener(existing.historyResult)
+      }
     } else {
       this.targets.set(key, {
-        filters: filters.map(cloneFilter),
+        relayFilters: relayFilters.map(cloneFilter),
+        localFilters: localFilters.map(cloneFilter),
+        historyListeners: new Set(listener ? [listener] : []),
         historyPending: true,
         refs: 1,
       })
       this.schedule()
     }
 
-    return () => this.unregister(key)
+    return () => this.unregister(key, listener)
   }
 
-  private unregister(key: string) {
+  private unregister(key: string, listener?: (result: BoundedCommunityHistoryResult) => void) {
     if (this.closed) return true
 
     const target = this.targets.get(key)
@@ -173,6 +212,7 @@ class ActivityCoordinator {
 
     target.refs -= 1
     this.registrationCount -= 1
+    if (listener) target.historyListeners.delete(listener)
 
     if (target.refs === 0) {
       this.targets.delete(key)
@@ -199,17 +239,105 @@ class ActivityCoordinator {
     if (this.closed) return
 
     const historicalFilters: Filter[] = []
+    const historicalLocalFilters: Filter[] = []
+    const historicalTargets: ActivityTarget[] = []
     for (const target of this.targets.values()) {
       if (!target.historyPending) continue
 
       target.historyPending = false
+      historicalTargets.push(target)
       historicalFilters.push(
-        ...target.filters.map(filter => ({...cloneFilter(filter), until: this.liveSince})),
+        ...target.relayFilters.map(filter => ({...cloneFilter(filter), until: this.liveSince})),
+      )
+      historicalLocalFilters.push(
+        ...target.localFilters.map(filter => ({...cloneFilter(filter), until: this.liveSince})),
       )
     }
 
-    if (historicalFilters.length > 0) this.loadHistory(historicalFilters)
+    if (historicalFilters.length > 0) {
+      if (this.broadHistory) {
+        this.loadBroadHistory(historicalFilters, historicalLocalFilters, historicalTargets)
+      } else {
+        this.loadHistory(historicalFilters)
+      }
+    }
     this.reconcileLive()
+  }
+
+  private loadBroadHistory(
+    relayFilters: Filter[],
+    localFilters: Filter[],
+    targets: ActivityTarget[],
+  ) {
+    const controller = new AbortController()
+    this.historyRequests.set(controller, undefined)
+
+    void this.loadBoundedHistory({
+      relays: this.relays,
+      relayFilters,
+      localFilters,
+      signal: controller.signal,
+      priority: ACTIVITY_PRIORITY,
+      owner: "event-activity-history",
+      timeoutMs: this.dependencies.historyTimeoutMs,
+    })
+      .then(async result => {
+        if (controller.signal.aborted || result.events.length === 0) return result
+
+        const idsByAuthor = new Map<string, string[]>()
+        for (const event of result.events) {
+          const ids = idsByAuthor.get(event.pubkey) || []
+          ids.push(event.id)
+          idsByAuthor.set(event.pubkey, ids)
+        }
+        const deleteFilters = Array.from(idsByAuthor).flatMap(([author, ids]) =>
+          chunkValues(Array.from(new Set(ids)), ACTIVITY_TAG_CHUNK_SIZE).map(chunk => ({
+            kinds: [DELETE],
+            authors: [author],
+            "#e": chunk,
+          })),
+        )
+        const deleteResult = await this.loadBoundedHistory({
+          relays: this.relays,
+          relayFilters: deleteFilters,
+          localFilters: deleteFilters,
+          signal: controller.signal,
+          priority: ACTIVITY_PRIORITY,
+          owner: "event-activity-deletes",
+          timeoutMs: this.dependencies.historyTimeoutMs,
+        })
+
+        return {
+          events: result.events,
+          complete: result.complete && deleteResult.complete,
+          timedOut: result.timedOut || deleteResult.timedOut,
+          saturated: result.saturated || deleteResult.saturated,
+        }
+      })
+      .then(result => {
+        if (!controller.signal.aborted) this.notifyHistoryResult(targets, result)
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          this.dependencies.onError("Failed to load event activity history", error)
+          this.notifyHistoryResult(targets, {
+            events: [],
+            complete: false,
+            timedOut: false,
+            saturated: false,
+          })
+        }
+      })
+      .finally(() => this.finishHistory(controller))
+  }
+
+  private notifyHistoryResult(targets: ActivityTarget[], result: BoundedCommunityHistoryResult) {
+    const currentTargets = new Set(this.targets.values())
+    for (const target of targets) {
+      if (!currentTargets.has(target)) continue
+      target.historyResult = result
+      for (const listener of target.historyListeners) listener(result)
+    }
   }
 
   private loadHistory(filters: Filter[]) {
@@ -260,7 +388,7 @@ class ActivityCoordinator {
     )
 
     for (const target of this.targets.values()) {
-      for (const filter of target.filters) {
+      for (const filter of target.relayFilters) {
         for (const tag of ACTIVITY_TAGS) {
           for (const value of filter[tag] || []) valuesByTag.get(tag)?.add(value)
         }
@@ -393,6 +521,12 @@ class ActivityCoordinator {
   }
 
   private receiveEvent(event: TrustedEvent, relay: string) {
+    if (
+      !Array.from(this.targets.values()).some(target => matchFilters(target.localFilters, event))
+    ) {
+      return
+    }
+
     this.dependencies.track(event.id, relay)
     this.dependencies.publish(event)
   }
@@ -420,7 +554,7 @@ class ActivityCoordinator {
     this.retryTimer = undefined
 
     for (const [controller, timeout] of this.historyRequests) {
-      this.dependencies.clearTimer(timeout)
+      if (timeout) this.dependencies.clearTimer(timeout)
       controller.abort()
     }
     this.historyRequests.clear()
@@ -453,10 +587,13 @@ export const createEventActivityIO = (dependencies: EventActivityIODependencies)
 
   const register = (options: EventActivityRegistration) => {
     const relays = normalizeRelays(options.relays)
-    if (relays.length === 0 || options.filters.length === 0) return () => undefined
+    const relayFilters = options.relayFilters || options.filters
+    if (relays.length === 0 || options.filters.length === 0 || relayFilters.length === 0) {
+      return () => undefined
+    }
 
     const baseFilters = new Map(
-      options.filters.map(filter => {
+      relayFilters.map(filter => {
         const baseFilter = getBaseFilter(filter)
         return [getFilterKey(baseFilter), baseFilter]
       }),
@@ -498,11 +635,16 @@ export const createEventActivityIO = (dependencies: EventActivityIODependencies)
         baseFilter,
         routeState.liveSince,
         liveCovered,
+        Boolean(scopeH && options.relayFilters),
       )
       coordinators.set(coordinatorKey, coordinator)
     }
 
-    const unregisterTarget = coordinator.register(options.filters)
+    const unregisterTarget = coordinator.register(
+      relayFilters,
+      options.filters,
+      options.onHistoryResult,
+    )
     let registered = true
 
     return () => {

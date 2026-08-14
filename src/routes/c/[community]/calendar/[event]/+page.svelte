@@ -149,7 +149,7 @@
         })
       : [],
   )
-  const interactionAuthorPubkeys = $derived(
+  const commentAuthorPubkeys = $derived(
     $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
@@ -165,6 +165,16 @@
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reportAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
         })
       : [],
@@ -270,14 +280,14 @@
     communityBootstrapReady &&
       approvedEvent &&
       !approvedEventCensorReason &&
-      interactionAuthorPubkeys.length
+      commentAuthorPubkeys.length
       ? [
           {
             kinds: [COMMENT],
             "#E": [approvedEvent.id],
             "#K": [String(approvedEvent.kind)],
             "#h": [communityPubkey],
-            authors: interactionAuthorPubkeys,
+            authors: commentAuthorPubkeys,
           },
           ...(eventAddress
             ? [
@@ -286,14 +296,14 @@
                   "#A": [eventAddress],
                   "#K": [String(approvedEvent.kind)],
                   "#h": [communityPubkey],
-                  authors: interactionAuthorPubkeys,
+                  authors: commentAuthorPubkeys,
                 },
                 {
                   kinds: [COMMENT],
                   "#a": [eventAddress],
                   "#K": [String(approvedEvent.kind)],
                   "#h": [communityPubkey],
-                  authors: interactionAuthorPubkeys,
+                  authors: commentAuthorPubkeys,
                 },
               ]
             : []),
@@ -715,8 +725,9 @@
               reactionRelays={$activeCommunityPublishRelays}
               scopeH={communityPubkey}
               communitySectionName={approvedEventSectionName}
-              allowedAuthors={interactionAuthorPubkeys}
+              allowedAuthors={commentAuthorPubkeys}
               reactionAllowedAuthors={reactionAuthorPubkeys}
+              reportAllowedAuthors={reportAuthorPubkeys}
               readOnly={!canReact}
               redirectOnEdit
               event={approvedEvent} />
@@ -751,7 +762,9 @@
               interactionRelays={$activeCommunityRelays}
               actionRelays={$activeCommunityPublishRelays}
               profileRelays={$activeCommunityRelays}
-              {interactionAuthorPubkeys}
+              allowedAuthors={commentAuthorPubkeys}
+              reactionAllowedAuthors={reactionAuthorPubkeys}
+              reportAllowedAuthors={reportAuthorPubkeys}
               scopeH={communityPubkey}
               communitySectionName={commentSectionName}
               {replyParent}

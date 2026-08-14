@@ -31,10 +31,10 @@
     activeCommunityPublishRelays,
     activeCommunityReportState,
     activeCommunityRelays,
-    hydrateCommunityEventsWithStatus,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
   import {
+    makeCommunityContentFilterPlan,
     makeCommunityThreadRepliesFilter,
     makeCommunityThreadsFilter,
   } from "@app/core/community-feeds"
@@ -65,6 +65,7 @@
   import {setChecked} from "@app/util/notifications"
   import {makeCommunityThreadPath, parseCommunityRouteParam} from "@app/util/routes"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory} from "@app/core/requests"
 
   const REQUEST_HARD_TIMEOUT_MS = 10_000
 
@@ -142,26 +143,46 @@
         })
       : [],
   )
-  const threadFilters = $derived(
-    communityBootstrapReady && communityPubkey && threadId && threadAuthorPubkeys.length
-      ? [
-          makeCommunityThreadsFilter(communityPubkey, {
-            ids: [threadId],
-            authors: threadAuthorPubkeys,
-          }),
-        ]
+  const reactionAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
       : [],
   )
-  const replyFilters = $derived(
-    communityBootstrapReady && communityPubkey && threadId && replyAuthorPubkeys.length
-      ? [
-          makeCommunityThreadRepliesFilter(communityPubkey, {
-            "#E": [threadId],
-            authors: replyAuthorPubkeys,
-          }),
-        ]
+  const reportAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.report,
+          reportState: $activeCommunityReportState,
+        })
       : [],
   )
+  const threadFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey && threadId
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityThreadsFilter(communityPubkey, {ids: [threadId]})],
+          threadAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
+  )
+  const replyFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey && threadId
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityThreadRepliesFilter(communityPubkey, {"#E": [threadId]})],
+          replyAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
+  )
+  const threadFilters = $derived(threadFilterPlan.localFilters)
+  const threadRelayFilters = $derived(threadFilterPlan.relayFilters)
+  const replyFilters = $derived(replyFilterPlan.localFilters)
+  const replyRelayFilters = $derived(replyFilterPlan.relayFilters)
   const threadEvents = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: threadFilters})),
   )
@@ -173,7 +194,11 @@
       events: $threadEvents,
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
-      matches: event => Boolean(readCommunityThread(event, communityPubkey)?.id === threadId),
+      matches: event =>
+        Boolean(
+          threadAuthorPubkeys.includes(event.pubkey) &&
+          readCommunityThread(event, communityPubkey)?.id === threadId,
+        ),
     }),
   )
   const replyProjection = $derived.by(() =>
@@ -181,7 +206,11 @@
       events: $replyEvents,
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
-      matches: event => Boolean(readCommunityThreadReply(event, communityPubkey, threadId)),
+      matches: event =>
+        Boolean(
+          replyAuthorPubkeys.includes(event.pubkey) &&
+          readCommunityThreadReply(event, communityPubkey, threadId),
+        ),
     }),
   )
   const thread = $derived(
@@ -408,8 +437,9 @@
       return
     }
 
-    const filters = [...threadFilters, ...replyFilters]
-    if (filters.length === 0) {
+    const localFilters = [...threadFilters, ...replyFilters]
+    const relayFilters = [...threadRelayFilters, ...replyRelayFilters]
+    if (localFilters.length === 0 || relayFilters.length === 0) {
       loadingThread = false
       loadingReplies = false
       threadLoadStatus = "idle"
@@ -417,24 +447,33 @@
     }
 
     const controller = new AbortController()
+    const relays = $activeCommunityRelays
 
-    threadLoadStatus = "queued"
+    threadLoadStatus = "loading"
     loadingThread = true
     loadingReplies = true
-    void hydrateCommunityEventsWithStatus({
-      key: `thread:${threadPath}:${historicalLoadRetryVersion}:${JSON.stringify(filters)}`,
-      relays: $activeCommunityRelays,
-      filters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-thread:${communityPubkey}:${threadId}`,
       signal: controller.signal,
-      onStatus: status => {
-        threadLoadStatus = status
-        loadingThread = status === "queued" || status === "loading"
-        loadingReplies = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        threadLoadStatus = result.complete ? "complete" : "incomplete"
+        loadingThread = false
+        loadingReplies = false
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-thread] Failed to load thread history", error)
+        threadLoadStatus = "failed"
+        loadingThread = false
+        loadingReplies = false
+      })
 
     return () => controller.abort()
   })
@@ -534,6 +573,8 @@
                 scopeH={communityPubkey}
                 communitySectionName={threadSectionName}
                 allowedAuthors={replyAuthorPubkeys}
+                reactionAllowedAuthors={reactionAuthorPubkeys}
+                reportAllowedAuthors={reportAuthorPubkeys}
                 readOnly={!canReact}
                 event={thread.event} />
             </div>
@@ -552,6 +593,20 @@
 
     {#if !threadCensorReason}
       <div class="col-2">
+        {#if threadLoadStatus === "incomplete" || threadLoadStatus === "failed"}
+          <div
+            class="card2 bg-alt flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+            role="status">
+            <span>Reply history is incomplete; some replies may be missing.</span>
+            <button
+              class="btn btn-neutral btn-sm"
+              type="button"
+              disabled={loadingReplies}
+              onclick={retryHistoricalLoad}>
+              {loadingReplies ? "Retrying..." : "Retry"}
+            </button>
+          </div>
+        {/if}
         {#each visibleReplies as item (item?.id)}
           {#if item}
             {@const replyParent = item.parentReplyId
@@ -569,7 +624,9 @@
                 interactionRelays={$activeCommunityRelays}
                 actionRelays={$activeCommunityPublishRelays}
                 profileRelays={$activeCommunityRelays}
-                interactionAuthorPubkeys={replyAuthorPubkeys}
+                allowedAuthors={replyAuthorPubkeys}
+                reactionAllowedAuthors={reactionAuthorPubkeys}
+                reportAllowedAuthors={reportAuthorPubkeys}
                 scopeH={communityPubkey}
                 communitySectionName={commentSectionName}
                 {replyParent}
@@ -584,12 +641,6 @@
           <p class="flex h-10 items-center justify-center py-20 text-center">
             <Spinner loading={loadingReplies}>Looking for replies...</Spinner>
           </p>
-        {:else if replies.length === 0 && (threadLoadStatus === "incomplete" || threadLoadStatus === "failed")}
-          <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-            <p>Reply history is incomplete or temporarily unavailable.</p>
-            <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
-              >Retry</button>
-          </div>
         {:else if communityPermissionsLoading}
           <p class="flex h-10 items-center justify-center py-20 text-center">
             <Spinner loading>Loading reply permissions...</Spinner>

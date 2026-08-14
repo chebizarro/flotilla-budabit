@@ -26,6 +26,7 @@
     readOnly?: boolean
     allowedAuthors?: string[]
     reactionAllowedAuthors?: string[]
+    reportAllowedAuthors?: string[]
     showRoom?: boolean
     activityLiveCovered?: boolean
     operationId?: string
@@ -42,6 +43,7 @@
     readOnly = false,
     allowedAuthors,
     reactionAllowedAuthors,
+    reportAllowedAuthors,
     showRoom = false,
     activityLiveCovered = false,
     operationId = undefined,
@@ -92,6 +94,7 @@
             {readOnly}
             {allowedAuthors}
             {reactionAllowedAuthors}
+            {reportAllowedAuthors}
             {activityLiveCovered}
             {event} />
         {/if}

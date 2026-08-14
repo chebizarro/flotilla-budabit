@@ -122,6 +122,8 @@
   } from "@app/core/community-permissions"
   import {getEffectiveCommunityReportState} from "@app/core/community-reports"
   import {
+    makeCommunityContentFilterPlan,
+    makeCommunityRepositoryFilter,
     makeCommunityTargetingFilter,
     makeTargetedPublicationOriginalFilters,
   } from "@app/core/community-feeds"
@@ -184,6 +186,8 @@
     type RepoCollectionReadState,
   } from "@app/core/repo-collection-read-model"
   import {loadRepoCardVerification} from "@app/core/repo-card-verification"
+  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory} from "@app/core/requests"
 
   const url = GIT_RELAYS[0] || ""
   const repoListHydrationReadyStore = getContext<Readable<boolean>>(REPO_LIST_HYDRATION_READY_KEY)
@@ -1107,59 +1111,98 @@
     return latest
   })
 
-  const communityRepoFilters = $derived.by(() =>
-    selectedCommunityPubkey
-      ? ([
-          {
-            kinds: [GIT_REPO_ANNOUNCEMENT],
-            "#h": [selectedCommunityPubkey],
-            limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
-          },
-        ] as Filter[])
-      : [],
+  const communityRepoFilterPlan = $derived.by(() =>
+    selectedCommunityDefinition
+      ? makeCommunityContentFilterPlan(
+          [
+            makeCommunityRepositoryFilter(selectedCommunityPubkey, {
+              limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+            }),
+          ],
+          selectedCommunityRepoWriterPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
 
   const communityRepoEvents = $derived.by(() =>
-    communityRepoFilters.length
-      ? deriveEventsDesc(deriveEventsById({repository, filters: communityRepoFilters as any}))
+    communityRepoFilterPlan.localFilters.length
+      ? deriveEventsDesc(
+          deriveEventsById({repository, filters: communityRepoFilterPlan.localFilters as any}),
+        )
       : undefined,
   )
 
   let communityRepoLoadKey = ""
   let communityRepoLoadRequestId = 0
   let communityRepoAnnouncementsSettled = $state(false)
+  let communityRepoHistoryIncomplete = $state(false)
+  let communityRepoRetryVersion = $state(0)
   $effect(() => {
+    void communityRepoRetryVersion
     if (
       !$repoListHydrationReadyStore ||
       activeMode !== "community" ||
       activeTab !== "my-repos" ||
       !selectedCommunityPubkey ||
       selectedCommunityListRelays.length === 0 ||
-      communityRepoFilters.length === 0
+      communityRepoFilterPlan.relayFilters.length === 0
     ) {
       communityRepoLoadRequestId += 1
       communityRepoLoadKey = ""
       communityRepoAnnouncementsSettled = true
+      communityRepoHistoryIncomplete =
+        Boolean(selectedCommunityPubkey) && communityRepoFilterPlan.relayFilters.length > 0
       return
     }
 
-    const key = `${selectedCommunityPubkey}:${selectedCommunityListRelays.join(",")}`
+    const relayFilters = communityRepoFilterPlan.relayFilters
+    const localFilters = communityRepoFilterPlan.localFilters
+    const key = JSON.stringify({
+      community: selectedCommunityPubkey,
+      relays: selectedCommunityListRelays,
+      relayFilters,
+      localFilters,
+      retry: communityRepoRetryVersion,
+    })
     if (key === communityRepoLoadKey) return
     communityRepoLoadKey = key
     communityRepoAnnouncementsSettled = false
+    communityRepoHistoryIncomplete = false
     const requestId = ++communityRepoLoadRequestId
-    settleRepoLoad({
-      promise: load({
-        relays: selectedCommunityListRelays,
-        filters: communityRepoFilters as any,
-      }).catch(error => {
-        console.warn("[git/+page] Failed to load community repos", error)
-      }),
-      onSettled: () => {
-        if (requestId === communityRepoLoadRequestId) communityRepoAnnouncementsSettled = true
-      },
+    const controller = new AbortController()
+    const signal = AbortSignal.any([controller.signal, gitPageLoadController.signal])
+    void loadBoundedCommunityHistory({
+      relays: selectedCommunityListRelays,
+      relayFilters,
+      localFilters,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `global-git-community:${selectedCommunityPubkey}`,
+      signal,
     })
+      .then(result => {
+        if (signal.aborted || requestId !== communityRepoLoadRequestId) return
+        communityRepoHistoryIncomplete = !result.complete
+      })
+      .catch(error => {
+        if (signal.aborted || requestId !== communityRepoLoadRequestId) return
+        communityRepoHistoryIncomplete = true
+        console.warn("[git/+page] Failed to load community repos", error)
+      })
+      .finally(() => {
+        if (signal.aborted || requestId !== communityRepoLoadRequestId) return
+        afterRepoLoadSettle(() => {
+          if (requestId === communityRepoLoadRequestId) {
+            communityRepoAnnouncementsSettled = true
+          }
+        })
+      })
+
+    return () => controller.abort()
   })
+
+  const retryCommunityRepoHistory = () => {
+    if (communityRepoAnnouncementsSettled) communityRepoRetryVersion += 1
+  }
 
   const latestCommunityRepos = $derived.by(() => {
     if (!$communityRepoEvents || !selectedCommunityPubkey) return []
@@ -4157,6 +4200,20 @@
               <span>{repoDiscoveryStatusLabel}</span>
             {/if}
           </div>
+        </div>
+      {/if}
+      {#if activeMode === "community" && activeTab === "my-repos" && selectedCommunityPubkey && communityRepoHistoryIncomplete}
+        <div
+          class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground"
+          role="status">
+          <span>Community repository history is incomplete; some repositories may be missing.</span>
+          <button
+            class="btn btn-neutral btn-sm"
+            type="button"
+            disabled={!communityRepoAnnouncementsSettled}
+            onclick={retryCommunityRepoHistory}>
+            {communityRepoAnnouncementsSettled ? "Retry" : "Retrying..."}
+          </button>
         </div>
       {/if}
       {#if activeMode === "community" && !selectedCommunityPubkey}

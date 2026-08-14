@@ -25,6 +25,7 @@
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
   import {
+    makeCommunityContentFilterPlan,
     makeCommunityThreadRepliesFilter,
     makeCommunityThreadsFilter,
   } from "@app/core/community-feeds"
@@ -72,6 +73,26 @@
         })
       : [],
   )
+  const reactionAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reportAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.report,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
@@ -109,17 +130,30 @@
       COMMUNITY_WRITE_TARGETS.thread,
     ),
   )
-  const threadFilter = $derived(
-    communityBootstrapReady && communityPubkey && threadAuthorPubkeys.length
-      ? makeCommunityThreadsFilter(communityPubkey, {authors: threadAuthorPubkeys})
-      : undefined,
+  const threadFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityThreadsFilter(communityPubkey)],
+          threadAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
-  const replyFilter = $derived(
-    communityBootstrapReady && communityPubkey && replyAuthorPubkeys.length
-      ? makeCommunityThreadRepliesFilter(communityPubkey, {authors: replyAuthorPubkeys})
-      : undefined,
+  const replyFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityThreadRepliesFilter(communityPubkey)],
+          replyAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
-  const feedFilters = $derived([threadFilter, replyFilter].filter(Boolean) as Filter[])
+  const feedFilters = $derived([
+    ...threadFilterPlan.localFilters,
+    ...replyFilterPlan.localFilters,
+  ] as Filter[])
+  const feedRelayFilters = $derived([
+    ...threadFilterPlan.relayFilters,
+    ...replyFilterPlan.relayFilters,
+  ] as Filter[])
   const feedKey = $derived.by(() =>
     communityBootstrapReady &&
     communityPubkey &&
@@ -152,8 +186,10 @@
       ownerPubkey: $pubkey || "",
       matches: event =>
         Boolean(
-          readCommunityThreads([event], communityPubkey).length ||
-          readCommunityThreadReply(event, communityPubkey),
+          (threadAuthorPubkeys.includes(event.pubkey) &&
+            readCommunityThreads([event], communityPubkey).length) ||
+          (replyAuthorPubkeys.includes(event.pubkey) &&
+            readCommunityThreadReply(event, communityPubkey)),
         ),
     }),
   )
@@ -226,7 +262,14 @@
   }
 
   const startFeed = (key: string) => {
-    if (!element || !key || feedFilters.length === 0 || $activeCommunityRelays.length === 0) return
+    if (
+      !element ||
+      !key ||
+      feedFilters.length === 0 ||
+      feedRelayFilters.length === 0 ||
+      $activeCommunityRelays.length === 0
+    )
+      return
 
     const hydrationKey = `threads:feed:${key}`
 
@@ -241,11 +284,12 @@
       element,
       relays: $activeCommunityRelays,
       feedFilters,
+      relayFilters: feedRelayFilters,
       subscriptionFilters: feedFilters,
-      onInitialLoad: ({complete, timedOut}) => {
+      onInitialLoad: ({complete}) => {
         if (complete) markCommunityHydrationCompleted(hydrationKey)
         loadingEvents = false
-        feedLoadStatus = complete ? "complete" : timedOut ? "incomplete" : "failed"
+        feedLoadStatus = complete ? "complete" : "incomplete"
       },
       onExhausted: () => {
         markCommunityHydrationCompleted(hydrationKey)
@@ -332,6 +376,8 @@
         activityLiveCovered
         communitySectionName={threadSectionName}
         allowedAuthors={replyAuthorPubkeys}
+        reactionAllowedAuthors={reactionAuthorPubkeys}
+        reportAllowedAuthors={reportAuthorPubkeys}
         readOnly={!canReact}
         operationId={threadProjection.operationIds.get(thread.event.id)}
         event={thread.event} />

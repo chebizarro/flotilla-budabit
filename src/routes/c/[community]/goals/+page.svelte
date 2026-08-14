@@ -125,12 +125,32 @@
         })
       : [],
   )
-  const interactionAuthorPubkeys = $derived(
+  const commentAuthorPubkeys = $derived(
     $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.comment,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reactionAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reportAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
         })
       : [],
@@ -169,12 +189,12 @@
       filters.unshift({kinds: [ZAP_GOAL], authors: goalAuthorPubkeys, "#h": targetingIds})
     }
 
-    if (filters.length > 0 && interactionAuthorPubkeys.length > 0) {
+    if (filters.length > 0 && commentAuthorPubkeys.length > 0) {
       filters.push({
         kinds: [COMMENT],
         "#K": [String(ZAP_GOAL)],
         "#h": [communityPubkey],
-        authors: interactionAuthorPubkeys,
+        authors: commentAuthorPubkeys,
       })
     }
 
@@ -189,7 +209,7 @@
           communityPubkey,
           ...$activeCommunityRelays,
           ...goalAuthorPubkeys,
-          ...interactionAuthorPubkeys,
+          ...commentAuthorPubkeys,
           ...$targetingEvents.map(event => event.id),
         ].join("|")
       : "",
@@ -424,7 +444,9 @@
       scopeH={communityPubkey}
       activityLiveCovered
       communitySectionName={goalSectionName}
-      allowedAuthors={interactionAuthorPubkeys}
+      allowedAuthors={commentAuthorPubkeys}
+      reactionAllowedAuthors={reactionAuthorPubkeys}
+      reportAllowedAuthors={reportAuthorPubkeys}
       readOnly={!canReact}
       operationId={goalProjection.operationIds.get(event.id)}
       event={$state.snapshot(event)} />

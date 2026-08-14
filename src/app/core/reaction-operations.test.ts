@@ -188,6 +188,32 @@ describe("reaction operation projection", () => {
     expect(projection.reactions).toEqual([])
   })
 
+  it("admits optimistic reactions only from allowed reaction authors", () => {
+    const pending = makeEvent({id: "e".repeat(64)})
+    const operation = makeOperation({event: pending})
+
+    const rejected = projectReactionOperations({
+      reactions: [],
+      operations: [operation],
+      targetEvent,
+      ownerPubkey: owner,
+      relays: [relay],
+      allowedAuthors: [otherAuthor],
+    })
+    const admitted = projectReactionOperations({
+      reactions: [],
+      operations: [operation],
+      targetEvent,
+      ownerPubkey: owner,
+      relays: [relay],
+      allowedAuthors: [owner],
+    })
+
+    expect(rejected.reactions).toEqual([])
+    expect(rejected.pendingSemanticKeys.size).toBe(0)
+    expect(admitted.reactions).toEqual([pending])
+  })
+
   it("projects a pending addition across an addressable event replacement", () => {
     const addressPubkey = "d".repeat(64)
     const address = `31922:${addressPubkey}:calendar-event`

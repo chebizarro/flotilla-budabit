@@ -94,6 +94,29 @@ const makeAssociation = ({
   })
 
 describe("repo community context", () => {
+  it("endorses direct community repos only for current repository writers", () => {
+    const definition = makeDefinition()
+    const tags = [
+      ["d", "demo"],
+      ["h", communityPubkey],
+    ]
+    const granteeContext = getPrimaryRepoCommunityContext({
+      repoEvent: makeRepo({pubkey: granteePubkey, tags}),
+      definitions: [definition],
+      profileListEvents: [makeProfileList()],
+    })
+    const outsiderContext = getPrimaryRepoCommunityContext({
+      repoEvent: makeRepo({pubkey: outsiderPubkey, tags}),
+      definitions: [definition],
+      profileListEvents: [makeProfileList()],
+    })
+
+    expect(granteeContext).toMatchObject({validation: "valid", communityPubkey})
+    expect(isEndorsedRepoCommunityContext(granteeContext)).toBe(true)
+    expect(outsiderContext).toMatchObject({validation: "weak", communityPubkey})
+    expect(isEndorsedRepoCommunityContext(outsiderContext)).toBe(false)
+  })
+
   it("strongly validates repo associations from community admins and repo moderators", () => {
     const definition = makeDefinition()
     const repoEvent = makeRepo()

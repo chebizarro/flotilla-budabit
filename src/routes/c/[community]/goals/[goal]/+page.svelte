@@ -152,12 +152,32 @@
         })
       : [],
   )
-  const interactionAuthorPubkeys = $derived(
+  const commentAuthorPubkeys = $derived(
     $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.comment,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reactionAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reportAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
         })
       : [],
@@ -229,14 +249,14 @@
     communityBootstrapReady &&
       approvedGoal &&
       !approvedGoalCensorReason &&
-      interactionAuthorPubkeys.length
+      commentAuthorPubkeys.length
       ? [
           {
             kinds: [COMMENT],
             "#E": [approvedGoal.id],
             "#K": [String(ZAP_GOAL)],
             "#h": [communityPubkey],
-            authors: interactionAuthorPubkeys,
+            authors: commentAuthorPubkeys,
           },
         ]
       : [],
@@ -589,7 +609,9 @@
                   publishRelays={$activeCommunityPublishRelays}
                   scopeH={communityPubkey}
                   communitySectionName={goalSectionName}
-                  allowedAuthors={interactionAuthorPubkeys}
+                  allowedAuthors={commentAuthorPubkeys}
+                  reactionAllowedAuthors={reactionAuthorPubkeys}
+                  reportAllowedAuthors={reportAuthorPubkeys}
                   readOnly={!canReact} />
               </div>
             {/if}
@@ -632,7 +654,9 @@
                 interactionRelays={$activeCommunityRelays}
                 actionRelays={$activeCommunityPublishRelays}
                 profileRelays={$activeCommunityRelays}
-                {interactionAuthorPubkeys}
+                allowedAuthors={commentAuthorPubkeys}
+                reactionAllowedAuthors={reactionAuthorPubkeys}
+                reportAllowedAuthors={reportAuthorPubkeys}
                 scopeH={communityPubkey}
                 communitySectionName={commentSectionName}
                 canEdit={canEditReply}

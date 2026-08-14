@@ -18,6 +18,23 @@ const replaceableFilters = (id: string): Filter[] => [
   {...BASE_FILTER, "#a": [`30023:author:${id}`]},
 ]
 
+const makeActivityEvent = ({
+  id = "reply-1",
+  pubkey = "a".repeat(64),
+  target = "event-1",
+  scopeH = "",
+  createdAt = 900,
+} = {}): TrustedEvent =>
+  ({
+    id,
+    pubkey,
+    created_at: createdAt,
+    kind: 1111,
+    tags: [["K", "1"], ["E", target], ...(scopeH ? [["h", scopeH]] : [])],
+    content: "",
+    sig: "sig",
+  }) as TrustedEvent
+
 const makeRegistration = (
   filters: Filter[],
   overrides: Partial<EventActivityRegistration> = {},
@@ -135,10 +152,155 @@ describe("event activity coordinator", () => {
     expect(history).toMatchObject({autoClose: true, lifetime: "finite", priority: -100})
     expect(history.filters).toEqual(filters.map(filter => ({...filter, until: 995})))
 
-    const event = {id: "reply-1"} as TrustedEvent
+    const event = makeActivityEvent()
     history.onEvent(event, "wss://one.example/")
     expect(track).toHaveBeenCalledWith("reply-1", "wss://one.example/")
     expect(publish).toHaveBeenCalledWith(event)
+    io.close()
+  })
+
+  it("uses broad scoped wire filters while rejecting unauthorized activity", async () => {
+    vi.useFakeTimers()
+    const {calls, io, publish, track} = makeHarness()
+    const scopeH = "b".repeat(64)
+    const allowedAuthors = Array.from({length: 1001}, (_, index) =>
+      index.toString(16).padStart(64, "0"),
+    )
+    const allowedAuthor = allowedAuthors[1000]
+    const relayFilters = [{...BASE_FILTER, "#h": [scopeH], "#E": ["event-1"]}]
+    const filters = relayFilters.map(filter => ({...filter, authors: allowedAuthors}))
+
+    io.register(
+      makeRegistration(filters, {
+        scopeH,
+        relayFilters,
+      }),
+    )
+    await flushBatch()
+
+    const [history] = getHistoryCalls(calls)
+    const [live] = getLiveCalls(calls)
+    expect(history.filters[0]).toMatchObject({
+      kinds: [1111],
+      "#K": ["1"],
+      "#h": [scopeH],
+      "#E": ["event-1"],
+    })
+    expect(history.filters[0]).not.toHaveProperty("authors")
+    expect(live.filters[0]).not.toHaveProperty("authors")
+
+    history.onEvent(
+      makeActivityEvent({id: "outsider", pubkey: "f".repeat(64), scopeH}),
+      "wss://one.example/",
+    )
+    history.onEvent(
+      makeActivityEvent({id: "wrong-scope", pubkey: allowedAuthor, scopeH: "c".repeat(64)}),
+      "wss://one.example/",
+    )
+    expect(track).not.toHaveBeenCalled()
+    expect(publish).not.toHaveBeenCalled()
+
+    const admitted = makeActivityEvent({pubkey: allowedAuthor, scopeH})
+    history.onEvent(admitted, "wss://one.example/")
+    expect(track).toHaveBeenCalledWith(admitted.id, "wss://one.example/")
+    expect(publish).toHaveBeenCalledWith(admitted)
+    io.close()
+  })
+
+  it("retains author filters on the wire for generic activity", async () => {
+    vi.useFakeTimers()
+    const {calls, io} = makeHarness()
+    const authors = ["a".repeat(64)]
+
+    io.register(makeRegistration([{...BASE_FILTER, authors, "#E": ["event-1"]}]))
+    await flushBatch()
+
+    expect(getHistoryCalls(calls)[0].filters[0].authors).toEqual(authors)
+    expect(getLiveCalls(calls)[0].filters[0].authors).toEqual(authors)
+    io.close()
+  })
+
+  it("paginates broad history by raw events and loads exact deletes for admitted comments", async () => {
+    vi.useFakeTimers()
+    const scopeH = "b".repeat(64)
+    const relay = "wss://one.example/"
+    const allowedAuthor = "c".repeat(64)
+    const outsiderPage = Array.from({length: 100}, (_, index) =>
+      makeActivityEvent({
+        id: index.toString(16).padStart(64, "0"),
+        pubkey: "d".repeat(64),
+        scopeH,
+        createdAt: 995 - index,
+      }),
+    )
+    const admitted = makeActivityEvent({
+      id: "e".repeat(64),
+      pubkey: allowedAuthor,
+      scopeH,
+      createdAt: 800,
+    })
+    const calls: EventActivityRequestOptions[] = []
+    const publish = vi.fn()
+    const track = vi.fn()
+    const historyResult = vi.fn()
+    const request = vi.fn((options: EventActivityRequestOptions) => {
+      calls.push(options)
+      if (options.lifetime === "live") {
+        return new Promise<unknown>(resolve => {
+          options.signal.addEventListener("abort", () => resolve([]), {once: true})
+        })
+      }
+
+      const isDeleteLoad = options.filters.every(filter => filter.kinds?.includes(5))
+      const events = isDeleteLoad
+        ? []
+        : options.filters[0].until === 995
+          ? outsiderPage
+          : [admitted]
+      for (const event of events) options.onEvent(event, relay)
+      options.onEose?.(relay)
+      return Promise.resolve(events)
+    })
+    const io = createEventActivityIO({
+      request,
+      publish,
+      track,
+      now: () => 1_000_000,
+      batchMs: BATCH_MS,
+    })
+    const relayFilters = [{...BASE_FILTER, "#h": [scopeH], "#E": ["event-1"]}]
+    const localFilters = relayFilters.map(filter => ({...filter, authors: [allowedAuthor]}))
+
+    io.register(
+      makeRegistration(localFilters, {
+        relays: [relay],
+        scopeH,
+        relayFilters,
+        onHistoryResult: historyResult,
+      }),
+    )
+    await flushBatch()
+    for (let index = 0; index < 10; index += 1) await Promise.resolve()
+
+    const historyCalls = getHistoryCalls(calls)
+    expect(historyCalls).toHaveLength(3)
+    expect(historyCalls[0].filters[0]).toMatchObject({limit: 100, until: 995})
+    expect(historyCalls[0].filters[0]).not.toHaveProperty("authors")
+    expect(historyCalls[1].filters[0]).toMatchObject({limit: 100, until: 895})
+    expect(historyCalls[2].filters[0]).toMatchObject({
+      kinds: [5],
+      authors: [allowedAuthor],
+      "#e": [admitted.id],
+    })
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish).toHaveBeenCalledWith(admitted)
+    expect(track).toHaveBeenCalledWith(admitted.id, relay)
+    expect(historyResult).toHaveBeenCalledWith({
+      events: [admitted],
+      complete: false,
+      timedOut: false,
+      saturated: true,
+    })
     io.close()
   })
 

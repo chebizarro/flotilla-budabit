@@ -44,7 +44,9 @@
     interactionRelays?: string[]
     actionRelays?: string[]
     profileRelays?: string[]
-    interactionAuthorPubkeys?: string[]
+    allowedAuthors?: string[]
+    reactionAllowedAuthors?: string[]
+    reportAllowedAuthors?: string[]
     scopeH?: string
     communitySectionName?: string
     replyParent?: TrustedEvent
@@ -64,7 +66,9 @@
     interactionRelays = [],
     actionRelays = undefined,
     profileRelays = [],
-    interactionAuthorPubkeys = undefined,
+    allowedAuthors = undefined,
+    reactionAllowedAuthors = undefined,
+    reportAllowedAuthors = undefined,
     scopeH = "",
     communitySectionName = "",
     replyParent = undefined,
@@ -314,7 +318,9 @@
         {url}
         relays={relayTargets}
         operationRelays={actionRelayTargets}
-        allowedAuthors={interactionAuthorPubkeys}
+        {allowedAuthors}
+        {reactionAllowedAuthors}
+        {reportAllowedAuthors}
         {scopeH}
         {event}
         readOnly={effectiveReadOnly}

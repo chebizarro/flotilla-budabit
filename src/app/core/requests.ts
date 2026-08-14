@@ -11,7 +11,7 @@ import {
 } from "@welshman/util"
 import type {TrustedEvent, Filter, List} from "@welshman/util"
 import {feedFromFilters, makeRelayFeed, makeIntersectionFeed} from "@welshman/feeds"
-import {load, request, Tracker} from "@welshman/net"
+import {load, request, Tracker, type RequestOptions} from "@welshman/net"
 import {repository, makeFeedController, loadRelay, tracker} from "@welshman/app"
 import {createScroller} from "@lib/html"
 import {daysBetween} from "@lib/util"
@@ -29,6 +29,10 @@ import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 const INITIAL_FEED_LOAD_TIMEOUT = 3000
 const CALENDAR_REQUEST_TIMEOUT = 3000
 const MAX_EMPTY_ADMISSION_SCAN_PAGES = 3
+const COMMUNITY_HISTORY_PAGE_SIZE = 100
+const COMMUNITY_HISTORY_MAX_PAGES = 3
+const COMMUNITY_HISTORY_TIMEOUT_MS = 30_000
+const COMMUNITY_HISTORY_TAG_CHUNK_SIZE = 100
 
 const filterIncludesKind = (filter: Filter, kind: number) =>
   filter.kinds
@@ -58,6 +62,297 @@ export const makeCalendarTimeBasedFilters = (
 }
 
 export type InitialLoadResult = {complete: boolean; timedOut: boolean; saturated?: boolean}
+
+export type BoundedCommunityHistoryResult = {
+  events: TrustedEvent[]
+  complete: boolean
+  timedOut: boolean
+  saturated: boolean
+}
+
+export type BoundedCommunityHistoryOptions = {
+  relays: string[]
+  relayFilters: Filter[]
+  localFilters: Filter[]
+  signal?: AbortSignal
+  priority?: number
+  owner?: string
+  pageSize?: number
+  maxPages?: number
+  timeoutMs?: number
+}
+
+export const makeSameAuthorDeleteFilters = (events: TrustedEvent[]): Filter[] => {
+  const idsByAuthor = new Map<string, Set<string>>()
+
+  for (const event of events) {
+    if (!event.id || !event.pubkey) continue
+
+    const ids = idsByAuthor.get(event.pubkey) || new Set<string>()
+    ids.add(event.id)
+    idsByAuthor.set(event.pubkey, ids)
+  }
+
+  return Array.from(idsByAuthor).flatMap(([author, ids]) => {
+    const values = Array.from(ids)
+    const filters: Filter[] = []
+
+    for (let index = 0; index < values.length; index += COMMUNITY_HISTORY_TAG_CHUNK_SIZE) {
+      filters.push({
+        kinds: [DELETE],
+        authors: [author],
+        "#e": values.slice(index, index + COMMUNITY_HISTORY_TAG_CHUNK_SIZE),
+      })
+    }
+
+    return filters
+  })
+}
+
+type CommunityHistoryRequest = (options: RequestOptions) => Promise<unknown>
+
+type BoundedCommunityHistoryDependencies = {
+  request: CommunityHistoryRequest
+  publish: (event: TrustedEvent) => void
+  track: (eventId: string, relay: string) => void
+  setTimer?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>
+  clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+}
+
+type CommunityHistoryFilterState = {
+  filter: Filter
+  cursor?: number
+  pages: number
+}
+
+type CommunityHistoryPageResult = {
+  events: TrustedEvent[]
+  complete: boolean
+  timedOut: boolean
+}
+
+const cloneFilter = (filter: Filter): Filter =>
+  Object.fromEntries(
+    Object.entries(filter).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]),
+  ) as Filter
+
+const makeCommunityHistoryPageFilter = (
+  state: CommunityHistoryFilterState,
+  pageSize: number,
+): Filter => ({
+  ...cloneFilter(state.filter),
+  limit: pageSize,
+  ...(state.cursor === undefined ? {} : {until: state.cursor}),
+})
+
+export const createBoundedCommunityHistoryLoader = (
+  dependencies: BoundedCommunityHistoryDependencies,
+) => {
+  const setTimer = dependencies.setTimer || ((callback, delay) => setTimeout(callback, delay))
+  const clearTimer = dependencies.clearTimer || (timer => clearTimeout(timer))
+
+  return async ({
+    relays,
+    relayFilters,
+    localFilters,
+    signal,
+    priority,
+    owner,
+    pageSize = COMMUNITY_HISTORY_PAGE_SIZE,
+    maxPages = COMMUNITY_HISTORY_MAX_PAGES,
+    timeoutMs = COMMUNITY_HISTORY_TIMEOUT_MS,
+  }: BoundedCommunityHistoryOptions): Promise<BoundedCommunityHistoryResult> => {
+    if (!Number.isSafeInteger(pageSize) || pageSize <= 0) {
+      throw new Error("Community history page size must be a positive integer")
+    }
+    if (!Number.isSafeInteger(maxPages) || maxPages <= 0) {
+      throw new Error("Community history page budget must be a positive integer")
+    }
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("Community history timeout must be a positive number")
+    }
+
+    if (localFilters.length === 0 || relayFilters.length === 0) {
+      return {events: [], complete: true, timedOut: false, saturated: false}
+    }
+
+    const loadRelays = Array.from(new Set(relays.filter(Boolean)))
+    if (loadRelays.length === 0 || signal?.aborted) {
+      return {events: [], complete: false, timedOut: false, saturated: false}
+    }
+
+    const admittedEvents = new Map<string, TrustedEvent>()
+    const trackedEventRelays = new Set<string>()
+
+    const admitEvent = (event: TrustedEvent, relay: string) => {
+      if (!matchFilters(localFilters, event)) return
+
+      const relayKey = `${event.id}:${relay}`
+      if (!trackedEventRelays.has(relayKey)) {
+        trackedEventRelays.add(relayKey)
+        dependencies.track(event.id, relay)
+      }
+      if (!admittedEvents.has(event.id)) {
+        admittedEvents.set(event.id, event)
+        dependencies.publish(event)
+      }
+    }
+
+    const requestPage = async (
+      relay: string,
+      filters: Filter[],
+    ): Promise<CommunityHistoryPageResult> => {
+      const controller = new AbortController()
+      const requestSignal = signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal
+      const eventsById = new Map<string, TrustedEvent>()
+      let sawEose = false
+      let interrupted = false
+      let timedOut = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let resolveTermination: (() => void) | undefined
+
+      const termination = new Promise<void>(resolve => {
+        resolveTermination = resolve
+      })
+      const terminate = () => {
+        controller.abort()
+        resolveTermination?.()
+      }
+      const onCallerAbort = () => terminate()
+      const receiveEvent = (event: TrustedEvent, eventRelay: string) => {
+        if (controller.signal.aborted || eventsById.has(event.id)) return
+        eventsById.set(event.id, event)
+        admitEvent(event, eventRelay || relay)
+      }
+
+      signal?.addEventListener("abort", onCallerAbort, {once: true})
+      timer = setTimer(() => {
+        timedOut = true
+        terminate()
+      }, timeoutMs)
+
+      const pending = Promise.resolve()
+        .then(() =>
+          dependencies.request({
+            relays: [relay],
+            filters,
+            autoClose: true,
+            lifetime: "finite",
+            priority,
+            owner,
+            signal: requestSignal,
+            onEvent: receiveEvent,
+            onDuplicate: receiveEvent,
+            onEose: () => {
+              sawEose = true
+            },
+            onClosed: () => {
+              interrupted = true
+              terminate()
+            },
+            onDisconnect: () => {
+              interrupted = true
+              terminate()
+            },
+          }),
+        )
+        .then(
+          events => {
+            if (Array.isArray(events)) {
+              for (const event of events) receiveEvent(event as TrustedEvent, relay)
+            }
+          },
+          () => {
+            if (!controller.signal.aborted) interrupted = true
+          },
+        )
+
+      await Promise.race([pending, termination])
+
+      if (timer) clearTimer(timer)
+      signal?.removeEventListener("abort", onCallerAbort)
+
+      return {
+        events: Array.from(eventsById.values()),
+        complete: sawEose && !interrupted && !timedOut && !signal?.aborted,
+        timedOut,
+      }
+    }
+
+    const scanRelay = async (relay: string) => {
+      let active: CommunityHistoryFilterState[] = relayFilters.map(
+        filter =>
+          ({
+            filter: cloneFilter(filter),
+            cursor: filter.until,
+            pages: 0,
+          }) satisfies CommunityHistoryFilterState,
+      )
+      let complete = true
+      let timedOut = false
+      let saturated = false
+
+      while (active.length > 0 && !signal?.aborted) {
+        const pageFilters = active.map(state => makeCommunityHistoryPageFilter(state, pageSize))
+        const page = await requestPage(relay, pageFilters)
+        timedOut ||= page.timedOut
+
+        if (!page.complete) {
+          complete = false
+          break
+        }
+
+        const nextActive: CommunityHistoryFilterState[] = []
+        for (let index = 0; index < active.length; index += 1) {
+          const state = active[index]
+          const pageFilter = pageFilters[index]
+          const rawEvents = page.events.filter(event => matchFilters([pageFilter], event))
+
+          state.pages += 1
+          if (rawEvents.length < pageSize) continue
+
+          // `until` is inclusive and Nostr has no secondary cursor. A full page
+          // can hide more events at its oldest timestamp, so it is never proof
+          // of complete history even when older pages are still useful to scan.
+          saturated = true
+          complete = false
+          if (state.pages >= maxPages) continue
+
+          const oldestTimestamp = Math.min(...rawEvents.map(event => event.created_at))
+          if (!Number.isSafeInteger(oldestTimestamp)) continue
+
+          const nextCursor = oldestTimestamp - 1
+          if (state.filter.since !== undefined && nextCursor < state.filter.since) continue
+
+          state.cursor = nextCursor
+          nextActive.push(state)
+        }
+
+        active = nextActive
+      }
+
+      if (signal?.aborted) complete = false
+      return {complete, timedOut, saturated}
+    }
+
+    const relayResults = await Promise.all(loadRelays.map(scanRelay))
+
+    return {
+      events: Array.from(admittedEvents.values()),
+      complete: relayResults.every(result => result.complete),
+      timedOut: relayResults.some(result => result.timedOut),
+      saturated: relayResults.some(result => result.saturated),
+    }
+  }
+}
+
+export const loadBoundedCommunityHistory = createBoundedCommunityHistoryLoader({
+  request: options => request(options),
+  publish: event => repository.publish(event),
+  track: (eventId, relay) => tracker.addRelay(eventId, relay),
+})
 
 const waitForSettled = (promise: Promise<unknown>, timeoutMs: number) =>
   Promise.race<InitialLoadResult>([

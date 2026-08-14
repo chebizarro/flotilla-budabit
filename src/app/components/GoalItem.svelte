@@ -25,6 +25,8 @@
     communitySectionName?: string
     readOnly?: boolean
     allowedAuthors?: string[]
+    reactionAllowedAuthors?: string[]
+    reportAllowedAuthors?: string[]
     showRoom?: boolean
     activityLiveCovered?: boolean
     operationId?: string
@@ -39,6 +41,8 @@
     communitySectionName = "",
     readOnly = false,
     allowedAuthors = undefined,
+    reactionAllowedAuthors = undefined,
+    reportAllowedAuthors = undefined,
     showRoom = false,
     activityLiveCovered = false,
     operationId = undefined,
@@ -101,6 +105,8 @@
             {communitySectionName}
             {readOnly}
             {allowedAuthors}
+            {reactionAllowedAuthors}
+            {reportAllowedAuthors}
             {activityLiveCovered}
             {event} />
         {/if}

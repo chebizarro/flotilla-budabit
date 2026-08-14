@@ -1,17 +1,15 @@
 <script lang="ts">
   import cx from "classnames"
-  import {onMount} from "svelte"
   import type {Snippet} from "svelte"
   import {groupBy, map, sum, uniq, uniqBy, batch, displayList} from "@welshman/lib"
   import {
     REPORT,
     REACTION,
-    ZAP_RESPONSE,
     getReplyFilters,
     getEmojiTags,
     fromMsats,
     getTag,
-    DELETE,
+    matchFilters,
     normalizeRelayUrl,
   } from "@welshman/util"
   import type {TrustedEvent, EventContent, Filter, Zap} from "@welshman/util"
@@ -28,7 +26,16 @@
   import Icon from "@lib/components/Icon.svelte"
   import Reaction from "@app/components/Reaction.svelte"
   import ReportDetails from "@app/components/ReportDetails.svelte"
-  import {REACTION_KINDS} from "@app/core/state"
+  import {
+    makeCommunityScopedFilterPlan,
+    type CommunityContentFilterPlan,
+  } from "@app/core/community-feeds"
+  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {
+    loadBoundedCommunityHistory,
+    makeSameAuthorDeleteFilters,
+    type BoundedCommunityHistoryResult,
+  } from "@app/core/requests"
   import {pushModal} from "@app/util/modal"
   import {getZapReceiptFilters, getZapRelays} from "@app/util/zaps"
   import {publicationOperations} from "@app/core/publication-operations"
@@ -54,6 +61,8 @@
     noTooltip?: boolean
     readOnly?: boolean
     allowedAuthors?: string[]
+    reactionAllowedAuthors?: string[]
+    reportAllowedAuthors?: string[]
     children?: Snippet
   }
 
@@ -72,6 +81,8 @@
     noTooltip = false,
     readOnly = false,
     allowedAuthors = undefined,
+    reactionAllowedAuthors = undefined,
+    reportAllowedAuthors = undefined,
     children,
   }: Props = $props()
 
@@ -90,24 +101,9 @@
 
   const relaySet = $derived.by(() => new Set(relays.map(normalizeRelay).filter(Boolean)))
 
-  const hasScopeH = $derived.by(() => Boolean(scopeH))
   const effectiveZapScopeH = $derived(zapScopeH || scopeH)
-  const allowedAuthorSet = $derived.by(() =>
-    allowedAuthors
-      ? new Set(allowedAuthors.map(author => author.toLowerCase()).filter(Boolean))
-      : undefined,
-  )
-  const nonZapReactionKinds = REACTION_KINDS.filter(kind => kind !== ZAP_RESPONSE)
-
-  const withScopeH = (filters: Filter[]) =>
-    hasScopeH ? filters.map(filter => ({...filter, "#h": [scopeH]})) : filters
-
-  const withAllowedAuthors = (filters: Filter[]) =>
-    allowedAuthors === undefined
-      ? filters
-      : allowedAuthors.length > 0
-        ? filters.map(filter => ({...filter, authors: allowedAuthors}))
-        : []
+  const effectiveReactionAllowedAuthors = $derived(reactionAllowedAuthors ?? allowedAuthors)
+  const effectiveReportAllowedAuthors = $derived(reportAllowedAuthors ?? allowedAuthors)
 
   const matchesRelayScope = (event: TrustedEvent) => {
     if (relaySet.size === 0) return true
@@ -120,11 +116,6 @@
 
     return false
   }
-
-  const matchesScopeH = (event: TrustedEvent) => !scopeH || getTag("h", event.tags)?.[1] === scopeH
-
-  const matchesAllowedAuthor = (event: TrustedEvent) =>
-    !allowedAuthorSet || allowedAuthorSet.has(event.pubkey.toLowerCase())
 
   const getRelayScopedEvents = (
     allEvents: TrustedEvent[],
@@ -148,6 +139,20 @@
   const engagementFilters = getReplyFilters([event], {
     kinds: [REPORT, REACTION],
   }) as Filter[]
+  const reactionAdmissionFilterPlan = $derived.by(() =>
+    makeCommunityScopedFilterPlan(
+      getReplyFilters([event], {kinds: [REACTION]}) as Filter[],
+      scopeH,
+      effectiveReactionAllowedAuthors,
+    ),
+  )
+  const reportAdmissionFilterPlan = $derived.by(() =>
+    makeCommunityScopedFilterPlan(
+      getReplyFilters([event], {kinds: [REPORT]}) as Filter[],
+      scopeH,
+      effectiveReportAllowedAuthors,
+    ),
+  )
   const engagements = deriveArray(deriveEventsById({repository, filters: engagementFilters}))
   const engagementsByRelay = deriveEventsByIdByUrl({
     repository,
@@ -166,13 +171,14 @@
 
   const scopedReports = $derived.by(() =>
     getRelayScopedEvents($engagements, $engagementsByRelay).filter(
-      event => event.kind === REPORT && matchesScopeH(event) && matchesAllowedAuthor(event),
+      event => event.kind === REPORT && matchFilters(reportAdmissionFilterPlan.localFilters, event),
     ),
   )
 
   const canonicalReactions = $derived.by(() =>
     getRelayScopedEvents($engagements, $engagementsByRelay).filter(
-      event => event.kind === REACTION && matchesScopeH(event) && matchesAllowedAuthor(event),
+      event =>
+        event.kind === REACTION && matchFilters(reactionAdmissionFilterPlan.localFilters, event),
     ),
   )
   const reactionProjection = $derived.by(() =>
@@ -183,7 +189,7 @@
       ownerPubkey: $pubkey || "",
       relays: operationRelays,
       scopeH,
-      allowedAuthors,
+      allowedAuthors: effectiveReactionAllowedAuthors,
     }),
   )
   const scopedReactions = $derived(reactionProjection.reactions)
@@ -211,7 +217,13 @@
     }
   }
 
-  const onReportClick = () => pushModal(ReportDetails, {url: url || loadRelays[0] || "", event})
+  const onReportClick = () =>
+    pushModal(ReportDetails, {
+      url: url || loadRelays[0] || "",
+      event,
+      scopeH,
+      allowedAuthors: effectiveReportAllowedAuthors,
+    })
 
   const reportReasons = $derived(uniq(map(e => getTag("e", e.tags)?.[2], scopedReports)))
 
@@ -225,62 +237,289 @@
   )
 
   const groupedZaps = $derived(groupBy(e => getReactionKey(e.request), scopedZaps))
-  const reactionLoadFilters = $derived.by(() => {
-    if (allowedAuthors === undefined) {
-      return withScopeH(getReplyFilters([event], {kinds: nonZapReactionKinds}) as Filter[])
-    }
-
-    const filters: Filter[] = withAllowedAuthors(
-      getReplyFilters([event], {kinds: nonZapReactionKinds}) as Filter[],
-    )
-
-    return withScopeH(filters)
-  })
+  const reactionLoadFilterPlan = $derived.by(() =>
+    makeCommunityScopedFilterPlan(
+      getReplyFilters([event], {kinds: [REACTION]}) as Filter[],
+      scopeH,
+      effectiveReactionAllowedAuthors,
+    ),
+  )
+  const reportLoadFilterPlan = $derived.by(() =>
+    makeCommunityScopedFilterPlan(
+      getReplyFilters([event], {kinds: [REPORT]}) as Filter[],
+      scopeH,
+      effectiveReportAllowedAuthors,
+    ),
+  )
 
   const zapLoadRelays = $derived.by(() =>
     getZapRelays({event, relayHints: relays, scopeH: effectiveZapScopeH, strict: strictZapRelays}),
   )
   const zapLoadFilters = $derived.by(() => getZapReceiptFilters({event}))
 
-  const makeDeleteLoadFilters = (events: TrustedEvent[]) =>
-    withScopeH(withAllowedAuthors(getReplyFilters(events, {kinds: [DELETE]}) as Filter[]))
+  const loadCommunityEngagementHistory = async (
+    currentRelays: string[],
+    filterPlan: CommunityContentFilterPlan,
+    signal: AbortSignal,
+    owner: string,
+  ): Promise<BoundedCommunityHistoryResult> => {
+    const result = await loadBoundedCommunityHistory({
+      relays: currentRelays,
+      relayFilters: filterPlan.relayFilters,
+      localFilters: filterPlan.localFilters,
+      signal,
+      priority: RELAY_REQUEST_PRIORITY.background,
+      owner,
+    })
+    const deleteFilters = makeSameAuthorDeleteFilters(result.events)
+    if (deleteFilters.length === 0 || signal.aborted) return result
 
-  onMount(() => {
+    const deleteResult = await loadBoundedCommunityHistory({
+      relays: currentRelays,
+      relayFilters: deleteFilters,
+      localFilters: deleteFilters,
+      signal,
+      priority: RELAY_REQUEST_PRIORITY.background,
+      owner: `${owner}:deletes`,
+    })
+
+    return {
+      events: result.events,
+      complete: result.complete && deleteResult.complete,
+      timedOut: result.timedOut || deleteResult.timedOut,
+      saturated: result.saturated || deleteResult.saturated,
+    }
+  }
+
+  let reactionLoadIncomplete = $state(false)
+  let cachedReactionDeleteHistoryIncomplete = $state(false)
+  let reportLoadIncomplete = $state(false)
+  let cachedReportDeleteHistoryIncomplete = $state(false)
+  const reactionHistoryIncomplete = $derived(
+    reactionLoadIncomplete || cachedReactionDeleteHistoryIncomplete,
+  )
+  const reportHistoryIncomplete = $derived(
+    reportLoadIncomplete || cachedReportDeleteHistoryIncomplete,
+  )
+
+  $effect(() => {
+    const currentRelays = loadRelays
+    const filterPlan = reactionLoadFilterPlan
+
+    if (filterPlan.relayFilters.length === 0) {
+      reactionLoadIncomplete = false
+      return
+    }
+    if (currentRelays.length === 0) {
+      reactionLoadIncomplete = Boolean(scopeH)
+      return
+    }
+
+    const controller = new AbortController()
+    reactionLoadIncomplete = false
+
+    if (scopeH) {
+      void loadCommunityEngagementHistory(
+        currentRelays,
+        filterPlan,
+        controller.signal,
+        `reaction-summary:${event.id}`,
+      )
+        .then(result => {
+          if (controller.signal.aborted) return
+          reactionLoadIncomplete = !result.complete
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) reactionLoadIncomplete = true
+        })
+
+      return () => controller.abort()
+    }
+
+    void load({
+      relays: currentRelays,
+      signal: controller.signal,
+      filters: filterPlan.relayFilters,
+      onEvent: batch(300, (events: TrustedEvent[]) => {
+        const admittedEvents = events.filter(event => matchFilters(filterPlan.localFilters, event))
+        const deleteFilters = makeSameAuthorDeleteFilters(admittedEvents)
+        if (deleteFilters.length === 0) return
+
+        void load({
+          relays: currentRelays,
+          signal: controller.signal,
+          filters: deleteFilters,
+        })
+      }),
+    })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    const currentRelays = loadRelays
+    const cachedReactions = canonicalReactions
+    const deleteFilters = makeSameAuthorDeleteFilters(cachedReactions)
+
+    if (deleteFilters.length === 0) {
+      cachedReactionDeleteHistoryIncomplete = false
+      return
+    }
+    if (currentRelays.length === 0) {
+      cachedReactionDeleteHistoryIncomplete = Boolean(scopeH)
+      return
+    }
+
+    const controller = new AbortController()
+    cachedReactionDeleteHistoryIncomplete = false
+
+    if (scopeH) {
+      void loadBoundedCommunityHistory({
+        relays: currentRelays,
+        relayFilters: deleteFilters,
+        localFilters: deleteFilters,
+        signal: controller.signal,
+        priority: RELAY_REQUEST_PRIORITY.background,
+        owner: `reaction-summary:${event.id}:cached-deletes`,
+      })
+        .then(result => {
+          if (!controller.signal.aborted) {
+            cachedReactionDeleteHistoryIncomplete = !result.complete
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) cachedReactionDeleteHistoryIncomplete = true
+        })
+
+      return () => controller.abort()
+    }
+
+    void load({
+      relays: currentRelays,
+      signal: controller.signal,
+      filters: deleteFilters,
+    })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    const currentRelays = loadRelays
+    const filterPlan = reportLoadFilterPlan
+
+    if (filterPlan.relayFilters.length === 0) {
+      reportLoadIncomplete = false
+      return
+    }
+    if (currentRelays.length === 0) {
+      reportLoadIncomplete = Boolean(scopeH)
+      return
+    }
+
+    const controller = new AbortController()
+    reportLoadIncomplete = false
+
+    if (scopeH) {
+      void loadCommunityEngagementHistory(
+        currentRelays,
+        filterPlan,
+        controller.signal,
+        `report-summary:${event.id}`,
+      )
+        .then(result => {
+          if (!controller.signal.aborted) reportLoadIncomplete = !result.complete
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) reportLoadIncomplete = true
+        })
+
+      return () => controller.abort()
+    }
+
+    void load({
+      relays: currentRelays,
+      signal: controller.signal,
+      filters: filterPlan.relayFilters,
+      onEvent: batch(300, (events: TrustedEvent[]) => {
+        const admittedEvents = events.filter(event => matchFilters(filterPlan.localFilters, event))
+        const deleteFilters = makeSameAuthorDeleteFilters(admittedEvents)
+        if (deleteFilters.length === 0) return
+
+        void load({relays: currentRelays, signal: controller.signal, filters: deleteFilters})
+      }),
+    })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    const currentRelays = loadRelays
+    const cachedReports = scopedReports
+    const deleteFilters = makeSameAuthorDeleteFilters(cachedReports)
+
+    if (deleteFilters.length === 0) {
+      cachedReportDeleteHistoryIncomplete = false
+      return
+    }
+    if (currentRelays.length === 0) {
+      cachedReportDeleteHistoryIncomplete = Boolean(scopeH)
+      return
+    }
+
+    const controller = new AbortController()
+    cachedReportDeleteHistoryIncomplete = false
+
+    if (scopeH) {
+      void loadBoundedCommunityHistory({
+        relays: currentRelays,
+        relayFilters: deleteFilters,
+        localFilters: deleteFilters,
+        signal: controller.signal,
+        priority: RELAY_REQUEST_PRIORITY.background,
+        owner: `report-summary:${event.id}:cached-deletes`,
+      })
+        .then(result => {
+          if (!controller.signal.aborted) cachedReportDeleteHistoryIncomplete = !result.complete
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) cachedReportDeleteHistoryIncomplete = true
+        })
+
+      return () => controller.abort()
+    }
+
+    void load({relays: currentRelays, signal: controller.signal, filters: deleteFilters})
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    const currentRelays = zapLoadRelays
+    const filters = zapLoadFilters
+
+    if (!loadZapReceipts || currentRelays.length === 0 || filters.length === 0) return
+
     const controller = new AbortController()
 
-    if (loadRelays.length > 0 && reactionLoadFilters.length > 0) {
-      load({
-        relays: loadRelays,
-        signal: controller.signal,
-        filters: reactionLoadFilters,
-        onEvent: batch(300, (events: TrustedEvent[]) => {
-          const deleteLoadFilters = makeDeleteLoadFilters(events)
-          if (deleteLoadFilters.length === 0) return
+    void load({
+      relays: currentRelays,
+      signal: controller.signal,
+      filters,
+    })
 
-          load({
-            relays: loadRelays,
-            filters: deleteLoadFilters,
-          })
-        }),
-      })
-    }
-
-    if (loadZapReceipts && zapLoadRelays.length > 0 && zapLoadFilters.length > 0) {
-      load({
-        relays: zapLoadRelays,
-        signal: controller.signal,
-        filters: zapLoadFilters,
-      })
-    }
-
-    return () => {
-      controller.abort()
-    }
+    return () => controller.abort()
   })
 </script>
 
-{#if scopedReactions.length > 0 || scopedZaps.length || scopedReports.length > 0}
+{#if scopedReactions.length > 0 || scopedZaps.length || scopedReports.length > 0 || reactionHistoryIncomplete || reportHistoryIncomplete}
   <div class="flex min-w-0 flex-wrap gap-2">
+    {#if reactionHistoryIncomplete || reportHistoryIncomplete}
+      <span
+        class="btn btn-neutral btn-xs cursor-default rounded-full font-normal opacity-70"
+        title="Community engagement history is incomplete">
+        Engagement incomplete
+      </span>
+    {/if}
     {#if (url || loadRelays.length > 0) && scopedReports.length > 0}
       <button
         type="button"

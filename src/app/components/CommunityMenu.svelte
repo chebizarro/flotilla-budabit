@@ -52,7 +52,10 @@
     makeProfileBadgeFilters,
     selectCommunityBadgeDefinitions,
   } from "@app/core/community-badges"
-  import {makeCommunityRoomRootsFilter} from "@app/core/community-feeds"
+  import {
+    makeCommunityContentFilterPlan,
+    makeCommunityRoomRootsFilter,
+  } from "@app/core/community-feeds"
   import {readCommunityRoomRoots} from "@app/core/community-rooms"
   import {FORM_RESPONSE_KIND, normalizePubkey} from "@app/core/community"
   import {
@@ -133,11 +136,12 @@
         })
       : [],
   )
-  const roomFilters = $derived(
-    community && roomAuthorPubkeys.length
-      ? [makeCommunityRoomRootsFilter(community, {authors: roomAuthorPubkeys})]
-      : [],
+  const roomFilterPlan = $derived(
+    community
+      ? makeCommunityContentFilterPlan([makeCommunityRoomRootsFilter(community)], roomAuthorPubkeys)
+      : {relayFilters: [], localFilters: []},
   )
+  const roomFilters = $derived(roomFilterPlan.localFilters)
   const roomEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: roomFilters})))
   const rooms = $derived(
     readCommunityRoomRoots($roomEvents, community).filter(

@@ -21,6 +21,8 @@
     communitySectionName?: string
     readOnly?: boolean
     allowedAuthors?: string[]
+    reactionAllowedAuthors?: string[]
+    reportAllowedAuthors?: string[]
     activityLiveCovered?: boolean
   }
 
@@ -35,6 +37,8 @@
     communitySectionName = "",
     readOnly = false,
     allowedAuthors = undefined,
+    reactionAllowedAuthors = undefined,
+    reportAllowedAuthors = undefined,
     activityLiveCovered = false,
   }: Props = $props()
 
@@ -68,6 +72,8 @@
     {event}
     {readOnly}
     {allowedAuthors}
+    {reactionAllowedAuthors}
+    {reportAllowedAuthors}
     {deleteReaction}
     {createReaction}
     reactionClass="tooltip-left" />

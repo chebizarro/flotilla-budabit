@@ -1,7 +1,6 @@
 <script lang="ts">
   import {page} from "$app/stores"
-  import {request} from "@welshman/net"
-  import {pubkey, repository, tracker} from "@welshman/app"
+  import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {makeEvent, type Filter, type TrustedEvent} from "@welshman/util"
   import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
@@ -46,7 +45,10 @@
     markCommunityHydrationCompleted,
     recoverCommunityBootstrap,
   } from "@app/core/community-state"
-  import {makeCommunityRoomRootsFilter} from "@app/core/community-feeds"
+  import {
+    makeCommunityContentFilterPlan,
+    makeCommunityRoomRootsFilter,
+  } from "@app/core/community-feeds"
   import {readCommunityRoomRoots} from "@app/core/community-rooms"
   import {
     getCommunityModeratorInviteProfileListRefs,
@@ -60,6 +62,7 @@
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory, type BoundedCommunityHistoryResult} from "@app/core/requests"
   import {publicationOperations, startPublication} from "@app/core/publication-operations"
   import {assertReplaceablePublicationIsCurrent} from "@app/core/replaceable-publication"
   import {getModeratorInviteResponseSemanticKey} from "@app/core/governance-publication-operations"
@@ -216,11 +219,16 @@
       communityUnavailableSettleReady,
     ),
   )
-  const roomFilters = $derived(
-    communityDefinitionReady && communityId && roomAuthorPubkeys.length
-      ? [makeCommunityRoomRootsFilter(communityId, {authors: roomAuthorPubkeys})]
-      : [],
+  const roomFilterPlan = $derived(
+    communityDefinitionReady && communityId
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityRoomRootsFilter(communityId)],
+          roomAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
+  const roomFilters = $derived(roomFilterPlan.localFilters)
+  const roomRelayFilters = $derived(roomFilterPlan.relayFilters)
   const roomEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: roomFilters})))
   const rooms = $derived(
     readCommunityRoomRoots($roomEvents, communityId).filter(
@@ -364,6 +372,7 @@
           permissionKey: $activeCommunityPermissionStatus.key,
           relays: normalizeRelays($activeCommunityRelays),
           filters: roomFilters,
+          relayFilters: roomRelayFilters,
         })
       : "",
   )
@@ -437,6 +446,15 @@
 
     clearTimeout(roomLoadRetryTimer)
     roomLoadRetryTimer = undefined
+  }
+
+  const retryRoomHistory = () => {
+    clearRoomLoadRetry()
+    roomLoadEmptyRetries = 0
+    roomLoadKey = ""
+    roomRootsIncomplete = false
+    roomRootsLoaded = false
+    roomLoadRetryNonce += 1
   }
 
   const scheduleRoomLoadRetry = () => {
@@ -636,9 +654,14 @@
       return
     }
 
-    const catalog = JSON.parse(key) as {relays: string[]; filters: Filter[]}
+    const catalog = JSON.parse(key) as {
+      relays: string[]
+      filters: Filter[]
+      relayFilters: Filter[]
+    }
     const relays = catalog.relays
     const filters = catalog.filters
+    const relayFilters = catalog.relayFilters
 
     if (roomLoadHydrationKey !== key) {
       roomLoadHydrationKey = key
@@ -649,7 +672,7 @@
       roomLoadRetryNonce = 0
     }
 
-    if (relays.length === 0 || filters.length === 0) {
+    if (relays.length === 0 || filters.length === 0 || relayFilters.length === 0) {
       roomLoadKey = key
       roomRootsLoading = false
       roomRootsLoaded = true
@@ -676,30 +699,24 @@
 
     const controller = new AbortController()
     let disposed = false
-    let interrupted = false
-    let timedOut = false
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, ROOM_ROOT_LOAD_TIMEOUT_MS)
 
     roomLoadKey = requestKey
     roomRootsLoading = true
     roomRootsLoaded = false
     roomRootsIncomplete = false
 
-    const finishRoomLoad = (events: TrustedEvent[] = []) => {
+    const finishRoomLoad = (result: BoundedCommunityHistoryResult) => {
       if (disposed || roomLoadKey !== requestKey) return
 
       roomRootsFirstAttemptTerminal = true
 
-      const loadedRooms = readCommunityRoomRoots(events, communityId).filter(
+      const loadedRooms = readCommunityRoomRoots(result.events, communityId).filter(
         room => !isCommunityPersonBanned($activeCommunityReportState, room.event.pubkey),
       )
       const hasLoadedRooms = loadedRooms.length > 0 || rooms.length > 0
 
       if (hasLoadedRooms) {
-        roomRootsComplete = !interrupted && !timedOut
+        roomRootsComplete = result.complete
         roomRootsIncomplete = !roomRootsComplete
         if (roomRootsComplete) markCommunityHydrationCompleted(key)
         clearRoomLoadRetry()
@@ -708,45 +725,33 @@
         return
       }
 
-      const shouldRetryEmpty = roomLoadEmptyRetries === 0 || interrupted || timedOut
+      const shouldRetryEmpty = roomLoadEmptyRetries === 0 || !result.complete
       if (shouldRetryEmpty && scheduleRoomLoadRetry()) return
 
-      roomRootsComplete = !interrupted && !timedOut
+      roomRootsComplete = result.complete
       roomRootsIncomplete = !roomRootsComplete
       if (roomRootsComplete) markCommunityHydrationCompleted(key)
       roomRootsLoading = false
       roomRootsLoaded = true
     }
 
-    request({
+    loadBoundedCommunityHistory({
       relays,
-      autoClose: true,
-      lifetime: "finite",
+      relayFilters,
+      localFilters: filters,
       priority: RELAY_REQUEST_PRIORITY.community,
-      filters,
+      owner: `community-home-rooms:${communityId}`,
+      timeoutMs: ROOM_ROOT_LOAD_TIMEOUT_MS,
       signal: controller.signal,
-      onDisconnect: () => {
-        interrupted = true
-      },
-      onClosed: () => {
-        interrupted = true
-      },
-      onEvent: (event, relay) => {
-        tracker.addRelay(event.id, relay)
-        repository.publish(event)
-      },
     })
       .then(finishRoomLoad)
       .catch(error => {
         if (!controller.signal.aborted) console.warn("[community-home] Failed to load rooms", error)
-        interrupted = true
-        finishRoomLoad()
+        finishRoomLoad({events: [], complete: false, timedOut: false, saturated: false})
       })
-      .finally(() => clearTimeout(timeout))
 
     return () => {
       disposed = true
-      clearTimeout(timeout)
       clearRoomLoadRetry()
       controller.abort()
     }
@@ -962,6 +967,19 @@
         {/if}
       </Link>
     {/each}
+    {#if communityId && rooms.length > 0 && roomRootsIncomplete}
+      <div
+        class="card2 bg-alt col-span-full flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+        role="status">
+        <span>Room history is incomplete; some rooms may be missing.</span>
+        <Button
+          class="btn btn-neutral btn-sm shrink-0 justify-center"
+          disabled={roomRootsLoading}
+          onclick={retryRoomHistory}>
+          {roomRootsLoading ? "Retrying..." : "Retry"}
+        </Button>
+      </div>
+    {/if}
     {#if communityId && rooms.length === 0 && (roomsSkeletonDelayElapsed || !roomsLoading)}
       <div class="card2 bg-alt col-span-full flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
@@ -992,9 +1010,9 @@
         {#if roomRootsIncomplete}
           <Button
             class="btn btn-neutral shrink-0 justify-center"
-            disabled={retryingCommunityBootstrap}
-            onclick={retryCommunityBootstrap}>
-            {retryingCommunityBootstrap ? "Retrying..." : "Retry"}
+            disabled={roomRootsLoading}
+            onclick={retryRoomHistory}>
+            {roomRootsLoading ? "Retrying..." : "Retry"}
           </Button>
         {:else if canCreateRoom && roomsSettledEmpty}
           <button class="btn btn-primary" type="button" onclick={createRoom}> Create Room </button>

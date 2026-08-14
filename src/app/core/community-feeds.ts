@@ -54,6 +54,30 @@ export const makeCommunityContentFilterPlan = (
   }
 }
 
+export const makeCommunityScopedFilterPlan = (
+  structuralFilters: Filter[],
+  scopeH: string,
+  allowedAuthors?: string[],
+): CommunityContentFilterPlan => {
+  const scopedFilters = scopeH
+    ? structuralFilters.map(filter => ({...filter, "#h": [scopeH]}))
+    : structuralFilters
+
+  if (allowedAuthors === undefined) {
+    return {relayFilters: scopedFilters, localFilters: scopedFilters}
+  }
+  if (allowedAuthors.length === 0) {
+    return {relayFilters: [], localFilters: []}
+  }
+  if (scopeH) {
+    return makeCommunityContentFilterPlan(scopedFilters, allowedAuthors)
+  }
+
+  const localFilters = scopedFilters.map(filter => ({...filter, authors: allowedAuthors}))
+
+  return {relayFilters: localFilters, localFilters}
+}
+
 export const makeCommunityExclusiveFilter = (
   communityPubkey: string,
   kinds: number[] = COMMUNITY_EXCLUSIVE_KINDS,
@@ -82,6 +106,11 @@ export const makeCommunityRoomMessagesFilter = (
   extra: Filter = {},
 ): Filter =>
   makeCommunityExclusiveFilter(communityPubkey, [MESSAGE], {"#E": [roomRootId], ...extra})
+
+export const makeCommunityRepositoryFilter = (
+  communityPubkey: string,
+  extra: Filter = {},
+): Filter => makeCommunityExclusiveFilter(communityPubkey, [GIT_REPO_ANNOUNCEMENT], extra)
 
 export const makeCommunityTargetingFilter = (
   communityPubkey: string,

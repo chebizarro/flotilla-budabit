@@ -24,6 +24,8 @@
     communitySectionName?: string
     readOnly?: boolean
     allowedAuthors?: string[]
+    reactionAllowedAuthors?: string[]
+    reportAllowedAuthors?: string[]
     activityLiveCovered?: boolean
     operationId?: string
   }
@@ -37,6 +39,8 @@
     communitySectionName = "",
     readOnly = false,
     allowedAuthors = undefined,
+    reactionAllowedAuthors = undefined,
+    reportAllowedAuthors = undefined,
     activityLiveCovered = false,
     operationId = undefined,
   }: Props = $props()
@@ -86,6 +90,8 @@
           {communitySectionName}
           {readOnly}
           {allowedAuthors}
+          {reactionAllowedAuthors}
+          {reportAllowedAuthors}
           {activityLiveCovered}
           {event} />
       {/if}

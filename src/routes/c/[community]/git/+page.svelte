@@ -35,6 +35,8 @@
   import {normalizeRelays} from "@app/core/community"
   import {getRepoAnnouncementPublishRelays} from "@app/core/git-state"
   import {
+    makeCommunityContentFilterPlan,
+    makeCommunityRepositoryFilter,
     makeCommunityTargetingFilter,
     makeTargetedPublicationOriginalFilters,
   } from "@app/core/community-feeds"
@@ -47,6 +49,8 @@
     getRepoAddress,
     isEndorsedRepoCommunityContext,
   } from "@app/core/repo-community-context"
+  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory} from "@app/core/requests"
   import {parseCommunityRouteParam} from "@app/util/routes"
 
   const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
@@ -81,14 +85,19 @@
         })
       : [],
   )
-  const repoFilters = $derived(
-    communityBootstrapReady && repoAuthorPubkeys.length
-      ? [{kinds: [GIT_REPO_ANNOUNCEMENT], authors: repoAuthorPubkeys, "#h": [communityPubkey]}]
-      : [],
+  const directRepoFilterPlan = $derived.by(() =>
+    communityBootstrapReady
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityRepositoryFilter(communityPubkey)],
+          repoAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
   const legacyRepoEventsStore = $derived(
-    repoFilters.length
-      ? deriveEventsAsc(deriveEventsById({repository, filters: repoFilters}))
+    directRepoFilterPlan.localFilters.length
+      ? deriveEventsAsc(
+          deriveEventsById({repository, filters: directRepoFilterPlan.localFilters as any}),
+        )
       : undefined,
   )
   const communityRepoAssociationFilters = $derived(
@@ -115,8 +124,7 @@
       ? deriveEventsAsc(deriveEventsById({repository, filters: targetedRepoFilters as any}))
       : undefined,
   )
-  const repoLoadFilters = $derived.by(() => [
-    ...repoFilters,
+  const targetedRepoLoadFilters = $derived.by(() => [
     ...communityRepoAssociationFilters,
     ...targetedRepoFilters,
   ])
@@ -244,40 +252,108 @@
   let slug = $state("")
   let description = $state("")
   let clone = $state("")
-  let loadingRepos = $state(false)
-  let repoRequestDone = $state(false)
+  let directRepoLoading = $state(false)
+  let directRepoLoadSettled = $state(false)
+  let directRepoHistoryIncomplete = $state(false)
+  let directRepoRetryVersion = $state(0)
+  let targetedRepoLoading = $state(false)
+  let targetedRepoRequestDone = $state(false)
+  const retryDirectRepoHistory = () => {
+    if (!directRepoLoading) directRepoRetryVersion += 1
+  }
   const reposLoading = $derived(
     communityBootstrapLoading ||
       communityPermissionsLoading ||
-      loadingRepos ||
-      (repoLoadFilters.length > 0 && !repoRequestDone && repos.length === 0),
+      directRepoLoading ||
+      targetedRepoLoading ||
+      (!directRepoLoadSettled && directRepoFilterPlan.relayFilters.length > 0) ||
+      (!targetedRepoRequestDone && targetedRepoLoadFilters.length > 0 && repos.length === 0),
   )
 
   $effect(() => {
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      repoLoadFilters.length === 0
-    ) {
-      loadingRepos = false
-      repoRequestDone = false
+    void directRepoRetryVersion
+    const relays = $activeCommunityRelays
+    const relayFilters = directRepoFilterPlan.relayFilters
+    const localFilters = directRepoFilterPlan.localFilters
+
+    if (!communityBootstrapReady) {
+      directRepoLoading = false
+      directRepoLoadSettled = false
+      directRepoHistoryIncomplete = false
+      return
+    }
+    if (relayFilters.length === 0 || localFilters.length === 0) {
+      directRepoLoading = false
+      directRepoLoadSettled = true
+      directRepoHistoryIncomplete = false
+      return
+    }
+    if (relays.length === 0) {
+      directRepoLoading = false
+      directRepoLoadSettled = true
+      directRepoHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
-    loadingRepos = true
-    repoRequestDone = false
+    directRepoLoading = true
+    directRepoLoadSettled = false
+    directRepoHistoryIncomplete = false
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-repositories:${communityPubkey}`,
+      signal: controller.signal,
+    })
+      .then(result => {
+        if (controller.signal.aborted) return
+        directRepoHistoryIncomplete = !result.complete
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        directRepoHistoryIncomplete = true
+        console.warn("[community-repositories] Failed to load direct repositories", error)
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return
+        directRepoLoading = false
+        directRepoLoadSettled = true
+      })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    const relays = $activeCommunityRelays
+    const filters = targetedRepoLoadFilters
+    if (!communityBootstrapReady) {
+      targetedRepoLoading = false
+      targetedRepoRequestDone = false
+      return
+    }
+    if (relays.length === 0 || filters.length === 0) {
+      targetedRepoLoading = false
+      targetedRepoRequestDone = true
+      return
+    }
+
+    const controller = new AbortController()
+    targetedRepoLoading = true
+    targetedRepoRequestDone = false
     request({
-      relays: $activeCommunityRelays,
+      relays,
       autoClose: true,
-      filters: repoLoadFilters as any,
+      lifetime: "finite",
+      filters: filters as any,
       signal: controller.signal,
     })
       .catch(() => undefined)
       .finally(() => {
         if (controller.signal.aborted) return
-        loadingRepos = false
-        repoRequestDone = true
+        targetedRepoLoading = false
+        targetedRepoRequestDone = true
       })
 
     return () => controller.abort()
@@ -342,6 +418,20 @@
   </form>
 
   <div class="col-2">
+    {#if directRepoHistoryIncomplete}
+      <div
+        class="card2 bg-alt flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+        role="status">
+        <span>Repository history is incomplete; some repositories may be missing.</span>
+        <button
+          class="btn btn-neutral btn-sm"
+          type="button"
+          disabled={directRepoLoading}
+          onclick={retryDirectRepoHistory}>
+          {directRepoLoading ? "Retrying..." : "Retry"}
+        </button>
+      </div>
+    {/if}
     {#each repos as repo (repo.id)}
       <div class="card2 bg-alt p-4 shadow-md">
         <strong

@@ -37,6 +37,7 @@
     readOnly?: boolean
     allowedAuthors?: string[]
     reactionAllowedAuthors?: string[]
+    reportAllowedAuthors?: string[]
     redirectOnEdit?: boolean
     activityLiveCovered?: boolean
   }
@@ -54,6 +55,7 @@
     readOnly = false,
     allowedAuthors = undefined,
     reactionAllowedAuthors = undefined,
+    reportAllowedAuthors = undefined,
     redirectOnEdit = false,
     activityLiveCovered = false,
   }: Props = $props()
@@ -114,7 +116,9 @@
     {scopeH}
     {event}
     {readOnly}
-    allowedAuthors={reactionAllowedAuthors ?? allowedAuthors}
+    {allowedAuthors}
+    {reactionAllowedAuthors}
+    {reportAllowedAuthors}
     {deleteReaction}
     {createReaction}
     reactionClass="tooltip-left" />

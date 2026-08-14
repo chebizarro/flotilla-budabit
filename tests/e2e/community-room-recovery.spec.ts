@@ -5,6 +5,7 @@ import {MockRelay} from "./helpers/mock-relay"
 const relayUrl = "wss://community-room-recovery.example/"
 const communitySecret = Uint8Array.from({length: 32}, (_, index) => index + 1)
 const communityPubkey = getPublicKey(communitySecret)
+const outsiderSecret = Uint8Array.from({length: 32}, (_, index) => 32 - index)
 
 const definition = finalizeEvent(
   {
@@ -49,6 +50,20 @@ const message = finalizeEvent(
     ],
   },
   communitySecret,
+)
+
+const outsiderMessage = finalizeEvent(
+  {
+    kind: 9,
+    created_at: Math.floor(Date.now() / 1000) + 1,
+    content: "Unauthorized room history",
+    tags: [
+      ["h", communityPubkey],
+      ["E", room.id, relayUrl, communityPubkey],
+      ["K", "11"],
+    ],
+  },
+  outsiderSecret,
 )
 
 const communityInput = `ncommunity://${communityPubkey}?relay=${encodeURIComponent(relayUrl)}`
@@ -151,4 +166,30 @@ test("prioritizes delayed room history before broad community discovery", async 
   await expect(
     page.getByText("Message history is incomplete or temporarily unavailable."),
   ).toBeHidden()
+})
+
+test("requests structural room history and rejects an unauthorized matching author", async ({
+  page,
+}) => {
+  let sawAuthorlessRoomHistory = false
+  const mockRelay = new MockRelay({
+    seedEvents: [definition, room, message, outsiderMessage],
+    onSubscribe: (_subscriptionId, filters) => {
+      if (
+        filters.some(
+          filter => filter.kinds?.includes(9) && filter["#E"]?.includes(room.id) && !filter.authors,
+        )
+      ) {
+        sawAuthorlessRoomHistory = true
+      }
+    },
+  })
+
+  await page.addInitScript(() => localStorage.clear())
+  await mockRelay.setup(page)
+  await page.goto(roomPath)
+
+  await expect.poll(() => sawAuthorlessRoomHistory, {timeout: 10_000}).toBe(true)
+  await expect(page.getByText("Delayed room history", {exact: true})).toBeVisible({timeout: 10_000})
+  await expect(page.getByText("Unauthorized room history", {exact: true})).toHaveCount(0)
 })

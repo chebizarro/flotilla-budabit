@@ -145,7 +145,7 @@
         })
       : [],
   )
-  const interactionAuthorPubkeys = $derived(
+  const commentAuthorPubkeys = $derived(
     $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
@@ -161,6 +161,16 @@
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.reaction,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const reportAuthorPubkeys = $derived(
+    $activeCommunityDefinition
+      ? getCommunityTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
         })
       : [],
@@ -550,8 +560,9 @@
         scopeH={communityPubkey}
         activityLiveCovered
         communitySectionName={getCalendarEventSectionName(event.kind)}
-        allowedAuthors={interactionAuthorPubkeys}
+        allowedAuthors={commentAuthorPubkeys}
         reactionAllowedAuthors={reactionAuthorPubkeys}
+        reportAllowedAuthors={reportAuthorPubkeys}
         readOnly={!canReact}
         operationId={calendarProjection.operationIds.get(event.id)}
         {event} />

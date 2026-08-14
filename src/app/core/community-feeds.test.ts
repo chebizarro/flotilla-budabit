@@ -1,6 +1,14 @@
 import {describe, expect, it} from "vitest"
 import * as nip19 from "nostr-tools/nip19"
-import {EVENT_DATE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
+import {
+  DELETE,
+  EVENT_DATE,
+  EVENT_TIME,
+  REACTION,
+  REPORT,
+  matchFilters,
+  type TrustedEvent,
+} from "@welshman/util"
 import {TARGETED_PUBLICATION_KIND, buildTargetedPublication} from "./community"
 import {
   eventTargetsCommunity,
@@ -10,7 +18,9 @@ import {
   isRoomMessage,
   makeCommunityContentFilterPlan,
   makeCommunityExclusiveFilter,
+  makeCommunityRepositoryFilter,
   makeCommunityRoomMessagesFilter,
+  makeCommunityScopedFilterPlan,
   makeCommunityThreadRepliesFilter,
   makeCommunityTargetingFilter,
   makeTargetedPublicationOriginalFilters,
@@ -44,15 +54,85 @@ describe("community feed helpers", () => {
 
   it("separates structural relay filters from current-writer admission", () => {
     const writers = Array.from({length: 1001}, (_, index) => index.toString(16).padStart(64, "0"))
-    const structuralFilter = makeCommunityExclusiveFilter(communityPubkey, [9])
+    const structuralFilter = makeCommunityRepositoryFilter(communityPubkey, {limit: 100})
 
     expect(makeCommunityContentFilterPlan([structuralFilter], writers)).toEqual({
-      relayFilters: [{kinds: [9], "#h": [communityPubkey]}],
-      localFilters: [{kinds: [9], "#h": [communityPubkey], authors: writers}],
+      relayFilters: [{kinds: [30617], "#h": [communityPubkey], limit: 100}],
+      localFilters: [{kinds: [30617], "#h": [communityPubkey], limit: 100, authors: writers}],
     })
     expect(makeCommunityContentFilterPlan([structuralFilter], [])).toEqual({
       relayFilters: [],
       localFilters: [],
+    })
+  })
+
+  it("keeps scoped engagement transport broad and rejects outsider results", () => {
+    const writers = Array.from({length: 1001}, (_, index) => index.toString(16).padStart(64, "0"))
+    const writer = writers[1000]
+    const structuralFilters = [{kinds: [REPORT, REACTION], "#e": ["root-id"]}]
+    const plan = makeCommunityScopedFilterPlan(structuralFilters, communityPubkey, writers)
+
+    expect(plan.relayFilters).toEqual([
+      {kinds: [REPORT, REACTION], "#e": ["root-id"], "#h": [communityPubkey]},
+    ])
+    expect(plan.localFilters[0].authors).toHaveLength(1001)
+
+    const allowedReaction = makeEvent({
+      kind: REACTION,
+      pubkey: writer,
+      tags: [
+        ["e", "root-id"],
+        ["h", communityPubkey],
+      ],
+    })
+    const allowedReport = makeEvent({
+      kind: REPORT,
+      pubkey: writer,
+      tags: [
+        ["e", "root-id"],
+        ["h", communityPubkey],
+      ],
+    })
+    const outsiderReaction = makeEvent({...allowedReaction, id: "outsider", pubkey: authorPubkey})
+    const wrongScopeReport = makeEvent({
+      ...allowedReport,
+      id: "wrong-scope",
+      tags: [
+        ["e", "root-id"],
+        ["h", otherCommunityPubkey],
+      ],
+    })
+
+    expect(matchFilters(plan.localFilters, allowedReaction)).toBe(true)
+    expect(matchFilters(plan.localFilters, allowedReport)).toBe(true)
+    expect(matchFilters(plan.localFilters, outsiderReaction)).toBe(false)
+    expect(matchFilters(plan.localFilters, wrongScopeReport)).toBe(false)
+
+    const deletePlan = makeCommunityScopedFilterPlan(
+      [{kinds: [DELETE], "#e": [allowedReaction.id]}],
+      communityPubkey,
+      writers,
+    )
+    const outsiderDelete = makeEvent({
+      kind: DELETE,
+      pubkey: authorPubkey,
+      tags: [
+        ["e", allowedReaction.id],
+        ["h", communityPubkey],
+      ],
+    })
+
+    expect(deletePlan.relayFilters[0]).not.toHaveProperty("authors")
+    expect(matchFilters(deletePlan.localFilters, outsiderDelete)).toBe(false)
+  })
+
+  it("retains allowed authors in generic non-community relay filters", () => {
+    const filters = [{kinds: [REACTION], "#e": ["root-id"]}]
+    const authors = [authorPubkey]
+
+    expect(makeCommunityScopedFilterPlan(filters, "", authors)).toEqual({
+      relayFilters: [{...filters[0], authors}],
+      localFilters: [{...filters[0], authors}],
     })
   })
 

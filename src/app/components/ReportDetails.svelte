@@ -1,23 +1,60 @@
 <script lang="ts">
-  import {REPORT} from "@welshman/util"
-  import type {TrustedEvent} from "@welshman/util"
+  import {REPORT, getReplyFilters} from "@welshman/util"
+  import type {Filter, TrustedEvent} from "@welshman/util"
   import {deriveEventsById} from "@welshman/store"
   import {repository} from "@welshman/app"
   import ModalHeader from "@lib/components/ModalHeader.svelte"
   import Button from "@lib/components/Button.svelte"
   import ReportItem from "@app/components/ReportItem.svelte"
+  import {normalizePubkey} from "@app/core/community"
+  import {
+    activeCommunityDefinition,
+    activeCommunityProfileListEvents,
+    activeCommunityPubkey,
+    activeCommunityReportState,
+  } from "@app/core/community-state"
+  import {
+    COMMUNITY_WRITE_TARGETS,
+    getCommunityTargetWriterPubkeys,
+  } from "@app/core/community-permissions"
 
   type Props = {
     url: string
     event: TrustedEvent
+    scopeH?: string
+    allowedAuthors?: string[]
   }
 
-  const {url, event}: Props = $props()
+  const {url, event, scopeH = "", allowedAuthors = undefined}: Props = $props()
+  const activeCommunityReportAuthors = $derived.by(() => {
+    const scope = normalizePubkey(scopeH)
+    const definition = $activeCommunityDefinition
+    if (
+      !scope ||
+      scope !== normalizePubkey($activeCommunityPubkey || "") ||
+      scope !== normalizePubkey(definition?.pubkey || "") ||
+      !definition
+    ) {
+      return undefined
+    }
 
-  const reports = deriveEventsById({
-    repository,
-    filters: [{kinds: [REPORT], "#e": [event.id]}],
+    return getCommunityTargetWriterPubkeys({
+      definition,
+      profileListEvents: $activeCommunityProfileListEvents,
+      target: COMMUNITY_WRITE_TARGETS.report,
+      reportState: $activeCommunityReportState,
+    })
   })
+  const effectiveAllowedAuthors = $derived(activeCommunityReportAuthors ?? allowedAuthors)
+  const reportFilters = $derived.by(() =>
+    (getReplyFilters([event], {kinds: [REPORT]}) as Filter[]).map(filter => ({
+      ...filter,
+      ...(scopeH ? {"#h": [scopeH]} : {}),
+      ...(effectiveAllowedAuthors ? {authors: effectiveAllowedAuthors} : {}),
+    })),
+  )
+
+  const reports = $derived(deriveEventsById({repository, filters: reportFilters}))
 
   const back = () => history.back()
 

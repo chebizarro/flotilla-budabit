@@ -12,13 +12,14 @@
 
 ## Current Phase
 
-- Phase 2: Community-Exclusive Content
+- Phase 3: Targeted Publications And Extensions
 
 ## Phase Exit Criteria
 
-- Room roots/messages and thread roots/replies use structural relay filters without ACL-derived authors.
-- Route selectors and projections continue to reject unauthorized structurally valid events.
-- Community activity, reactions, and direct repository transport use broad structural filters with local admission.
+- Targeting wrappers are admitted by current wrapper-author grants.
+- Explicit originals load by exact event/address references and implicit targeting IDs retain wrapper-signer identity.
+- Calendar, goals, repositories, permalinks, widgets, and extension descriptor queries share wrapper-author authority.
+- Broad extension results are locally admitted before reaching widgets.
 - Focused tests, root check, formatting, and whitespace checks pass.
 - Phase files and checkpoint advancement are committed and pushed.
 
@@ -35,6 +36,14 @@
 - Phase 1 broad scans count raw and admitted events separately, deduplicate relay exhaustion, scan at most three unauthorized pages per load, and report non-exhausted empty or saturated results as incomplete.
 - Phase 1 tests prove an allowed writer at index 1,001 is admitted locally while absent from the wire filter, outsiders are rejected from repository and initial events, and multi-relay exhaustion is not falsely inferred.
 - Phase 1 final review found no remaining high or medium blockers.
+- Phase 2 migrated room, thread, message, comment, reaction, report, and direct repository transport to structural relay filters with current-grant local selectors.
+- Phase 2 added bounded per-relay/per-filter cursor history with raw/admitted separation, disconnect/timeout handling, three-page budgets, same-timestamp saturation detection, and explicit incomplete results.
+- Phase 2 made room/thread/Git request keys grant-sensitive so revocation refilters immediately and regrant refetches history.
+- Phase 2 separated comment, reaction, and report grants throughout shared components and community routes; open report modals react to current report grants.
+- Phase 2 loads exact same-author NIP-09 deletes without requiring `h`, includes delete completion in engagement status, and chunks exact target IDs by 100.
+- Phase 2 keeps partial authorized content visible with incomplete-history warnings and retry controls.
+- Phase 2 added E2E proof that room history wire filters omit ACL authors while a structurally matching outsider message remains hidden.
+- Phase 2 final review found no remaining high or medium blockers.
 
 ## Decisions
 
@@ -48,11 +57,11 @@
 
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev`.
-- Phase 1 is verified and ready for durable closeout in the same commit as this checkpoint advancement.
+- Phases 1 and 2 are verified; Phase 2 is ready for durable closeout in the same commit as this checkpoint advancement.
 
 ## Next Action
 
-- Reread the full plan, inspect current direct community routes and components, then migrate room/thread/activity/repository transport to Phase 1 filter plans.
+- Reread the full plan and inspect targeted-publication consumers; centralize authorized wrapper selection and migrate original loads to the Phase 1 targeted filter plan.
 
 ## Verification
 
@@ -63,14 +72,18 @@
 - Phase 1 `pnpm check` passed with 0 errors and 0 warnings.
 - Phase 1 intentional-file Prettier and `git diff --check` passed.
 - Phase 1 review reported no high or medium blocking findings.
+- Phase 2 focused tests: 8 files and 80 tests passed in the combined run; final review reran the changed-file suite with 68 tests passing.
+- Phase 2 `pnpm check` passed with 0 errors and 0 warnings.
+- Phase 2 room recovery/authorization E2E passed, 3 tests.
+- Phase 2 intentional-file Prettier and `git diff --check` passed after formatting the E2E addition.
+- Phase 2 final review reported no high or medium blocking findings.
 
 ## Risks Or Blockers
 
 - No current blocker.
 - Broad `#h`/`#p` transport is vulnerable to unauthorized event volume; bounded pagination must report incomplete rather than false empty.
 - A single profile-list event remains bounded by relay event/tag limits; sections need multiple list references for very large memberships.
-- Targeted-publication consumers currently implement inconsistent wrapper/original authority and require careful phased migration.
-- Broad-scan consumers must map `{complete:false, saturated:true}` to incomplete UI state when Phase 2 starts using relay filters.
+- Targeted-publication consumers still implement inconsistent wrapper/original authority and are the Phase 3 focus.
 - Targeted-wrapper authorization remains a caller precondition until Phase 3 centralizes it.
 
 ## Files
@@ -81,3 +94,32 @@
 - `src/app/core/community-feeds.test.ts`
 - `src/app/core/requests.ts`
 - `src/app/core/requests.test.ts`
+- `src/app/core/event-activity-io.ts`
+- `src/app/core/event-activity-io.test.ts`
+- `src/app/core/community-route-transport.test.ts`
+- `src/app/core/reaction-operations.test.ts`
+- `src/app/core/reaction-publication-contract.test.ts`
+- `src/app/core/repo-community-context.test.ts`
+- `src/app/components/CommunityMenu.svelte`
+- `src/app/components/EventActivity.svelte`
+- `src/app/components/ReactionSummary.svelte`
+- `src/app/components/ReportDetails.svelte`
+- `src/app/components/ThreadItem.svelte`
+- `src/app/components/ThreadActions.svelte`
+- `src/app/components/RoomItem.svelte`
+- `src/app/components/ChannelMessage.svelte`
+- `src/app/components/GoalItem.svelte`
+- `src/app/components/GoalActions.svelte`
+- `src/app/components/CalendarEventItem.svelte`
+- `src/app/components/CalendarEventActions.svelte`
+- `src/routes/c/[community]/+page.svelte`
+- `src/routes/c/[community]/threads/+page.svelte`
+- `src/routes/c/[community]/threads/[thread]/+page.svelte`
+- `src/routes/c/[community]/rooms/[room]/+page.svelte`
+- `src/routes/c/[community]/git/+page.svelte`
+- `src/routes/c/[community]/goals/+page.svelte`
+- `src/routes/c/[community]/goals/[goal]/+page.svelte`
+- `src/routes/c/[community]/calendar/+page.svelte`
+- `src/routes/c/[community]/calendar/[event]/+page.svelte`
+- `src/routes/git/+page.svelte`
+- `tests/e2e/community-room-recovery.spec.ts`
