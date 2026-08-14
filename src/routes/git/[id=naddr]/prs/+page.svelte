@@ -52,8 +52,11 @@
   import type {Readable} from "svelte/store"
   import type {Repo} from "@nostr-git/ui"
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
-  import {getRepoRootListPresentation} from "@app/core/repo-root-presentation"
-  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
+  import {
+    getAutoFilledRootVisibleCount,
+    getRepoRootListPresentation,
+    isRepoRootFirstPageLoading,
+  } from "@app/core/repo-root-presentation"
 
   type PrStatusKey = "open" | "merged" | "closed" | "draft"
 
@@ -104,7 +107,6 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -857,17 +859,6 @@
       cacheHydrationFailed: $repoCacheHydrationFailedStore,
     }),
   )
-  const retryPrHistory = () =>
-    Promise.all([
-      $repoCacheHydrationFailedStore ? repoRootHistory.retryCacheHydration() : Promise.resolve(),
-      repoRootHistory.retryRootHistory(),
-      $repoAnnouncementStatusStore === "partial" ||
-      $repoAnnouncementStatusStore === "failed" ||
-      $repoAnnouncementStatusStore === "aborted"
-        ? repoRootHistory.retryAnnouncement()
-        : Promise.resolve(),
-    ]).then(() => undefined)
-
   $effect(() => {
     void [searchTerm, statusFilter, authorFilter, selectedLabels, matchAllLabels, sortBy]
     visiblePrCount = ITEMS_PER_PAGE
@@ -875,19 +866,24 @@
 
   $effect(() => {
     const total = searchedPrs.length
-    const minimumVisibleCount = Math.min(ITEMS_PER_PAGE, total)
+    const nextVisibleCount = getAutoFilledRootVisibleCount({
+      visibleCount: visiblePrCount,
+      resultCount: total,
+      pageSize: ITEMS_PER_PAGE,
+    })
 
-    if (visiblePrCount < minimumVisibleCount) {
-      visiblePrCount = minimumVisibleCount
-      return
-    }
-
-    if (visiblePrCount > total) {
-      visiblePrCount = total
-    }
+    if (visiblePrCount !== nextVisibleCount) visiblePrCount = nextVisibleCount
   })
 
   const visiblePrs = $derived.by(() => searchedPrs.slice(0, visiblePrCount))
+  const prFirstPageLoading = $derived.by(() =>
+    isRepoRootFirstPageLoading({
+      historyStatus: $repoRootHistory.status,
+      notice: prListPresentation.notice,
+      visibleCount: visiblePrs.length,
+      pageSize: ITEMS_PER_PAGE,
+    }),
+  )
   const canLoadMorePrs = $derived.by(
     () => visiblePrCount < searchedPrs.length || prListPresentation.canLoadOlder,
   )
@@ -977,56 +973,12 @@
       showReset={true} />
   {/if}
 
-  {#if prListPresentation.notice && prListPresentation.content !== "incomplete" && prListPresentation.content !== "loading"}
-    <div
-      class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-      role="status"
-      aria-live="polite">
-      <span>
-        {#if prListPresentation.notice === "loading"}
-          {$repoRootHistory.operation === "older"
-            ? "Loading older pull request history…"
-            : "Refreshing recent pull request history…"}
-        {:else if prListPresentation.notice === "partial"}
-          Some relays did not respond. Showing loaded activity.
-        {:else if prListPresentation.notice === "failed"}
-          Pull request history refresh failed. Showing saved pull requests.
-        {:else}
-          Repository relays are unavailable. Showing saved pull requests.
-        {/if}
-      </span>
-      {#if $repoFailedRelayRequestsStore.length > 0}
-        <RepoRelayFailureNotice />
-      {:else if prListPresentation.canRetry}
-        <GitButton variant="outline" size="sm" onclick={retryPrHistory}>Retry</GitButton>
-      {/if}
-    </div>
-  {/if}
-
-  {#if prListPresentation.content === "loading" || prListPresentation.content === "incomplete"}
+  {#if prListPresentation.content === "loading"}
     <div
       class="flex flex-col items-center justify-center gap-3 py-12 text-center"
       role="status"
       aria-live="polite">
-      {#if prListPresentation.notice === "loading"}
-        <Spinner loading>Loading recent pull request history…</Spinner>
-      {:else}
-        <SearchX class="h-8 w-8 text-muted-foreground" />
-        <p class="max-w-lg text-sm text-muted-foreground">
-          {prListPresentation.notice === "unavailable"
-            ? "Repository relays are unavailable, so pull request history cannot be checked."
-            : prListPresentation.notice === "failed"
-              ? "Pull request history could not be loaded from the repository relays."
-              : "Some relays did not respond. Showing loaded activity."}
-        </p>
-        {#if $repoFailedRelayRequestsStore.length > 0}
-          <RepoRelayFailureNotice />
-        {:else if prListPresentation.canRetry}
-          <GitButton variant="outline" size="sm" onclick={retryPrHistory}>
-            Retry pull request history
-          </GitButton>
-        {/if}
-      {/if}
+      <Spinner loading>Loading recent pull request history…</Spinner>
     </div>
   {:else if prListPresentation.content !== "rows"}
     <div class="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -1038,7 +990,9 @@
             ? "No visible pull requests in the loaded history."
             : prListPresentation.content === "recent-empty"
               ? "No pull requests were found in the recent history page. Older history may still contain pull requests."
-              : "No pull requests yet."}
+              : prListPresentation.content === "incomplete"
+                ? "No pull requests loaded."
+                : "No pull requests yet."}
       </p>
       {#if suggestedUnreadStatus}
         <p class="mt-2 max-w-md text-center text-sm text-muted-foreground">
@@ -1084,7 +1038,14 @@
       {/each}
     </div>
 
-    {#if canLoadMorePrs}
+    {#if prFirstPageLoading}
+      <div
+        class="mt-3 flex justify-center pb-2 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite">
+        <Spinner loading>Looking for more pull requests…</Spinner>
+      </div>
+    {:else if canLoadMorePrs}
       <div class="mt-3 flex flex-col items-center gap-1.5 pb-2">
         <GitButton variant="outline" size="sm" class="h-8 min-h-0 gap-2" onclick={loadMorePrs}>
           Load more

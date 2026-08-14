@@ -148,7 +148,6 @@
     disposeActiveRepo,
     GIT_RELAYS,
     getRepoAnnouncementPublishRelays,
-    getRepoAnnouncementRelays,
     getRepoScopedRelays,
     getOwnedRepoStateLoadScopes,
     getOwnedRepoStateLoadPlans,
@@ -217,11 +216,12 @@
     loadRepoRootGap,
     mapRepoRelayWork,
     summarizeRepoRootResults,
+    DEFAULT_REPO_ROOT_PAGE_SIZE,
     type RepoRootHistorySnapshot,
     type RepoRootHistoryStatus,
   } from "@app/core/repo-root-history"
   import {requestFiniteRelay} from "@app/core/finite-relay-request"
-  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {getRelayPolicy, RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {accessRepositoryCache, receiveRepositoryCacheEvent} from "@app/core/repo-cache"
   import {normalizeRepoRelay, normalizeRepoRelays} from "@app/core/repo-relays"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
@@ -384,12 +384,6 @@
       repoCacheHydrationFailed.set(false)
     }
   })
-  const repoStatusKinds = [
-    GIT_STATUS_OPEN,
-    GIT_STATUS_DRAFT,
-    GIT_STATUS_CLOSED,
-    GIT_STATUS_COMPLETE,
-  ]
   const initialRepoRootHistory: RepoRootHistorySnapshot = {
     status: "idle",
     operation: null,
@@ -2472,7 +2466,6 @@
 
   // Initialize tracking for data loading
   let unsubscribers: (() => void)[] = []
-  let layoutDestroyed = false
   let commentReportLoadKey = ""
   let announcementRefreshInFlight: Promise<void> | undefined
   const announcementOutboxResultsByRelay = new Map<
@@ -2542,16 +2535,18 @@
     relays,
     filters,
     owner,
+    initialReplayLimit,
     ownedAddresses = [],
   }: {
     lanes: Map<string, RepoLiveLane>
     relays: string[]
     filters: Filter[]
     owner: string
+    initialReplayLimit: number
     ownedAddresses?: string[]
   }) => {
     const targetRelays = new Set(relays)
-    const signature = getRepoLiveFilterSignature(filters)
+    const signature = `${initialReplayLimit}:${getRepoLiveFilterSignature(filters)}`
 
     for (const [relay, lane] of lanes) {
       if (targetRelays.has(relay) && lane.signature === signature) continue
@@ -2574,6 +2569,10 @@
           signal: layoutLoadController.signal,
           priority: RELAY_REQUEST_PRIORITY.live,
           owner,
+          initialReplayLimit: Math.min(
+            initialReplayLimit,
+            getRelayPolicy(relay).maxLimit ?? initialReplayLimit,
+          ),
           onEvent: receiveRepoLiveEvent,
         }),
         releaseOwnership: () => releases.forEach(release => release()),
@@ -2581,7 +2580,7 @@
     }
   }
 
-  // Finite history is enqueued above before persistent live ownership starts.
+  // Initial bounded replay makes the finite-history/live handoff independent of queue order.
   // Root discovery never changes these filters; legacy root-only activity uses the exact lane.
   $effect(() => {
     if (!$repoActivityHydrationReady) {
@@ -2593,15 +2592,9 @@
       ...announcementDiscoveryRelays,
       ...$discoveredAnnouncementRelays,
     ])
-    const liveAnnouncementRelays =
-      $repoAnnouncementStatus === "loading" && repoAnnouncementLiveByRelay.size === 0
-        ? []
-        : announcementRelays.slice(0, 6)
+    const liveAnnouncementRelays = announcementRelays.slice(0, 6)
     const activityRelays = normalizeRelayScopeValues(($repoRelaysStore || []).filter(Boolean))
-    const liveActivityRelays =
-      $repoAnnouncementStatus === "loading" && repoActivityLiveByRelay.size === 0
-        ? []
-        : activityRelays.slice(0, 6)
+    const liveActivityRelays = activityRelays.slice(0, 6)
     const addresses = normalizeScopeValues(($repoAddressesStore || []).filter(Boolean))
     const owners = normalizeScopeValues(($repoOwnerStore || []).filter(Boolean))
     const viewer = $pubkey || ""
@@ -2624,6 +2617,7 @@
         includeActivity: false,
       }),
       owner: "repo-foreground:announcement",
+      initialReplayLimit: 1,
     })
     reconcileRepoLiveLane({
       lanes: repoActivityLiveByRelay,
@@ -2638,6 +2632,7 @@
         includeActivity: true,
       }),
       owner: "repo-foreground:stable",
+      initialReplayLimit: DEFAULT_REPO_ROOT_PAGE_SIZE,
       ownedAddresses: addresses,
     })
     reconcileRepoLiveLane({
@@ -2645,6 +2640,7 @@
       relays: liveActivityRelays,
       filters: exactThreadIds.flatMap(rootId => buildRepoExactThreadLiveFilters(rootId)),
       owner: "repo-foreground:exact-thread",
+      initialReplayLimit: DEFAULT_REPO_ROOT_PAGE_SIZE,
     })
   })
 
@@ -2788,7 +2784,6 @@
 
   // Cleanup on component destroy
   onDestroy(() => {
-    layoutDestroyed = true
     layoutLoadController.abort()
     repoRootResolverWaiters.forEach(resolve => resolve())
     if (routeRepoClass) disposeActiveRepo(routeRepoClass)

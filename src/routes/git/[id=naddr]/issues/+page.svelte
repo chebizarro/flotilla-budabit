@@ -63,8 +63,11 @@
   import {editedTargetIds, filterVisibleAfterDeletesAndEdits} from "@app/core/event-edits"
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
   import {postIssue, postStatus} from "@app/core/git-commands"
-  import {getRepoRootListPresentation} from "@app/core/repo-root-presentation"
-  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
+  import {
+    getAutoFilledRootVisibleCount,
+    getRepoRootListPresentation,
+    isRepoRootFirstPageLoading,
+  } from "@app/core/repo-root-presentation"
 
   let showScrollButton = $state(false)
   let pageContainerRef: HTMLElement | undefined = $state()
@@ -101,7 +104,6 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
   const repoBoundRelays = $derived.by(() => (repoRelaysStore ? $repoRelaysStore : []))
   const repoActivityAuthority = $derived.by(() =>
     repoClass?.repoEvent && repoBoundRelays.length > 0
@@ -862,14 +864,13 @@
 
   $effect(() => {
     const total = searchedIssues.length
-    if (visibleIssueCount > total) {
-      visibleIssueCount = total
-      return
-    }
+    const nextVisibleCount = getAutoFilledRootVisibleCount({
+      visibleCount: visibleIssueCount,
+      resultCount: total,
+      pageSize: ITEMS_PER_PAGE,
+    })
 
-    if (total > 0 && visibleIssueCount === 0) {
-      visibleIssueCount = Math.min(ITEMS_PER_PAGE, total)
-    }
+    if (visibleIssueCount !== nextVisibleCount) visibleIssueCount = nextVisibleCount
   })
 
   const visibleIssues = $derived.by(() => searchedIssues.slice(0, visibleIssueCount))
@@ -900,16 +901,14 @@
       cacheHydrationFailed: $repoCacheHydrationFailedStore,
     }),
   )
-  const retryIssueHistory = () =>
-    Promise.all([
-      $repoCacheHydrationFailedStore ? repoRootHistory.retryCacheHydration() : Promise.resolve(),
-      repoRootHistory.retryRootHistory(),
-      $repoAnnouncementStatusStore === "partial" ||
-      $repoAnnouncementStatusStore === "failed" ||
-      $repoAnnouncementStatusStore === "aborted"
-        ? repoRootHistory.retryAnnouncement()
-        : Promise.resolve(),
-    ]).then(() => undefined)
+  const issueFirstPageLoading = $derived.by(() =>
+    isRepoRootFirstPageLoading({
+      historyStatus: $repoRootHistory.status,
+      notice: issueListPresentation.notice,
+      visibleCount: visibleIssues.length,
+      pageSize: ITEMS_PER_PAGE,
+    }),
+  )
   // CRITICAL: Cleanup on destroy to prevent memory leaks and blocking navigation
   onDestroy(() => {
     const seenAt = getIssuesSeenAt()
@@ -1095,55 +1094,12 @@
       showReset={true} />
   {/if}
 
-  {#if issueListPresentation.notice && issueListPresentation.content !== "incomplete" && issueListPresentation.content !== "loading"}
-    <div
-      class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-      role="status"
-      aria-live="polite">
-      <span>
-        {#if issueListPresentation.notice === "loading"}
-          {$repoRootHistory.operation === "older"
-            ? "Loading older issue history…"
-            : "Refreshing recent issue history…"}
-        {:else if issueListPresentation.notice === "partial"}
-          Some relays did not respond. Showing loaded activity.
-        {:else if issueListPresentation.notice === "failed"}
-          Issue history refresh failed. Showing saved issues.
-        {:else}
-          Repository relays are unavailable. Showing saved issues.
-        {/if}
-      </span>
-      {#if $repoFailedRelayRequestsStore.length > 0}
-        <RepoRelayFailureNotice />
-      {:else if issueListPresentation.canRetry}
-        <GitButton variant="outline" size="sm" onclick={retryIssueHistory}>Retry</GitButton>
-      {/if}
-    </div>
-  {/if}
-
-  {#if issueListPresentation.content === "loading" || issueListPresentation.content === "incomplete"}
+  {#if issueListPresentation.content === "loading"}
     <div
       class="flex flex-col items-center justify-center gap-3 py-12 text-center"
       role="status"
       aria-live="polite">
-      {#if issueListPresentation.notice === "loading"}
-        <Spinner loading>Loading recent issue history…</Spinner>
-      {:else}
-        <SearchX class="h-8 w-8 text-muted-foreground" />
-        <p class="max-w-lg text-sm text-muted-foreground">
-          {issueListPresentation.notice === "unavailable"
-            ? "Repository relays are unavailable, so issue history cannot be checked."
-            : issueListPresentation.notice === "failed"
-              ? "Issue history could not be loaded from the repository relays."
-              : "Some relays did not respond. Showing loaded activity."}
-        </p>
-        {#if $repoFailedRelayRequestsStore.length > 0}
-          <RepoRelayFailureNotice />
-        {:else if issueListPresentation.canRetry}
-          <GitButton variant="outline" size="sm" onclick={retryIssueHistory}
-            >Retry issue history</GitButton>
-        {/if}
-      {/if}
+      <Spinner loading>Loading recent issue history…</Spinner>
     </div>
   {:else if issueListPresentation.content !== "rows"}
     <div class="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -1155,7 +1111,9 @@
             ? "No visible issues in the loaded history."
             : issueListPresentation.content === "recent-empty"
               ? "No issues were found in the recent history page. Older history may still contain issues."
-              : "No issues yet."}
+              : issueListPresentation.content === "incomplete"
+                ? "No issues loaded."
+                : "No issues yet."}
       </p>
       {#if suggestedUnreadStatus}
         <p class="mt-2 max-w-md text-center text-sm text-muted-foreground">
@@ -1198,7 +1156,14 @@
       {/each}
     </div>
 
-    {#if canLoadMoreIssues}
+    {#if issueFirstPageLoading}
+      <div
+        class="mt-3 flex justify-center pb-2 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite">
+        <Spinner loading>Looking for more issues…</Spinner>
+      </div>
+    {:else if canLoadMoreIssues}
       <div class="mt-3 flex flex-col items-center gap-1.5 pb-2">
         <GitButton variant="outline" size="sm" class="h-8 min-h-0 gap-2" onclick={loadMoreIssues}>
           Load more

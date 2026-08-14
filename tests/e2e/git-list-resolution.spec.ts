@@ -58,6 +58,66 @@ test("replaces an EOSE-backed empty issue list when late live activity arrives",
   await expect(page.getByText("Cold-start issue", {exact: true})).toBeVisible({timeout: 10_000})
 })
 
+test("fills the first issue page reactively and stops loading after history times out", async ({
+  page,
+}) => {
+  const discoveryRelay = "wss://git-issue-autofill-discovery.test"
+  const activityRelay = "wss://git-issue-autofill-activity.test"
+  const identifier = "issue-autofill-fixture"
+  const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
+  const announcement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "Issue autofill fixture",
+      relays: [activityRelay],
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP,
+    }),
+  )
+  const issues = Array.from({length: 24}, (_, index) =>
+    signTestEvent(
+      createIssue({
+        repoAddress,
+        subject: `Autofill issue ${index + 1}`,
+        content: "Cold-start issue pagination fixture.",
+        pubkey: TEST_PUBKEYS.charlie,
+        created_at: BASE_TIMESTAMP + index + 1,
+      }),
+    ),
+  )
+  let activitySubscriptions = 0
+  const mockRelay = new MockRelay({
+    seedEvents: [announcement],
+    subscriptionOutcomesByRelay: {[`${activityRelay}/`]: "stall"},
+    onSubscribe: (_subscriptionId, _filters, relay) => {
+      if (relay === `${activityRelay}/`) activitySubscriptions += 1
+    },
+  })
+
+  await page.addInitScript(() => localStorage.clear())
+  await mockRelay.setup(page)
+  const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [discoveryRelay])
+  await page.goto(`/git/${naddr}/issues`)
+
+  await expect.poll(() => activitySubscriptions).toBeGreaterThan(0)
+  await mockRelay.injectEvents(issues.slice(0, 3))
+
+  await expect(page.locator("[data-issue-id]")).toHaveCount(3, {timeout: 10_000})
+  await expect(page.getByText("Looking for more issues…", {exact: true})).toBeVisible()
+
+  await mockRelay.injectEvents(issues.slice(3, 4))
+
+  await expect(page.locator("[data-issue-id]")).toHaveCount(4, {timeout: 10_000})
+  await expect(page.getByText("Looking for more issues…", {exact: true})).toHaveCount(0, {
+    timeout: 15_000,
+  })
+
+  await mockRelay.injectEvents(issues.slice(4))
+
+  await expect(page.locator("[data-issue-id]")).toHaveCount(20, {timeout: 10_000})
+  await expect(page.getByRole("button", {name: "Load more", exact: true})).toBeVisible()
+})
+
 test("replaces an EOSE-backed empty PR list when late live activity arrives", async ({page}) => {
   const relayUrl = "wss://git-pr-list-resolution.test"
   const identifier = "pr-list-resolution-fixture"
@@ -134,8 +194,12 @@ test("loads a bounded recent issue page before requesting older relay history", 
   const mockRelay = new MockRelay({
     seedEvents: [announcement, ...issues],
     onSubscribe: (_subscriptionId, filters) => {
+      const isStableLive = filters.some(
+        filter => Array.isArray(filter["#q"]) && (filter["#q"] as string[]).includes(repoAddress),
+      )
       for (const filter of filters) {
         if (
+          !isStableLive &&
           filter["#a"]?.includes(repoAddress) &&
           filter.kinds?.includes(1621) &&
           filter.kinds?.includes(1618) &&
@@ -157,19 +221,17 @@ test("loads a bounded recent issue page before requesting older relay history", 
   await expect(page.getByText("Paginated issue 100", {exact: true})).toBeVisible({timeout: 10_000})
 
   const loadMore = page.getByRole("button", {name: "Load more", exact: true})
-  for (
-    let index = 0;
-    index < 6 && !rootRequests.some(request => request.until !== undefined);
-    index += 1
-  ) {
+  for (let index = 0; index < 4; index += 1) {
     await loadMore.click()
   }
+  await expect(page.locator("[data-issue-id]")).toHaveCount(100)
+  await loadMore.click()
 
   await expect.poll(() => rootRequests.some(request => request.until !== undefined)).toBe(true)
   expect(rootRequests.find(request => request.until !== undefined)?.until).toBe(BASE_TIMESTAMP + 1)
 })
 
-test("shows partial issue history and retries only current root work", async ({page}) => {
+test("settles partial issue history without exposing relay diagnostics", async ({page}) => {
   const discoveryRelay = "wss://git-issue-partial-discovery.test"
   const activityRelay = "wss://git-issue-partial-activity.test"
   const identifier = "issue-partial-fixture"
@@ -190,14 +252,17 @@ test("shows partial issue history and retries only current root work", async ({p
     subscriptionOutcomesByRelay: {[`${activityRelay}/`]: "stall"},
     onSubscribe: (_subscriptionId, filters, relay) => {
       if (relay !== `${activityRelay}/`) return
+      const isStableLive = filters.some(
+        filter => Array.isArray(filter["#q"]) && (filter["#q"] as string[]).includes(repoAddress),
+      )
       for (const filter of filters) {
         if (
           filter["#a"]?.includes(repoAddress) &&
           filter.kinds?.includes(1621) &&
           filter.kinds?.includes(1618)
         ) {
-          if (filter.limit === 100) rootRequests += 1
-          if (filter.limit === 0) stableSubscriptions += 1
+          if (isStableLive) stableSubscriptions += 1
+          else if (filter.limit === 100) rootRequests += 1
         }
       }
     },
@@ -208,29 +273,11 @@ test("shows partial issue history and retries only current root work", async ({p
   const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [discoveryRelay])
   await page.goto(`/git/${naddr}/issues`)
 
-  await expect(
-    page.getByText("Some relays did not respond. Showing loaded activity.", {
-      exact: true,
-    }),
-  ).toBeVisible({timeout: 15_000})
-  await expect(page.getByText(/No issues exist/)).toHaveCount(0)
+  await expect(page.getByText("No issues loaded.", {exact: true})).toBeVisible({timeout: 15_000})
+  await expect(page.getByText(/Some relays did not respond/)).toHaveCount(0)
+  await expect(page.getByRole("button", {name: "Show"})).toHaveCount(0)
+  await expect(page.getByRole("button", {name: "Retry failed"})).toHaveCount(0)
   expect(rootRequests).toBe(1)
-
-  await page.getByRole("button", {name: "Show"}).click()
-  const relayFailure = page.getByText(`${activityRelay}/`, {exact: true})
-  await expect(relayFailure).toBeVisible()
-  expect(
-    await relayFailure.evaluate(element => {
-      const rect = element.getBoundingClientRect()
-      const topmost = document.elementFromPoint(
-        rect.left + rect.width / 2,
-        rect.top + rect.height / 2,
-      )
-      return element === topmost || element.contains(topmost)
-    }),
-  ).toBe(true)
-  await page.getByRole("button", {name: "Retry failed"}).click()
-  await expect.poll(() => rootRequests).toBeGreaterThan(1)
   expect(stableSubscriptions).toBe(1)
 })
 

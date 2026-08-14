@@ -20,7 +20,6 @@
   import Icon from "@lib/components/Icon.svelte"
   import AltArrowUp from "@assets/icons/alt-arrow-up.svg?dataurl"
   import PRView from "@app/components/PRView.svelte"
-  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
 
   const repoClass = getContext<Repo>(REPO_KEY)
   const repoRelaysStore = getContext<Readable<string[]>>(REPO_RELAYS_KEY)
@@ -30,7 +29,6 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -43,13 +41,6 @@
   const prEditRelays = $derived(repoRelays)
   const hasRepoAnnouncement = $derived.by(() => Boolean(repoClass.repoEvent))
   const announcementStatus = $derived($repoAnnouncementStatusStore)
-  const repoRelaysUnavailable = $derived(
-    hasRepoAnnouncement &&
-      announcementStatus === "complete" &&
-      !$repoCacheHydrationPendingStore &&
-      !$repoCacheHydrationFailedStore &&
-      repoRelays.length === 0,
-  )
   const SCROLL_TO_TOP_THRESHOLD = 300
 
   let prResolution = $state<{
@@ -57,7 +48,6 @@
     status: "loading" | "complete" | "partial" | "failed" | "unavailable" | "aborted"
     rootId?: string
   }>({requestedId: "", status: "loading"})
-  let prResolutionNonce = $state(0)
   let resolvedRoot = $state({requestedId: "", rootId: ""})
   let previousPrId = ""
   let showScrollButton = $state(false)
@@ -107,7 +97,6 @@
     const relays = repoRelays
     void requestedRepoEvent
     void $requestedRootEventStore.get(requestedRootReference)
-    void prResolutionNonce
     if (previousPrId !== currentPrId) {
       previousPrId = currentPrId
       resolvedRoot = {requestedId: "", rootId: ""}
@@ -178,18 +167,6 @@
   const prResolutionStatus = $derived(
     prResolution.requestedId === prId ? prResolution.status : "loading",
   )
-  const retryPrResolution = async () => {
-    if ($repoCacheHydrationFailedStore) await repoRootHistory.retryCacheHydration()
-    if (
-      announcementStatus === "partial" ||
-      announcementStatus === "failed" ||
-      announcementStatus === "aborted"
-    ) {
-      await repoRootHistory.retryAnnouncement()
-    }
-    prResolutionNonce += 1
-  }
-
   $effect(() => {
     const container = pageContainerRef
     if (!container) return
@@ -220,56 +197,16 @@
   {#if isHiddenRoot && prEvent}
     <div class="p-4 text-center text-muted-foreground">This pull request was hidden as spam.</div>
   {:else if pr && resolvedPrEvent}
-    {#if prResolutionStatus !== "complete" && prResolutionStatus !== "loading"}
-      <div
-        class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-        role="status"
-        aria-live="polite">
-        <span>
-          {prResolutionStatus === "unavailable"
-            ? "Repository relays are unavailable. Showing saved pull request content."
-            : prResolutionStatus === "failed"
-              ? "Pull request activity refresh failed. Showing saved content."
-              : "Some relays did not respond. Showing loaded activity."}
-        </span>
-        {#if $repoFailedRelayRequestsStore.length > 0}
-          <RepoRelayFailureNotice
-            onRetry={() => {
-              prResolutionNonce += 1
-            }} />
-        {:else if prResolutionStatus === "partial" || prResolutionStatus === "failed"}
-          <button
-            class="rounded-md border border-border px-3 py-1 text-sm"
-            onclick={retryPrResolution}>Retry</button>
-        {/if}
-      </div>
-    {/if}
     <PRView {pr} prEvent={resolvedPrEvent} repo={repoClass} {repoRelays} {prEditRelays} />
-  {:else if repoRelaysUnavailable || prResolutionStatus === "unavailable"}
-    <div class="p-4 text-center">
-      <p class="font-medium">Repository Relays Unavailable</p>
-      <p class="mt-1 text-sm text-muted-foreground">
-        This pull request cannot be loaded until a valid repository announcement declares at least
-        one relay.
-      </p>
-    </div>
   {:else if prResolutionStatus === "loading"}
     <div class="p-4 text-center" role="status">Loading pull request...</div>
-  {:else if prResolutionStatus === "partial" || prResolutionStatus === "failed"}
-    <div class="flex flex-col items-center gap-3 p-4 text-center text-muted-foreground">
-      <p>
-        {prResolutionStatus === "failed"
-          ? "This pull request could not be loaded from the repository relays."
-          : "This pull request could not be checked completely because some repository relays did not finish."}
-      </p>
-      <button class="rounded-md border border-border px-3 py-1 text-sm" onclick={retryPrResolution}
-        >Retry pull request lookup</button>
-    </div>
   {:else if prResolution.rootId}
     <div class="p-4 text-center" role="status">This repository item is not a pull request.</div>
   {:else}
     <div class="p-4 text-center text-muted-foreground">
-      Pull request not found in the current repository history.
+      {prResolutionStatus === "complete"
+        ? "Pull request not found in the current repository history."
+        : "Pull request unavailable."}
     </div>
   {/if}
 </div>

@@ -49,7 +49,7 @@
     type RepoPublishTransport,
   } from "@app/core/git-commands"
   import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
-  import {beforeNavigate, goto, preloadData} from "$app/navigation"
+  import {beforeNavigate, goto} from "$app/navigation"
   import {getContext, onMount, onDestroy, untrack} from "svelte"
   import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
@@ -293,10 +293,10 @@
 
     if (event?.kind && event?.pubkey && Array.isArray(event?.tags)) {
       const d = getTagValue("d", event.tags)
-      if (d) return `${event.kind}:${event.pubkey}:${d}:${euc}:${eventId}`
+      if (d) return `${event.kind}:${event.pubkey}:${d}:${euc}`
 
       const eucTag = event.tags.find((t: string[]) => t[0] === "r" && t[2] === "euc")?.[1] || ""
-      if (eucTag) return `${event.kind}:${event.pubkey}:euc:${eucTag}:${euc}:${eventId}`
+      if (eucTag) return `${event.kind}:${event.pubkey}:euc:${eucTag}:${euc}`
 
       if (event.id) return `${event.kind}:${event.pubkey}:id:${event.id}:${euc}`
     }
@@ -2083,6 +2083,27 @@
 
   const trimmedSearchQuery = $derived.by(() => searchQuery.trim())
   const trimmedActiveRepoSearchQuery = $derived.by(() => activeRepoSearchQuery.trim())
+  const accountSearchContext = $derived.by(() =>
+    JSON.stringify([
+      accountSearch.mode,
+      accountSearch.pubkey,
+      accountSearch.identifier,
+      accountSearch.invalid,
+      accountSearch.relayHints.slice().sort(),
+    ]),
+  )
+  const repoCardsScopeContext = $derived.by(() =>
+    JSON.stringify([
+      activeMode,
+      activeTab,
+      activeMode === "community" ? selectedCommunityPubkey : "",
+      $pubkey || "",
+      accountSearchContext,
+    ]),
+  )
+  const repoCardsContext = $derived.by(() =>
+    JSON.stringify([repoCardsScopeContext, trimmedActiveRepoSearchQuery]),
+  )
 
   const hasRawRepoSearchInput = $derived.by(
     () => activeTab !== "snippets" && !isAccountSearch && trimmedSearchQuery.length > 0,
@@ -2451,6 +2472,7 @@
                 filters: [{kinds: [0], authors}],
                 timeoutMs: Math.min(4000, remainingMs),
                 signal: controller.signal,
+                isolated: true,
               })
 
               if (controller.signal.aborted) return
@@ -2501,6 +2523,7 @@
                 filters: [{kinds: [GIT_REPO_ANNOUNCEMENT], authors}],
                 timeoutMs: Math.min(5000, remainingMs),
                 signal: controller.signal,
+                isolated: true,
               })
 
               if (controller.signal.aborted) return
@@ -2634,9 +2657,7 @@
     })
   })
 
-  const repoResultsVisibleContext = $derived(
-    `${activeMode}:${activeTab}:${trimmedActiveRepoSearchQuery}`,
-  )
+  const repoResultsVisibleContext = $derived(repoCardsContext)
   let lastRepoResultsVisibleContext = ""
   $effect(() => {
     if (repoResultsVisibleContext === lastRepoResultsVisibleContext) return
@@ -2658,12 +2679,14 @@
   let accountSearchRepoCards = $state<any[]>([])
   let accountSearchCardsComputeTimer: ReturnType<typeof setTimeout> | null = null
   let accountSearchCardsComputeRequestId = 0
+  let renderedAccountSearchContext = $state("")
   const sortedAccountSearchRepoCards = $derived.by(() =>
     prioritizeFreshRepoCards(accountSearchRepoCards),
   )
 
   // Update account search repo cards
   $effect(() => {
+    const context = accountSearchContext
     if (!isAccountSearch) {
       if (accountSearchCardsComputeTimer) {
         clearTimeout(accountSearchCardsComputeTimer)
@@ -2671,8 +2694,11 @@
       }
       accountSearchCardsComputeRequestId += 1
       accountSearchRepoCards = []
+      renderedAccountSearchContext = ""
       return
     }
+
+    if (renderedAccountSearchContext !== context) accountSearchRepoCards = []
 
     const repos = accountSearchVisibleRepos
     if (repos.length > 0) {
@@ -2681,11 +2707,18 @@
       }
       const requestId = ++accountSearchCardsComputeRequestId
       const timer = setTimeout(() => {
-        if (requestId !== accountSearchCardsComputeRequestId || !isAccountSearch) return
+        if (
+          requestId !== accountSearchCardsComputeRequestId ||
+          !isAccountSearch ||
+          accountSearchContext !== context
+        ) {
+          return
+        }
         const cards = repositoriesStore.computeCards(repos, {
           parseRepoAnnouncementEvent,
         })
         accountSearchRepoCards = cards
+        renderedAccountSearchContext = context
         if (accountSearchCardsComputeTimer === timer) accountSearchCardsComputeTimer = null
       }, 0)
       accountSearchCardsComputeTimer = timer
@@ -2696,6 +2729,7 @@
       }
       accountSearchCardsComputeRequestId += 1
       accountSearchRepoCards = []
+      renderedAccountSearchContext = context
     }
   })
 
@@ -2707,12 +2741,13 @@
   let cardsComputeTimer: ReturnType<typeof setTimeout> | null = null
   let cardsComputeRequestId = 0
   let renderedRepoCardsContext = $state("")
+  let renderedRepoCardsScopeContext = $state("")
+  let lastRepoCardsScopeContext = ""
   let repoCardsComputing = $state(false)
   const sortedRepoCards = $derived.by(() => {
     const cards = $repositoriesStore as any[]
     return trimmedActiveRepoSearchQuery ? cards : prioritizeFreshRepoCards(cards)
   })
-  const repoCardsContext = $derived(`${activeMode}:${activeTab}:${trimmedActiveRepoSearchQuery}`)
   const personalStarredReposLoading = $derived(
     activeMode === "personal" &&
       activeTab === "bookmarks" &&
@@ -2745,24 +2780,36 @@
     return false
   })
   const hasRenderedRepoCardsForCurrentContext = $derived(
-    renderedRepoCardsContext === repoCardsContext && sortedRepoCards.length > 0,
+    renderedRepoCardsScopeContext === repoCardsScopeContext &&
+      renderedRepoCardsContext === repoCardsContext &&
+      sortedRepoCards.length > 0,
+  )
+  const hasRenderedRepoCardsForCurrentScope = $derived(
+    renderedRepoCardsScopeContext === repoCardsScopeContext && sortedRepoCards.length > 0,
+  )
+  const repoSearchUpdating = $derived(
+    hasRenderedRepoCardsForCurrentScope &&
+      (!hasRenderedRepoCardsForCurrentContext ||
+        repoCardsComputing ||
+        (hasRepoSearchInput && repoDiscoveryStatus.loading)),
   )
   const repoListLoading = $derived.by(() => {
     if (activeTab === "snippets" || isAccountSearch) return false
-    if (hasRenderedRepoCardsForCurrentContext) return false
+    if (hasRenderedRepoCardsForCurrentScope) return false
     return Boolean(loading || repoCardsComputing || activeRepoDataLoading)
   })
   const canShowRepoEmpty = $derived(
     activeTab !== "snippets" &&
       !isAccountSearch &&
       !repoListLoading &&
+      !repoSearchUpdating &&
       searchFilteredRepos.length === 0,
   )
 
   const repoCardsForProfileHydration = $derived.by(() =>
     isAccountSearch
       ? sortedAccountSearchRepoCards
-      : hasRenderedRepoCardsForCurrentContext
+      : hasRenderedRepoCardsForCurrentScope
         ? sortedRepoCards
         : [],
   )
@@ -2924,6 +2971,22 @@
   // Update repositoriesStore whenever repos change
   // Uses debouncing to wait for all repos to load before showing cards
   $effect(() => {
+    const scopeContext = repoCardsScopeContext
+    if (scopeContext !== lastRepoCardsScopeContext) {
+      lastRepoCardsScopeContext = scopeContext
+      if (cardsComputeTimer) {
+        clearTimeout(cardsComputeTimer)
+        cardsComputeTimer = null
+      }
+      cardsComputeRequestId += 1
+      repoCardsComputing = false
+      cachedCards = []
+      cachedCardsKey = ""
+      renderedRepoCardsContext = ""
+      renderedRepoCardsScopeContext = ""
+      untrack(() => repositoriesStore.clear())
+    }
+
     if (activeTab === "snippets") {
       if (cardsComputeTimer) {
         clearTimeout(cardsComputeTimer)
@@ -2947,13 +3010,15 @@
     const reposToShow = visibleSearchFilteredRepos
     const context = repoCardsContext
     const cachedEntry = repoCardsByContext.get(context)
+    const searchResultsPending = hasRepoSearchInput && repoDiscoveryStatus.loading
 
-    if (activeRepoDataLoading && reposToShow.length === 0) {
+    if ((activeRepoDataLoading || searchResultsPending) && reposToShow.length === 0) {
       if (cachedEntry?.cards.length) {
         cachedCards = cachedEntry.cards
         cachedCardsKey = cachedEntry.cardsKey
         repositoriesStore.set(cachedEntry.cards)
         renderedRepoCardsContext = context
+        renderedRepoCardsScopeContext = scopeContext
         repoCardsComputing = false
         loading = false
       } else {
@@ -2977,6 +3042,7 @@
           cachedCardsKey = cachedEntry.cardsKey
           repositoriesStore.set(cachedEntry.cards)
           renderedRepoCardsContext = context
+          renderedRepoCardsScopeContext = scopeContext
           repoCardsComputing = false
         } else if (cardsKey !== cachedCardsKey || renderedRepoCardsContext !== context) {
           if (cardsComputeTimer) {
@@ -2986,7 +3052,13 @@
           repoCardsComputing = true
           const requestId = ++cardsComputeRequestId
           const timer = setTimeout(() => {
-            if (requestId !== cardsComputeRequestId || repoCardsContext !== context) return
+            if (
+              requestId !== cardsComputeRequestId ||
+              repoCardsContext !== context ||
+              repoCardsScopeContext !== scopeContext
+            ) {
+              return
+            }
             const cards = repositoriesStore.computeCards(reposToShow, {
               parseRepoAnnouncementEvent,
             })
@@ -2995,6 +3067,7 @@
             repoCardsByContext.set(context, {cardsKey, cards})
             repositoriesStore.set(cachedCards)
             renderedRepoCardsContext = context
+            renderedRepoCardsScopeContext = scopeContext
             repoCardsComputing = false
             if (cardsComputeTimer === timer) cardsComputeTimer = null
           }, 0)
@@ -3014,6 +3087,7 @@
           repositoriesStore.clear()
         })
         renderedRepoCardsContext = context
+        renderedRepoCardsScopeContext = scopeContext
       }
     }
   })
@@ -3261,9 +3335,6 @@
 
   const getRepoCardNavigationKey = (announcement: RepoAnnouncementEvent) =>
     announcement.id || getRepoBrowseHref(announcement)
-  const preloadRepoCard = (announcement: RepoAnnouncementEvent) => {
-    void preloadData(getRepoBrowseHref(announcement)).catch(() => {})
-  }
 
   const navigateToRepoCard = (announcement: RepoAnnouncementEvent) => {
     const navigationKey = getRepoCardNavigationKey(announcement)
@@ -4020,12 +4091,6 @@
               role="link"
               tabindex="0"
               aria-busy={repoCardNavigating}
-              onpointerenter={g.first
-                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
-                : undefined}
-              onfocus={g.first
-                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
-                : undefined}
               onclick={g.first
                 ? event => handleRepoCardNeutralClick(event, g.first as RepoAnnouncementEvent)
                 : undefined}
@@ -4147,8 +4212,20 @@
               : "No starred repositories found."}
           {/if}
         </p>
-      {:else if hasRenderedRepoCardsForCurrentContext}
-        <div class="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {:else if hasRenderedRepoCardsForCurrentScope}
+        {#if repoSearchUpdating}
+          <div
+            class="mb-3 flex items-center justify-end gap-2 text-xs text-muted-foreground"
+            role="status"
+            aria-live="polite">
+            <Spinner loading={true} />
+            Updating results...
+          </div>
+        {/if}
+        <div
+          data-testid="repo-card-grid"
+          class="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
+          aria-busy={repoSearchUpdating}>
           {#each sortedRepoCards as g, i (getRepoCardStableKey(g))}
             {@const cardProfileRelays = g.first
               ? getRepoCardProfileRelays(g.first as RepoAnnouncementEvent)
@@ -4169,18 +4246,14 @@
               repoCardNavigationKey && navigatingRepoCardKey === repoCardNavigationKey,
             )}
             <div
+              data-testid="repo-card"
+              data-repo-key={getRepoCardStableKey(g)}
               class="relative flex min-w-0 flex-col rounded-md border border-border bg-card p-3 transition {repoCardNavigating
                 ? 'cursor-wait opacity-70 ring-2 ring-primary/40'
                 : ''}"
               role="link"
               tabindex="0"
               aria-busy={repoCardNavigating}
-              onpointerenter={g.first
-                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
-                : undefined}
-              onfocus={g.first
-                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
-                : undefined}
               onclick={g.first
                 ? event => handleRepoCardNeutralClick(event, g.first as RepoAnnouncementEvent)
                 : undefined}
@@ -4267,7 +4340,7 @@
             </div>
           {/each}
         </div>
-        {#if hasMoreRepoResults}
+        {#if hasRenderedRepoCardsForCurrentContext && hasMoreRepoResults}
           <div class="mt-4 flex flex-col items-center gap-2">
             <button type="button" class="btn btn-outline btn-sm" onclick={loadMoreRepoResults}>
               Show more repositories

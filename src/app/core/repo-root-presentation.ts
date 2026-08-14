@@ -18,6 +18,37 @@ export type RepoRootListPresentation = {
   canLoadOlder: boolean
 }
 
+export const getAutoFilledRootVisibleCount = ({
+  visibleCount,
+  resultCount,
+  pageSize,
+}: {
+  visibleCount: number
+  resultCount: number
+  pageSize: number
+}) => {
+  const boundedResultCount = Math.max(0, resultCount)
+  const firstPageTarget = Math.min(Math.max(1, pageSize), boundedResultCount)
+
+  return Math.min(Math.max(visibleCount, firstPageTarget), boundedResultCount)
+}
+
+export const isRepoRootFirstPageLoading = ({
+  historyStatus,
+  notice,
+  visibleCount,
+  pageSize,
+}: {
+  historyStatus: RepoRootHistorySnapshot["status"]
+  notice: RepoRootListNotice
+  visibleCount: number
+  pageSize: number
+}) =>
+  notice === "loading" &&
+  (historyStatus === "idle" || historyStatus === "loading") &&
+  visibleCount > 0 &&
+  visibleCount < Math.max(1, pageSize)
+
 export const getRepoRootListPresentation = ({
   authority,
   history,

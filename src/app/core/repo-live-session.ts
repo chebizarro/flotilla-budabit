@@ -44,6 +44,7 @@ export type RepoLiveRequestOptions = {
   retryBaseMs?: number
   retryMaxMs?: number
   overlapSeconds?: number
+  initialReplayLimit?: number
 }
 
 export type RepoLiveRequestDependencies = {
@@ -56,6 +57,25 @@ export type RepoLiveRequestDependencies = {
 }
 
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean))).sort()
+const REPO_SCOPE_FILTER_KEYS = ["#a", "#q", "#d", "#e", "#E"] as const
+
+const isRepoScopedFilter = (filter: Filter) =>
+  REPO_SCOPE_FILTER_KEYS.some(key => {
+    const values = filter[key]
+    return Array.isArray(values) && values.length > 0
+  })
+
+const makeInitialLiveFilter = (filter: Filter, initialReplayLimit: number): Filter => {
+  const next = {...filter, limit: isRepoScopedFilter(filter) ? initialReplayLimit : 0}
+  delete next.since
+  return next
+}
+
+const makeRetryLiveFilter = (filter: Filter, since: number): Filter => {
+  const next = {...filter, since}
+  delete next.limit
+  return next
+}
 
 export const buildRepoStableLiveFilters = ({
   addresses,
@@ -152,11 +172,12 @@ export const createRepoLiveRequester = (dependencies: RepoLiveRequestDependencie
     const retryBaseMs = options.retryBaseMs ?? 1000
     const retryMaxMs = options.retryMaxMs ?? 30_000
     const overlapSeconds = options.overlapSeconds ?? 10
+    const initialReplayLimit = Math.max(0, Math.floor(options.initialReplayLimit ?? 0))
     const initialSince = Math.floor(now() / 1000) - overlapSeconds
 
     let stopped = false
     let retryCount = 0
-    let attemptCount = 0
+    let initialReplayComplete = false
     let lastReceivedAt = 0
     let retryTimer: Timer | undefined
     let attemptController: AbortController | undefined
@@ -178,9 +199,10 @@ export const createRepoLiveRequester = (dependencies: RepoLiveRequestDependencie
       const controller = new AbortController()
       attemptController = controller
       const since = Math.max(initialSince, lastReceivedAt - overlapSeconds)
-      const isRetry = attemptCount++ > 0
       const filters = options.filters.map(filter =>
-        isRetry ? {...filter, since} : {...filter, limit: 0},
+        initialReplayComplete
+          ? makeRetryLiveFilter(filter, since)
+          : makeInitialLiveFilter(filter, initialReplayLimit),
       )
 
       let pending: Promise<TrustedEvent[]>
@@ -201,6 +223,7 @@ export const createRepoLiveRequester = (dependencies: RepoLiveRequestDependencie
             options.onEvent(event, relay)
           },
           onEose: () => {
+            initialReplayComplete = true
             retryCount = 0
           },
           onClosed: reason => {

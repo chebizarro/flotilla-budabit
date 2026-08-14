@@ -60,6 +60,116 @@ describe("repository live session", () => {
     expect(filters.some(filter => "ids" in filter)).toBe(false)
   })
 
+  it("replays bounded repository-scoped filters until the first EOSE", () => {
+    const calls: RequestOptions[] = []
+    const request = vi.fn((options: RequestOptions) => {
+      calls.push(options)
+      return pendingRequest(options)
+    })
+    const start = createRepoLiveRequester({request})
+    const routeController = new AbortController()
+    const stop = start({
+      relay,
+      filters: [
+        {kinds: [1621], "#a": [address]},
+        {kinds: [1111], "#E": [event.id]},
+        {kinds: [1621], "#p": [event.pubkey]},
+      ],
+      signal: routeController.signal,
+      priority: 200,
+      owner: "repo-foreground:stable",
+      initialReplayLimit: 100,
+      onEvent: vi.fn(),
+    })
+
+    try {
+      expect(calls[0].filters).toEqual([
+        {kinds: [1621], "#a": [address], limit: 100},
+        {kinds: [1111], "#E": [event.id], limit: 100},
+        {kinds: [1621], "#p": [event.pubkey], limit: 0},
+      ])
+      expect(calls[0].filters.every(filter => filter.since === undefined)).toBe(true)
+    } finally {
+      stop()
+    }
+  })
+
+  it("keeps initial replay armed when an attempt closes before EOSE", async () => {
+    vi.useFakeTimers()
+    const calls: RequestOptions[] = []
+    let firstResolve: ((events: TrustedEvent[]) => void) | undefined
+    const request = vi.fn((options: RequestOptions) => {
+      calls.push(options)
+      if (calls.length === 1) {
+        options.onClosed?.("rate-limited", relay)
+        return new Promise<TrustedEvent[]>(resolve => {
+          firstResolve = resolve
+        })
+      }
+      return pendingRequest(options)
+    })
+    const start = createRepoLiveRequester({request, random: () => 0, onError: vi.fn()})
+    const routeController = new AbortController()
+    const stop = start({
+      relay,
+      filters: [{kinds: [1621], "#a": [address]}],
+      signal: routeController.signal,
+      priority: 200,
+      owner: "repo-foreground:stable",
+      initialReplayLimit: 100,
+      onEvent: vi.fn(),
+      retryBaseMs: 1000,
+    })
+
+    try {
+      firstResolve?.([])
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(calls).toHaveLength(2)
+      expect(calls[0].filters[0]).toMatchObject({limit: 100})
+      expect(calls[1].filters[0]).toMatchObject({limit: 100})
+      expect(calls[1].filters[0].since).toBeUndefined()
+    } finally {
+      stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it("covers an old-timestamp event retained after finite history reaches EOSE", () => {
+    const received = vi.fn()
+    const retainedAfterHistory = {...event, created_at: 1}
+    let finiteHistoryComplete = false
+    const request = vi.fn((options: RequestOptions) => {
+      if (finiteHistoryComplete && Number(options.filters[0]?.limit || 0) > 0) {
+        options.onEvent?.(retainedAfterHistory, relay)
+      }
+      options.onEose?.(relay)
+      return pendingRequest(options)
+    })
+    const start = createRepoLiveRequester({request, now: () => 100_000})
+    const routeController = new AbortController()
+
+    finiteHistoryComplete = true
+    const stop = start({
+      relay,
+      filters: [{kinds: [1621], "#a": [address]}],
+      signal: routeController.signal,
+      priority: 200,
+      owner: "repo-foreground:stable",
+      initialReplayLimit: 100,
+      onEvent: received,
+    })
+
+    try {
+      expect(received).toHaveBeenCalledWith(retainedAfterHistory, relay)
+      expect(request.mock.calls[0][0].filters[0]).toMatchObject({limit: 100})
+      expect(request.mock.calls[0][0].filters[0].since).toBeUndefined()
+    } finally {
+      stop()
+    }
+  })
+
   it("retries an unexpectedly closed relay with overlap from the last event", async () => {
     vi.useFakeTimers()
     const calls: RequestOptions[] = []
@@ -68,6 +178,7 @@ describe("repository live session", () => {
       calls.push(options)
       if (calls.length === 1) {
         options.onEvent?.(event, relay)
+        options.onEose?.(relay)
         options.onClosed?.("rate-limited", relay)
         return new Promise<TrustedEvent[]>(resolve => {
           firstResolve = resolve
@@ -84,11 +195,12 @@ describe("repository live session", () => {
     const routeController = new AbortController()
     const stop = start({
       relay,
-      filters: [{kinds: [1621]}],
+      filters: [{kinds: [1621], "#a": [address]}],
       signal: routeController.signal,
       priority: 200,
       owner: "repo-foreground:stable",
       onEvent: vi.fn(),
+      initialReplayLimit: 100,
       retryBaseMs: 1000,
     })
 
@@ -98,7 +210,7 @@ describe("repository live session", () => {
       await vi.advanceTimersByTimeAsync(1000)
 
       expect(calls).toHaveLength(2)
-      expect(calls[0].filters[0]).toMatchObject({limit: 0})
+      expect(calls[0].filters[0]).toMatchObject({limit: 100})
       expect(calls[0].filters[0].since).toBeUndefined()
       expect(calls[1].filters[0].since).toBe(110)
     } finally {

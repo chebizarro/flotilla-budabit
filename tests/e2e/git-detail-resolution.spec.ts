@@ -70,7 +70,7 @@ test("replaces EOSE-backed issue absence when repository live activity delivers 
   await expect(page.getByText(/Issue not found/)).toHaveCount(0)
 })
 
-test("reports unavailable repository relays for issue and pull request details", async ({page}) => {
+test("uses neutral unavailable states for details without relay authority", async ({page}) => {
   const relaylessIdentifier = `${identifier}-relayless`
   const announcement = signTestEvent(
     createRepoAnnouncement({
@@ -88,12 +88,12 @@ test("reports unavailable repository relays for issue and pull request details",
   const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, relaylessIdentifier, [relayUrl])
 
   await page.goto(`/git/${naddr}/issues/${missingId}`)
-  await expect(page.getByText("Repository Relays Unavailable", {exact: true})).toBeVisible()
-  await expect(page.getByText("No issue found.", {exact: true})).toHaveCount(0)
+  await expect(page.getByText("Issue unavailable.", {exact: true})).toBeVisible()
+  await expect(page.getByText(/Repository Relays/)).toHaveCount(0)
 
   await page.goto(`/git/${naddr}/prs/${missingId}`)
-  await expect(page.getByText("Repository Relays Unavailable", {exact: true})).toBeVisible()
-  await expect(page.getByText("Pull request not found.", {exact: true})).toHaveCount(0)
+  await expect(page.getByText("Pull request unavailable.", {exact: true})).toBeVisible()
+  await expect(page.getByText(/Repository Relays/)).toHaveCount(0)
 })
 
 test("rejects a foreign exact issue before canonical projection", async ({page}) => {
@@ -165,8 +165,10 @@ test("resolves a pull request update deep link through one repository activity o
     onSubscribe: (_subscriptionId, filters) => {
       if (
         filters.some(
+          filter => Array.isArray(filter["#q"]) && (filter["#q"] as string[]).includes(repoAddress),
+        ) &&
+        filters.some(
           filter =>
-            filter.limit === 0 &&
             filter["#a"]?.includes(repoAddress) &&
             filter.kinds?.includes(1621) &&
             filter.kinds?.includes(1618),
@@ -375,7 +377,10 @@ test("keeps one stable lane through large root growth and clears it on teardown"
         relay === `${stressRelay}/` &&
         filters.some(
           filter =>
-            filter.limit === 0 &&
+            Array.isArray(filter["#q"]) && (filter["#q"] as string[]).includes(stressAddress),
+        ) &&
+        filters.some(
+          filter =>
             filter["#a"]?.includes(stressAddress) &&
             filter.kinds?.includes(1621) &&
             filter.kinds?.includes(1618),
@@ -394,7 +399,9 @@ test("keeps one stable lane through large root growth and clears it on teardown"
 
   await mockRelay.injectEvents(issues)
   await page.getByRole("link", {name: "Issues", exact: true}).click()
-  await expect(page.getByText("Stress issue 150", {exact: true})).toBeVisible({timeout: 10_000})
+  await expect(page.getByRole("link", {name: /Open Stress issue 150/})).toBeVisible({
+    timeout: 10_000,
+  })
   expect(stableActivitySubscriptions).toBe(1)
 
   await page.goto("/home")

@@ -143,7 +143,7 @@ Entering a foreground route does not promote existing queued background work. It
 
 ## Stable Live Coverage
 
-Live coverage starts before finite history to avoid a history-to-live gap. Each relay has independent ownership and a route-scoped controller.
+Live and finite history may be admitted in either order. To avoid a history-to-live gap, each relay's first live request performs a bounded replay for repository-scoped filters until that request reaches EOSE. Broad viewer-only filters remain live-only, and reconnects after the first EOSE use the normal timestamp overlap. Each relay has independent ownership and a route-scoped controller.
 
 ### Coordinate Lane
 

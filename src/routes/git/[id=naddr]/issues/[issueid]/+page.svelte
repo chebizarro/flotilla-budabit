@@ -73,7 +73,6 @@
   import {loadBudabitProfile} from "@app/core/profile-resolver"
   import Markdown from "@src/lib/components/Markdown.svelte"
   import RepoRichDescriptionEditor from "@app/components/RepoRichDescriptionEditor.svelte"
-  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
   import {HIDDEN_ROOT_IDS_KEY, REPO_KEY} from "@app/core/git-state"
   import type {Repo} from "@nostr-git/ui"
   import type {Readable} from "svelte/store"
@@ -88,7 +87,6 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -130,15 +128,6 @@
   const issueResolutionStatus = $derived(
     issueResolution.issueId === issueId ? issueResolution.status : "loading",
   )
-  const repoRelaysUnavailable = $derived(
-    hasRepoAnnouncement &&
-      announcementStatus === "complete" &&
-      !$repoCacheHydrationPendingStore &&
-      !$repoCacheHydrationFailedStore &&
-      repoBoundRelays.length === 0,
-  )
-  let issueResolutionNonce = $state(0)
-
   $effect(() => {
     const currentIssueId = issueId
     const announcementAvailable = hasRepoAnnouncement
@@ -147,7 +136,6 @@
     const cacheHydrationFailed = $repoCacheHydrationFailedStore
     const relays = repoBoundRelays
     void issueEvent
-    void issueResolutionNonce
 
     if (!currentIssueId) {
       issueResolution = {issueId: currentIssueId, status: "complete"}
@@ -214,18 +202,6 @@
       controller.abort()
     }
   })
-  const retryIssueResolution = async () => {
-    if ($repoCacheHydrationFailedStore) await repoRootHistory.retryCacheHydration()
-    if (
-      announcementStatus === "partial" ||
-      announcementStatus === "failed" ||
-      announcementStatus === "aborted"
-    ) {
-      await repoRootHistory.retryAnnouncement()
-    }
-    issueResolutionNonce += 1
-  }
-
   // Filter helpers used when refreshing labels/description updates after publishing
   const getLabelFilter = (): Filter => ({kinds: [1985], "#e": [issueEvent?.id ?? ""]})
   const getCoverLetterFilter = (): Filter => ({
@@ -913,30 +889,6 @@
   </div>
 {:else if issue}
   <div class="px-2 py-2 sm:px-0 sm:py-4" data-event={issueEvent?.id} transition:slide>
-    {#if issueResolutionStatus !== "complete" && issueResolutionStatus !== "loading"}
-      <div
-        class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-        role="status"
-        aria-live="polite">
-        <span>
-          {issueResolutionStatus === "unavailable"
-            ? "Repository relays are unavailable. Showing saved issue content."
-            : issueResolutionStatus === "failed"
-              ? "Issue activity refresh failed. Showing saved issue content."
-              : "Some relays did not respond. Showing loaded activity."}
-        </span>
-        {#if $repoFailedRelayRequestsStore.length > 0}
-          <RepoRelayFailureNotice
-            onRetry={() => {
-              issueResolutionNonce += 1
-            }} />
-        {:else if issueResolutionStatus === "partial" || issueResolutionStatus === "failed"}
-          <button
-            class="rounded-md border border-border px-3 py-1 text-sm"
-            onclick={retryIssueResolution}>Retry</button>
-        {/if}
-      </div>
-    {/if}
     <Card class="git-card p-4 transition-colors sm:p-6">
       <div class="flex items-start gap-2 sm:gap-4">
         {#if statusIcon}
@@ -1238,30 +1190,11 @@
         enableReplies />
     </Card>
   </div>
-{:else if repoRelaysUnavailable || issueResolutionStatus === "unavailable"}
-  <div class="flex flex-col items-center justify-center px-4 py-8 text-center sm:py-12">
-    <SearchX class="mb-2 h-6 w-6 sm:h-8 sm:w-8" />
-    <p class="text-sm font-medium sm:text-base">Repository Relays Unavailable</p>
-    <p class="mt-1 max-w-lg text-sm text-muted-foreground">
-      This issue cannot be loaded until a valid repository announcement declares at least one relay.
-    </p>
-  </div>
 {:else if issueResolutionStatus === "loading"}
   <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12">
     <p class="text-center text-sm text-muted-foreground sm:text-base" role="status">
       Loading issue...
     </p>
-  </div>
-{:else if issueResolutionStatus === "partial" || issueResolutionStatus === "failed"}
-  <div class="flex flex-col items-center justify-center gap-3 px-4 py-8 text-center sm:py-12">
-    <SearchX class="h-6 w-6 sm:h-8 sm:w-8" />
-    <p class="max-w-lg text-sm text-muted-foreground sm:text-base">
-      {issueResolutionStatus === "failed"
-        ? "This issue could not be loaded from the repository relays."
-        : "This issue could not be checked completely because some repository relays did not finish."}
-    </p>
-    <button class="rounded-md border border-border px-3 py-1 text-sm" onclick={retryIssueResolution}
-      >Retry issue lookup</button>
   </div>
 {:else if issueResolution.rootId}
   <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12" role="status">
@@ -1273,7 +1206,9 @@
   <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12">
     <SearchX class="mb-2 h-6 w-6 sm:h-8 sm:w-8" />
     <p class="text-center text-sm sm:text-base">
-      Issue not found in the current repository history.
+      {issueResolutionStatus === "complete"
+        ? "Issue not found in the current repository history."
+        : "Issue unavailable."}
     </p>
   </div>
 {/if}
