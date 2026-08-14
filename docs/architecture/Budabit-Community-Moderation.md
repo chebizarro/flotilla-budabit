@@ -6,27 +6,27 @@ The goal is to let communities stay readable and discoverable while keeping publ
 
 ## Summary
 
-Budabit communities use `kind:10222` Communikey definitions for stable community structure. Section write access is enforced by `kind:30000` profile lists. Admission requests use NIP-101 forms created by moderators, not by the community root key.
+Budabit communities use `kind:10222` Communikey definitions for stable community structure. Current section grants from `kind:30000` profile lists govern publishing and permission-governed Budabit visibility. Admission requests use NIP-101 forms created by moderators, not by the community root key.
 
 Moderators create application forms as `kind:30168` events. A form references the community definition with an `a` tag and identifies the requested section with a `content` tag. Users submit public, identified `kind:1069` responses to request access. Moderators review responses and either grant access by updating the section profile list and publishing a positive review, or reject by reacting negatively to the response.
 
 ## Core Decisions
 
-| Topic                    | Decision                                                                                                                                                 |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Community root stability | `kind:10222` should change rarely and must not list application forms.                                                                                   |
-| Form ownership           | Application forms are authored by moderators with grant capability for the section.                                                                      |
-| Form discovery           | Forms are discovered from community relays by community `a` tag and section `content` tag.                                                               |
-| Read access              | Users may read community content where relays serve it, but Budabit filters permission-governed content by authorized authors.                           |
-| Write access             | Effective publish permission comes from section profile-list membership.                                                                                 |
-| Admission request        | Users submit an identified public `kind:1069` response to the selected application form.                                                                 |
-| Duplicate applications   | Budabit allows one active submission per user/form. Resubmission requires a `kind:5` delete of the old response.                                         |
-| Grant                    | Update the section profile list and publish a `+` reaction on the response.                                                                              |
-| Reject                   | Publish a `-` reaction on the response. No profile-list edit.                                                                                            |
-| Root visibility          | Root-level section content only appears when explicitly allowed by current section permissions and targeting rules. Replies do not make roots visible.   |
-| Censoring                | Explicit moderation uses NIP-56 `kind:1984` reports with report type `spam`; it is a negative overlay on top of normal visibility and write permissions. |
-| Relays                   | Forms, responses, reactions, and profile-list edits are confined to the community relays plus any explicit authority relay hints.                        |
-| Anonymous submissions    | Not supported. Admission requests must be tied to the requesting pubkey.                                                                                 |
+| Topic                    | Decision                                                                                                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Community root stability | `kind:10222` should change rarely and must not list application forms.                                                                                               |
+| Form ownership           | Application forms are authored by moderators with grant capability for the section.                                                                                  |
+| Form discovery           | Forms are discovered from community relays by community `a` tag and section `content` tag.                                                                           |
+| Community visibility     | Relays may serve public candidates, but Budabit admits permission-governed content under current section grants.                                                     |
+| Write access             | Effective publish permission comes from section profile-list membership.                                                                                             |
+| Admission request        | Users submit an identified public `kind:1069` response to the selected application form.                                                                             |
+| Duplicate applications   | Budabit allows one active submission per user/form. Resubmission requires a `kind:5` delete of the old response.                                                     |
+| Grant                    | Update the section profile list and publish a `+` reaction on the response.                                                                                          |
+| Reject                   | Publish a `-` reaction on the response. No profile-list edit.                                                                                                        |
+| Root visibility          | Root-level section content only appears when explicitly allowed by current section permissions and targeting rules. Replies do not make roots visible.               |
+| Censoring                | Explicit moderation uses NIP-56 `kind:1984` reports with report type `spam`; it is a negative overlay on top of normal visibility and write permissions.             |
+| Relays                   | Forms, responses, and profile-list edits use community/authority relays. Review reactions also reach applicant/app discovery relays and carry community relay hints. |
+| Anonymous submissions    | Not supported. Admission requests must be tied to the requesting pubkey.                                                                                             |
 
 ## Why Forms Are Not In `kind:10222`
 
@@ -73,6 +73,8 @@ The empty identifier in `10222:<community-pubkey>:` is intentional. Budabit trea
 
 A moderator can create and review forms for a section only when the moderator can grant that section's access.
 
+Admission review reactions are published to the scoped community relays and to normalized applicant/app discovery relays. They carry the community relay set as `relay` tags so an applicant who is denied or finally revoked can discover the addressed review first. The client bounds those untrusted hints and uses them only to bootstrap the exact signed definition, refreshes that definition on its own declared relays, and then partitions form, response, review-history, profile-list, report, and delete queries by community relay scope. Explicit profile-list relay coordinates are prioritized within the bounded authority set.
+
 Grant capability requires profile-list management:
 
 | Capability              | Source                                                                                   |
@@ -84,6 +86,10 @@ This keeps the access-control model simple and prevents users from applying thro
 Badges are community endorsements and engagement primitives. They do not grant write access and do not make a pubkey a moderator.
 
 If a future community wants separate reviewers who cannot grant access, Budabit can add a reviewer role later. That should be explicit rather than inferred from form authorship.
+
+### Profile-list shards
+
+A section may repeat `a` tags to reference several distinct profile-list coordinates. The effective section grant set is the union of the current `p` tags in all loaded shards. Sharding keeps large grant sets within relay event-size and tag-count limits; it does not weaken coordinate authority, so every shard is fetched with its exact author and `d` identifier. An unresolved shard contributes no grants.
 
 ## Section Forms
 
@@ -290,13 +296,13 @@ Repository authority is intentionally narrower than community write access. A us
 
 Definitions:
 
-| Role                | Source                                                     |
-| ------------------- | ---------------------------------------------------------- |
-| Repo owner          | The pubkey that authored the repository announcement.      |
-| Declared maintainer | Pubkeys listed in the repo announcement `maintainers` tag. |
+| Role                | Source                                                                       |
+| ------------------- | ---------------------------------------------------------------------------- |
+| Repo owner          | The pubkey that authored the repository announcement.                        |
+| Declared maintainer | Pubkeys listed in the repo announcement `maintainers` tag.                   |
 | Verified maintainer | A declared maintainer with at least one owner-merged PR in the current repo. |
-| Issue author        | The pubkey that authored the issue root event.             |
-| PR author           | The pubkey that authored the pull request root event.      |
+| Issue author        | The pubkey that authored the issue root event.                               |
+| PR author           | The pubkey that authored the pull request root event.                        |
 
 Status resolution is shared in `@nostr-git/core`. Budabit should pass the same repository owner and maintainer set to both the status resolver and the status editor UI. This keeps the displayed final state and the visible “Change Status” affordance aligned.
 
@@ -391,6 +397,7 @@ Rules:
 - A root event is visible only if it passes the section's current author allow-list and targeting rules.
 - A valid reply, chat message, quote, mention, or other reference MUST NOT make an otherwise disallowed root event appear as a community root.
 - If a root author's section access is revoked, their root events disappear from default section views and direct community detail pages unless separately allowed again later.
+- If access is regranted, Budabit restarts structural acquisition so matching historical roots can be refetched and reappear.
 - Budabit does not currently implement historical “was allowed when posted” visibility. Current community state is the source of truth.
 
 ### Reply-Like Events
@@ -556,20 +563,24 @@ The review view should show the full response and buttons to grant or reject. Gr
 
 ## Fetching Permissioned Views
 
-For content subject to section permissions, Budabit should load the relevant profile list before requesting the section content.
+For content subject to section permissions, Budabit loads the current community definition and exact referenced profile-list shards before admitting section content. Missing authority evidence fails closed: a broad relay result may be retained as a candidate, but it is not community-approved content and cannot establish an empty or populated view by itself.
 
-Query construction should use allow-listed authors:
+Relay discovery uses stable structural tags rather than an ACL-sized `authors` array. For example, direct community content uses:
 
 ```json
 {
-  "kinds": [30617],
-  "authors": ["<allowed-author-1>", "<allowed-author-2>"]
+  "kinds": [11],
+  "#h": ["<community-pubkey>"]
 }
 ```
 
-For targeted publications, Budabit should still discover targeting events for the community, but original content should only be accepted if its author is authorized for the section mapped to that publication kind.
+Targeted content starts with wrappers discovered by `#p = <community-pubkey>` and `#k = <original-kind>`. Budabit admits a wrapper only when its author has the current grant for that kind. An explicit `e` original is then loaded by exact event ID and may have an external author. An explicit `a` original is loaded with the exact coordinate author and `#d` and may also be external. An implicit original must use `h = <wrapper-targeting-id>` and be signed by the same author as the admitted wrapper.
 
-If the relevant profile list cannot be loaded, Budabit should not broaden the query to all authors for permission-governed views. Failing closed prevents relay leakage from being treated as community-approved content.
+Current grants are applied locally to historical pages, live updates, repository/cache projections, notifications, shared activity/reaction consumers, and extension results. Revocation therefore hides previously visible direct content and wrappers; regrant changes the admission evidence, restarts/refilters consumers, and permits history to be refetched and reappear. Relays are not assumed to perform this policy.
+
+Exact `authors` filters remain where authorship is the requested authority or identity: `kind:10222` definitions, referenced profile-list shards, grant-capable forms, personal metadata and lists, exact `kind:pubkey:d` coordinates, implicit same-wrapper originals, and same-author deletion requests. These filters are not section writer arrays.
+
+Broad historical requests use bounded raw-event cursor scans per relay and per structural filter. The cursor advances from raw relay events, not only admitted events, so outsider-only pages cannot create false emptiness or starve an older current writer. Page-budget exhaustion, timeout, disconnect, `CLOSED`, or a full page with possible same-timestamp overflow is incomplete, not empty. Notifications require complete grant and report evidence, may share foreground live coverage for the same community and relay, and keep bounded finite catch-up separate from local row admission.
 
 ## Rationale
 

@@ -43,25 +43,25 @@ Community definitions, profile lists, targeting associations, forms, and several
 
 ### Current Historical Visibility
 
-Most current community surfaces derive allowed authors from the latest section profile lists and include those pubkeys in relay or repository filters. Removing a writer from the current list can therefore make that writer's historical roots disappear from default community views even without an event report or person-ban.
+Budabit discovers community content with structural `#h` filters or structural `kind:30222` `#p`/`#k` filters, then admits relay, repository, cache, live, notification, and extension results against current section grants. ACL-sized profile-list author sets are not the relay discovery boundary.
 
-This is the dominant behavior for threads, rooms, calendars, goals, permalinks, and the strict community repository view. Some repository and widget paths currently behave differently. Migration must not assume that only person-bans affect historical visibility, and a future historical-authorization policy should be applied consistently across content types.
+Current grants consistently govern historical and live Budabit visibility. Removing a writer hides that writer's historical direct content and targeting wrappers even without an event report or person-ban. Regranting invalidates the prior admission state and restarts structural acquisition, so matching history can be refetched and reappear. Migration must preserve this current-state policy unless a successor protocol explicitly versions a different historical model.
 
 ## Terminology
 
-| Term | Meaning |
-| --- | --- |
-| Community root | The pubkey that authors a branch's current `kind:10222`. |
-| Genesis community | The first Communikey community in a lineage. |
-| Lineage | A set of community branches that claim descent from the same genesis community. |
-| Branch | One independently controlled Communikey community in a lineage. |
-| Predecessor | The branch from which another branch imports history or authority. |
-| Successor | A branch authorized by its predecessor to continue the community under a new key. |
-| Fork | A new branch that claims historical descent without becoming the sole continuation of its predecessor. |
-| Recovery | A controller change authorized through a policy established before root-key loss or compromise. |
-| Transition | A signed relationship between predecessor and successor branches. |
-| Snapshot | A cryptographic commitment to the exact predecessor state or history imported by a branch. |
-| Cutoff | A human-readable transition time or query bound. It is not, by itself, a cryptographic publication-order guarantee. |
+| Term              | Meaning                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Community root    | The pubkey that authors a branch's current `kind:10222`.                                                            |
+| Genesis community | The first Communikey community in a lineage.                                                                        |
+| Lineage           | A set of community branches that claim descent from the same genesis community.                                     |
+| Branch            | One independently controlled Communikey community in a lineage.                                                     |
+| Predecessor       | The branch from which another branch imports history or authority.                                                  |
+| Successor         | A branch authorized by its predecessor to continue the community under a new key.                                   |
+| Fork              | A new branch that claims historical descent without becoming the sole continuation of its predecessor.              |
+| Recovery          | A controller change authorized through a policy established before root-key loss or compromise.                     |
+| Transition        | A signed relationship between predecessor and successor branches.                                                   |
+| Snapshot          | A cryptographic commitment to the exact predecessor state or history imported by a branch.                          |
+| Cutoff            | A human-readable transition time or query bound. It is not, by itself, a cryptographic publication-order guarantee. |
 
 ## Core Invariants
 
@@ -221,7 +221,7 @@ A snapshot gives the successor an exact, signed answer to two questions:
 An authority snapshot should identify exact accepted versions of state such as:
 
 - The predecessor `kind:10222` definition.
-- Every inherited section profile list.
+- Every inherited section profile-list shard and its exact event version.
 - Active targeting associations.
 - Active forms and application workflow definitions.
 - Active reports, bans, and moderation decisions if those are inherited.
@@ -283,9 +283,9 @@ Important writes should require relay acknowledgement and exact readback before 
 
 ## Historical Content Policy
 
-Migration should distinguish historical acceptance from current write permission.
+The implemented Budabit policy uses current grants for both historical and live community visibility. A migration design must define how successor grants apply to imported snapshot content without silently changing that rule.
 
-Potential inputs are:
+Relevant migration inputs are:
 
 - Snapshot inclusion.
 - Permission at publication time.
@@ -294,9 +294,9 @@ Potential inputs are:
 - Current event-report state.
 - Original author deletion requests.
 
-Using only current writer lists rewrites visible history whenever permissions change. Using only historical grants can preserve content that the current community no longer endorses. A snapshot allows the transition authority to preserve a defined archive while current reports and bans remain separate overlays.
+Under the current policy, grant changes intentionally change visible history: revocation hides previously admitted content, and regrant permits it to be refetched and shown again. A snapshot can prove which signed events belong to an imported archive, but snapshot inclusion alone does not bypass the successor branch's current grants, reports, bans, targeting rules, or same-author deletions.
 
-Whichever policy is selected should be shared by threads, rooms, calendars, goals, repositories, permalinks, widgets, extension queries, direct detail routes, and notifications.
+Any intentional future departure from current-grant visibility must be explicit and shared by threads, rooms, calendars, goals, repositories, permalinks, widgets, extension queries, direct detail routes, and notifications.
 
 ## Discovery And User Experience
 
@@ -362,6 +362,8 @@ Successor-aware views may need to query:
 - Transition and recovery evidence.
 
 Events must then be validated against the selected branch rather than accepted solely because they match an `h` or `p` filter.
+
+The same acquisition boundary applies during migration: `#h` and wrapper `#p`/`#k` discover candidates, while the selected branch's current grants admit them. Explicit wrapper `e` and exact `a` references may retain external-author originals; implicit `h = targeting-id` originals must share the admitted wrapper signer. Missing branch authority evidence fails closed.
 
 ### Storage
 
@@ -432,10 +434,10 @@ The following questions remain intentionally unresolved.
 
 ### Historical Visibility
 
-- Whether ordinary historical roots remain visible after current permission revocation.
-- Whether authorization is evaluated at publication time, snapshot time, current time, or through layered policy.
-- Whether replies and reactions follow the root's historical acceptance or require independent current authorization.
-- How existing feature-specific visibility inconsistencies are migrated.
+- Whether a future migration protocol should deliberately version an alternative to Budabit's current-grant visibility policy.
+- How successor current grants are mapped to predecessor-authored snapshot content without changing signed provenance.
+- Whether a snapshot archives events that are currently hidden while keeping them excluded from normal branch views.
+- How replies and reactions retain independent current authorization when their root is imported.
 
 ### Deletes And Replacements
 
@@ -477,7 +479,7 @@ The following questions remain intentionally unresolved.
 
 Before implementing community migration, the project should settle the future decisions in this order:
 
-1. Define historical visibility independently from current write permission.
+1. Carry the current-grant historical visibility policy into the branch and snapshot model, or explicitly version any departure.
 2. Define fork, planned succession, and recovery as separate trust classes.
 3. Choose branch identity and user-facing redirect behavior.
 4. Specify immutable transition artifacts and conflict handling.

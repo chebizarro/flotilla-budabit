@@ -1,10 +1,11 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
 import {get} from "svelte/store"
-import {COMMENT, MESSAGE, type TrustedEvent} from "@welshman/util"
+import {COMMENT, DELETE, MESSAGE, type TrustedEvent} from "@welshman/util"
 import {
   canEditMessageEvent,
   canEditReplyEvent,
   areTagsEqual,
+  deleteEventDeletesTarget,
   editedTargetIds,
   filterVisibleAfterDeletesAndEdits,
   makeEditedMessageTemplate,
@@ -50,6 +51,18 @@ describe("event edit helpers", () => {
     expect(canEditReplyEvent(makeEvent({created_at: 1}), pubkey)).toBe(false)
     expect(canEditReplyEvent(makeEvent({kind: MESSAGE}), pubkey)).toBe(false)
     expect(canEditReplyEvent(makeEvent(), pubkey, false)).toBe(false)
+  })
+
+  it("accepts same-author address deletions for addressable events only", () => {
+    const target = makeEvent({kind: 30222, tags: [["d", "targeting-id"]]})
+    const deletion = makeEvent({
+      kind: DELETE,
+      tags: [["a", `30222:${pubkey}:targeting-id`]],
+    })
+
+    expect(deleteEventDeletesTarget(deletion, target)).toBe(true)
+    expect(deleteEventDeletesTarget({...deletion, pubkey: "b".repeat(64)}, target)).toBe(false)
+    expect(deleteEventDeletesTarget(deletion, makeEvent({kind: COMMENT}))).toBe(false)
   })
 
   it("preserves reply context while replacing content and editor tags", () => {

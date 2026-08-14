@@ -7,12 +7,18 @@ import {chatsById, userSettingsValues} from "@app/core/state"
 import {
   activeCommunityDefinition,
   activeCommunityModeratorRequestStates,
+  activeCommunityPermissionStatus,
   activeCommunityProfileListEvents,
   activeCommunityRelays,
   activeCommunityReportState,
   activeCommunityUserModeratorRequestStates,
+  type CommunityPermissionStatus,
 } from "@app/core/community-state"
-import {normalizePubkey, parseTargetedPublication} from "@app/core/community"
+import {
+  normalizePubkey,
+  parseTargetedPublication,
+  type CommunityDefinition,
+} from "@app/core/community"
 import {
   makeCommunityContentFilterPlan,
   makeCommunityExclusiveFilter,
@@ -434,6 +440,22 @@ export const getTargetedPublicationRootNotificationCandidates = ({
   return latestEvent ? [{path, latestEvent}] : []
 }
 
+export const getActiveCommunityNotificationPermissionKey = (
+  definition: CommunityDefinition,
+  currentPubkey: string,
+  permissionStatus: CommunityPermissionStatus,
+) => {
+  const expectedKeyPrefix = `${normalizePubkey(currentPubkey)}:${definition.event.id}:`
+
+  return normalizePubkey(permissionStatus.communityPubkey) === normalizePubkey(definition.pubkey) &&
+    permissionStatus.key.startsWith(expectedKeyPrefix) &&
+    !permissionStatus.loading &&
+    permissionStatus.loaded &&
+    permissionStatus.complete
+    ? permissionStatus.key
+    : ""
+}
+
 const moderatorRequestStatusCandidates: Readable<NotificationCandidate[]> = derived(
   [pubkey, activeCommunityUserModeratorRequestStates],
   ([$pubkey, $activeCommunityUserModeratorRequestStates]) => {
@@ -482,17 +504,34 @@ const moderatorRequestAdminCandidates: Readable<NotificationCandidate[]> = deriv
 )
 
 const roomMessageNotificationCandidates: Readable<NotificationCandidate[]> = derived(
-  [pubkey, activeCommunityDefinition, activeCommunityProfileListEvents, activeCommunityReportState],
+  [
+    pubkey,
+    activeCommunityDefinition,
+    activeCommunityPermissionStatus,
+    activeCommunityProfileListEvents,
+    activeCommunityReportState,
+  ],
   (
     [
       $pubkey,
       $activeCommunityDefinition,
+      $activeCommunityPermissionStatus,
       $activeCommunityProfileListEvents,
       $activeCommunityReportState,
     ],
     set,
   ) => {
     if (!$pubkey || !$activeCommunityDefinition) {
+      set([])
+      return
+    }
+
+    const permissionKey = getActiveCommunityNotificationPermissionKey(
+      $activeCommunityDefinition,
+      $pubkey,
+      $activeCommunityPermissionStatus,
+    )
+    if (!permissionKey) {
       set([])
       return
     }
@@ -532,17 +571,34 @@ const roomMessageNotificationCandidates: Readable<NotificationCandidate[]> = der
 )
 
 const threadRootNotificationCandidates: Readable<NotificationCandidate[]> = derived(
-  [pubkey, activeCommunityDefinition, activeCommunityProfileListEvents, activeCommunityReportState],
+  [
+    pubkey,
+    activeCommunityDefinition,
+    activeCommunityPermissionStatus,
+    activeCommunityProfileListEvents,
+    activeCommunityReportState,
+  ],
   (
     [
       $pubkey,
       $activeCommunityDefinition,
+      $activeCommunityPermissionStatus,
       $activeCommunityProfileListEvents,
       $activeCommunityReportState,
     ],
     set,
   ) => {
     if (!$pubkey || !$activeCommunityDefinition) {
+      set([])
+      return
+    }
+
+    const permissionKey = getActiveCommunityNotificationPermissionKey(
+      $activeCommunityDefinition,
+      $pubkey,
+      $activeCommunityPermissionStatus,
+    )
+    if (!permissionKey) {
       set([])
       return
     }
@@ -595,6 +651,7 @@ const makeTargetedPublicationRootNotificationCandidates = ({
     [
       pubkey,
       activeCommunityDefinition,
+      activeCommunityPermissionStatus,
       activeCommunityProfileListEvents,
       activeCommunityRelays,
       activeCommunityReportState,
@@ -603,6 +660,7 @@ const makeTargetedPublicationRootNotificationCandidates = ({
       [
         $pubkey,
         $activeCommunityDefinition,
+        $activeCommunityPermissionStatus,
         $activeCommunityProfileListEvents,
         $activeCommunityRelays,
         $activeCommunityReportState,
@@ -610,6 +668,16 @@ const makeTargetedPublicationRootNotificationCandidates = ({
       set,
     ) => {
       if (!$pubkey || !$activeCommunityDefinition || $activeCommunityRelays.length === 0) {
+        set([])
+        return
+      }
+
+      const permissionKey = getActiveCommunityNotificationPermissionKey(
+        $activeCommunityDefinition,
+        $pubkey,
+        $activeCommunityPermissionStatus,
+      )
+      if (!permissionKey) {
         set([])
         return
       }
@@ -649,7 +717,7 @@ const makeTargetedPublicationRootNotificationCandidates = ({
         relayFilters: targetingFilterPlan.relayFilters,
         localFilters: targetingFilterPlan.localFilters,
         priority: RELAY_REQUEST_PRIORITY.background,
-        owner: `notifications-community-targets:${$activeCommunityDefinition.pubkey}`,
+        owner: `notifications-community-targets:${permissionKey}`,
         signal: targetingController.signal,
       }).catch(error => {
         if (!targetingController.signal.aborted) {
@@ -700,7 +768,7 @@ const makeTargetedPublicationRootNotificationCandidates = ({
             loadBoundedCommunityHistory({
               ...plan,
               priority: RELAY_REQUEST_PRIORITY.background,
-              owner: `notifications-community-originals:${$activeCommunityDefinition.pubkey}`,
+              owner: `notifications-community-originals:${permissionKey}`,
               signal: controller.signal,
             }),
           ),

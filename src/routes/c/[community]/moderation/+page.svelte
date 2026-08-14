@@ -28,6 +28,7 @@
     getProfileListPubkeys,
     normalizePubkey,
   } from "@app/core/community"
+  import {APP_RELAYS} from "@app/core/state"
   import {
     getOwnerMembershipGrantProfileList,
     makeCommunityGrantEvent,
@@ -83,6 +84,7 @@
     getCommunityScopedPublishRelays,
   } from "@app/core/community-relays"
   import {setChecked} from "@app/util/notifications"
+  import {getAuthorRelayHints, normalizeRelayHints} from "@app/util/event-links"
   import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
 
   type ReviewApplication = {
@@ -887,10 +889,18 @@
       formAddress: application.form.address,
       communityPubkey: $activeCommunityDefinition.pubkey,
       sectionName: application.sectionName,
+      relays: communityPublishRelays,
       status,
     })
 
-    publishThunk({relays: communityPublishRelays, event: makeEvent(review.kind, review)})
+    publishThunk({
+      relays: normalizeRelayHints(
+        communityPublishRelays,
+        getAuthorRelayHints(applicant),
+        APP_RELAYS,
+      ),
+      event: makeEvent(review.kind, review),
+    })
     pushToast({
       message:
         status === "granted"

@@ -6,7 +6,7 @@ NOTE: This article was updated based on comments and things that needed clarific
 
 ### Communikeys
 
-Works on any standard Nostr relay. No special relay implementation is required. Relays MAY optimize for Communikeys by only storing events from badgeholders, but it's optional.
+Works on any standard Nostr relay. No special relay implementation is required, and clients do not assume that relays enforce Communikey grants. Relays provide transport and may have independent storage policies; Budabit performs community admission locally.
 
 ### NIP-72
 
@@ -80,7 +80,7 @@ Plus relay-specific configuration not stored as events (NIP-11, NIP-42, NIP-43, 
 
 ### Communikeys
 
-Content sections (Chat, Posts, Articles) have specific event kinds and profile-list write rules. Different sections can point at different profile lists, giving granular per-content-type permissions. Badges can add engagement and onboarding context, but they do not grant access in Budabit.
+Content sections (Chat, Posts, Articles) have specific event kinds and profile-list write rules. Different sections can point at different profile-list sets, giving granular per-content-type permissions. Repeated `a` references shard large grant sets across exact list coordinates, and their current `p` tags have union semantics. Badges can add engagement and onboarding context, but they do not grant access in Budabit.
 
 Membership requests use Forms (NIP-101), allowing communities to require anything: email verification, captcha, payments, invite codes, questionnaires, etc. Requirements are transparent in the Form Template events, and approved access is reflected in profile lists.
 
@@ -116,7 +116,7 @@ No content type declaration. Communities are generic containers. You don't know 
 
 Any existing Nostr event can be targeted to a community via a Targeted Publication event (`kind:30222`). Full backwards compatibility. The association can be updated or removed without affecting the original content.
 
-A single publication can be targeted to up to 12 communities via one Targeted Publication event. The creator's intended audience is explicit and transparent — anyone can see which communities a piece of content was meant for. This can serve as an organic disovery route for related Communities + lowers the bar for bootstrapping new ones.
+A single publication can be targeted to up to 12 communities via one Targeted Publication event. The authorized wrapper curator's intended community association is explicit and transparent, including when the original has an external author. This can serve as an organic discovery route for related communities and lowers the bar for bootstrapping new ones.
 
 ### NIP-72 and NIP-29
 
@@ -136,12 +136,15 @@ Best you can do is poletly ask the relay to not propagate your publication (with
 
 ### Communikeys
 
-Per-section REQ query:
+Per-section acquisition and admission:
 
-1. Fetch the profile list (kind:30000) referenced in the content section's `a` tag — single event with all whitelisted pubkeys
-2. REQ the content kinds filtered by those pubkeys
+1. Fetch the exact profile-list shards (`kind:30000`) referenced by the content section and union their current `p` tags.
+2. Discover direct content structurally with `#h = communityPubkey`, or discover `kind:30222` wrappers with `#p = communityPubkey` and `#k`.
+3. Admit candidates locally under current grants. Missing grant evidence fails closed.
 
-No need to query potentially hundreds of badge award events — the profile list gives you all allowed pubkeys in one fetch. Different content sections can have different whitelists, so you only fetch pubkeys relevant to the section you're viewing. REQ-level filtering, efficient and granular.
+No need to query potentially hundreds of badge award events. Profile-list shards keep large communities within relay event/tag limits, while structural relay filters avoid ACL-sized `authors` arrays and allow writers beyond relay filter limits to be discovered. Current grants govern historical and live Budabit visibility: revocation hides prior content, and regrant can refetch and restore it.
+
+For targeted publications, the currently granted wrapper author controls the association. Explicit `e` or exact `a` references may curate external-author originals; an implicit original must use `h = wrapper-targeting-id` and share the wrapper signer. Bounded raw-event scans treat page/time/disconnect or same-timestamp saturation as incomplete rather than empty.
 
 ### NIP-72
 
@@ -167,12 +170,12 @@ Information is also scattered across multiple NIPs (NIP-11, NIP-29, NIP-42, NIP-
 
 ### Communikeys
 
-A standard "General" content section handles comments (kind:1111), reactions (kind:7), and labels (kind:1985) with one shared profile list. Optional badges can recognize participants. Fetch the list, filter responses by those pubkeys.
+A standard "General" content section handles comments (kind:1111), reactions (kind:7), and labels (kind:1985) with one shared profile-list grant set. Optional badges can recognize participants. Fetch the referenced shards, query by structural community/root tags, and admit responses locally under current grants.
 
-- **Comments, reactions, labels:** Filter by the General section's profile list. Only members' responses are shown.
+- **Comments, reactions, labels:** Use the General section's current profile-list union for client admission. Only currently authorized responses are shown in Budabit community views.
 - **Zaps:** Anyone can zap. Query zap receipts on the community relay.
 
-Creators publish once, list the communities they want to target, and members from all those communities meet in one shared comments section. One discussion, multiple communities participating together. No duplicates, no fragmented conversations to check.
+An original is published once, authorized wrapper curators associate it with communities, and members from those communities meet in one shared comments section. One discussion, multiple communities participating together. No duplicates, no fragmented conversations to check.
 
 ### NIP-72 and NIP-29 and Relays
 
@@ -214,7 +217,7 @@ Communikeys piggyback on everything profiles already have or need:
 
 **Key management solutions** — nsec leaking, "this profile is compromised", "this is my new profile" — these problems are being solved for profiles anyway. Communities using npubs inherit these solutions. NIP-29 and NIP-72 would need to add extra tags or specs to handle community key rotation, compromise recovery, etc.
 
-Badge awarding can be delegated to a separate keypair, allowing assistants or automated systems to handle membership without access to the main community keypair.
+Badge awarding can be delegated to a separate keypair, allowing assistants or automated systems to handle engagement programs without access to the main community keypair. Profile-list updates remain the permission step.
 
 ### NIP-72
 

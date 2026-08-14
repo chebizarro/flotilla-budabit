@@ -177,7 +177,12 @@ test("requests structural room history and rejects an unauthorized matching auth
     onSubscribe: (_subscriptionId, filters) => {
       if (
         filters.some(
-          filter => filter.kinds?.includes(9) && filter["#E"]?.includes(room.id) && !filter.authors,
+          filter =>
+            Array.isArray(filter.kinds) &&
+            filter.kinds.some(kind => Number(kind) === 9) &&
+            Array.isArray(filter["#E"]) &&
+            filter["#E"].some(value => String(value) === room.id) &&
+            !filter.authors,
         )
       ) {
         sawAuthorlessRoomHistory = true

@@ -12,7 +12,7 @@
 
 ## Current Phase
 
-- Phase 4: Notifications Documentation And Final Validation
+- Complete
 
 ## Phase Exit Criteria
 
@@ -54,6 +54,16 @@
 - Repository collection reads distinguish collected, uncollected, and indeterminate state; authoritative scans cover all declared community relays and include bounded target, same-author delete, and original completeness.
 - Widget and repository wrapper deletes use chunked same-author filters, avoiding relay filter-value truncation and unauthorized NIP-09 deletion.
 - Phase 3 final review found no remaining actionable findings.
+- Phase 4 migrated active and global notification loading to structural transport with current-grant local admission and per-community definition, profile-list, report, delete, and replacement completion.
+- Phase 4 preserves completed community scopes across unrelated configuration changes, treats relayless authority sources as incomplete, and retains final ban context without admitting renounced communities.
+- Admission outcomes refresh signed definitions before scoped authority reads, use bounded untrusted bootstrap hints, and publish review events to community, applicant-hint, and app relays with community relay tags.
+- Multi-community targeted wrappers are admitted only when every active target has complete candidate, replacement, and same-author `e`/`a` deletion evidence.
+- Repository-watch loading now hydrates and reports authority and completion per community, including when multiple communities share physical relays.
+- Notification and repository-watch regressions cover more than 1,000 writers, outsider saturation, revoke/regrant, non-member outcomes, relayless sources, wrapper replacement/deletion, and preserved completed scopes.
+- The final community `authors` audit found no ACL-derived author arrays on community content transport; retained authors constrain exact authority, identity, personal metadata, or address coordinates.
+- Updated Communikey and Budabit architecture documentation describes structural discovery, current-grant admission, targeted-wrapper authority, bounded saturation, per-community completion, and profile-list sharding limits.
+- The final full main suite passed 1,691 tests; root check, E2E typecheck, build, changed-file Prettier, and whitespace checks also passed.
+- Final independent reviews reported no remaining security or correctness findings.
 
 ## Decisions
 
@@ -61,17 +71,21 @@
 - Use wrapper-author authority for targeted publications; explicit references may curate external originals.
 - Require same-author originals for implicit targeting-ID associations.
 - Keep exact authors for definitions, profile lists, personal metadata, forms, and address coordinates.
+- Partition notification and repository-watch authority and completion by community even when communities share relays.
+- Treat bounded pagination saturation, timeout, disconnect, relayless authority, and same-timestamp ambiguity as incomplete rather than authoritative empty history.
 - Use four durable phases and push each verified phase to tracked `origin/dev`.
 
 ## Current State
 
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev`.
-- Phases 1 through 3 are verified; Phase 3 is ready for durable closeout in the same commit as this checkpoint advancement.
+- All four phases are implemented and verified.
+- Phase 1 is pushed as `65ab65648`, Phase 2 as `150fd6cf6`, and Phase 3 as `afcb9dbbe`.
+- Phase 4 is ready for its final closeout commit and push with this checkpoint advancement.
 
 ## Next Action
 
-- After the Phase 3 commit and push, reread this checkpoint and the full plan, audit remaining notification/shared consumers and community `authors` construction, update architecture documentation, and run the complete Phase 4 validation matrix.
+- Inspect and stage only the verified Phase 4 files, commit, push `dev`, and reread this checkpoint to confirm `Current Phase: Complete`.
 
 ## Verification
 
@@ -91,6 +105,14 @@
 - Phase 3 `pnpm check` passed with 0 errors and 0 warnings.
 - Phase 3 intentional-file Prettier and `git diff --check` passed.
 - Phase 3 final independent review reported no actionable findings and confirmed readiness for checkpoint advancement and commit.
+- Phase 4 focused main matrix passed 7 files and 129 tests.
+- `src/app/core/commands.test.ts` passed 45 tests after canonical Blossom downloads were changed to consume `response.arrayBuffer()` directly.
+- Final full main suite passed 1,691 tests with `NODE_OPTIONS=--no-experimental-webstorage`.
+- Final `pnpm check` passed with 0 errors and 0 warnings.
+- Final `pnpm run e2e:check` passed.
+- Final `pnpm run build` passed.
+- Final changed-file Prettier and `git diff --check` passed.
+- Final status, diff statistics, recent log, and all 24 implementation/documentation files were inspected before checkpoint advancement.
 
 ## Risks Or Blockers
 
@@ -98,9 +120,39 @@
 - Broad `#h`/`#p` transport is vulnerable to unauthorized event volume; bounded pagination must report incomplete rather than false empty.
 - A single profile-list event remains bounded by relay event/tag limits; sections need multiple list references for very large memberships.
 - Node 25 exposes an unusable default `localStorage` stub without a persistence path; jsdom tests that use storage require `NODE_OPTIONS=--no-experimental-webstorage` in this environment.
-- The complete test, E2E typecheck, build, documentation, and retained-`authors` audit remain Phase 4 work.
+- Relay outages, disconnects, timeouts, pagination limits, and same-timestamp saturation can still produce explicitly incomplete history rather than a definitive empty result.
 
 ## Files
+
+### Phase 4 Changed Files
+
+- `docs/session-checkpoint.md`
+- `docs/architecture/Budabit-Community-Architecture.md`
+- `docs/architecture/Budabit-Community-Migration.md`
+- `docs/architecture/Budabit-Community-Moderation.md`
+- `docs/architecture/Budabit-Relay-Publishing-Policy.md`
+- `docs/architecture/Communikeys.md`
+- `docs/architecture/Community-spec-comparison.md`
+- `docs/architecture/community-relay-io-scheduling.md`
+- `src/app/components/NotificationsModal.svelte`
+- `src/app/core/commands.ts`
+- `src/app/core/community-admission-lifecycle.test.ts`
+- `src/app/core/community-forms.test.ts`
+- `src/app/core/community-forms.ts`
+- `src/app/core/event-edits.test.ts`
+- `src/app/core/event-edits.ts`
+- `src/app/core/requests.test.ts`
+- `src/app/core/requests.ts`
+- `src/app/util/notification-sources.test.ts`
+- `src/app/util/notification-sources.ts`
+- `src/app/util/notifications.test.ts`
+- `src/app/util/notifications.ts`
+- `src/app/util/repo-watch-notifications.test.ts`
+- `src/app/util/repo-watch-notifications.ts`
+- `src/routes/c/[community]/moderation/+page.svelte`
+- `tests/e2e/community-room-recovery.spec.ts`
+
+### Earlier Phase Reference
 
 - `docs/session-plan.md`
 - `docs/session-checkpoint.md`

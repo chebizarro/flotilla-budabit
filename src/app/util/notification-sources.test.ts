@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import {describe, expect, it, vi} from "vitest"
-import {readable} from "svelte/store"
+import {get, readable} from "svelte/store"
 import {nip19} from "nostr-tools"
 import {
   GIT_COMMENT,
@@ -27,10 +27,13 @@ import type {ActiveUserCommunityRef} from "@app/core/community-membership"
 import {
   COMMUNITY_SECTION_CALENDAR,
   COMMUNITY_SECTION_GENERAL,
+  COMMUNITY_SECTION_GOALS,
   COMMUNITY_SECTION_THREADS,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
+  TARGETED_PUBLICATION_KIND,
+  buildTargetedPublication,
 } from "@app/core/community"
 import {COMMUNITY_FORM_REVIEW_KIND} from "@app/core/community-forms"
 import {
@@ -50,6 +53,11 @@ vi.mock("@app/core/repo-watch", () => ({
 
 vi.mock("@app/util/repo-watch-notifications", () => ({
   repoWatchNotificationCandidates: readable([]),
+  repoWatchNotificationHistoryStatus: readable({
+    loading: false,
+    complete: true,
+    saturated: false,
+  }),
 }))
 
 vi.mock("@app/extensions/widget-update-notifications", () => ({
@@ -89,6 +97,9 @@ const profileListPubkey = "1".repeat(64)
 const zapper = "2".repeat(64)
 const profileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_GENERAL}`
 const threadProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_THREADS}`
+const calendarProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_CALENDAR}`
+const goalProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_GOALS}`
+const emptyReportState = {eventReports: [], personReports: []} as any
 
 const makeCommunityRef = (): ActiveUserCommunityRef => ({
   communityPubkey,
@@ -107,7 +118,7 @@ const makeCommunityRef = (): ActiveUserCommunityRef => ({
     sections: [
       {
         name: COMMUNITY_SECTION_GENERAL,
-        kinds: [{kind: MESSAGE, subtype: "room-message"}, {kind: COMMENT}],
+        kinds: [{kind: MESSAGE, subtype: "room-message"}, {kind: COMMENT}, {kind: REACTION}],
         profileLists: [
           {
             kind: PROFILE_LIST_KIND,
@@ -133,6 +144,34 @@ const makeCommunityRef = (): ActiveUserCommunityRef => ({
         badges: [],
         retention: [],
       },
+      {
+        name: COMMUNITY_SECTION_CALENDAR,
+        kinds: [{kind: EVENT_TIME}],
+        profileLists: [
+          {
+            kind: PROFILE_LIST_KIND,
+            pubkey: profileListPubkey,
+            identifier: COMMUNITY_SECTION_CALENDAR,
+            address: calendarProfileListAddress,
+          },
+        ],
+        badges: [],
+        retention: [],
+      },
+      {
+        name: COMMUNITY_SECTION_GOALS,
+        kinds: [{kind: ZAP_GOAL}],
+        profileLists: [
+          {
+            kind: PROFILE_LIST_KIND,
+            pubkey: profileListPubkey,
+            identifier: COMMUNITY_SECTION_GOALS,
+            address: goalProfileListAddress,
+          },
+        ],
+        badges: [],
+        retention: [],
+      },
     ],
   },
 })
@@ -151,6 +190,29 @@ const makeProfileList = (address = profileListAddress) => {
     ],
   })
 }
+
+const makeTargetingEvent = ({
+  id,
+  kind,
+  originalId,
+  pubkey = communityPubkey,
+}: {
+  id: string
+  kind: number
+  originalId: string
+  pubkey?: string
+}) =>
+  makeEvent({
+    id,
+    kind: TARGETED_PUBLICATION_KIND,
+    pubkey,
+    tags: buildTargetedPublication({
+      id: `${id}-target`,
+      kind,
+      ref: {type: "e", value: originalId},
+      communities: [{pubkey: communityPubkey}],
+    }).tags,
+  })
 
 describe("notification sources", () => {
   it("builds unread chat rows from latest incoming DM events", async () => {
@@ -418,6 +480,7 @@ describe("notification sources", () => {
           tags: [["d", COMMUNITY_SECTION_THREADS]],
         }),
       ],
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
       admissionFormEvents: [generalForm, threadForm],
       admissionResponseEvents: [generalResponse, threadResponse],
     })
@@ -437,54 +500,84 @@ describe("notification sources", () => {
 
   it("builds applicant rows for publishing access decisions", async () => {
     const {buildCommunityApplicationNotificationRows} = await import("./notification-sources")
-    const formAddress = `${FORM_TEMPLATE_KIND}:${writer}:calendar-application`
+    const ref = makeCommunityRef()
+    const formAddress = `${FORM_TEMPLATE_KIND}:${profileListPubkey}:general-application`
     const form = makeEvent({
-      id: "calendar-form",
+      id: "general-form",
       kind: FORM_TEMPLATE_KIND,
-      pubkey: writer,
+      pubkey: profileListPubkey,
       tags: [
-        ["d", "calendar-application"],
+        ["d", "general-application"],
         ["a", `10222:${communityPubkey}:`],
-        ["content", COMMUNITY_SECTION_CALENDAR],
-        ["name", "Calendar application"],
+        ["content", COMMUNITY_SECTION_GENERAL],
+        ["name", "General application"],
       ],
     })
+    const response = makeEvent({
+      id: "general-response",
+      kind: FORM_RESPONSE_KIND,
+      pubkey: viewer,
+      created_at: 200,
+      tags: [["a", formAddress]],
+    })
+    const outsiderResponse = makeEvent({
+      id: "outsider-response",
+      kind: FORM_RESPONSE_KIND,
+      pubkey: outsider,
+      created_at: 205,
+      tags: [["a", formAddress]],
+    })
     const accepted = makeEvent({
-      id: "calendar-accepted",
+      id: "general-accepted",
       kind: COMMUNITY_FORM_REVIEW_KIND,
-      pubkey: writer,
+      pubkey: profileListPubkey,
       created_at: 220,
       content: "+",
       tags: [
-        ["e", "calendar-response"],
+        ["e", response.id],
         ["p", viewer],
         ["k", String(FORM_RESPONSE_KIND)],
         ["a", formAddress],
         ["h", communityPubkey],
-        ["content", COMMUNITY_SECTION_CALENDAR],
+        ["content", COMMUNITY_SECTION_GENERAL],
       ],
     })
     const revoked = makeEvent({
-      id: "calendar-revoked",
+      id: "general-revoked",
       kind: COMMUNITY_FORM_REVIEW_KIND,
-      pubkey: writer,
+      pubkey: profileListPubkey,
       created_at: 240,
       content: "-",
       tags: [
-        ["e", "calendar-response"],
+        ["e", response.id],
         ["p", viewer],
         ["k", String(FORM_RESPONSE_KIND)],
         ["a", formAddress],
         ["h", communityPubkey],
-        ["content", COMMUNITY_SECTION_CALENDAR],
+        ["content", COMMUNITY_SECTION_GENERAL],
       ],
+    })
+    const spoofedReview = makeEvent({
+      ...accepted,
+      id: "spoofed-review",
+      pubkey: outsider,
+      created_at: 250,
+    })
+    const wrongApplicantReview = makeEvent({
+      ...accepted,
+      id: "wrong-applicant-review",
+      created_at: 260,
+      tags: accepted.tags.map(tag => (tag[0] === "e" ? ["e", outsiderResponse.id] : [...tag])),
     })
 
     const rows = buildCommunityApplicationNotificationRows({
-      refs: [],
+      refs: [ref],
       currentPubkey: viewer,
+      profileListEvents: [makeProfileList()],
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
       admissionFormEvents: [form],
-      admissionReviewEvents: [accepted, revoked],
+      admissionResponseEvents: [response, outsiderResponse],
+      admissionReviewEvents: [accepted, revoked, spoofedReview, wrongApplicantReview],
     })
 
     expect(rows).toEqual([
@@ -492,7 +585,7 @@ describe("notification sources", () => {
         source: "community",
         title: "Publishing access revoked",
         action: "revoked your access to publish in",
-        actorPubkey: writer,
+        actorPubkey: profileListPubkey,
         path: expect.stringContaining("/access"),
         eventId: revoked.id,
       }),
@@ -500,11 +593,155 @@ describe("notification sources", () => {
         source: "community",
         title: "Publishing request approved",
         action: "approved your request to publish in",
-        actorPubkey: writer,
+        actorPubkey: profileListPubkey,
         path: expect.stringContaining("/access"),
         eventId: accepted.id,
       }),
     ])
+    expect(rows.map(row => row.eventId)).not.toEqual(
+      expect.arrayContaining([spoofedReview.id, wrongApplicantReview.id]),
+    )
+    expect(
+      buildCommunityApplicationNotificationRows({
+        refs: [ref],
+        currentPubkey: viewer,
+        profileListEvents: [makeProfileList()],
+        reportStates: new Map([[communityPubkey, emptyReportState]]),
+        outcomeReportStates: new Map(),
+        admissionFormEvents: [form],
+        admissionResponseEvents: [response],
+        admissionReviewEvents: [accepted],
+      }),
+    ).toEqual([])
+  })
+
+  it("validates first-time denied outcomes from exact references without an active ref", async () => {
+    const {buildCommunityApplicationNotificationRows} = await import("./notification-sources")
+    const definition = makeEvent({
+      id: "outcome-community-definition",
+      kind: 10222,
+      pubkey: communityPubkey,
+      tags: [
+        ["r", "wss://community.example"],
+        ["content", COMMUNITY_SECTION_GENERAL],
+        ["k", String(COMMENT)],
+        ["a", profileListAddress],
+      ],
+    })
+    const formAddress = `${FORM_TEMPLATE_KIND}:${profileListPubkey}:first-application`
+    const form = makeEvent({
+      id: "first-application-form",
+      kind: FORM_TEMPLATE_KIND,
+      pubkey: profileListPubkey,
+      tags: [
+        ["d", "first-application"],
+        ["a", `10222:${communityPubkey}:`],
+        ["content", COMMUNITY_SECTION_GENERAL],
+      ],
+    })
+    const response = makeEvent({
+      id: "first-application-response",
+      kind: FORM_RESPONSE_KIND,
+      pubkey: viewer,
+      tags: [["a", formAddress]],
+    })
+    const denied = makeEvent({
+      id: "first-application-denied",
+      kind: COMMUNITY_FORM_REVIEW_KIND,
+      pubkey: profileListPubkey,
+      content: "-",
+      tags: [
+        ["e", response.id],
+        ["p", viewer],
+        ["k", String(FORM_RESPONSE_KIND)],
+        ["a", formAddress],
+        ["h", communityPubkey],
+        ["content", COMMUNITY_SECTION_GENERAL],
+      ],
+    })
+
+    expect(
+      buildCommunityApplicationNotificationRows({
+        refs: [],
+        outcomeDefinitionEvents: [definition],
+        currentPubkey: viewer,
+        profileListEvents: [makeProfileList()],
+        reportStates: new Map([[communityPubkey, emptyReportState]]),
+        admissionFormEvents: [form],
+        admissionResponseEvents: [response],
+        admissionReviewEvents: [denied],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        eventId: denied.id,
+        title: "Publishing request denied",
+        path: expect.stringContaining("/access"),
+      }),
+    ])
+  })
+
+  it("validates final revocation outcomes after membership refs disappear", async () => {
+    const {buildCommunityApplicationNotificationRows} = await import("./notification-sources")
+    const definition = makeEvent({
+      id: "revoked-community-definition",
+      kind: 10222,
+      pubkey: communityPubkey,
+      tags: [
+        ["content", COMMUNITY_SECTION_GENERAL],
+        ["k", String(COMMENT)],
+        ["a", profileListAddress],
+      ],
+    })
+    const formAddress = `${FORM_TEMPLATE_KIND}:${profileListPubkey}:revoked-application`
+    const form = makeEvent({
+      id: "revoked-application-form",
+      kind: FORM_TEMPLATE_KIND,
+      pubkey: profileListPubkey,
+      tags: [
+        ["d", "revoked-application"],
+        ["a", `10222:${communityPubkey}:`],
+        ["content", COMMUNITY_SECTION_GENERAL],
+      ],
+    })
+    const response = makeEvent({
+      id: "revoked-application-response",
+      kind: FORM_RESPONSE_KIND,
+      pubkey: viewer,
+      tags: [["a", formAddress]],
+    })
+    const makeReview = (id: string, content: "+" | "-", created_at: number) =>
+      makeEvent({
+        id,
+        kind: COMMUNITY_FORM_REVIEW_KIND,
+        pubkey: profileListPubkey,
+        created_at,
+        content,
+        tags: [
+          ["e", response.id],
+          ["p", viewer],
+          ["k", String(FORM_RESPONSE_KIND)],
+          ["a", formAddress],
+          ["h", communityPubkey],
+          ["content", COMMUNITY_SECTION_GENERAL],
+        ],
+      })
+    const granted = makeReview("no-ref-granted", "+", 200)
+    const revoked = makeReview("no-ref-revoked", "-", 300)
+
+    const rows = buildCommunityApplicationNotificationRows({
+      refs: [],
+      outcomeDefinitionEvents: [definition],
+      currentPubkey: viewer,
+      profileListEvents: [makeProfileList()],
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
+      admissionFormEvents: [form],
+      admissionResponseEvents: [response],
+      admissionReviewEvents: [granted, revoked],
+    })
+
+    expect(rows.find(row => row.eventId === revoked.id)).toEqual(
+      expect.objectContaining({title: "Publishing access revoked"}),
+    )
   })
 
   it("filters notification rows by selected sources and profile names", async () => {
@@ -601,6 +838,174 @@ describe("notification sources", () => {
     )
   })
 
+  it("keeps more than 1,000 community writers out of relay filters", async () => {
+    const {buildGlobalCommunityNotificationFilterPlan} = await import("./notification-sources")
+    const writers = Array.from({length: 1_001}, (_, index) =>
+      (index + 10).toString(16).padStart(64, "0"),
+    )
+    const profileList = makeEvent({
+      id: "large-profile-list",
+      kind: PROFILE_LIST_KIND,
+      pubkey: profileListPubkey,
+      tags: [["d", COMMUNITY_SECTION_GENERAL], ...writers.map(pubkey => ["p", pubkey])],
+    })
+    const plan = buildGlobalCommunityNotificationFilterPlan({
+      refs: [makeCommunityRef()],
+      profileListEvents: [profileList],
+      currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
+      since: 10,
+      limit: 50,
+    })
+
+    expect(plan.relayFilters).not.toHaveLength(0)
+    expect(plan.relayFilters.every(filter => filter.authors === undefined)).toBe(true)
+    expect(
+      Math.max(...plan.localFilters.map(filter => filter.authors?.length || 0)),
+    ).toBeGreaterThan(1_000)
+  })
+
+  it("fails closed when current community permission evidence is incomplete", async () => {
+    const {buildCommunityNotificationRows, buildGlobalCommunityNotificationFilterPlan} =
+      await import("./notification-sources")
+    const ref = makeCommunityRef()
+    const mention = makeEvent({
+      id: "incomplete-evidence-mention",
+      kind: MESSAGE,
+      pubkey: writer,
+      content: "hi #[0]",
+      tags: [
+        ["p", viewer],
+        ["h", communityPubkey],
+        ["E", "room-one"],
+      ],
+    })
+    const makePlan = (profileListEvents: TrustedEvent[], reportState: any) =>
+      buildGlobalCommunityNotificationFilterPlan({
+        refs: [ref],
+        profileListEvents,
+        currentPubkey: viewer,
+        reportStates: new Map([[communityPubkey, reportState]]),
+        since: 10,
+        limit: 50,
+      })
+
+    expect(makePlan([], emptyReportState).relayFilters).not.toHaveLength(0)
+    expect(makePlan([], emptyReportState).localFilters).toEqual([])
+    expect(makePlan([makeProfileList()], undefined).localFilters).toEqual([])
+    expect(makePlan([makeProfileList()], emptyReportState).localFilters).not.toHaveLength(0)
+    expect(
+      buildCommunityNotificationRows({
+        refs: [ref],
+        events: [mention],
+        profileListEvents: [makeProfileList()],
+        currentPubkey: viewer,
+        reportStates: new Map([[communityPubkey, undefined]]),
+      }),
+    ).toEqual([])
+  })
+
+  it("aggregates incomplete catch-up status and clears stale sources", async () => {
+    const {
+      areNotificationAuthorityLoadsComplete,
+      buildNotificationCommunitySeedRefs,
+      createNotificationHistoryStatusController,
+      isNotificationHistoryIncomplete,
+    } = await import("./notification-sources")
+    const status = createNotificationHistoryStatusController()
+    const first = {}
+    const second = {}
+
+    expect(get(status.incomplete)).toBe(false)
+    status.start(first, 2)
+    expect(get(status.incomplete)).toBe(true)
+    status.resolve(first, {complete: true})
+    expect(get(status.incomplete)).toBe(true)
+    status.resolve(first, {complete: false})
+    expect(get(status.incomplete)).toBe(true)
+    status.start(second, 1)
+    status.clear(first)
+    status.resolve(second, {complete: true})
+    expect(get(status.incomplete)).toBe(false)
+    status.clear(second)
+    expect(get(status.incomplete)).toBe(false)
+
+    expect(areNotificationAuthorityLoadsComplete([{complete: true}, {complete: true}])).toBe(true)
+    expect(areNotificationAuthorityLoadsComplete([{complete: true}, {complete: false}])).toBe(false)
+    expect(
+      isNotificationHistoryIncomplete(false, {
+        loading: false,
+        complete: true,
+        saturated: false,
+      }),
+    ).toBe(false)
+    expect(
+      isNotificationHistoryIncomplete(false, {
+        loading: false,
+        complete: false,
+        saturated: false,
+      }),
+    ).toBe(true)
+    expect(
+      buildNotificationCommunitySeedRefs({
+        refs: [makeCommunityRef()],
+        definitionEvents: [],
+        renouncedCommunityPubkeys: [communityPubkey],
+      }),
+    ).toEqual([])
+  })
+
+  it("paginates broad notification history past outsider-only raw pages", async () => {
+    const {createBoundedNotificationHistoryLoader} = await import("./notification-sources")
+    const relay = "wss://notifications.example/"
+    const outsiderEvents = [
+      makeEvent({
+        id: "outsider-new",
+        kind: COMMENT,
+        pubkey: outsider,
+        created_at: 30,
+        tags: [["h", communityPubkey]],
+      }),
+      makeEvent({
+        id: "outsider-old",
+        kind: COMMENT,
+        pubkey: outsider,
+        created_at: 20,
+        tags: [["h", communityPubkey]],
+      }),
+    ]
+    const authorized = makeEvent({
+      id: "authorized-older",
+      kind: COMMENT,
+      pubkey: writer,
+      created_at: 10,
+      tags: [["h", communityPubkey]],
+    })
+    const requestHistory = vi.fn(async (options: any) => {
+      const events = options.filters[0].until === undefined ? outsiderEvents : [authorized]
+      for (const event of events) options.onEvent?.(event, relay)
+      options.onEose?.()
+      return events
+    })
+    const admitted: TrustedEvent[] = []
+    const load = createBoundedNotificationHistoryLoader({
+      request: requestHistory,
+      onEvent: event => admitted.push(event),
+    })
+    const result = await load({
+      relays: [relay],
+      relayFilters: [{kinds: [COMMENT], "#h": [communityPubkey]}],
+      localFilters: [{kinds: [COMMENT], authors: [writer]}],
+      pageSize: 2,
+      maxPages: 3,
+    })
+
+    expect(requestHistory).toHaveBeenCalledTimes(2)
+    expect(requestHistory.mock.calls[0][0].filters[0]).not.toHaveProperty("authors")
+    expect(admitted.map(event => event.id)).toEqual([authorized.id])
+    expect(result.events.map(event => event.id)).toEqual([authorized.id])
+  })
+
   it("partitions community filters by relay and suppresses only foreground live coverage", async () => {
     const {groupCommunityNotificationFiltersByRelay} = await import("./notification-sources")
     const firstCommunity = "3".repeat(64)
@@ -630,16 +1035,19 @@ describe("notification sources", () => {
       {
         relay: "wss://first.example/",
         filters: [firstFilter],
+        localFilters: [firstFilter],
         liveFilters: [firstFilter],
       },
       {
         relay: "wss://second.example/",
         filters: [secondFilter],
+        localFilters: [secondFilter],
         liveFilters: [secondFilter],
       },
       {
         relay: sharedRelay,
         filters: [firstFilter, secondFilter],
+        localFilters: [firstFilter, secondFilter],
         liveFilters: [secondFilter],
       },
     ])
@@ -656,6 +1064,34 @@ describe("notification sources", () => {
         new Set(),
       )[0].liveFilters,
     ).toEqual([firstFilter])
+    expect(
+      groupCommunityNotificationFiltersByRelay(
+        [
+          {communityPubkey: firstCommunity, relays: [sharedRelay], filters: [firstFilter]},
+          {communityPubkey: secondCommunity, relays: [sharedRelay], filters: [secondFilter]},
+        ],
+        new Set(),
+        true,
+      ).map(group => ({scope: group.scope, filters: group.filters})),
+    ).toEqual([
+      {scope: firstCommunity, filters: [firstFilter]},
+      {scope: secondCommunity, filters: [secondFilter]},
+    ])
+    expect(
+      groupCommunityNotificationFiltersByRelay(
+        [{communityPubkey: firstCommunity, relays: [], filters: [firstFilter]}],
+        new Set(),
+        true,
+      ),
+    ).toEqual([
+      {
+        relay: "",
+        scope: firstCommunity,
+        filters: [firstFilter],
+        localFilters: [firstFilter],
+        liveFilters: [],
+      },
+    ])
   })
 
   it("keeps user-specific community access and suppresses generic community rows", async () => {
@@ -850,6 +1286,7 @@ describe("notification sources", () => {
         refs: [ref],
         currentPubkey: viewer,
         profileListEvents: [makeProfileList()],
+        reportStates: new Map([[communityPubkey, emptyReportState]]),
         reportEvents: [report],
       }),
     ).toEqual([
@@ -865,6 +1302,7 @@ describe("notification sources", () => {
         refs: [ref],
         currentPubkey: profileListPubkey,
         profileListEvents: [makeProfileList()],
+        reportStates: new Map([[communityPubkey, emptyReportState]]),
         reportEvents: [report],
       }),
     ).toEqual([
@@ -994,6 +1432,7 @@ describe("notification sources", () => {
         refs: [ref],
         currentPubkey: writer,
         profileListEvents: [makeProfileList()],
+        reportStates: new Map([[communityPubkey, emptyReportState]]),
         reportEvents: [report],
         reportReviewEvents: [review],
       }),
@@ -1057,6 +1496,35 @@ describe("notification sources", () => {
         title: "Member banned",
         action: "banned a member",
         actorPubkey: communityPubkey,
+        path: expect.stringContaining("/access"),
+      }),
+    ])
+    expect(
+      buildCommunityModerationNotificationRows({
+        refs: [ref],
+        currentPubkey: viewer,
+        reportStates: new Map([
+          [
+            communityPubkey,
+            {
+              eventReports: [],
+              personReports: [
+                {
+                  event: banReport,
+                  target: "person",
+                  targetPubkey: viewer,
+                  reporterPubkey: communityPubkey,
+                  adminAuthored: true,
+                },
+              ],
+            } as any,
+          ],
+        ]),
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        title: "Community ban",
+        action: "banned you",
         path: expect.stringContaining("/access"),
       }),
     ])
@@ -1272,6 +1740,7 @@ describe("notification sources", () => {
       targetEvents: [parentMessage],
       profileListEvents: [makeProfileList()],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.find(row => row.eventId === replyMessage.id)).toEqual(
@@ -1288,7 +1757,51 @@ describe("notification sources", () => {
     )
   })
 
-  it("labels community room replies when the parent is not loaded but q tags the signed-in user", async () => {
+  it("rejects room replies whose exact parent no longer has a current grant", async () => {
+    const {buildCommunityNotificationRows} = await import("./notification-sources")
+    const parentMessage = makeEvent({
+      id: "revoked-parent-message",
+      kind: MESSAGE,
+      pubkey: viewer,
+      tags: [
+        ["h", communityPubkey],
+        ["E", "room-one"],
+      ],
+    })
+    const replyMessage = makeEvent({
+      id: "reply-to-revoked-parent",
+      kind: MESSAGE,
+      pubkey: writer,
+      content: "reply",
+      tags: [
+        ["h", communityPubkey],
+        ["E", "room-one"],
+        ["q", parentMessage.id, "", viewer],
+      ],
+    })
+    const writerOnlyProfileList = makeEvent({
+      id: "writer-only-profile-list",
+      kind: PROFILE_LIST_KIND,
+      pubkey: profileListPubkey,
+      tags: [
+        ["d", COMMUNITY_SECTION_GENERAL],
+        ["p", writer],
+      ],
+    })
+
+    expect(
+      buildCommunityNotificationRows({
+        refs: [makeCommunityRef()],
+        events: [replyMessage],
+        targetEvents: [parentMessage],
+        profileListEvents: [writerOnlyProfileList],
+        currentPubkey: viewer,
+        reportStates: new Map([[communityPubkey, emptyReportState]]),
+      }).find(row => row.eventId === replyMessage.id),
+    ).toBeUndefined()
+  })
+
+  it("rejects community room replies when the claimed parent is unavailable", async () => {
     const {buildCommunityNotificationRows} = await import("./notification-sources")
     const ref = makeCommunityRef()
     const replyMessage = makeEvent({
@@ -1310,19 +1823,10 @@ describe("notification sources", () => {
       targetEvents: [],
       profileListEvents: [makeProfileList()],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
-    expect(rows.find(row => row.eventId === replyMessage.id)).toEqual(
-      expect.objectContaining({
-        source: "community",
-        type: "reply",
-        title: "New room reply",
-        actorPubkey: writer,
-        path: expect.stringContaining("/rooms/room-one"),
-        target: undefined,
-        detail: expect.objectContaining({label: "New room reply", eventId: replyMessage.id}),
-      }),
-    )
+    expect(rows.find(row => row.eventId === replyMessage.id)).toBeUndefined()
   })
 
   it("labels community room mentions to the signed-in user", async () => {
@@ -1348,6 +1852,7 @@ describe("notification sources", () => {
       targetEvents: [],
       profileListEvents: [makeProfileList()],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.find(row => row.eventId === mentionMessage.id)).toEqual(
@@ -1388,6 +1893,7 @@ describe("notification sources", () => {
       targetEvents: [],
       profileListEvents: [makeProfileList()],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
     const row = rows.find(row => row.eventId === mentionMessage.id)
 
@@ -1427,6 +1933,7 @@ describe("notification sources", () => {
       targetEvents: [parentMessage],
       profileListEvents: [makeProfileList()],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.find(row => row.eventId === replyMessage.id)).toBeUndefined()
@@ -1475,6 +1982,7 @@ describe("notification sources", () => {
       targetEvents: [parentMessage, firstReply],
       profileListEvents: [makeProfileList()],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.find(row => row.eventId === secondReply.id)).toBeUndefined()
@@ -1555,6 +2063,7 @@ describe("notification sources", () => {
       targetEvents: [parentComment, foreignParentComment],
       profileListEvents: [makeProfileList()],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.map(row => row.eventId)).toEqual(
@@ -1621,8 +2130,9 @@ describe("notification sources", () => {
       refs: [ref],
       events: [nestedComment],
       targetEvents: [threadRoot, firstComment],
-      profileListEvents: [makeProfileList()],
+      profileListEvents: [makeProfileList(), makeProfileList(threadProfileListAddress)],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.find(row => row.eventId === nestedComment.id)).toEqual(
@@ -1682,13 +2192,36 @@ describe("notification sources", () => {
         ["p", writer],
       ],
     })
+    const targetingEvent = makeTargetingEvent({
+      id: "calendar-targeting",
+      kind: EVENT_TIME,
+      originalId: calendarRoot.id,
+    })
+    const unauthorizedTargetingEvent = makeTargetingEvent({
+      id: "unauthorized-calendar-targeting",
+      kind: EVENT_TIME,
+      originalId: calendarRoot.id,
+      pubkey: outsider,
+    })
+
+    expect(
+      buildCommunityNotificationRows({
+        refs: [ref],
+        events: [nestedComment],
+        targetEvents: [calendarRoot, firstComment, unauthorizedTargetingEvent],
+        profileListEvents: [makeProfileList(), makeProfileList(calendarProfileListAddress)],
+        currentPubkey: viewer,
+        reportStates: new Map([[communityPubkey, emptyReportState]]),
+      }).find(row => row.eventId === nestedComment.id),
+    ).toBeUndefined()
 
     const rows = buildCommunityNotificationRows({
       refs: [ref],
       events: [nestedComment],
-      targetEvents: [calendarRoot, firstComment],
-      profileListEvents: [makeProfileList()],
+      targetEvents: [calendarRoot, firstComment, targetingEvent],
+      profileListEvents: [makeProfileList(), makeProfileList(calendarProfileListAddress)],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.find(row => row.eventId === nestedComment.id)).toEqual(
@@ -1745,13 +2278,19 @@ describe("notification sources", () => {
         ["p", writer],
       ],
     })
+    const targetingEvent = makeTargetingEvent({
+      id: "goal-targeting",
+      kind: ZAP_GOAL,
+      originalId: goalRoot.id,
+    })
 
     const rows = buildCommunityNotificationRows({
       refs: [ref],
       events: [nestedComment],
-      targetEvents: [goalRoot, firstComment],
-      profileListEvents: [makeProfileList()],
+      targetEvents: [goalRoot, firstComment, targetingEvent],
+      profileListEvents: [makeProfileList(), makeProfileList(goalProfileListAddress)],
       currentPubkey: viewer,
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
     })
 
     expect(rows.find(row => row.eventId === nestedComment.id)).toEqual(
@@ -1816,7 +2355,7 @@ describe("notification sources", () => {
     const mention = makeEvent({
       id: mentionId,
       kind: COMMENT,
-      pubkey: outsider,
+      pubkey: writer,
       created_at: 120,
       content: "hi #[0]",
       tags: [
@@ -1863,6 +2402,9 @@ describe("notification sources", () => {
     const rows = buildEngagementNotificationRows({
       events: [reply, mention, genericMention, inheritedReplyTag, ignoredBoost],
       targetEvents: [ownedComment, otherComment],
+      refs: [makeCommunityRef()],
+      profileListEvents: [makeProfileList()],
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
       currentPubkey: viewer,
     })
 
@@ -1885,13 +2427,267 @@ describe("notification sources", () => {
         sourceLabel: "Communities",
         type: "mention",
         title: "New mention",
-        actorPubkey: outsider,
+        actorPubkey: writer,
         path: expect.stringContaining("/threads/thread-one"),
         detail: expect.objectContaining({label: "New mention", eventId: mention.id}),
       }),
     )
     expect(rows.map(row => row.eventId)).not.toEqual(
       expect.arrayContaining([genericMention.id, inheritedReplyTag.id, ignoredBoost.id]),
+    )
+  })
+
+  it("enforces current community grants on engagement while allowing zaps", async () => {
+    const {buildEngagementNotificationRows} = await import("./notification-sources")
+    const target = makeEvent({
+      id: "community-engagement-target",
+      kind: COMMENT,
+      pubkey: viewer,
+      tags: [
+        ["h", communityPubkey],
+        ["E", "thread-one"],
+        ["K", String(THREAD)],
+      ],
+    })
+    const makeReply = (id: string, pubkey: string) =>
+      makeEvent({
+        id,
+        kind: COMMENT,
+        pubkey,
+        created_at: 200,
+        content: "reply",
+        tags: [
+          ["h", communityPubkey],
+          ["E", "thread-one"],
+          ["K", String(THREAD)],
+          ["e", target.id, "", viewer],
+          ["k", String(COMMENT)],
+          ["p", viewer],
+        ],
+      })
+    const makeReaction = (id: string, pubkey: string) =>
+      makeEvent({
+        id,
+        kind: REACTION,
+        pubkey,
+        created_at: 210,
+        content: "+",
+        tags: [
+          ["h", communityPubkey],
+          ["e", target.id],
+          ["p", viewer],
+        ],
+      })
+    const allowedReply = makeReply("allowed-community-reply", writer)
+    const outsiderReply = makeReply("outsider-community-reply", outsider)
+    const allowedReaction = makeReaction("allowed-community-reaction", writer)
+    const outsiderReaction = makeReaction("outsider-community-reaction", outsider)
+    const zap = makeEvent({
+      id: "community-zap",
+      kind: ZAP_RESPONSE,
+      pubkey: zapper,
+      created_at: 220,
+      tags: [
+        ["p", viewer],
+        ["e", target.id],
+        [
+          "description",
+          JSON.stringify({
+            pubkey: outsider,
+            tags: [
+              ["e", target.id],
+              ["p", viewer],
+            ],
+          }),
+        ],
+      ],
+    })
+    const options = {
+      events: [allowedReply, outsiderReply, allowedReaction, outsiderReaction, zap],
+      targetEvents: [target],
+      refs: [makeCommunityRef()],
+      profileListEvents: [makeProfileList()],
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
+      currentPubkey: viewer,
+      validZapResponseIds: new Set([zap.id]),
+    }
+    const rows = buildEngagementNotificationRows(options)
+    const displayedIds = rows.flatMap(row => row.eventIds || [row.eventId])
+
+    expect(displayedIds).toEqual(
+      expect.arrayContaining([allowedReply.id, allowedReaction.id, zap.id]),
+    )
+    expect(displayedIds).not.toEqual(
+      expect.arrayContaining([outsiderReply.id, outsiderReaction.id]),
+    )
+    expect(buildEngagementNotificationRows({...options, reportStates: undefined})).toEqual([])
+  })
+
+  it("admits targetable engagement context only through authorized wrapper semantics", async () => {
+    const {buildEngagementNotificationRows} = await import("./notification-sources")
+    const calendar = makeEvent({
+      id: "external-calendar",
+      kind: EVENT_TIME,
+      pubkey: viewer,
+      tags: [["d", "external-calendar"]],
+    })
+    const reaction = makeEvent({
+      id: "external-calendar-reaction",
+      kind: REACTION,
+      pubkey: writer,
+      tags: [
+        ["e", calendar.id],
+        ["p", viewer],
+      ],
+    })
+    const explicitWrapper = makeTargetingEvent({
+      id: "explicit-calendar-wrapper",
+      kind: EVENT_TIME,
+      originalId: calendar.id,
+    })
+    const base = {
+      events: [reaction],
+      refs: [makeCommunityRef()],
+      profileListEvents: [makeProfileList(), makeProfileList(calendarProfileListAddress)],
+      reportStates: new Map([[communityPubkey, emptyReportState]]),
+      currentPubkey: viewer,
+    }
+
+    expect(
+      buildEngagementNotificationRows({
+        ...base,
+        targetEvents: [calendar, explicitWrapper],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        type: "reaction",
+        source: "community",
+        path: expect.stringContaining("/calendar/external-calendar"),
+        target: expect.objectContaining({eventId: calendar.id}),
+      }),
+    ])
+
+    const removedWrapper = makeEvent({
+      id: "explicit-calendar-wrapper-removed",
+      kind: TARGETED_PUBLICATION_KIND,
+      pubkey: communityPubkey,
+      created_at: explicitWrapper.created_at + 1,
+      tags: buildTargetedPublication({
+        id: "explicit-calendar-wrapper-target",
+        kind: EVENT_TIME,
+        ref: {type: "e", value: calendar.id},
+        communities: [],
+      }).tags,
+    })
+    const wrapperDeletion = makeEvent({
+      id: "explicit-calendar-wrapper-delete",
+      kind: DELETE,
+      pubkey: communityPubkey,
+      tags: [["e", explicitWrapper.id]],
+    })
+
+    expect(
+      buildEngagementNotificationRows({
+        ...base,
+        targetEvents: [calendar, explicitWrapper, removedWrapper],
+      }),
+    ).toEqual([])
+    expect(
+      buildEngagementNotificationRows({
+        ...base,
+        targetEvents: [calendar, explicitWrapper, wrapperDeletion],
+      }),
+    ).toEqual([])
+
+    const implicitCalendar = makeEvent({
+      ...calendar,
+      id: "implicit-calendar",
+      tags: [
+        ["d", "implicit-calendar"],
+        ["h", "implicit-target"],
+      ],
+    })
+    const implicitReaction = makeEvent({
+      ...reaction,
+      id: "implicit-calendar-reaction",
+      tags: [
+        ["e", implicitCalendar.id],
+        ["p", viewer],
+      ],
+    })
+    const implicitWrapper = makeEvent({
+      id: "implicit-calendar-wrapper",
+      kind: TARGETED_PUBLICATION_KIND,
+      pubkey: communityPubkey,
+      tags: buildTargetedPublication({
+        id: "implicit-target",
+        kind: EVENT_TIME,
+        communities: [{pubkey: communityPubkey}],
+      }).tags,
+    })
+
+    expect(
+      buildEngagementNotificationRows({
+        ...base,
+        events: [implicitReaction],
+        targetEvents: [implicitCalendar, implicitWrapper],
+      }),
+    ).toEqual([])
+  })
+
+  it("uses current same-author wrapper replacements and deletions", async () => {
+    const {makeTargetingWrapperReplacementFilters, selectCurrentTargetingWrapperEvents} =
+      await import("./notification-sources")
+    const original = makeTargetingEvent({
+      id: "wrapper-original",
+      kind: EVENT_TIME,
+      originalId: "calendar-original",
+      pubkey: writer,
+    })
+    original.created_at = 100
+    const replacement = makeEvent({
+      id: "wrapper-replacement",
+      kind: TARGETED_PUBLICATION_KIND,
+      pubkey: writer,
+      created_at: 200,
+      tags: buildTargetedPublication({
+        id: "wrapper-original-target",
+        kind: EVENT_TIME,
+        ref: {type: "e", value: "calendar-original"},
+        communities: [],
+      }).tags,
+    })
+    const deletion = makeEvent({
+      id: "wrapper-deletion",
+      kind: DELETE,
+      pubkey: writer,
+      created_at: 300,
+      tags: [["e", replacement.id]],
+    })
+    const addressDeletion = makeEvent({
+      id: "wrapper-address-deletion",
+      kind: DELETE,
+      pubkey: writer,
+      created_at: 300,
+      tags: [["a", `${TARGETED_PUBLICATION_KIND}:${writer}:wrapper-original-target`]],
+    })
+    const foreignDeletion = makeEvent({...deletion, id: "foreign-deletion", pubkey: outsider})
+
+    expect(makeTargetingWrapperReplacementFilters([original])).toEqual([
+      {
+        kinds: [TARGETED_PUBLICATION_KIND],
+        authors: [writer],
+        "#d": ["wrapper-original-target"],
+        limit: 1,
+      },
+    ])
+    expect(selectCurrentTargetingWrapperEvents([original, replacement])).toEqual([replacement])
+    expect(selectCurrentTargetingWrapperEvents([original, replacement], [foreignDeletion])).toEqual(
+      [replacement],
+    )
+    expect(selectCurrentTargetingWrapperEvents([original, replacement], [deletion])).toEqual([])
+    expect(selectCurrentTargetingWrapperEvents([original, replacement], [addressDeletion])).toEqual(
+      [],
     )
   })
 

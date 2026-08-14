@@ -1,4 +1,3 @@
-
 # Communikeys
 
 Defines a standard for creating, managing and publishing to communities by leveraging existing key pairs and relays.
@@ -44,7 +43,7 @@ The community's name, picture, and description are derived from the pubkey's [[k
     // General section for comments, reactions, and labels (recommended for all communities)
     ["content", "General"],
     ["k", "1111"], // comments
-    ["k", "7"],    // reactions
+    ["k", "7"], // reactions
     ["k", "1985"], // labels
     ["a", "30000:<pubkey>:General", "<relay-url>"], // profile list with whitelisted pubkeys
     ["badge", "<badge-definition>"], // optional badge/engagement reference
@@ -84,21 +83,21 @@ The community's name, picture, and description are derived from the pubkey's [[k
 
 ### Tag definitions
 
-| Tag | Description |
-|-----|-------------|
-| `r` | URLs of relays where community content should be published. First one is considered main relay. |
-| `blossom` | (optional) URLs of blossom servers for additional community features. |
-| `grasp` | (optional) Ordered WebSocket URLs of GRASP servers the community endorses or offers to members. Earlier tags are preferred. |
-| `mint` | (optional) URL of community mint for token/payment features. |
-| `content` | Name of Content Type section that the Communikey works with. |
-| `k` | Event kind, within a content type section. |
-| `a` | (within content section) Addressable reference to a profile list [[kind-30000]] containing all whitelisted pubkeys (`p` tags) for this content section. Format: `30000:<pubkey>:<d-tag>`. |
-| `badge` | Optional community badge reference for endorsements, achievements, onboarding, or other engagement. References a Badge Definition event, see [[NIP-58]]. Format: `30009:<pubkey>:<d-tag>`. Multiple `badge` tags can be specified per content section, but Budabit does not treat them as publish permission inputs. |
-| `retention` | (optional) Retention policy in format [kind, value, type] where type is either "time" (seconds) or "count" (number of events). |
-| `tos` | (optional) Reference to the community's posting policy. |
-| `location` | (optional) Location of the community. |
-| `g` | (optional) Geohash of the community. It is not a GRASP server tag. |
-| `description` | (optional) Description of the community. |
+| Tag           | Description                                                                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `r`           | URLs of relays where community content should be published. First one is considered main relay.                                                                                                                                                                                                                      |
+| `blossom`     | (optional) URLs of blossom servers for additional community features.                                                                                                                                                                                                                                                |
+| `grasp`       | (optional) Ordered WebSocket URLs of GRASP servers the community endorses or offers to members. Earlier tags are preferred.                                                                                                                                                                                          |
+| `mint`        | (optional) URL of community mint for token/payment features.                                                                                                                                                                                                                                                         |
+| `content`     | Name of Content Type section that the Communikey works with.                                                                                                                                                                                                                                                         |
+| `k`           | Event kind, within a content type section.                                                                                                                                                                                                                                                                           |
+| `a`           | (within content section, one or more) Exact addressable reference to a profile-list shard [[kind-30000]]. The section grant set is the union of the current `p` tags in all referenced shards. Format: `30000:<pubkey>:<d-tag>`.                                                                                     |
+| `badge`       | Optional community badge reference for endorsements, achievements, onboarding, or other engagement. References a Badge Definition event, see [[NIP-58]]. Format: `30009:<pubkey>:<d-tag>`. Multiple `badge` tags can be specified per content section, but Budabit does not treat them as publish permission inputs. |
+| `retention`   | (optional) Retention policy in format [kind, value, type] where type is either "time" (seconds) or "count" (number of events).                                                                                                                                                                                       |
+| `tos`         | (optional) Reference to the community's posting policy.                                                                                                                                                                                                                                                              |
+| `location`    | (optional) Location of the community.                                                                                                                                                                                                                                                                                |
+| `g`           | (optional) Geohash of the community. It is not a GRASP server tag.                                                                                                                                                                                                                                                   |
+| `description` | (optional) Description of the community.                                                                                                                                                                                                                                                                             |
 
 ### Infrastructure authority and recommendations
 
@@ -120,7 +119,7 @@ Clients should reject new definitions that duplicate an exact `(kind, subtype)` 
 
 ### Section lifecycle safety
 
-Section names and profile-list identifiers are operational permission state. Renaming a section, moving a `(kind, subtype)` pair to another section, or removing a section can disconnect existing permissions, moderator ownership, application forms, and pending requests.
+Section names and profile-list identifiers are operational permission state. Renaming a section, moving a `(kind, subtype)` pair to another section, or removing a section can disconnect existing permission shards, moderator ownership, application forms, and pending requests.
 
 Budabit treats those edits as dangerous changes:
 
@@ -185,16 +184,23 @@ To target an existing publication at specific communities, users create a [[kind
 }
 ```
 
-The targeted publication event can reference the original publication in two ways:
+The targeted publication event can identify the original publication in three ways:
 
 1. Using an `e` tag with the event ID, relay hint, and pubkey hint
 2. Using an `a` tag with the event address and relay hint
+3. Omitting both explicit references and using the wrapper's `d` value as the original publication's `h` targeting ID
 
 The `k` tag specifies the kind of the original publication, and the `p` tags list the communities that this publication is targeting.
 
 Currently, we work with a maximum of 12 communities that can be tagged for one publication.
 
-**Note:** For publishing new events, clients SHOULD create a targeted Publication event first (that only has an id) and reference it with an `h` tag in the main event.
+**Note:** For the implicit form, clients SHOULD create the Targeted Publication event first and reference its `d` targeting ID with an `h` tag in the original event.
+
+### Targeting authority
+
+The `kind:30222` wrapper author is the community curator. Clients discover wrappers structurally with `#p = <community-pubkey>` and admit a wrapper only when its author has the current grant for the wrapper's declared original kind.
+
+An explicit `e` reference identifies the original by event ID, and an explicit `a` reference identifies it by its exact `kind:pubkey:d` coordinate. Either explicit form may curate an original signed by an external author; the wrapper grant, not original-author membership, authorizes the community association. Without `e` or `a`, the original is implicit: it uses `h = <wrapper-d-targeting-id>` and MUST be signed by the same pubkey as the wrapper.
 
 ## Community-Exclusive Publications
 
@@ -210,9 +216,7 @@ For chat messages within a community, users should use [[kind-9]] events with a 
   "pubkey": "<pubkey>",
   "created_at": 1675642635,
   "kind": 9,
-  "tags": [
-    ["h", "<community-pubkey>"]
-  ],
+  "tags": [["h", "<community-pubkey>"]],
   "content": "<message>",
   "sig": "<signature>"
 }
@@ -222,7 +226,7 @@ The same pattern applies to thread posts, see [[kind-11]].
 
 ## Profile-List Write Access And Badges
 
-Communities use profile lists for publishing permissions. Each content section has an `a` tag referencing allowed pubkeys. `badge` tags can reference [[NIP-58|Badge]] definitions for recognition or engagement around a section, but holding a badge does not make a user writable in Budabit.
+Communities use profile lists for publishing permissions. Each content section has one or more `a` tags referencing allowed pubkeys. `badge` tags can reference [[NIP-58|Badge]] definitions for recognition or engagement around a section, but holding a badge does not make a user writable in Budabit.
 
 ```json
 ["content", "Apps"],
@@ -239,9 +243,12 @@ Admission forms can collect information before a moderator grants profile-list a
 
 ### Profile Lists
 
-Each content section includes an `a` tag referencing a profile list [[kind-30000]] containing `p` tags for all whitelisted pubkeys. This allows clients to fetch all allowed pubkeys in a single event, avoiding the need to query potentially hundreds of badge award events.
+Each content section includes one or more `a` tags referencing profile lists [[kind-30000]]. Clients fetch each exact address and use the union of the current `p` tags as the section grant set. A missing or unresolved shard contributes no grants; clients must not treat missing evidence as permission.
+
+Repeated references allow a large section to shard its grants across several addressable events. This avoids depending on one event fitting every relay's maximum event-size and tag-count limits. Shards need distinct `kind:pubkey:d` coordinates, and changing any current shard changes the effective grant set.
 
 **Granting access:** Because profile lists are the access source, awarding or revoking a badge does not change publish rights. Admin interfaces that grant or revoke access must update profile lists directly. Badge awards can be handled separately by:
+
 - **Automated systems:** A hot-key solution that processes badge programs without exposing the community root key
 - **Manual admin interfaces:** Apps that let admins award badges as recognition while keeping profile-list edits as the permission step
 
@@ -259,11 +266,11 @@ Example: A community's "builder" badge could be defined and awarded by a separat
 
 ## Comments, Reactions, Labels, and Zaps
 
-Communities SHOULD include a "General" content section that handles comments ([[kind-1111]]), reactions ([[kind-7]]), and labels ([[kind-1985]]) with one shared profile list. Optional badges can recognize contributors, but profile-list membership controls filtered interaction.
+Communities SHOULD include a "General" content section that handles comments ([[kind-1111]]), reactions ([[kind-7]]), and labels ([[kind-1985]]) with one shared profile-list grant set. Optional badges can recognize contributors, but profile-list membership controls filtered interaction.
 
 When a publication targets multiple communities, members from all those communities participate together:
 
-**Comments, reactions, and labels** — filter by the General section's profile list from all targeted communities. Members from different communities meet in one shared discussion around the publication. No duplicates, no fragmented conversations across multiple places.
+**Comments, reactions, and labels** — apply the current General section profile-list union from each targeted community. Members from different communities meet in one shared discussion around the publication. No duplicates, no fragmented conversations across multiple places.
 
 NOTE: Communities that don't want to be part of discussions with certain other communities can just not accept the events regarding them.
 
@@ -271,13 +278,21 @@ NOTE: Communities that don't want to be part of discussions with certain other c
 
 ## Implementation Notes
 
-Unlike [[NIP-29]] (Relay-based Groups), Communikeys work on **any standard Nostr relay**. Access control is enforced client-side, not by relays (although they can of course optimize for it).
+Unlike [[NIP-29]] (Relay-based Groups), Communikeys work on **any standard Nostr relay**. Relays provide transport and storage; clients enforce Communikey visibility and publishing policy. Clients must not assume that a relay applied the community's grants.
 
 **Client filtering workflow:**
 
-1. Fetch the community's [[kind-10222]] event to get content sections and their `k` tags
-2. Fetch the profile list referenced in each content section's `a` tag to get whitelisted pubkeys
-3. Query for events of those kinds targeting the community (via `h` tag or Targeted Publication), filtering by the whitelisted pubkeys using the `authors` filter
+1. Fetch the community's [[kind-10222]] event with the exact community author to get content sections and their `k` tags.
+2. Fetch every profile-list address referenced by the selected section and union the current `p` tags. Missing definition or grant evidence fails closed.
+3. Discover exclusive content with stable structural filters such as `#h = <community-pubkey>`. Discover targeted wrappers with `#p = <community-pubkey>` and the declared `#k`; do not send the section's potentially large grant set as a relay `authors` ACL.
+4. Admit every relay, cache, live-subscription, notification, and extension result locally against the current grant set and required structural tags.
+5. For an admitted wrapper, load an explicit `e` original by exact ID, an explicit `a` original by exact coordinate author plus `#d`, or an implicit original by `h = <targeting-id>` plus the wrapper author.
+
+Current grants govern both historical and live Budabit visibility. Revoking a grant hides that author's previously admitted content and wrappers; regranting restarts structural acquisition so matching history can be refetched and reappear. This is current-state curation, not relay deletion or confidentiality.
+
+Broad history is scanned with bounded raw-event cursors per relay and per structural filter. Page-budget exhaustion, timeout, disconnect, or a full page that may omit more events at the oldest timestamp makes the result incomplete. An incomplete zero-admission result is not an authoritative empty section.
+
+An `authors` filter remains correct when authorship is the identity or authority being requested rather than a section ACL. Examples include the community definition, exact profile-list and form authorities, personal profile/list metadata, explicit `kind:pubkey:d` coordinates, implicit originals bound to their wrapper signer, and deletion requests constrained to the same author as their target. Addressable wrappers honor same-author NIP-09 deletion by either exact event ID or `kind:pubkey:d` coordinate.
 
 **Media fallback:**
 
@@ -286,8 +301,8 @@ Community blossom servers SHOULD back up all media files referenced in community
 **Additional recommendations:**
 
 - Clients MAY cache community metadata and badge awards to reduce relay queries
-- Clients SHOULD check profile-list membership before attempting to publish
-- Relays MAY optionally optimize for profile-list checks or implement retention policies, but this is not required
+- Clients SHOULD check current profile-list membership before attempting to publish
+- Relays MAY have independent storage and retention policies, but clients must still perform Communikey admission themselves
 
 ## Benefits
 

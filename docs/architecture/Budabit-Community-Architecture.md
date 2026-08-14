@@ -1,8 +1,8 @@
 # Budabit Community Architecture
 
-This document describes Budabit's target community architecture after the pivot from relay-as-community to Communikeys.
+This document describes Budabit's community architecture after the pivot from relay-as-community to Communikeys.
 
-Budabit should treat this as a clean redesign of the community foundation. Legacy relay spaces, relay URL identity, and NIP-29 room metadata are not part of the target model.
+Budabit treats this as a clean redesign of the community foundation. Legacy relay spaces, relay URL identity, and NIP-29 room metadata are not part of the model.
 
 ## Summary
 
@@ -21,7 +21,7 @@ The selected community is the root of the application session. A user may enter 
 | Community identity        | The community pubkey is the canonical durable identifier.                                                                                           |
 | Relay identity            | Relay URLs are never community IDs. They are relay hints and publication targets.                                                                   |
 | Session scope             | A Budabit session stores the selected community pubkey and optional relay hints.                                                                    |
-| Read visibility           | All community content is publicly readable for now.                                                                                                 |
+| Community visibility      | Budabit admits permission-governed content under current section grants. Matching events may remain publicly retrievable from relays.               |
 | Write access              | Profile lists are the effective write-permission source.                                                                                            |
 | User-community membership | App-wide membership is derived from community definitions plus section profile lists: admin, moderator/list owner, or member/grantee.               |
 | Badges                    | Badges drive engagement and endorsements; profile list inclusion is what Budabit enforces for write access.                                         |
@@ -72,7 +72,7 @@ Suggested shape:
 
 `communityPubkey` answers which community Budabit is currently viewing.
 
-Guests can select a community and read public content. Logged-in users can publish only when they satisfy the section's write rules.
+Guests can select a community and read content that passes Budabit's current community admission rules. Logged-in users can publish only when they satisfy the section's write rules.
 
 ## Community Definition
 
@@ -100,7 +100,8 @@ Example target shape:
     ["k", "7"],
     ["k", "1985"],
     ["k", "9", "room-message"],
-    ["a", "30000:<list-pubkey>:General", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:General-1", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:General-2", "wss://main.community.relay"],
     ["badge", "30009:<issuer-pubkey>:member"],
 
     ["content", "Room-creator"],
@@ -156,21 +157,29 @@ Section names and their profile-list references are part of the permission lifec
 
 When migration is selected, Budabit publishes and verifies replacement permission updates before publishing the new community definition. Granted members are merged into a new admin-owned list for destination sections. Moderators must accept new destination-section permissions. Active forms may be copied by the admin. Pending requests, applicant submissions, and user-authored reports are not copied.
 
+### Profile-list sharding
+
+A section may contain repeated `a` tags with distinct `kind:pubkey:d` coordinates. Budabit loads each exact coordinate and treats the union of the current `p` tags as the section grant set. This allows large sections to stay within relay event-size and tag-count limits instead of requiring one unbounded `kind:30000` event.
+
+Each shard remains independently replaceable by its coordinate author. Missing shard evidence contributes no grants, and missing definition or permission evidence must never turn a structural relay result into authorized content.
+
 ## Access Control
 
-Budabit uses Communikey access control only for write permissions in the first version.
+Budabit uses Communikey grants for both publish permission and client-side community visibility. This is curation, not confidentiality: relays may serve the underlying signed events to other clients, and Budabit does not rely on relays to enforce section policy.
 
-Read access is public. Budabit should not hide community content based on badges or profile lists.
-
-Write access workflow:
+Permission workflow:
 
 1. Read the active community's latest `kind:10222` definition.
 2. Find the content section for the attempted publication.
-3. Fetch the section's referenced `kind:30000` profile list.
-4. Check whether the user's pubkey is in that list.
-5. Allow publishing only when the user is listed.
+3. Fetch every exact `kind:30000` coordinate referenced by the section.
+4. Union their current `p` tags and include applicable community and active moderator authority.
+5. Allow publishing or community rendering only when the relevant author has a current grant and the event passes structural validation.
 
 Badges remain important as community endorsements and engagement primitives, but they are not access-control inputs. For Budabit enforcement, profile list inclusion is authoritative.
+
+The same current grants govern historical and live content. A revocation hides an author's previously visible direct content and targeting wrappers without deleting those events from relays. A regrant invalidates the old admission state and restarts structural acquisition, allowing matching history to be refetched and reappear. Budabit does not preserve a separate “was authorized when published” grant for normal community views.
+
+If the definition or relevant grant evidence is unavailable, Budabit fails closed. It may retain or fetch structural candidates, but it does not render them, return them to extensions, or turn the absence of admitted rows into an authoritative empty state.
 
 ## App-Wide User Community Membership
 
@@ -208,15 +217,15 @@ For Budabit section access, effective revocation is profile-list removal:
 }
 ```
 
-When a user is removed from the relevant section list, Budabit must treat that user as no longer allowed to publish in that section, even if an old badge award event still exists.
+When a user is removed from every shard in the relevant section's current profile-list union, Budabit must treat that user as no longer allowed to publish or remain visible as a section author, even if an old badge award event still exists. Removing the user from only one shard does not revoke a grant that remains in another current shard.
 
 Admin tooling that grants or revokes access must update profile lists. Badge awards may be published separately as recognition or onboarding context, but they are not effective permission state:
 
-| Action           | Badge event                                | Profile list event              | Effective result                         |
-| ---------------- | ------------------------------------------ | ------------------------------- | ---------------------------------------- |
-| Grant access     | Optional endorsement award                 | Add pubkey to section list      | User can publish.                        |
-| Revoke access    | Existing badge award remains display state | Remove pubkey from section list | User cannot publish.                     |
-| User hides badge | User updates profile badges                | No required change              | Display changes, write access unchanged. |
+| Action           | Badge event                                | Profile list event                    | Effective result                         |
+| ---------------- | ------------------------------------------ | ------------------------------------- | ---------------------------------------- |
+| Grant access     | Optional endorsement award                 | Add pubkey to a section shard         | User can publish.                        |
+| Revoke access    | Existing badge award remains display state | Remove pubkey from all section shards | User cannot publish.                     |
+| User hides badge | User updates profile badges                | No required change                    | Display changes, write access unchanged. |
 
 If a future standard defines explicit badge revocation, Budabit can support it for badge display and engagement. Profile lists remain the access-control source of truth unless Budabit intentionally adopts another permission signal.
 
@@ -261,9 +270,9 @@ If a future standard defines explicit badge revocation, Budabit can support it f
 | Nutzap information        |               `10019` | No                         | Nutzap receiving configuration; mint tags may provide person-level recommendation evidence.        |
 | App settings and Git auth |               `30078` | No                         | User-private app data.                                                                             |
 | DMs                       |                `4444` | No                         | Private messaging.                                                                                 |
-| Badge definition          |               `30009` | No                         | Access-control infrastructure.                                                                     |
-| Badge award               |                   `8` | No                         | Access-control infrastructure.                                                                     |
-| Profile list              |               `30000` | No                         | Access-control infrastructure.                                                                     |
+| Badge definition          |               `30009` | No                         | Engagement and endorsement infrastructure.                                                         |
+| Badge award               |                   `8` | No                         | Engagement and display infrastructure.                                                             |
+| Profile list              |               `30000` | No                         | Section grant and moderation infrastructure.                                                       |
 | Form template             |               `30168` | No                         | Admission workflow infrastructure.                                                                 |
 | Form response             |                `1069` | No                         | Admission request.                                                                                 |
 | Community definition      |               `10222` | No                         | Community root configuration.                                                                      |
@@ -298,6 +307,8 @@ This preserves a strict split:
 | ----------------- | -------------------------------------------------------- |
 | `communityPubkey` | Exclusive community-native content.                      |
 | `targeting d/id`  | Targetable publications associated through `kind:30222`. |
+
+The wrapper author is the community-facing authority. Budabit discovers wrappers by `#p = communityPubkey` and `#k = originalKind`, then admits only wrappers whose signer has the current section grant. An explicit `e` reference may identify an external-author original by exact event ID. An explicit `a` reference may identify an external-author original by its exact coordinate, retaining that coordinate's author and `#d`. Without either reference, the original is implicit and must have `h = targeting d` and the same signer as the admitted wrapper.
 
 Example targeted calendar publication:
 
@@ -530,7 +541,19 @@ Targeting events for community publications:
 }
 ```
 
-After loading `kind:30222`, Budabit fetches referenced original publications via their `e` or `a` tags.
+After loading and admitting `kind:30222`, Budabit fetches an explicit original via its `e` or `a` tag, or an implicit original via the wrapper's `d` targeting ID.
+
+These are transport filters, not authorization filters. Exclusive community content is discovered by stable `#h = communityPubkey` plus feature structure such as kind, root IDs, or date tags. Targeting wrappers are discovered by stable `#p = communityPubkey` and `#k`. Budabit applies current-grant author admission locally to relay events, repository events, cache projections, and live updates instead of putting an ACL-sized `authors` array on the wire.
+
+An `authors` field remains on exact authority, identity, or coordinate queries: community definitions; profile-list shards; grant-capable forms; personal profile and list metadata; `kind:pubkey:d` references; implicit originals tied to the wrapper signer; and same-author delete requests. These are singleton or semantically exact authors, not section ACL arrays.
+
+Historical acquisition uses bounded raw-event cursor scans independently for each relay and structural filter. Budabit counts raw relay events before local admission. A full page is saturated because Nostr's inclusive `until` cursor cannot prove that more events do not share the oldest timestamp; page-budget exhaustion, timeout, disconnect, or `CLOSED` likewise makes the scan incomplete. Partial admitted rows may render with an incomplete warning, but zero admitted rows from an incomplete scan must not render as authoritative emptiness.
+
+## Notifications And Shared Consumers
+
+Active-community notification candidates, global notification rows, route projections, activity/reaction consumers, and extension queries use the same current-grant admission as their destination views. Broad `#h` or `#p` notification acquisition may run before profile-list hydration, but no permission-governed row is emitted without complete referenced profile-list and report-state evidence. Targeted notification roots use the same explicit-external and implicit-same-wrapper rules as routes, and community engagement rows require their referenced community root to pass admission too.
+
+Foreground and background consumers coordinate live ownership by community and relay; repository watchers do the same by repository address and relay. When a foreground session already owns matching live coverage, the background notification consumer suppresses only its duplicate live subscription. Bounded finite catch-up may still run, and another community or repository on the same relay keeps its own live filters. Every consumer revalidates repository and live events when grant evidence changes so revocation removes rows and regrant can refetch them.
 
 ## Admin Key Model
 
@@ -597,14 +620,14 @@ The target architecture removes these assumptions:
 
 ## Implementation Guardrails
 
-This document is the target design, not the implementation phase plan.
+This document describes the implemented community model, not the implementation phase plan.
 
-Important guardrails for future implementation:
+Important guardrails:
 
 1. Do not introduce relay URL based compatibility shims into the new core model.
-2. Keep read visibility public until Budabit intentionally implements real relay-side or encryption-based privacy.
+2. Keep community admission distinct from privacy; current grants control Budabit visibility but do not make relay events confidential.
 3. Keep `h = communityPubkey` reserved for exclusive community-native events.
 4. Keep `h = targeting identifier` reserved for targetable publications that have a `kind:30222` association.
-5. Treat profile lists as the effective write-permission source.
+5. Treat the union of current section profile-list shards as the effective grant source for publishing and Budabit visibility.
 6. Treat room root event IDs as canonical room IDs.
 7. Keep one active community in the first UI, but model targeted publications as multi-community capable.

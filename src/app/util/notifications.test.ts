@@ -5,6 +5,8 @@ import {readFileSync} from "node:fs"
 import {nip19} from "nostr-tools"
 import {describe, expect, it, vi} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
+import type {CommunityDefinition} from "@app/core/community"
+import type {CommunityPermissionStatus} from "@app/core/community-state"
 
 vi.mock("@app/core/storage", () => ({
   kv: {get: vi.fn(), set: vi.fn(), clear: vi.fn()},
@@ -19,6 +21,14 @@ vi.mock("@app/core/state", () => ({
 vi.mock("@app/core/community-state", () => ({
   activeCommunityDefinition: readable(undefined),
   activeCommunityModeratorRequestStates: readable([]),
+  activeCommunityPermissionStatus: readable({
+    communityPubkey: "",
+    key: "",
+    loading: false,
+    loaded: false,
+    complete: false,
+    hasCachedEvents: false,
+  }),
   activeCommunityProfileListEvents: readable([]),
   activeCommunityRelays: readable([]),
   activeCommunityReportState: readable(undefined),
@@ -61,6 +71,94 @@ describe("notifications", () => {
     expect(source).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
     expect(source.match(/loadBoundedCommunityHistory\(\{/g)).toHaveLength(2)
     expect(source).not.toContain("request({")
+  })
+
+  it("fails active-community candidates closed until current permissions are authoritative", async () => {
+    const {getActiveCommunityNotificationPermissionKey} = await import("./notifications")
+    const viewer = "a".repeat(64)
+    const communityPubkey = "b".repeat(64)
+    const definition = {
+      event: makeEvent({id: "definition", pubkey: communityPubkey}),
+      pubkey: communityPubkey,
+    } as CommunityDefinition
+    const ready: CommunityPermissionStatus = {
+      communityPubkey,
+      key: `${viewer}:definition:wss://relay.example/:1`,
+      loading: false,
+      loaded: true,
+      complete: true,
+      hasCachedEvents: true,
+    }
+
+    expect(getActiveCommunityNotificationPermissionKey(definition, viewer, ready)).toBe(ready.key)
+    const regranted = {...ready, key: `${viewer}:definition:wss://relay.example/:2`}
+    expect(getActiveCommunityNotificationPermissionKey(definition, viewer, regranted)).toBe(
+      regranted.key,
+    )
+    expect(regranted.key).not.toBe(ready.key)
+    expect(
+      getActiveCommunityNotificationPermissionKey(definition, viewer, {
+        ...ready,
+        loading: true,
+      }),
+    ).toBe("")
+    expect(
+      getActiveCommunityNotificationPermissionKey(definition, viewer, {
+        ...ready,
+        loaded: false,
+      }),
+    ).toBe("")
+    expect(
+      getActiveCommunityNotificationPermissionKey(definition, viewer, {
+        ...ready,
+        complete: false,
+      }),
+    ).toBe("")
+    expect(
+      getActiveCommunityNotificationPermissionKey(definition, viewer, {
+        ...ready,
+        communityPubkey: "c".repeat(64),
+      }),
+    ).toBe("")
+    expect(
+      getActiveCommunityNotificationPermissionKey(definition, viewer, {
+        ...ready,
+        key: `${"d".repeat(64)}:definition:wss://relay.example/:1`,
+      }),
+    ).toBe("")
+  })
+
+  it("clears and refilters candidate stores across revoke and regrant evidence", () => {
+    const source = readFileSync("src/app/util/notifications.ts", "utf8")
+    const roomStore = source.slice(
+      source.indexOf("const roomMessageNotificationCandidates"),
+      source.indexOf("const threadRootNotificationCandidates"),
+    )
+    const threadStore = source.slice(
+      source.indexOf("const threadRootNotificationCandidates"),
+      source.indexOf("const makeTargetedPublicationRootNotificationCandidates"),
+    )
+    const targetedStore = source.slice(
+      source.indexOf("const makeTargetedPublicationRootNotificationCandidates"),
+      source.indexOf("const calendarRootNotificationCandidates"),
+    )
+
+    for (const store of [roomStore, threadStore, targetedStore]) {
+      expect(store).toContain("activeCommunityPermissionStatus")
+      expect(store).toContain("$activeCommunityPermissionStatus")
+      expect(store).toMatch(/if \(!permissionKey\) \{\s*set\(\[\]\)\s*return/)
+      expect(store.indexOf("if (!permissionKey)")).toBeLessThan(
+        store.indexOf("getCommunityTargetWriterPubkeys({"),
+      )
+    }
+
+    expect(roomStore).toContain("authors: authorPubkeys")
+    expect(threadStore).toContain("authors: authorPubkeys")
+    expect(targetedStore).toContain("makeCommunityContentFilterPlan(")
+    expect(targetedStore).toContain("relayFilters: targetingFilterPlan.relayFilters")
+    expect(targetedStore).toContain("localFilters: targetingFilterPlan.localFilters")
+    expect(targetedStore).toContain("owner: `notifications-community-targets:${permissionKey}`")
+    expect(targetedStore).toContain("owner: `notifications-community-originals:${permissionKey}`")
   })
 
   it("matches repo notification helpers against canonical git routes", async () => {

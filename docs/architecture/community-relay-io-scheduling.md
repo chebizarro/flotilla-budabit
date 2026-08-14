@@ -2,23 +2,25 @@
 
 ## Purpose
 
-BudaBit must support authenticated and public Nostr relays without letting general feed traffic delay critical community state. The transport must also respect small strfry deployments with strict per-connection and per-request limits.
+BudaBit must support authenticated and public Nostr relays without letting general feed traffic delay critical community state. The transport must also respect small strfry deployments with strict per-connection and per-request limits while keeping relay discovery separate from client-side community admission.
 
 The first target is `wss://relay.budabit.club/`, which currently exposes:
 
-| Constraint | Value |
-| --- | ---: |
-| NIP-42 authentication | Disabled |
-| Active subscription IDs per connection | 30 |
-| Filters per `REQ` | 10 |
-| Maximum events per filter | 200 |
-| Maximum WebSocket message | 131,072 bytes |
-| Maximum event | 65,536 bytes |
-| Maximum tags per event | 2,000 |
-| Ordinary event retention | One year |
-| Write rate | Limited |
+| Constraint                             |         Value |
+| -------------------------------------- | ------------: |
+| NIP-42 authentication                  |      Disabled |
+| Active subscription IDs per connection |            30 |
+| Filters per `REQ`                      |            10 |
+| Maximum events per filter              |           200 |
+| Maximum WebSocket message              | 131,072 bytes |
+| Maximum event                          |  65,536 bytes |
+| Maximum tags per event                 |         2,000 |
+| Ordinary event retention               |      One year |
+| Write rate                             |       Limited |
 
 The ten-filter limit, event-size limit, tag limit, retention period, and write-rate policy are deployment configuration described in human-readable relay metadata rather than structured NIP-11 limitation fields. They therefore require explicit local policy where applicable. The relay advertises the subscription, result, and message limits through NIP-11.
+
+Profile-list grants can exceed one event's size or tag budget. A content section may therefore repeat `a` references to distinct `kind:30000` shards; clients fetch each exact coordinate and use the union of current `p` tags. Transport scheduling must not assume that one profile-list event contains every writer.
 
 ## Protocol Model
 
@@ -46,6 +48,8 @@ Grouping reduces protocol and subscription-state overhead, but the relay still p
 - Keep BudaBit-specific relay policy and feature priority in BudaBit.
 - Group only related filters with the same relay, priority, lifetime, and failure domain.
 - Treat timeout as incomplete, never as authoritative absence.
+- Discover permission-governed content with stable structural `#h` or `#p` filters and apply current grants client-side.
+- Fail closed when current definition or profile-list evidence is unavailable; relay matches are candidates, not authorization.
 - Close finite subscriptions immediately after EOSE.
 - Keep permanent live filters small and stable.
 - Route general profile, Git, and feed traffic away from the community relay unless explicitly community-scoped.
@@ -92,23 +96,23 @@ Authentication state is scoped to the socket session and resets on disconnect.
 
 Finite requests use independent Welshman loader instances so unrelated feature traffic is not physically grouped together.
 
-| Lane | Batch window | Priority |
-| --- | ---: | --- |
-| Community definition and authority | 50 ms | Highest |
-| Widget curation and exact bridge references | 50 ms | High |
-| Interactive route data | 100 ms | Medium |
-| General feed and profile hydration | 200 ms | Low |
-| Live subscriptions | Persistent | Lifetime-capped |
+| Lane                                        | Batch window | Priority        |
+| ------------------------------------------- | -----------: | --------------- |
+| Community definition and authority          |        50 ms | Highest         |
+| Widget curation and exact bridge references |        50 ms | High            |
+| Interactive route data                      |       100 ms | Medium          |
+| General feed and profile hydration          |       200 ms | Low             |
+| Live subscriptions                          |   Persistent | Lifetime-capped |
 
 For the public relay, the 30-ID server budget is divided by class:
 
-| Budget | IDs |
-| --- | ---: |
-| Budabit-managed total | 28 |
-| Maximum live | 24 |
-| Maximum background-live | 18 |
-| Capacity left for finite work at maximum live | 4 |
-| Outside managed budget for recovery and overlap | 2 |
+| Budget                                          | IDs |
+| ----------------------------------------------- | --: |
+| Budabit-managed total                           |  28 |
+| Maximum live                                    |  24 |
+| Maximum background-live                         |  18 |
+| Capacity left for finite work at maximum live   |   4 |
+| Outside managed budget for recovery and overlap |   2 |
 
 Finite work may use all managed capacity not occupied by live work. Lifetime caps, rather than priority reservations, prevent persistent traffic from consuming finite capacity. Background-live traffic has the strictest cap; critical live traffic can borrow its headroom without exceeding the overall live cap.
 
@@ -125,6 +129,12 @@ Each finite physical chunk:
 
 Abort, timeout, disconnect, and `CLOSED` also release the slot. A strfry `NOTICE` reporting too many concurrent REQs pauses the connection queue and lowers effective concurrency.
 
+### Bounded permissioned history
+
+Community history scans maintain a cursor independently for each relay and each structural filter. Each page is bounded and counted by raw relay events before current-grant admission, so a page of outsiders advances the scan rather than masquerading as an empty authorized result.
+
+Nostr's `until` cursor is inclusive and has no event-ID tiebreaker. When a raw page reaches its limit, more events may share the oldest timestamp; Budabit marks the scan saturated and incomplete even if it continues with `until = oldestTimestamp - 1`. Exhausting the page budget, reaching the time budget, disconnecting, or receiving `CLOSED` is likewise incomplete. Partial admitted events remain usable, but an incomplete zero-admission result is not authoritative emptiness.
+
 ## Live Subscription Scope
 
 The community relay keeps only core community state live:
@@ -139,14 +149,27 @@ Dynamic exact original-event filters are finite queries. A new targeting event t
 
 Growing per-ID filters for deletes, reports, and form responses should use the same finite-query pattern where possible. Related broad filters may be consolidated when client-side post-validation preserves authorization semantics.
 
+Community-exclusive live transport uses structural `#h = communityPubkey`; targeted-wrapper transport uses `#p = communityPubkey` and `#k`. Current grants are applied after receipt to live and cached events. A grant revocation refilters existing results, while a regrant restarts structural acquisition so matching history can reappear.
+
+Exact author filters remain appropriate for definitions, profile-list shards, grant-capable forms, personal metadata and lists, explicit address coordinates, implicit originals bound to a wrapper signer, and same-author deletes. These exact identity or authority filters must not be widened while removing ACL-derived writer arrays from content transport.
+
+## Notification And Shared Consumer Rules
+
+Global notification acquisition may subscribe broadly before grant evidence finishes hydrating, but rows are admitted only after bounded definition, profile-list, report, and report-delete hydration completes for that community. Cached authority events do not make a pending or failed refresh authoritative. Admission reviews are discoverable from applicant/app relays; bounded review relay hints bootstrap only the exact signed definition, which is refreshed on its declared relays before community-partitioned workflow and authority reads begin. Completion is tracked per community, including when communities share a physical relay, and unchanged completed scopes survive unrelated source reconfiguration. A hostile or unavailable context therefore cannot suppress or continuously reset unrelated decisions. Repository-watch authority queries and completion use the same partition, and renounced communities are excluded from retained ban-notice seeds. Its finite catch-up uses the same bounded raw-event history loader as community routes. Active-community badges, route projections, activity/reaction summaries, repository watchers, and extension queries apply current grants and the same targeted-wrapper authority as their destination views; community engagement also requires the referenced root to pass admission.
+
+Live ownership is coordinated by `(community, relay)`, and repository-watch ownership by `(repository address, relay)`. If a foreground consumer owns coverage, the notification background consumer removes only duplicate live filters for that pair; its finite catch-up may still run, and other communities or repositories sharing the relay retain their coverage. Grant changes rebuild local selectors and relevant subscriptions instead of trusting previously admitted rows.
+
 ## Error Semantics
 
 - `CLOSED` is scoped to a subscription ID and fails only its logical chunk.
 - Explicit local policy prevents `bad req: arr too big` on known relays. A future adaptive fallback may learn a lower filter count for unknown deployments.
 - `NOTICE: too many concurrent REQs` pauses new sends and lowers effective concurrency.
 - Timeout returns received events with `complete: false`.
+- Page-budget exhaustion and same-timestamp saturation return received events with `complete: false`.
+- Disconnect and `CLOSED` make the affected relay/filter scan incomplete.
 - EOSE is not treated as CLOSE or proof that a live monitor was accepted.
 - Empty UI states require a complete relay result or valid cached authority evidence.
+- A nonempty authority filter set with no valid relay remains incomplete and contributes to the global partial-history warning; it is never normalized into a completed empty query.
 
 ## Rollout
 
@@ -170,6 +193,9 @@ Growing per-ID filters for deletes, reports, and form responses should use the s
 - Finite subscriptions send CLOSE after EOSE.
 - Startup produces no concurrent-REQ NOTICE under expected load.
 - Timeouts do not produce authoritative empty UI states.
+- Saturated, disconnected, or page-budget-limited community scans do not produce authoritative empty UI states.
+- Structural community discovery does not depend on ACL-sized current-writer arrays.
+- Missing grant evidence admits no permission-governed rows.
 - Cached widgets and exact event references render while refresh continues.
 - Priority community state begins without waiting for background feed batches.
 

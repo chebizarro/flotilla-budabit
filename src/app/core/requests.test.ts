@@ -589,6 +589,60 @@ describe("requests", () => {
     expect(result).toEqual({events: [], complete: false, timedOut: false, saturated: true})
   })
 
+  it("reports a full same-timestamp cursor boundary as saturated incomplete history", async () => {
+    const {loadBoundedCommunityHistory} = await import("./requests")
+    const {request} = await import("@welshman/net")
+    const relay = "wss://same-timestamp-boundary.test"
+    const allowedAuthor = "1".repeat(64)
+    const boundaryTimestamp = 500
+    const makeEvent = (id: string, pubkey: string): TrustedEvent => ({
+      id: id.repeat(64),
+      pubkey,
+      created_at: boundaryTimestamp,
+      kind: 9,
+      tags: [["h", "community"]],
+      content: "message",
+      sig: "f".repeat(128),
+    })
+    const boundaryPage = [
+      makeEvent("2", "3".repeat(64)),
+      makeEvent("4", "5".repeat(64)),
+      makeEvent("6", "7".repeat(64)),
+    ]
+    const hiddenAllowedEvent = makeEvent("8", allowedAuthor)
+    const relayEvents = [...boundaryPage, hiddenAllowedEvent]
+    const requestMock = vi.mocked(request)
+    requestMock.mockImplementation(async options => {
+      const filter = options.filters[0]
+      const events = relayEvents
+        .filter(event => filter.until === undefined || event.created_at <= filter.until)
+        .slice(0, filter.limit)
+
+      for (const event of events) options.onEvent?.(event, relay)
+      options.onEose?.(relay)
+      return events
+    })
+
+    try {
+      const result = await loadBoundedCommunityHistory({
+        relays: [relay],
+        relayFilters: [{kinds: [9], "#h": ["community"]}],
+        localFilters: [{kinds: [9], "#h": ["community"], authors: [allowedAuthor]}],
+        pageSize: boundaryPage.length,
+        maxPages: 2,
+        timeoutMs: 1000,
+      })
+
+      expect(requestMock).toHaveBeenCalledTimes(2)
+      expect(requestMock.mock.calls[0][0].filters[0]).toMatchObject({limit: 3})
+      expect(requestMock.mock.calls[0][0].filters[0]).not.toHaveProperty("authors")
+      expect(requestMock.mock.calls[1][0].filters[0]).toMatchObject({limit: 3, until: 499})
+      expect(result).toEqual({events: [], complete: false, timedOut: false, saturated: true})
+    } finally {
+      requestMock.mockReset()
+    }
+  })
+
   it("does not report complete history when a relay disconnects", async () => {
     const {createBoundedCommunityHistoryLoader} = await import("./requests")
     const relay = "wss://disconnected-bounded-history.test"
@@ -666,11 +720,21 @@ describe("requests", () => {
     const filters = makeSameAuthorDeleteFilters([
       makeTarget("reaction", author, 7),
       makeTarget("report", author, 1984),
+      {
+        id: "wrapper",
+        pubkey: author,
+        created_at: 100,
+        kind: 30222,
+        tags: [["d", "targeting-id"]],
+        content: "",
+        sig: "f".repeat(128),
+      } as TrustedEvent,
       makeTarget("other-report", otherAuthor, 1984),
     ])
 
     expect(filters).toEqual([
-      {kinds: [5], authors: [author], "#e": ["reaction", "report"]},
+      {kinds: [5], authors: [author], "#e": ["reaction", "report", "wrapper"]},
+      {kinds: [5], authors: [author], "#a": [`30222:${author}:targeting-id`]},
       {kinds: [5], authors: [otherAuthor], "#e": ["other-report"]},
     ])
     expect(filters.every(filter => !("#h" in filter))).toBe(true)

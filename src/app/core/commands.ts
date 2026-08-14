@@ -1643,8 +1643,7 @@ const getCanonicalFileForBrowserMirror = async (canonical: BlossomBlobDescriptor
 
   if (!response.ok) throw new Error(`Failed to download canonical file (HTTP ${response.status})`)
 
-  const blob = await response.blob()
-  const buffer = await blob.arrayBuffer()
+  const buffer = await response.arrayBuffer()
   const hash = await sha256(buffer)
 
   if (hash !== canonical.sha256) {
@@ -1652,7 +1651,10 @@ const getCanonicalFileForBrowserMirror = async (canonical: BlossomBlobDescriptor
   }
 
   return new File([buffer], canonical.sha256, {
-    type: canonical.type || blob.type || "application/octet-stream",
+    type:
+      canonical.type ||
+      response.headers.get("content-type")?.split(";")[0] ||
+      "application/octet-stream",
   })
 }
 

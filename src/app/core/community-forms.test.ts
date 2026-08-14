@@ -749,6 +749,7 @@ describe("community admission responses", () => {
         formAddress,
         communityPubkey,
         sectionName: "General",
+        relays: ["wss://community.example"],
         status: "granted",
       }),
     ).toMatchObject({
@@ -760,6 +761,7 @@ describe("community admission responses", () => {
         ["a", formAddress],
         ["h", communityPubkey],
         ["content", "General"],
+        ["relay", "wss://community.example/"],
       ],
     })
   })

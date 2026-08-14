@@ -5,6 +5,7 @@ import {
   COMMENT,
   DELETE,
   MESSAGE,
+  getAddress,
   uniqTags,
   type EventContent,
   type TrustedEvent,
@@ -133,7 +134,14 @@ export const filterVisibleAfterDeletesAndEdits = <T extends TrustedEvent>(
 export const deleteEventDeletesTarget = (deleteEvent: TrustedEvent, targetEvent: TrustedEvent) =>
   deleteEvent.kind === DELETE &&
   deleteEvent.pubkey === targetEvent.pubkey &&
-  (deleteEvent.tags || []).some(tag => tag[0] === "e" && tag[1] === targetEvent.id)
+  (deleteEvent.tags || []).some(
+    tag =>
+      (tag[0] === "e" && tag[1] === targetEvent.id) ||
+      (tag[0] === "a" &&
+        targetEvent.kind >= 30_000 &&
+        targetEvent.kind < 40_000 &&
+        tag[1] === getAddress(targetEvent)),
+  )
 
 export const deleteEventsDeleteTarget = (deleteEvents: TrustedEvent[], targetEvent: TrustedEvent) =>
   deleteEvents.some(deleteEvent => deleteEventDeletesTarget(deleteEvent, targetEvent))

@@ -83,26 +83,34 @@ export type BoundedCommunityHistoryOptions = {
 }
 
 export const makeSameAuthorDeleteFilters = (events: TrustedEvent[]): Filter[] => {
-  const idsByAuthor = new Map<string, Set<string>>()
+  const targetsByAuthor = new Map<string, {ids: Set<string>; addresses: Set<string>}>()
 
   for (const event of events) {
     if (!event.id || !event.pubkey) continue
 
-    const ids = idsByAuthor.get(event.pubkey) || new Set<string>()
-    ids.add(event.id)
-    idsByAuthor.set(event.pubkey, ids)
+    const targets = targetsByAuthor.get(event.pubkey) || {
+      ids: new Set<string>(),
+      addresses: new Set<string>(),
+    }
+    targets.ids.add(event.id)
+    if (event.kind >= 30_000 && event.kind < 40_000) targets.addresses.add(getAddress(event))
+    targetsByAuthor.set(event.pubkey, targets)
   }
 
-  return Array.from(idsByAuthor).flatMap(([author, ids]) => {
-    const values = Array.from(ids)
+  return Array.from(targetsByAuthor).flatMap(([author, targets]) => {
     const filters: Filter[] = []
 
-    for (let index = 0; index < values.length; index += COMMUNITY_HISTORY_TAG_CHUNK_SIZE) {
-      filters.push({
-        kinds: [DELETE],
-        authors: [author],
-        "#e": values.slice(index, index + COMMUNITY_HISTORY_TAG_CHUNK_SIZE),
-      })
+    for (const [tagName, values] of [
+      ["#e", Array.from(targets.ids)],
+      ["#a", Array.from(targets.addresses)],
+    ] as const) {
+      for (let index = 0; index < values.length; index += COMMUNITY_HISTORY_TAG_CHUNK_SIZE) {
+        filters.push({
+          kinds: [DELETE],
+          authors: [author],
+          [tagName]: values.slice(index, index + COMMUNITY_HISTORY_TAG_CHUNK_SIZE),
+        } as Filter)
+      }
     }
 
     return filters

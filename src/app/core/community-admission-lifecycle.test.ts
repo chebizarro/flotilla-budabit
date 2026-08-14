@@ -1,4 +1,5 @@
-import {describe, expect, it} from "vitest"
+import {describe, expect, it, vi} from "vitest"
+import type {RequestOptions} from "@welshman/net"
 import {DELETE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
 import {
   COMMUNITY_DEFINITION_KIND,
@@ -14,7 +15,12 @@ import {
   makeTargetedPublicationForCommunity,
   makeAddressablePublicationRef,
 } from "./community-targeting"
-import {makeTargetedPublicationOriginalFilters} from "./community-feeds"
+import {
+  makeCommunityContentFilterPlan,
+  makeCommunityExclusiveFilter,
+  makeTargetedPublicationOriginalFilters,
+} from "./community-feeds"
+import {createBoundedCommunityHistoryLoader} from "./requests"
 import {
   COMMUNITY_WRITE_TARGETS,
   canWriteCommunityTarget,
@@ -460,5 +466,91 @@ describe("community admission lifecycle integration", () => {
         moderatorPubkeys: currentModerators,
       }).status,
     ).toBe("pending")
+  })
+
+  it("hides historical content on revoke and refetches it on regrant", async () => {
+    const relay = "wss://admission-lifecycle.test"
+    const historicalContent = makeEvent({
+      id: "historical-community-content",
+      pubkey: applicantPubkey,
+      created_at: 5,
+      kind: 1111,
+      tags: [["h", communityPubkey]],
+      content: "Historical community content",
+    })
+    const grantedProfileList = makeEvent({
+      id: "general-list-grant-lifecycle",
+      kind: PROFILE_LIST_KIND,
+      pubkey: moderatorPubkey,
+      created_at: 10,
+      tags: makeCommunityGrantEvent({
+        profileList: generalListRef,
+        pubkey: applicantPubkey,
+      }).tags,
+    })
+    const revokedProfileList = makeEvent({
+      id: "general-list-revoke-lifecycle",
+      kind: PROFILE_LIST_KIND,
+      pubkey: moderatorPubkey,
+      created_at: 20,
+      tags: makeCommunityRevokeEvent({
+        profileList: generalListRef,
+        profileListEvent: grantedProfileList,
+        pubkey: applicantPubkey,
+      }).tags,
+    })
+    const regrantedProfileList = makeEvent({
+      id: "general-list-regrant-lifecycle",
+      kind: PROFILE_LIST_KIND,
+      pubkey: moderatorPubkey,
+      created_at: 30,
+      tags: makeCommunityGrantEvent({
+        profileList: generalListRef,
+        profileListEvent: revokedProfileList,
+        pubkey: applicantPubkey,
+      }).tags,
+    })
+    const request = vi.fn(async (options: RequestOptions) => {
+      expect(options.filters[0]).not.toHaveProperty("authors")
+      options.onEvent?.(historicalContent, relay)
+      options.onEose?.(relay)
+      return [historicalContent]
+    })
+    const publish = vi.fn()
+    const loadHistory = createBoundedCommunityHistoryLoader({request, publish, track: vi.fn()})
+    const loadWithCurrentAdmission = (profileListEvents: TrustedEvent[]) => {
+      const writers = getCommunitySectionWriterPubkeys({
+        definition,
+        profileListEvents,
+        sectionName: "General",
+      })
+      const plan = makeCommunityContentFilterPlan(
+        [makeCommunityExclusiveFilter(communityPubkey, [historicalContent.kind])],
+        writers,
+      )
+
+      return loadHistory({
+        relays: [relay],
+        ...plan,
+        timeoutMs: 1000,
+      })
+    }
+
+    const granted = await loadWithCurrentAdmission([grantedProfileList])
+    const revoked = await loadWithCurrentAdmission([grantedProfileList, revokedProfileList])
+    const regranted = await loadWithCurrentAdmission([
+      grantedProfileList,
+      revokedProfileList,
+      regrantedProfileList,
+    ])
+
+    expect(granted.events).toEqual([historicalContent])
+    expect(revoked.events).toEqual([])
+    expect(regranted.events).toEqual([historicalContent])
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(publish.mock.calls.map(([event]) => event)).toEqual([
+      historicalContent,
+      historicalContent,
+    ])
   })
 })

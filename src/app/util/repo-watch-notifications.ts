@@ -1,5 +1,6 @@
 import {derived, readable, type Readable} from "svelte/store"
 import {request} from "@welshman/net"
+import type {RequestOptions} from "@welshman/net"
 import {pubkey, repository, tracker} from "@welshman/app"
 import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
 import {now} from "@welshman/lib"
@@ -7,6 +8,7 @@ import {
   Address,
   getTagValue,
   isRelayUrl,
+  matchFilters,
   normalizeRelayUrl,
   type Filter,
   type TrustedEvent,
@@ -26,16 +28,21 @@ import {
   parseRepoAnnouncementEvent,
   type RepoAnnouncementEvent,
 } from "@nostr-git/core/events"
-import {
-  COMMUNITY_DEFINITION_KIND,
-  PROFILE_LIST_KIND,
-  type CommunityDefinition,
-} from "@app/core/community"
+import {COMMUNITY_DEFINITION_KIND, type CommunityDefinition} from "@app/core/community"
 import {
   makeCommunityProfileListFilters,
+  makeCommunityReportFilters,
   selectLatestCommunityDefinition,
 } from "@app/core/community-state"
-import {COMMUNITY_WRITE_TARGETS, canWriteCommunityTarget} from "@app/core/community-permissions"
+import {
+  COMMUNITY_WRITE_TARGETS,
+  canWriteCommunityTarget,
+  getCommunityTargetWriterPubkeys,
+} from "@app/core/community-permissions"
+import {
+  getEffectiveCommunityReportState,
+  type EffectiveCommunityReportState,
+} from "@app/core/community-reports"
 import {
   GIT_RELAYS,
   getRepoMaintainers,
@@ -62,10 +69,7 @@ import {
 } from "@app/util/notification-history"
 import {makeGitPath} from "@app/util/routes"
 import {ROLE_NS} from "@app/util/labels"
-import {
-  catchUpThenSetBackgroundLive,
-  createBackgroundLiveCoordinator,
-} from "@app/core/background-live"
+import {createBackgroundLiveCoordinator} from "@app/core/background-live"
 import {
   isRepoLiveOwned,
   repoLiveOwnership,
@@ -73,6 +77,12 @@ import {
 } from "@app/core/repo-live-ownership"
 import {notificationBackgroundEnabled} from "@app/util/notification-background"
 import {receiveRepositoryCacheEvent} from "@app/core/repo-cache"
+import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+import {
+  createBoundedCommunityHistoryLoader,
+  makeSameAuthorDeleteFilters,
+  type BoundedCommunityHistoryResult,
+} from "@app/core/requests"
 
 type RepoWatchAddressRef = {
   address: string
@@ -90,6 +100,7 @@ export type RepoWatchNotificationRepo = RepoWatchAddressRef & {
   repoEvent?: TrustedEvent
   communityDefinition?: CommunityDefinition
   communityProfileListEvents?: TrustedEvent[]
+  communityReportState?: EffectiveCommunityReportState
 }
 
 export type GetRepoNotificationReposOptions = {
@@ -115,12 +126,36 @@ export type RepoWatchActivityRelayTarget = {
   since: number
   limit: number
   rootIds?: string[]
+  authors?: string[]
 }
 
 export type RepoWatchRelayFilterGroup = {
   relay: string
+  scope?: string
   filters: Filter[]
+  localFilters: Filter[]
   liveFilters: Filter[]
+  acceptSaturated?: boolean
+  maxPages?: number
+}
+
+export type RepoWatchHistoryStatus = {
+  loading: boolean
+  complete: boolean
+  saturated: boolean
+}
+
+type LoadedRepoWatchEvents<T extends TrustedEvent> = RepoWatchHistoryStatus & {
+  events: T[]
+  completeRelays: Set<string>
+  completeScopes: Set<string>
+}
+
+export type RepoWatchCommunityContext = {
+  definition?: CommunityDefinition
+  profileListEvents: TrustedEvent[]
+  reportState?: EffectiveCommunityReportState
+  ready: boolean
 }
 
 type RepoWatchCandidateSection = "issues" | "prs"
@@ -334,10 +369,24 @@ const buildRootFilters = (targets: RepoWatchActivityRelayTarget[]) => {
   return filters
 }
 
+const applyTargetAuthors = (filters: Filter[], authors: string[] | undefined) =>
+  authors === undefined ? filters : filters.map(filter => ({...filter, authors}))
+
+const buildLocalAddressFilters = (targets: RepoWatchActivityRelayTarget[]) =>
+  targets.flatMap(target => applyTargetAuthors(buildAddressFilters([target]), target.authors))
+
+const buildLocalRootFilters = (targets: RepoWatchActivityRelayTarget[]) =>
+  targets.flatMap(target =>
+    buildRootFilters([target]).map(filter =>
+      filter.ids || target.authors === undefined ? filter : {...filter, authors: target.authors},
+    ),
+  )
+
 const buildRepoWatchRelayGroups = (
   targets: RepoWatchActivityRelayTarget[],
   ownership: RepoLiveOwnership,
   buildFilters: (targets: RepoWatchActivityRelayTarget[]) => Filter[],
+  buildLocalFilters: (targets: RepoWatchActivityRelayTarget[]) => Filter[],
 ): RepoWatchRelayFilterGroup[] => {
   const targetsByRelay = new Map<string, RepoWatchActivityRelayTarget[]>()
 
@@ -352,6 +401,7 @@ const buildRepoWatchRelayGroups = (
   return Array.from(targetsByRelay, ([relay, relayTargets]) => ({
     relay,
     filters: dedupeFilters(buildFilters(relayTargets)),
+    localFilters: dedupeFilters(buildLocalFilters(relayTargets)),
     liveFilters: dedupeFilters(
       buildFilters(
         relayTargets.filter(target => !isRepoLiveOwned(ownership, target.address, relay)),
@@ -363,12 +413,53 @@ const buildRepoWatchRelayGroups = (
 export const buildRepoWatchActivityRelayGroups = (
   targets: RepoWatchActivityRelayTarget[],
   ownership: RepoLiveOwnership = new Set(),
-) => buildRepoWatchRelayGroups(targets, ownership, buildAddressFilters)
+) => buildRepoWatchRelayGroups(targets, ownership, buildAddressFilters, buildLocalAddressFilters)
 
 export const buildRepoWatchRootRelayGroups = (
   targets: RepoWatchActivityRelayTarget[],
   ownership: RepoLiveOwnership = new Set(),
-) => buildRepoWatchRelayGroups(targets, ownership, buildRootFilters)
+) => buildRepoWatchRelayGroups(targets, ownership, buildRootFilters, buildLocalRootFilters)
+
+type RepoWatchScopedFilterSource = {
+  communityPubkey?: string
+  relays: string[]
+  filters: Filter[]
+}
+
+export const buildRepoWatchScopedFilterGroups = (
+  sources: RepoWatchScopedFilterSource[],
+  currentOnly = false,
+): RepoWatchRelayFilterGroup[] => {
+  const groupsByScopeRelay = new Map<string, {scope: string; relay: string; filters: Filter[]}>()
+
+  for (const source of sources) {
+    const relays = normalizeRelays(source.relays)
+    if (relays.length === 0 && source.filters.length > 0) {
+      const scope = source.communityPubkey || ""
+      groupsByScopeRelay.set(`${scope}:`, {scope, relay: "", filters: [...source.filters]})
+    }
+
+    for (const relay of relays) {
+      const scope = source.communityPubkey || ""
+      const key = `${scope}:${relay}`
+      const group = groupsByScopeRelay.get(key) || {scope, relay, filters: []}
+      group.filters.push(...source.filters)
+      groupsByScopeRelay.set(key, group)
+    }
+  }
+
+  return Array.from(groupsByScopeRelay.values(), ({scope, relay, filters}) => {
+    const scopedFilters = dedupeFilters(filters)
+    return {
+      relay,
+      ...(scope ? {scope} : {}),
+      filters: scopedFilters,
+      localFilters: scopedFilters,
+      liveFilters: relay ? scopedFilters : [],
+      ...(currentOnly ? {acceptSaturated: true, maxPages: 1} : {}),
+    }
+  }).sort((a, b) => a.relay.localeCompare(b.relay) || (a.scope || "").localeCompare(b.scope || ""))
+}
 
 const parseWatchedRepoAddress = (address: string): RepoWatchAddressRef | undefined => {
   try {
@@ -498,13 +589,15 @@ const getRepoMaintainerSet = (repo: RepoWatchNotificationRepo) => {
 
 const authorCanWriteRepoCommunity = (repo: RepoWatchNotificationRepo, authorPubkey: string) => {
   const definition = repo.communityDefinition
-  if (!definition) return false
+  const reportState = repo.communityReportState
+  if (!definition || !reportState) return false
 
   return canWriteCommunityTarget({
     definition,
     profileListEvents: repo.communityProfileListEvents || [],
     userPubkey: authorPubkey,
     target: COMMUNITY_WRITE_TARGETS.repository,
+    reportState,
   })
 }
 
@@ -797,15 +890,75 @@ const receiveRepoWatchEvent = (event: TrustedEvent, relay: string) => {
   receiveRepositoryCacheEvent(event, relay)
 }
 
+export const createBoundedRepoWatchHistoryLoader = ({
+  request: requestHistory,
+  onEvent,
+}: {
+  request: (options: RequestOptions) => Promise<unknown>
+  onEvent: (event: TrustedEvent, relay: string) => void
+}) => {
+  const relayByEventId = new Map<string, string>()
+
+  return createBoundedCommunityHistoryLoader({
+    request: requestHistory,
+    track: (eventId, relay) => relayByEventId.set(eventId, relay),
+    publish: event => {
+      onEvent(event, relayByEventId.get(event.id) || "")
+      relayByEventId.delete(event.id)
+    },
+  })
+}
+
 const baseRelays = derived(pubkey, getBaseRelays)
+
+const repoWatchLiveLocalFilters = new Map<object, Map<string, Filter[]>>()
+
+const setRepoWatchLiveLocalFilters = (source: object, relay: string, filters: Filter[]) => {
+  const filtersByRelay = repoWatchLiveLocalFilters.get(source) || new Map<string, Filter[]>()
+  repoWatchLiveLocalFilters.set(source, filtersByRelay)
+
+  if (filters.length > 0) filtersByRelay.set(relay, filters)
+  else filtersByRelay.delete(relay)
+
+  if (filtersByRelay.size === 0) repoWatchLiveLocalFilters.delete(source)
+}
+
+const clearRepoWatchLiveLocalFilters = (source: object) => {
+  repoWatchLiveLocalFilters.delete(source)
+}
+
+const receiveRepoWatchLiveEvent = (event: TrustedEvent, relay: string) => {
+  const normalizedRelay = normalizeRelay(relay)
+  const localFilters = Array.from(repoWatchLiveLocalFilters.values()).flatMap(
+    filtersByRelay => filtersByRelay.get(normalizedRelay) || [],
+  )
+
+  if (localFilters.length > 0 && matchFilters(localFilters, event)) {
+    receiveRepoWatchEvent(event, normalizedRelay)
+  }
+}
 
 const repoWatchLiveCoordinator = createBackgroundLiveCoordinator({
   request,
   owner: "repo-watcher",
-  onEvent: receiveRepoWatchEvent,
+  onEvent: receiveRepoWatchLiveEvent,
   onError: (relay, error) => {
     console.warn(`[repo-watch-notifications] Failed to subscribe on ${relay}`, error)
   },
+})
+
+const loadBoundedRepoWatchHistory = createBoundedRepoWatchHistoryLoader({
+  request,
+  onEvent: receiveRepoWatchEvent,
+})
+
+const initialLoadedRepoWatchEvents = <T extends TrustedEvent>(): LoadedRepoWatchEvents<T> => ({
+  events: [],
+  loading: false,
+  complete: false,
+  saturated: false,
+  completeRelays: new Set(),
+  completeScopes: new Set(),
 })
 
 const deriveLoadedEventGroups = <T extends TrustedEvent>({
@@ -814,28 +967,77 @@ const deriveLoadedEventGroups = <T extends TrustedEvent>({
 }: {
   groups: Readable<RepoWatchRelayFilterGroup[]>
   label: string
-}): Readable<T[]> =>
-  readable<T[]>([], set => {
+}): Readable<LoadedRepoWatchEvents<T>> =>
+  readable<LoadedRepoWatchEvents<T>>(initialLoadedRepoWatchEvents<T>(), set => {
     let filtersKey = ""
     let networkKey = ""
+    let generation = 0
+    let events: T[] = []
+    let status: RepoWatchHistoryStatus = {
+      loading: false,
+      complete: false,
+      saturated: false,
+    }
+    let completeRelays = new Set<string>()
+    let completeScopes = new Set<string>()
+    let completeGroupKeys = new Set<string>()
     const controllersByRelay = new Map<string, AbortController>()
     let unsubscribeEvents: (() => void) | undefined
     const liveSource = {}
 
+    const emit = () => set({...status, events, completeRelays, completeScopes})
+
     const stopRelaySubscriptions = () => {
+      generation += 1
       for (const controller of controllersByRelay.values()) {
         controller.abort()
       }
       controllersByRelay.clear()
+      clearRepoWatchLiveLocalFilters(liveSource)
       repoWatchLiveCoordinator.clear(liveSource)
+    }
+
+    const getGroupKey = (group: RepoWatchRelayFilterGroup) =>
+      JSON.stringify({...group, relay: normalizeRelay(group.relay)})
+
+    const updateCompletion = (currentGroups: RepoWatchRelayFilterGroup[]) => {
+      const completedGroups = currentGroups.filter(group =>
+        completeGroupKeys.has(getGroupKey(group)),
+      )
+      completeRelays = new Set(completedGroups.map(group => normalizeRelay(group.relay)))
+      completeScopes = new Set(
+        completedGroups.map(group => `${group.scope || ""}:${normalizeRelay(group.relay)}`),
+      )
+      status = {
+        loading: false,
+        complete: currentGroups.length > 0 && completedGroups.length === currentGroups.length,
+        saturated: false,
+      }
     }
 
     const unsubscribe = derived([groups, notificationBackgroundEnabled], ([$groups, $enabled]) => ({
       groups: $groups,
       enabled: $enabled,
     })).subscribe(({groups, enabled}) => {
-      const filters = dedupeFilters(groups.flatMap(group => group.filters))
+      const filters = dedupeFilters(groups.flatMap(group => group.localFilters))
       const nextFiltersKey = getFilterKey(filters)
+      const nextNetworkKey = JSON.stringify({enabled, groups})
+      if (nextNetworkKey === networkKey) return
+      networkKey = nextNetworkKey
+      const completionGroups = groups.filter(
+        group => group.filters.length > 0 && group.localFilters.length > 0,
+      )
+      const validGroups = completionGroups.filter(group => {
+        const url = normalizeRelay(group.relay)
+        return Boolean(url)
+      })
+      const nextGroupKeys = new Set(completionGroups.map(getGroupKey))
+      completeGroupKeys = new Set(
+        Array.from(completeGroupKeys).filter(key => nextGroupKeys.has(key)),
+      )
+      stopRelaySubscriptions()
+      updateCompletion(completionGroups)
+      emit()
 
       if (nextFiltersKey !== filtersKey) {
         unsubscribeEvents?.()
@@ -844,44 +1046,135 @@ const deriveLoadedEventGroups = <T extends TrustedEvent>({
 
         if (filters.length > 0) {
           unsubscribeEvents = deriveEventsAsc(deriveEventsById({repository, filters})).subscribe(
-            events => set(events as T[]),
+            loadedEvents => {
+              events = loadedEvents as T[]
+              emit()
+            },
           )
+        } else {
+          events = []
         }
       }
 
-      const nextNetworkKey = JSON.stringify({enabled, groups})
-      if (nextNetworkKey === networkKey) return
-      networkKey = nextNetworkKey
-      stopRelaySubscriptions()
-
       if (filters.length === 0) {
-        set([])
+        completeGroupKeys = new Set()
+        status = {loading: false, complete: true, saturated: false}
+        emit()
         return
       }
 
-      if (!enabled) return
-
-      for (const group of groups) {
-        const url = normalizeRelay(group.relay)
-        if (!url || group.filters.length === 0) continue
-        const controller = new AbortController()
-        controllersByRelay.set(url, controller)
-        void catchUpThenSetBackgroundLive({
-          request,
-          coordinator: repoWatchLiveCoordinator,
-          source: liveSource,
-          relay: url,
-          filters: group.filters,
-          liveFilters: group.liveFilters,
-          signal: controller.signal,
-          onEvent: receiveRepoWatchEvent,
-          onError: error => {
-            if (!controller.signal.aborted) {
-              console.warn(`[repo-watch-notifications] Failed to load ${label}`, error)
-            }
-          },
-        })
+      if (!enabled) {
+        completeGroupKeys = new Set()
+        status = {loading: false, complete: false, saturated: false}
+        emit()
+        return
       }
+
+      if (validGroups.length === 0) {
+        status = {loading: false, complete: false, saturated: false}
+        emit()
+        return
+      }
+
+      const currentGeneration = generation
+      const loads: Promise<{
+        relay: string
+        scopeKey: string
+        groupKey: string
+        result: BoundedCommunityHistoryResult
+      }>[] = []
+      const liveByRelay = new Map<string, {localFilters: Filter[]; liveFilters: Filter[]}>()
+
+      for (const group of validGroups) {
+        const url = normalizeRelay(group.relay)
+        if (!url || group.liveFilters.length === 0) continue
+        const relayLive = liveByRelay.get(url) || {localFilters: [], liveFilters: []}
+        relayLive.localFilters.push(...group.localFilters)
+        relayLive.liveFilters.push(...group.liveFilters)
+        liveByRelay.set(url, relayLive)
+      }
+
+      for (const [relay, live] of liveByRelay) {
+        setRepoWatchLiveLocalFilters(liveSource, relay, dedupeFilters(live.localFilters))
+        repoWatchLiveCoordinator.set(liveSource, relay, dedupeFilters(live.liveFilters))
+      }
+
+      const loadGroups = validGroups.filter(group => !completeGroupKeys.has(getGroupKey(group)))
+      for (const [index, group] of loadGroups.entries()) {
+        const url = normalizeRelay(group.relay)
+        if (!url || group.filters.length === 0 || group.localFilters.length === 0) continue
+        const controller = new AbortController()
+        controllersByRelay.set(`${group.scope || index}:${url}`, controller)
+        loads.push(
+          loadBoundedRepoWatchHistory({
+            relays: [url],
+            relayFilters: group.filters,
+            localFilters: group.localFilters,
+            signal: controller.signal,
+            owner: repoWatchLiveCoordinator.owner,
+            priority: RELAY_REQUEST_PRIORITY.background,
+            pageSize: Math.max(
+              1,
+              ...group.filters.map(filter => filter.limit || REPO_WATCH_LOAD_LIMIT),
+            ),
+            maxPages: group.maxPages,
+            timeoutMs: 5_000,
+          }).then(result => {
+            const acceptedResult =
+              group.acceptSaturated &&
+              result.saturated &&
+              !result.timedOut &&
+              !controller.signal.aborted
+                ? {...result, complete: true, saturated: false}
+                : result
+            if (currentGeneration === generation) {
+              if (acceptedResult.complete) completeGroupKeys.add(getGroupKey(group))
+              else completeGroupKeys.delete(getGroupKey(group))
+              updateCompletion(completionGroups)
+              status.loading = loadGroups.some(
+                candidate => !completeGroupKeys.has(getGroupKey(candidate)),
+              )
+              emit()
+            }
+            return {
+              relay: url,
+              scopeKey: `${group.scope || ""}:${url}`,
+              groupKey: getGroupKey(group),
+              result: acceptedResult,
+            }
+          }),
+        )
+      }
+
+      if (loads.length === 0) {
+        updateCompletion(completionGroups)
+        emit()
+        return
+      }
+
+      status = {loading: true, complete: false, saturated: false}
+      emit()
+
+      void Promise.allSettled(loads).then(results => {
+        if (currentGeneration !== generation) return
+
+        const fulfilled = results.flatMap(result =>
+          result.status === "fulfilled" ? [result.value] : [],
+        )
+        for (const item of fulfilled) {
+          if (item.result.complete) completeGroupKeys.add(item.groupKey)
+          else completeGroupKeys.delete(item.groupKey)
+        }
+        updateCompletion(completionGroups)
+        status.saturated = fulfilled.some(item => item.result.saturated)
+        emit()
+
+        for (const result of results) {
+          if (result.status === "rejected") {
+            console.warn(`[repo-watch-notifications] Failed to load ${label}`, result.reason)
+          }
+        }
+      })
     })
 
     return () => {
@@ -891,21 +1184,40 @@ const deriveLoadedEventGroups = <T extends TrustedEvent>({
     }
   })
 
+export const selectRepoWatchLoadRelays = (relays: string[], capRelays: boolean) => {
+  const normalized = normalizeRelays(relays)
+  return (
+    capRelays ? normalized.slice(0, MAX_REPO_NOTIFICATION_RELAYS_PER_SOURCE) : normalized
+  ).sort()
+}
+
 const deriveLoadedEvents = <T extends TrustedEvent>({
   filters,
   relays,
   label,
+  currentOnly = false,
+  capRelays = true,
 }: {
   filters: Readable<Filter[]>
   relays: Readable<string[]>
   label: string
-}): Readable<T[]> =>
+  currentOnly?: boolean
+  capRelays?: boolean
+}): Readable<LoadedRepoWatchEvents<T>> =>
   deriveLoadedEventGroups({
     groups: derived([filters, relays], ([$filters, $relays]) =>
-      normalizeRelays($relays)
-        .slice(0, MAX_REPO_NOTIFICATION_RELAYS_PER_SOURCE)
-        .sort()
-        .map(relay => ({relay, filters: $filters, liveFilters: $filters})),
+      (selectRepoWatchLoadRelays($relays, capRelays).length > 0
+        ? selectRepoWatchLoadRelays($relays, capRelays)
+        : $filters.length > 0
+          ? [""]
+          : []
+      ).map(relay => ({
+        relay,
+        filters: $filters,
+        localFilters: $filters,
+        liveFilters: relay ? $filters : [],
+        ...(currentOnly ? {acceptSaturated: true, maxPages: 1} : {}),
+      })),
     ),
     label,
   })
@@ -919,10 +1231,11 @@ const watchedRepoAnnouncementFilters = derived(watchedRepoRefs, $repos =>
   })),
 )
 
-const watchedRepoAnnouncementEvents = deriveLoadedEvents<TrustedEvent>({
+const watchedRepoAnnouncementLoad = deriveLoadedEvents<TrustedEvent>({
   filters: watchedRepoAnnouncementFilters,
   relays: baseRelays,
   label: "repo announcements",
+  currentOnly: true,
 })
 
 const ownedRepoAnnouncementFilters = derived(pubkey, $pubkey =>
@@ -937,20 +1250,20 @@ const ownedRepoAnnouncementFilters = derived(pubkey, $pubkey =>
     : [],
 )
 
-const ownedRepoAnnouncementEvents = deriveLoadedEvents<TrustedEvent>({
+const ownedRepoAnnouncementLoad = deriveLoadedEvents<TrustedEvent>({
   filters: ownedRepoAnnouncementFilters,
   relays: baseRelays,
   label: "owned repo announcements",
 })
 
 const knownRepoAnnouncementEvents = derived(
-  [repoAnnouncements, watchedRepoAnnouncementEvents, ownedRepoAnnouncementEvents],
-  ([$repoAnnouncements, $watchedRepoAnnouncementEvents, $ownedRepoAnnouncementEvents]) =>
+  [repoAnnouncements, watchedRepoAnnouncementLoad, ownedRepoAnnouncementLoad],
+  ([$repoAnnouncements, $watchedRepoAnnouncementLoad, $ownedRepoAnnouncementLoad]) =>
     Array.from(
       mapRepoEventsByAddress([
         ...($repoAnnouncements as TrustedEvent[]),
-        ...$watchedRepoAnnouncementEvents,
-        ...$ownedRepoAnnouncementEvents,
+        ...$watchedRepoAnnouncementLoad.events,
+        ...$ownedRepoAnnouncementLoad.events,
       ]).values(),
     ),
 )
@@ -979,94 +1292,6 @@ const watchedRepoActivityRelays = derived(knownRepoAnnouncementEvents, $events =
   return normalizeRelays(repoRelays)
 })
 
-const watchedRepoActivityTargets = derived(
-  [
-    notificationReposWithAnnouncements,
-    checked,
-    repoWatchNotificationSeen,
-    notificationHistorySince,
-    notificationHistoryFilterLimit,
-  ],
-  ([
-    $repos,
-    $checked,
-    $notificationSeen,
-    $notificationHistorySince,
-    $notificationHistoryFilterLimit,
-  ]) => {
-    return $repos.map(repo => ({
-      address: repo.address,
-      relays: getRepoEventRelays(repo),
-      since: getHistoryBoundedSince(
-        getRepoWatchSeenAt(repo, $checked, $notificationSeen),
-        $notificationHistorySince,
-      ),
-      limit: Math.max(REPO_WATCH_LOAD_LIMIT, $notificationHistoryFilterLimit),
-    }))
-  },
-)
-
-const watchedRepoActivityGroups = derived(
-  [watchedRepoActivityTargets, repoLiveOwnership],
-  ([$targets, $ownership]) => buildRepoWatchActivityRelayGroups($targets, $ownership),
-)
-
-const watchedRepoActivityEvents = deriveLoadedEventGroups<TrustedEvent>({
-  groups: watchedRepoActivityGroups,
-  label: "repo activity",
-})
-
-const watchedRepoRootScopedTargets = derived(
-  [
-    watchedRepoActivityEvents,
-    notificationReposWithAnnouncements,
-    checked,
-    repoWatchNotificationSeen,
-    notificationHistorySince,
-    notificationHistoryFilterLimit,
-  ],
-  ([
-    $events,
-    $repos,
-    $checked,
-    $notificationSeen,
-    $notificationHistorySince,
-    $notificationHistoryFilterLimit,
-  ]) => {
-    const limit = Math.max(REPO_WATCH_LOAD_LIMIT, $notificationHistoryFilterLimit)
-    const rootIdsByAddress = new Map<string, string[]>()
-
-    for (const event of $events) {
-      const address = getRepoAddress(event)
-      if (!address) continue
-      const rootIds = rootIdsByAddress.get(address) || []
-      rootIds.push(...getRepoWatchRootIdsForEvent(event))
-      rootIdsByAddress.set(address, rootIds)
-    }
-
-    return $repos.map(repo => ({
-      address: repo.address,
-      relays: getRepoEventRelays(repo),
-      since: getHistoryBoundedSince(
-        getRepoWatchSeenAt(repo, $checked, $notificationSeen),
-        $notificationHistorySince,
-      ),
-      limit,
-      rootIds: Array.from(new Set(rootIdsByAddress.get(repo.address) || [])).sort(),
-    }))
-  },
-)
-
-const watchedRepoRootScopedGroups = derived(
-  [watchedRepoRootScopedTargets, repoLiveOwnership],
-  ([$targets, $ownership]) => buildRepoWatchRootRelayGroups($targets, $ownership),
-)
-
-const watchedRepoRootScopedEvents = deriveLoadedEventGroups<TrustedEvent>({
-  groups: watchedRepoRootScopedGroups,
-  label: "repo root activity",
-})
-
 const watchedRepoCommunityRefs = derived(knownRepoAnnouncementEvents, $events => {
   const refs = new Map<string, string[]>()
 
@@ -1086,98 +1311,412 @@ const watchedRepoCommunityRefs = derived(knownRepoAnnouncementEvents, $events =>
   return refs
 })
 
-const watchedRepoCommunityDefinitionFilters = derived(watchedRepoCommunityRefs, $refs =>
-  Array.from($refs.keys()).map(communityPubkey => ({
-    kinds: [COMMUNITY_DEFINITION_KIND],
-    authors: [communityPubkey],
-    limit: 1,
-  })),
+const watchedRepoCommunityDefinitionSources = derived(knownRepoAnnouncementEvents, $events =>
+  $events.flatMap(event => {
+    try {
+      const announcement = parseRepoAnnouncementEvent(event as RepoAnnouncementEvent)
+      const community = announcement.community
+      if (!community?.pubkey) return []
+
+      return [
+        {
+          communityPubkey: community.pubkey,
+          relays: normalizeRelays([...(announcement.relays || []), community.relay]),
+          filters: [
+            {
+              kinds: [COMMUNITY_DEFINITION_KIND],
+              authors: [community.pubkey],
+              limit: 1,
+            },
+          ],
+        },
+      ]
+    } catch {
+      return []
+    }
+  }),
 )
 
-const watchedRepoCommunityRelays = derived(
-  [watchedRepoActivityRelays, watchedRepoCommunityRefs],
-  ([$repoRelays, $refs]) => normalizeRelays([...$repoRelays, ...Array.from($refs.values()).flat()]),
-)
-
-const watchedRepoCommunityDefinitionEvents = deriveLoadedEvents<TrustedEvent>({
-  filters: watchedRepoCommunityDefinitionFilters,
-  relays: watchedRepoCommunityRelays,
+const watchedRepoCommunityDefinitionLoad = deriveLoadedEventGroups<TrustedEvent>({
+  groups: derived(watchedRepoCommunityDefinitionSources, $sources =>
+    buildRepoWatchScopedFilterGroups($sources, true),
+  ),
   label: "repo community definitions",
 })
 
-const watchedRepoCommunityDefinitions = derived(watchedRepoCommunityDefinitionEvents, $events => {
-  const communityPubkeys = Array.from(new Set($events.map(event => event.pubkey).filter(Boolean)))
-  const definitions = new Map<string, CommunityDefinition>()
+const watchedRepoCommunityDefinitions = derived(
+  [watchedRepoCommunityRefs, watchedRepoCommunityDefinitionLoad],
+  ([$refs, $load]) => {
+    const definitions = new Map<string, CommunityDefinition>()
 
-  for (const communityPubkey of communityPubkeys) {
-    const definition = selectLatestCommunityDefinition($events, communityPubkey)
-    if (definition) definitions.set(communityPubkey, definition)
-  }
+    for (const communityPubkey of $refs.keys()) {
+      const definition = selectLatestCommunityDefinition($load.events, communityPubkey)
+      if (definition) definitions.set(communityPubkey, definition)
+    }
 
-  return definitions
-})
-
-const watchedRepoCommunityProfileListFilters = derived(
-  watchedRepoCommunityDefinitions,
-  $definitions => Array.from($definitions.values()).flatMap(makeCommunityProfileListFilters),
+    return definitions
+  },
 )
 
-const watchedRepoCommunityProfileListRelays = derived(
-  [watchedRepoCommunityRelays, watchedRepoCommunityDefinitions],
-  ([$relays, $definitions]) =>
-    normalizeRelays([
-      ...$relays,
-      ...Array.from($definitions.values()).flatMap(definition => definition.relays),
-    ]),
+const watchedRepoCommunityProfileListSources = derived(
+  [watchedRepoCommunityRefs, watchedRepoCommunityDefinitions],
+  ([$refs, $definitions]) =>
+    Array.from($definitions.values()).map(definition => ({
+      communityPubkey: definition.pubkey,
+      relays: normalizeRelays([
+        ...($refs.get(definition.pubkey) || []),
+        ...definition.relays,
+        ...definition.sections.flatMap(section =>
+          section.profileLists.flatMap(profileList =>
+            profileList.relay ? [profileList.relay] : [],
+          ),
+        ),
+      ]),
+      filters: makeCommunityProfileListFilters(definition),
+    })),
 )
 
-const watchedRepoCommunityProfileListEvents = deriveLoadedEvents<TrustedEvent>({
-  filters: watchedRepoCommunityProfileListFilters,
-  relays: watchedRepoCommunityProfileListRelays,
+const watchedRepoCommunityProfileListLoad = deriveLoadedEventGroups<TrustedEvent>({
+  groups: derived(watchedRepoCommunityProfileListSources, $sources =>
+    buildRepoWatchScopedFilterGroups($sources, true),
+  ),
   label: "repo community profile lists",
 })
+
+const watchedRepoCommunityReportSources = derived(
+  [watchedRepoCommunityRefs, watchedRepoCommunityDefinitions],
+  ([$refs, $definitions]) =>
+    Array.from($definitions.values()).map(definition => ({
+      communityPubkey: definition.pubkey,
+      relays: normalizeRelays([...($refs.get(definition.pubkey) || []), ...definition.relays]),
+      filters: makeCommunityReportFilters(definition),
+    })),
+)
+
+const watchedRepoCommunityReportLoad = deriveLoadedEventGroups<TrustedEvent>({
+  groups: derived(watchedRepoCommunityReportSources, $sources =>
+    buildRepoWatchScopedFilterGroups($sources),
+  ),
+  label: "repo community reports",
+})
+
+const watchedRepoCommunityReportDeleteSources = derived(
+  [watchedRepoCommunityReportSources, watchedRepoCommunityReportLoad],
+  ([$sources, $load]) =>
+    $sources.map(source => ({
+      communityPubkey: source.communityPubkey,
+      relays: source.relays,
+      filters: makeSameAuthorDeleteFilters(
+        $load.events.filter(event => matchFilters(source.filters, event)),
+      ),
+    })),
+)
+
+const watchedRepoCommunityReportDeleteLoad = deriveLoadedEventGroups<TrustedEvent>({
+  groups: derived(watchedRepoCommunityReportDeleteSources, $sources =>
+    buildRepoWatchScopedFilterGroups($sources),
+  ),
+  label: "repo community report deletes",
+})
+
+const getDefinitionProfileListEvents = (
+  definition: CommunityDefinition,
+  events: TrustedEvent[],
+) => {
+  const filters = makeCommunityProfileListFilters(definition)
+  return filters.length > 0 ? events.filter(event => matchFilters(filters, event)) : []
+}
+
+export const isRepoWatchCommunitySourceComplete = (
+  communityPubkey: string,
+  sources: RepoWatchScopedFilterSource[],
+  completeScopes: Set<string>,
+) => {
+  const communitySources = sources.filter(source => source.communityPubkey === communityPubkey)
+  if (communitySources.length === 0) return false
+
+  return communitySources.every(source => {
+    if (source.filters.length === 0) return true
+    const relays = normalizeRelays(source.relays)
+    return (
+      relays.length > 0 && relays.every(relay => completeScopes.has(`${communityPubkey}:${relay}`))
+    )
+  })
+}
+
+export const watchedRepoCommunityContexts: Readable<Map<string, RepoWatchCommunityContext>> =
+  derived(
+    [
+      watchedRepoCommunityRefs,
+      watchedRepoCommunityDefinitions,
+      watchedRepoCommunityDefinitionSources,
+      watchedRepoCommunityDefinitionLoad,
+      watchedRepoCommunityProfileListSources,
+      watchedRepoCommunityProfileListLoad,
+      watchedRepoCommunityReportSources,
+      watchedRepoCommunityReportLoad,
+      watchedRepoCommunityReportDeleteSources,
+      watchedRepoCommunityReportDeleteLoad,
+    ],
+    ([
+      $refs,
+      $definitions,
+      $definitionSources,
+      $definitionLoad,
+      $profileListSources,
+      $profileListLoad,
+      $reportSources,
+      $reportLoad,
+      $reportDeleteSources,
+      $reportDeleteLoad,
+    ]) => {
+      const contexts = new Map<string, RepoWatchCommunityContext>()
+
+      for (const communityPubkey of $refs.keys()) {
+        const definition = $definitions.get(communityPubkey)
+        const profileListEvents = definition
+          ? getDefinitionProfileListEvents(definition, $profileListLoad.events)
+          : []
+        const reportState = definition
+          ? getEffectiveCommunityReportState({
+              definition,
+              reportEvents: $reportLoad.events,
+              deleteEvents: $reportDeleteLoad.events,
+            })
+          : undefined
+
+        contexts.set(communityPubkey, {
+          definition,
+          profileListEvents,
+          reportState,
+          ready: Boolean(
+            definition &&
+            isRepoWatchCommunitySourceComplete(
+              communityPubkey,
+              $definitionSources,
+              $definitionLoad.completeScopes,
+            ) &&
+            isRepoWatchCommunitySourceComplete(
+              communityPubkey,
+              $profileListSources,
+              $profileListLoad.completeScopes,
+            ) &&
+            isRepoWatchCommunitySourceComplete(
+              communityPubkey,
+              $reportSources,
+              $reportLoad.completeScopes,
+            ) &&
+            isRepoWatchCommunitySourceComplete(
+              communityPubkey,
+              $reportDeleteSources,
+              $reportDeleteLoad.completeScopes,
+            ),
+          ),
+        })
+      }
+
+      return contexts
+    },
+  )
+
+const getRepoCommunityPubkey = (repo: RepoWatchNotificationRepo) => {
+  try {
+    return repo.repoEvent
+      ? parseRepoAnnouncementEvent(repo.repoEvent as RepoAnnouncementEvent).community?.pubkey || ""
+      : ""
+  } catch {
+    return ""
+  }
+}
+
+const getRepoWatchActivityAuthors = (
+  repo: RepoWatchNotificationRepo,
+  contexts: Map<string, RepoWatchCommunityContext>,
+) => {
+  if (repo.options.activityFilter === "all") return undefined
+
+  const authors = new Set<string>()
+  if (
+    repo.options.activityFilter === "maintainers" ||
+    repo.options.activityFilter === "maintainers-community"
+  ) {
+    for (const maintainer of getRepoMaintainerSet(repo)) authors.add(maintainer)
+  }
+
+  if (
+    repo.options.activityFilter === "community" ||
+    repo.options.activityFilter === "maintainers-community"
+  ) {
+    const context = contexts.get(getRepoCommunityPubkey(repo))
+    if (context?.ready && context.definition && context.reportState) {
+      for (const writer of getCommunityTargetWriterPubkeys({
+        definition: context.definition,
+        profileListEvents: context.profileListEvents,
+        target: COMMUNITY_WRITE_TARGETS.repository,
+        reportState: context.reportState,
+      })) {
+        authors.add(writer)
+      }
+    }
+  }
+
+  return Array.from(authors).sort()
+}
+
+const watchedRepoActivityTargets = derived(
+  [
+    notificationReposWithAnnouncements,
+    watchedRepoCommunityContexts,
+    checked,
+    repoWatchNotificationSeen,
+    notificationHistorySince,
+    notificationHistoryFilterLimit,
+  ],
+  ([
+    $repos,
+    $communityContexts,
+    $checked,
+    $notificationSeen,
+    $notificationHistorySince,
+    $notificationHistoryFilterLimit,
+  ]) => {
+    return $repos.flatMap(repo => {
+      const authors = getRepoWatchActivityAuthors(repo, $communityContexts)
+      if (authors?.length === 0) return []
+
+      return [
+        {
+          address: repo.address,
+          relays: getRepoEventRelays(repo),
+          since: getHistoryBoundedSince(
+            getRepoWatchSeenAt(repo, $checked, $notificationSeen),
+            $notificationHistorySince,
+          ),
+          limit: Math.max(REPO_WATCH_LOAD_LIMIT, $notificationHistoryFilterLimit),
+          authors,
+        },
+      ]
+    })
+  },
+)
+
+const watchedRepoActivityGroups = derived(
+  [watchedRepoActivityTargets, repoLiveOwnership],
+  ([$targets, $ownership]) => buildRepoWatchActivityRelayGroups($targets, $ownership),
+)
+
+const watchedRepoActivityLoad = deriveLoadedEventGroups<TrustedEvent>({
+  groups: watchedRepoActivityGroups,
+  label: "repo activity",
+})
+
+const watchedRepoRootScopedTargets = derived(
+  [
+    watchedRepoActivityLoad,
+    notificationReposWithAnnouncements,
+    watchedRepoCommunityContexts,
+    checked,
+    repoWatchNotificationSeen,
+    notificationHistorySince,
+    notificationHistoryFilterLimit,
+  ],
+  ([
+    $activityLoad,
+    $repos,
+    $communityContexts,
+    $checked,
+    $notificationSeen,
+    $notificationHistorySince,
+    $notificationHistoryFilterLimit,
+  ]) => {
+    const limit = Math.max(REPO_WATCH_LOAD_LIMIT, $notificationHistoryFilterLimit)
+    const rootIdsByAddress = new Map<string, string[]>()
+
+    for (const event of $activityLoad.events) {
+      const address = getRepoAddress(event)
+      if (!address) continue
+      const rootIds = rootIdsByAddress.get(address) || []
+      rootIds.push(...getRepoWatchRootIdsForEvent(event))
+      rootIdsByAddress.set(address, rootIds)
+    }
+
+    return $repos.flatMap(repo => {
+      const authors = getRepoWatchActivityAuthors(repo, $communityContexts)
+      const rootIds = Array.from(new Set(rootIdsByAddress.get(repo.address) || [])).sort()
+      if (authors?.length === 0 || rootIds.length === 0) return []
+
+      return [
+        {
+          address: repo.address,
+          relays: getRepoEventRelays(repo),
+          since: getHistoryBoundedSince(
+            getRepoWatchSeenAt(repo, $checked, $notificationSeen),
+            $notificationHistorySince,
+          ),
+          limit,
+          rootIds,
+          authors,
+        },
+      ]
+    })
+  },
+)
+
+const watchedRepoRootScopedGroups = derived(
+  [watchedRepoRootScopedTargets, repoLiveOwnership],
+  ([$targets, $ownership]) => buildRepoWatchRootRelayGroups($targets, $ownership),
+)
+
+const watchedRepoRootScopedLoad = deriveLoadedEventGroups<TrustedEvent>({
+  groups: watchedRepoRootScopedGroups,
+  label: "repo root activity",
+})
+
+export const aggregateRepoWatchHistoryStatus = (
+  loads: RepoWatchHistoryStatus[],
+): RepoWatchHistoryStatus => ({
+  loading: loads.some(load => load.loading),
+  complete: loads.every(load => load.complete),
+  saturated: loads.some(load => load.saturated),
+})
+
+export const repoWatchNotificationHistoryStatus: Readable<RepoWatchHistoryStatus> = derived(
+  [
+    watchedRepoAnnouncementLoad,
+    ownedRepoAnnouncementLoad,
+    watchedRepoCommunityDefinitionLoad,
+    watchedRepoCommunityProfileListLoad,
+    watchedRepoCommunityReportLoad,
+    watchedRepoCommunityReportDeleteLoad,
+    watchedRepoActivityLoad,
+    watchedRepoRootScopedLoad,
+  ],
+  aggregateRepoWatchHistoryStatus,
+)
 
 export const repoWatchNotificationCandidates = derived(
   [
     pubkey,
     notificationReposWithAnnouncements,
-    watchedRepoActivityEvents,
-    watchedRepoRootScopedEvents,
-    watchedRepoCommunityDefinitions,
-    watchedRepoCommunityProfileListEvents,
+    watchedRepoActivityLoad,
+    watchedRepoRootScopedLoad,
+    watchedRepoCommunityContexts,
   ],
-  ([
-    $pubkey,
-    $repos,
-    $activityEvents,
-    $rootScopedEvents,
-    $communityDefinitions,
-    $communityProfileListEvents,
-  ]) => {
+  ([$pubkey, $repos, $activityLoad, $rootScopedLoad, $communityContexts]) => {
     const repos = $repos.map(repo => {
-      const repoEvent = repo.repoEvent
-      let communityDefinition: CommunityDefinition | undefined
-
-      if (repoEvent) {
-        try {
-          const community = parseRepoAnnouncementEvent(repoEvent as RepoAnnouncementEvent).community
-          if (community?.pubkey) communityDefinition = $communityDefinitions.get(community.pubkey)
-        } catch {
-          communityDefinition = undefined
-        }
-      }
+      const communityContext = $communityContexts.get(getRepoCommunityPubkey(repo))
 
       return {
         ...repo,
-        repoEvent,
-        communityDefinition,
-        communityProfileListEvents: $communityProfileListEvents.filter(
-          event => event.kind === PROFILE_LIST_KIND,
-        ),
+        communityDefinition: communityContext?.ready ? communityContext.definition : undefined,
+        communityReportState: communityContext?.ready ? communityContext.reportState : undefined,
+        communityProfileListEvents: communityContext?.ready
+          ? communityContext.profileListEvents
+          : [],
       }
     })
 
-    const events = dedupeEvents([...$activityEvents, ...$rootScopedEvents])
+    const events = dedupeEvents([...$activityLoad.events, ...$rootScopedLoad.events])
 
     return getRepoWatchNotificationCandidates({
       repos,

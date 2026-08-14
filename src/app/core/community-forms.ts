@@ -665,6 +665,7 @@ export const makeAdmissionReview = ({
   formAddress = "",
   communityPubkey = "",
   sectionName = "",
+  relays = [],
   status,
 }: {
   responseId: string
@@ -672,6 +673,7 @@ export const makeAdmissionReview = ({
   formAddress?: string
   communityPubkey?: string
   sectionName?: string
+  relays?: string[]
   status: CommunityFormReviewStatus
 }): EventContent & {kind: typeof COMMUNITY_FORM_REVIEW_KIND} => ({
   kind: COMMUNITY_FORM_REVIEW_KIND,
@@ -683,6 +685,7 @@ export const makeAdmissionReview = ({
     ...makeOptionalTag("a", formAddress),
     ...makeOptionalTag("h", normalizePubkey(communityPubkey)),
     ...makeOptionalTag("content", normalizeCommunitySectionName(sectionName)),
+    ...normalizeRelays(relays).map(relay => ["relay", relay]),
   ],
 })
 
