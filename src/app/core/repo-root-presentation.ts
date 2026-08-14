@@ -1,13 +1,7 @@
 import type {RepoRootHistorySnapshot} from "@app/core/repo-root-history"
 
-export type RepoActivityAuthority =
-  | "pending"
-  | "available"
-  | "limited"
-  | "partial"
-  | "failed"
-  | "unavailable"
-export type RepoRootListNotice = "loading" | "limited" | "partial" | "failed" | "unavailable" | null
+export type RepoActivityAuthority = "pending" | "available" | "partial" | "failed" | "unavailable"
+export type RepoRootListNotice = "loading" | "partial" | "failed" | "unavailable" | null
 export type RepoRootListContent =
   | "rows"
   | "loading"
@@ -60,21 +54,19 @@ export const getRepoRootListPresentation = ({
                 ? "partial"
                 : history.status === "failed"
                   ? "failed"
-                  : authority === "limited"
-                    ? "limited"
-                    : history.status === "idle" || history.status === "loading"
-                      ? "loading"
-                      : null
+                  : history.status === "idle" || history.status === "loading"
+                    ? "loading"
+                    : null
 
   const content: RepoRootListContent = (() => {
     if (resultCount > 0) return "rows"
     if (projectionPending) return "loading"
-    if (notice && (authority !== "limited" || !history.hasOlder)) return "incomplete"
     if (sourceCount > 0) return "filtered-empty"
     if (rawCount > 0) return "hidden-empty"
     if (rootHistoryStatus === "complete" && !cacheHydrationPending && !cacheHydrationFailed) {
       return history.exhausted ? "exhausted-empty" : "recent-empty"
     }
+    if (notice) return "incomplete"
     return "loading"
   })()
 
@@ -85,10 +77,13 @@ export const getRepoRootListPresentation = ({
       cacheHydrationFailed ||
       authority === "partial" ||
       authority === "failed" ||
-      ((authority === "available" || authority === "limited") &&
-        (history.status === "partial" || history.status === "failed")),
+      (authority === "available" &&
+        ((history.rootStatus === "complete" && history.status === "partial") ||
+          history.relays.some(
+            relay => relay.outcome && relay.outcome !== "eose" && relay.outcome !== "aborted",
+          ))),
     canLoadOlder:
-      (authority === "available" || authority === "limited") &&
+      authority === "available" &&
       !projectionPending &&
       !cacheHydrationPending &&
       rootHistoryStatus === "complete" &&

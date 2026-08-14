@@ -47,6 +47,7 @@ import {
 } from "@app/core/grasp-server-events"
 import {getRepoDeclaredMaintainers, getRepoMaintainers} from "@app/core/repo-authority"
 import {getRepoActivityRelays} from "@nostr-git/core/utils"
+import {normalizeRepoRelays} from "@app/core/repo-relays"
 
 export {getRepoDeclaredMaintainers, getRepoMaintainers} from "@app/core/repo-authority"
 
@@ -104,17 +105,29 @@ export const REPO_ROOT_HISTORY_KEY = Symbol("repo-root-history")
 
 export type RepoAnnouncementStatus = "loading" | "complete" | "partial" | "failed" | "aborted"
 
+export type RepoFailedRelayRequest = {
+  key: string
+  relay: string
+  lane: string
+  outcome: Exclude<import("@app/core/finite-relay-request").FiniteRelayOutcome, "eose" | "aborted">
+  reason?: string
+  queuedAt?: number
+  startedAt?: number
+  finishedAt?: number
+  eventCount?: number
+}
+
 export type RepoRootHistoryContext = {
   subscribe: Readable<import("@app/core/repo-root-history").RepoRootHistorySnapshot>["subscribe"]
   announcementStatus: Readable<RepoAnnouncementStatus>
   cacheHydrationPending: Readable<boolean>
   cacheHydrationFailed: Readable<boolean>
-  liveCoveragePartial: Readable<boolean>
-  announcementLiveCoveragePartial: Readable<boolean>
+  failedRelayRequests: Readable<RepoFailedRelayRequest[]>
   loadOlderRoots: () => Promise<void>
   retryAnnouncement: () => Promise<void>
   retryCacheHydration: () => Promise<void>
   retryRootHistory: () => Promise<void>
+  retryFailedRelays: () => Promise<void>
   ensureRoot: (
     id: string,
     signal?: AbortSignal,
@@ -316,9 +329,7 @@ export const getRepoAnnouncementPublishRelays = ({
     ...repoRelays,
     ...scopedCommunityRelays,
   ]
-  const relays = Array.from(
-    new Set(merged.map(u => safeNormalizeRelayUrl(u)).filter(isRelayUrl)),
-  ) as string[]
+  const relays = normalizeRepoRelays(merged)
 
   logPublishRelaySummary({
     category: "repo-announcement",
@@ -348,7 +359,7 @@ export type RepoRelayCoordinate = {
 export const getRepoScopedRelays = (
   repoEvent?: RepoAnnouncementEvent | null,
   expected: RepoRelayCoordinate = {},
-) => getRepoActivityRelays(repoEvent, expected)
+) => normalizeRepoRelays(getRepoActivityRelays(repoEvent, expected))
 
 export type OwnedRepoStateLoadScope = {
   repoId: string

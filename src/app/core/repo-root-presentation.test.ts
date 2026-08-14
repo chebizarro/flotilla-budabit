@@ -96,20 +96,20 @@ describe("repository root list presentation", () => {
     }
   })
 
-  it("keeps failures visible when local filters or moderation hide loaded rows", () => {
+  it("keeps loaded filtered and hidden empty states truthful while failures remain advisory", () => {
     for (const counts of [
       {rawCount: 2, sourceCount: 2},
       {rawCount: 2, sourceCount: 0},
     ]) {
-      expect(
-        getRepoRootListPresentation({
-          authority: "available",
-          history: history("partial", {operation: "recent"}),
-          ...counts,
-          resultCount: 0,
-          projectionPending: false,
-        }).content,
-      ).toBe("incomplete")
+      const presentation = getRepoRootListPresentation({
+        authority: "available",
+        history: history("partial", {operation: "recent"}),
+        ...counts,
+        resultCount: 0,
+        projectionPending: false,
+      })
+      expect(presentation.notice).toBe("partial")
+      expect(presentation.content).toBe(counts.sourceCount > 0 ? "filtered-empty" : "hidden-empty")
     }
   })
 
@@ -155,7 +155,21 @@ describe("repository root list presentation", () => {
     expect(
       getRepoRootListPresentation({
         authority: "available",
-        history: history("partial", {operation: "recent", hasOlder: true}),
+        history: history("partial", {
+          operation: "recent",
+          hasOlder: true,
+          relays: [
+            {
+              relay: "wss://slow",
+              status: "partial",
+              exhausted: false,
+              boundarySaturated: false,
+              pageSize: 100,
+              eventCount: 0,
+              outcome: "timeout",
+            },
+          ],
+        }),
         rawCount: 0,
         sourceCount: 0,
         resultCount: 0,
@@ -187,28 +201,6 @@ describe("repository root list presentation", () => {
 
     expect(
       getRepoRootListPresentation({
-        authority: "limited",
-        history: history("complete", {operation: "recent", hasOlder: true}),
-        rawCount: 2,
-        sourceCount: 2,
-        resultCount: 2,
-        projectionPending: false,
-      }),
-    ).toMatchObject({notice: "limited", content: "rows", canRetry: false, canLoadOlder: true})
-
-    expect(
-      getRepoRootListPresentation({
-        authority: "limited",
-        history: history("complete", {operation: "older", hasOlder: false, exhausted: true}),
-        rawCount: 0,
-        sourceCount: 0,
-        resultCount: 0,
-        projectionPending: false,
-      }),
-    ).toMatchObject({content: "incomplete", canLoadOlder: false})
-
-    expect(
-      getRepoRootListPresentation({
         authority: "available",
         history: history("partial", {
           rootStatus: "complete",
@@ -221,5 +213,44 @@ describe("repository root list presentation", () => {
         projectionPending: false,
       }),
     ).toMatchObject({notice: "partial", content: "rows", canRetry: true, canLoadOlder: true})
+
+    expect(
+      getRepoRootListPresentation({
+        authority: "available",
+        history: history("partial", {
+          rootStatus: "complete",
+          operation: "older",
+          exhausted: true,
+        }),
+        rawCount: 0,
+        sourceCount: 0,
+        resultCount: 0,
+        projectionPending: false,
+      }),
+    ).toMatchObject({notice: "partial", content: "exhausted-empty"})
+
+    expect(
+      getRepoRootListPresentation({
+        authority: "available",
+        history: history("partial", {
+          operation: "older",
+          relays: [
+            {
+              relay: "wss://saturated",
+              status: "partial",
+              exhausted: false,
+              boundarySaturated: true,
+              pageSize: 100,
+              eventCount: 100,
+              outcome: "eose",
+            },
+          ],
+        }),
+        rawCount: 2,
+        sourceCount: 2,
+        resultCount: 2,
+        projectionPending: false,
+      }),
+    ).toMatchObject({notice: "partial", canRetry: false})
   })
 })

@@ -54,7 +54,7 @@ export const socketPolicyPing = (socket: Socket) => {
  * @return a cleanup function
  */
 export const socketPolicyAuthBuffer = (socket: Socket) => {
-  const {None, Ok, DeniedSignature, Forbidden} = AuthStatus
+  const {Ok, DeniedSignature, Forbidden, PendingSignature, PendingResponse} = AuthStatus
   const terminalStatuses = [Ok, DeniedSignature, Forbidden]
 
   let buffer: ClientMessage[] = []
@@ -82,18 +82,29 @@ export const socketPolicyAuthBuffer = (socket: Socket) => {
       // If the relay is closing a request during auth, don't tell the caller, we'll retry it
       if (
         (isRelayClosed(message) || isRelayNegErr(message)) &&
-        message[2]?.startsWith("auth-required:")
+        message[2]?.startsWith("auth-required:") &&
+        [PendingSignature, PendingResponse].includes(socket.auth.status)
       ) {
         socket._recvQueue.remove(message)
       }
 
-      // If we get an eose but we're in the middle of authenticating, wait
-      if (isRelayEose(message) && ![None, Ok].includes(socket.auth.status)) {
+      // Only defer EOSE while authentication is actively in progress. A relay
+      // challenge may be intentionally ignored, in which case public reads
+      // must still be allowed to settle.
+      if (
+        isRelayEose(message) &&
+        [PendingSignature, PendingResponse].includes(socket.auth.status)
+      ) {
         socket._recvQueue.remove(message)
       }
 
       // If the client is rejecting an event during auth, don't tell the caller, we'll retry it
-      if (isRelayOk(message) && !message[2] && message[3]?.startsWith("auth-required:")) {
+      if (
+        isRelayOk(message) &&
+        !message[2] &&
+        message[3]?.startsWith("auth-required:") &&
+        [PendingSignature, PendingResponse].includes(socket.auth.status)
+      ) {
         socket._recvQueue.remove(message)
       }
     }),

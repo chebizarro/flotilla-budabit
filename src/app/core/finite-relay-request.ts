@@ -55,6 +55,11 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
     let settled = false
 
     return new Promise(resolve => {
+      const startTimer = (delay: number, timeoutReason: string) => {
+        if (timer) clearTimer(timer)
+        timer = setTimer(() => abortAndFinish("timeout", timeoutReason), delay)
+      }
+
       const finish = (nextOutcome: FiniteRelayOutcome, nextReason?: string) => {
         if (settled) return
         settled = true
@@ -102,9 +107,9 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
       }
 
       options.signal?.addEventListener("abort", onCallerAbort, {once: true})
-      timer = setTimer(
-        () => abortAndFinish("timeout", `Request timed out after ${options.timeoutMs}ms`),
-        options.timeoutMs,
+      startTimer(
+        Math.max(30_000, options.timeoutMs),
+        "Request could not start because the relay subscription queue remained full",
       )
 
       const receiveEvent = (event: TrustedEvent, relay: string) => {
@@ -132,7 +137,9 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
           priority: options.priority,
           owner: options.owner,
           onStart: () => {
-            if (!settled && startedAt === undefined) startedAt = now()
+            if (settled || startedAt !== undefined) return
+            startedAt = now()
+            startTimer(options.timeoutMs, `Request timed out after ${options.timeoutMs}ms`)
           },
           onEvent: receiveEvent,
           onDuplicate: receiveEvent,

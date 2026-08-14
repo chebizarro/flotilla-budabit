@@ -49,8 +49,8 @@
     type RepoPublishTransport,
   } from "@app/core/git-commands"
   import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
-  import {goto} from "$app/navigation"
-  import {getContext, onMount, onDestroy, tick, untrack} from "svelte"
+  import {goto, preloadData} from "$app/navigation"
+  import {getContext, onMount, onDestroy, untrack} from "svelte"
   import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
   import {ListFilter, X} from "@lucide/svelte"
@@ -444,11 +444,6 @@
     getDefaultRepoDiscoveryPrioritySettings(),
   )
   let navigatingRepoCardKey = $state("")
-  const waitForNavigationIntentPaint = async () => {
-    await tick()
-    if (typeof requestAnimationFrame !== "function") return
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-  }
   let discoveredSearchRepoPool = $state<
     Array<{address: string; event: RepoAnnouncementEvent; relayHint: string}>
   >([])
@@ -3112,6 +3107,9 @@
 
   const getRepoCardNavigationKey = (announcement: RepoAnnouncementEvent) =>
     announcement.id || getRepoBrowseHref(announcement)
+  const preloadRepoCard = (announcement: RepoAnnouncementEvent) => {
+    void preloadData(getRepoBrowseHref(announcement)).catch(() => {})
+  }
 
   const navigateToRepoCard = (announcement: RepoAnnouncementEvent) => {
     const navigationKey = getRepoCardNavigationKey(announcement)
@@ -3120,7 +3118,6 @@
     navigatingRepoCardKey = navigationKey
     void (async () => {
       try {
-        await waitForNavigationIntentPaint()
         await goto(getRepoBrowseHref(announcement))
       } catch (error) {
         if (navigatingRepoCardKey === navigationKey) navigatingRepoCardKey = ""
@@ -3869,6 +3866,12 @@
               role="link"
               tabindex="0"
               aria-busy={repoCardNavigating}
+              onpointerenter={g.first
+                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
+                : undefined}
+              onfocus={g.first
+                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
+                : undefined}
               onclick={g.first
                 ? event => handleRepoCardNeutralClick(event, g.first as RepoAnnouncementEvent)
                 : undefined}
@@ -4015,6 +4018,12 @@
               role="link"
               tabindex="0"
               aria-busy={repoCardNavigating}
+              onpointerenter={g.first
+                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
+                : undefined}
+              onfocus={g.first
+                ? () => preloadRepoCard(g.first as RepoAnnouncementEvent)
+                : undefined}
               onclick={g.first
                 ? event => handleRepoCardNeutralClick(event, g.first as RepoAnnouncementEvent)
                 : undefined}

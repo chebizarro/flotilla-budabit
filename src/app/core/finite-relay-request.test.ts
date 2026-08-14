@@ -56,16 +56,20 @@ describe("finite relay request", () => {
     )
   })
 
-  it("times out while still queued", async () => {
+  it("uses a separate admission deadline while still queued", async () => {
     vi.useFakeTimers()
     const request = vi.fn((options: RequestOptions) => waitForAbort(options))
     const finiteRequest = createFiniteRelayRequester({request})
 
     try {
       const pending = finiteRequest({relay, filters: [{}], timeoutMs: 1000})
-      await vi.advanceTimersByTimeAsync(1000)
+      await vi.advanceTimersByTimeAsync(30_000)
 
-      await expect(pending).resolves.toMatchObject({outcome: "timeout", startedAt: undefined})
+      await expect(pending).resolves.toMatchObject({
+        outcome: "timeout",
+        startedAt: undefined,
+        reason: "Request could not start because the relay subscription queue remained full",
+      })
       expect(vi.mocked(request).mock.calls[0][0].signal?.aborted).toBe(true)
     } finally {
       vi.useRealTimers()
@@ -87,6 +91,29 @@ describe("finite relay request", () => {
       const result = await pending
       expect(result.outcome).toBe("timeout")
       expect(result.startedAt).toBeTypeOf("number")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("starts the active deadline when the physical request starts", async () => {
+    vi.useFakeTimers()
+    const request = vi.fn((options: RequestOptions) => {
+      setTimeout(() => options.onStart?.(relay), 5000)
+      return waitForAbort(options)
+    })
+    const finiteRequest = createFiniteRelayRequester({request})
+
+    try {
+      const pending = finiteRequest({relay, filters: [{}], timeoutMs: 1000})
+      await vi.advanceTimersByTimeAsync(5000)
+      let settled = false
+      void pending.then(() => (settled = true))
+      await vi.advanceTimersByTimeAsync(999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+
+      await expect(pending).resolves.toMatchObject({outcome: "timeout"})
     } finally {
       vi.useRealTimers()
     }

@@ -53,6 +53,7 @@
   import type {Repo} from "@nostr-git/ui"
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
   import {getRepoRootListPresentation} from "@app/core/repo-root-presentation"
+  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
 
   type PrStatusKey = "open" | "merged" | "closed" | "draft"
 
@@ -103,8 +104,7 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoLiveCoveragePartialStore = repoRootHistory.liveCoveragePartial
-  const repoAnnouncementLiveCoveragePartialStore = repoRootHistory.announcementLiveCoveragePartial
+  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -121,16 +121,14 @@
   )
   const repoRelays = $derived.by(() => (repoRelaysStore ? $repoRelaysStore : []))
   const repoActivityAuthority = $derived.by(() =>
-    $repoAnnouncementStatusStore === "loading"
-      ? "pending"
-      : $repoAnnouncementStatusStore === "partial"
-        ? "partial"
-        : $repoAnnouncementStatusStore === "failed" || $repoAnnouncementStatusStore === "aborted"
-          ? "failed"
-          : repoClass?.repoEvent && repoRelays.length > 0
-            ? $repoLiveCoveragePartialStore || $repoAnnouncementLiveCoveragePartialStore
-              ? "limited"
-              : "available"
+    repoClass?.repoEvent && repoRelays.length > 0
+      ? "available"
+      : $repoAnnouncementStatusStore === "loading"
+        ? "pending"
+        : $repoAnnouncementStatusStore === "partial"
+          ? "partial"
+          : $repoAnnouncementStatusStore === "failed" || $repoAnnouncementStatusStore === "aborted"
+            ? "failed"
             : "unavailable",
   )
   const allPullRequests = $derived.by(() => (pullRequestsStore ? $pullRequestsStore : []))
@@ -278,6 +276,7 @@
   let allPrItems = $state<PrListItem[]>([])
   let prList = $state<PrListItem[]>([])
   let prListCacheKey = ""
+  let prListHasProjected = false
 
   $effect(() => {
     const currentPullRequests = pullRequests
@@ -288,7 +287,7 @@
     const currentPrListCacheKey = prListCacheKey
     const currentResolvedStatusByRoot = resolvedStatusByRoot
 
-    const timeout = setTimeout(() => {
+    const projectPrList = () => {
       if (!currentPullRequests || currentPullRequests.length === 0) {
         allPrItems = []
         prList = []
@@ -371,7 +370,15 @@
 
       prList = sortedPrs
       prListCacheKey = currentKey
-    }, 100)
+      prListHasProjected = true
+    }
+
+    if (!prListHasProjected && currentPullRequests.length > 0) {
+      projectPrList()
+      return
+    }
+
+    const timeout = setTimeout(projectPrList, 100)
 
     return () => clearTimeout(timeout)
   })
@@ -981,20 +988,16 @@
             ? "Loading older pull request history…"
             : "Refreshing recent pull request history…"}
         {:else if prListPresentation.notice === "partial"}
-          Some repository relays did not finish. Showing the pull requests loaded so far.
-        {:else if prListPresentation.notice === "limited"}
-          {$repoLiveCoveragePartialStore && $repoAnnouncementLiveCoveragePartialStore
-            ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
-            : $repoLiveCoveragePartialStore
-              ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
-              : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."}
+          Some relays did not respond. Showing loaded activity.
         {:else if prListPresentation.notice === "failed"}
           Pull request history refresh failed. Showing saved pull requests.
         {:else}
           Repository relays are unavailable. Showing saved pull requests.
         {/if}
       </span>
-      {#if prListPresentation.canRetry}
+      {#if $repoFailedRelayRequestsStore.length > 0}
+        <RepoRelayFailureNotice />
+      {:else if prListPresentation.canRetry}
         <GitButton variant="outline" size="sm" onclick={retryPrHistory}>Retry</GitButton>
       {/if}
     </div>
@@ -1014,15 +1017,11 @@
             ? "Repository relays are unavailable, so pull request history cannot be checked."
             : prListPresentation.notice === "failed"
               ? "Pull request history could not be loaded from the repository relays."
-              : prListPresentation.notice === "limited"
-                ? $repoLiveCoveragePartialStore && $repoAnnouncementLiveCoveragePartialStore
-                  ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
-                  : $repoLiveCoveragePartialStore
-                    ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
-                    : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."
-                : "Some repository relays did not finish. Pull request history may be incomplete."}
+              : "Some relays did not respond. Showing loaded activity."}
         </p>
-        {#if prListPresentation.canRetry}
+        {#if $repoFailedRelayRequestsStore.length > 0}
+          <RepoRelayFailureNotice />
+        {:else if prListPresentation.canRetry}
           <GitButton variant="outline" size="sm" onclick={retryPrHistory}>
             Retry pull request history
           </GitButton>
@@ -1039,7 +1038,7 @@
             ? "No visible pull requests in the loaded history."
             : prListPresentation.content === "recent-empty"
               ? "No pull requests were found in the recent history page. Older history may still contain pull requests."
-              : "No pull requests exist in the fully loaded repository history."}
+              : "No pull requests yet."}
       </p>
       {#if suggestedUnreadStatus}
         <p class="mt-2 max-w-md text-center text-sm text-muted-foreground">

@@ -111,6 +111,12 @@ type RepositoryCacheDependencies = {
   addRelay?: (eventId: string, relay: string) => void
 }
 
+type PendingRepositoryCacheEvent = {
+  event: TrustedEvent
+  relays: Iterable<string>
+  address?: string
+}
+
 const supportedActivityKinds = new Set([
   COMMENT,
   GIT_PULL_REQUEST_UPDATE,
@@ -200,6 +206,9 @@ const classifyRepositoryEvent = (event: TrustedEvent): RepositoryCacheEventClass
   if (supportedActivityKinds.has(event.kind)) return "activity"
   return undefined
 }
+
+export const isSupportedRepositoryCacheEvent = (event: TrustedEvent) =>
+  Boolean(classifyRepositoryEvent(event))
 
 const getSerializedRecordBytes = (record: Omit<CachedRepositoryEvent, "bytes">) => {
   let bytes = 0
@@ -640,11 +649,55 @@ export class RepositoryCache {
     )
   }
 
+  storeEvents(items: PendingRepositoryCacheEvent[]) {
+    return this.run(() =>
+      this.persistMutation(() => {
+        let stored = 0
+        for (const item of items) {
+          if (!isSupportedRepositoryCacheEvent(item.event)) continue
+          if (item.address) {
+            stored += Number(this.storeVerifiedEvent(item.address, item.event, item.relays))
+            continue
+          }
+
+          const direct = getDirectRepositoryAddress(item.event)
+          if (direct.invalid) continue
+          if (direct.address) {
+            stored += Number(this.storeVerifiedEvent(direct.address, item.event, item.relays))
+            continue
+          }
+
+          for (const metadata of this.repositories.values()) {
+            if (!this.eventBelongsToRepository(item.event, metadata.address)) continue
+            stored += Number(this.storeVerifiedEvent(metadata.address, item.event, item.relays))
+            break
+          }
+        }
+        return stored
+      }),
+    )
+  }
+
   hydrateEligible() {
     return this.run(() =>
       this.persistMutation(() => {
         const eligible = this.getEligibleAddresses(this.now())
         return this.hydrateAddresses(eligible)
+      }),
+    )
+  }
+
+  hydrateEligibleAnnouncements() {
+    return this.run(() =>
+      this.persistMutation(() => {
+        const eligible = this.getEligibleAddresses(this.now())
+        return this.hydrateAddresses(
+          eligible,
+          event =>
+            event.kind === GIT_REPO_ANNOUNCEMENT ||
+            event.kind === GIT_REPO_STATE ||
+            event.kind === DELETE,
+        )
       }),
     )
   }
@@ -658,9 +711,12 @@ export class RepositoryCache {
     )
   }
 
-  private hydrateAddresses(addresses: Set<string>) {
+  private hydrateAddresses(
+    addresses: Set<string>,
+    include: (event: TrustedEvent) => boolean = () => true,
+  ) {
     const records = Array.from(this.events.values())
-      .filter(record => addresses.has(record.repositoryAddress))
+      .filter(record => addresses.has(record.repositoryAddress) && include(record.event))
       .sort(
         (left, right) =>
           Number(left.eventClass === "delete") - Number(right.eventClass === "delete") ||
@@ -777,12 +833,9 @@ const flushPendingEvents = () => {
   pendingEventTimer = undefined
   const pending = Array.from(pendingEvents.values())
   pendingEvents.clear()
-  for (const item of pending) {
-    const pending = item.address
-      ? repositoryCache.storeEvent(item.address, item.event, item.relays)
-      : repositoryCache.storeEventForKnownRepository(item.event, item.relays)
-    void pending.catch(error => console.warn("[repo-cache] Failed to store event", error))
-  }
+  void repositoryCache
+    .storeEvents(pending)
+    .catch(error => console.warn("[repo-cache] Failed to store events", error))
 }
 
 export const receiveRepositoryCacheEvent = (
@@ -790,6 +843,7 @@ export const receiveRepositoryCacheEvent = (
   relay?: string,
   repositoryAddress?: string,
 ) => {
+  if (!isSupportedRepositoryCacheEvent(event)) return
   const existing = pendingEvents.get(event.id)
   const relays = existing?.relays || new Set<string>()
   if (relay) relays.add(relay)
@@ -809,7 +863,6 @@ export const setupRepositoryCache = () => {
     if (!item || stopped) return
     void repositoryCache
       .reconcileWatched(getWatchedAddresses(item))
-      .then(() => repositoryCache.hydrateEligible())
       .catch(error => console.warn("[repo-cache] Failed to reconcile watched repositories", error))
   })
   const onRepositoryUpdate = (update: {added: Set<TrustedEvent>}) => {
@@ -819,17 +872,8 @@ export const setupRepositoryCache = () => {
   }
   repository.on("update", onRepositoryUpdate)
 
-  const startupTimer = setTimeout(() => {
-    if (!stopped) {
-      void repositoryCache
-        .hydrateEligible()
-        .catch(error => console.warn("[repo-cache] Failed to hydrate eligible repositories", error))
-    }
-  }, 0)
-
   return () => {
     stopped = true
-    clearTimeout(startupTimer)
     unsubscribeWatch()
     repository.off("update", onRepositoryUpdate)
     if (pendingEventTimer) clearTimeout(pendingEventTimer)

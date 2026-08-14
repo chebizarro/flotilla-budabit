@@ -7,12 +7,9 @@ const dense = (source: string) => source.replace(/\s+/g, "")
 describe("authoritative repository loading scope", () => {
   it("uses route hints only for kind 30617 discovery", () => {
     const routeLoad = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.ts"))
-    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
+    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte"))
 
-    expect(routeLoad).toContain("constannouncementDiscoveryRelays=Array.from(")
-    expect(routeLoad).toContain(
-      "newSet([...naddrRelays,...targetOutboxRelays,...configuredFallbackRelays])",
-    )
+    expect(routeLoad).toContain("constannouncementDiscoveryRelays=normalizeRepoRelays(")
     expect(routeLoad).not.toContain("refreshPubkeyOutboxRelays")
     expect(layout).toContain("getRepoScopedRelays(re,{pubkey:repoPubkey,identifier:repoName})")
     expect(layout).toContain('owner:"repo-foreground:announcement-refresh"')
@@ -63,7 +60,7 @@ describe("authoritative repository loading scope", () => {
     expect(issueDetail).toContain(
       'hasRepoAnnouncement&&announcementStatus==="complete"&&!$repoCacheHydrationPendingStore&&!$repoCacheHydrationFailedStore&&repoBoundRelays.length===0',
     )
-    expect(issueDetail).toContain("announcementLiveCoveragePartial")
+    expect(issueDetail).not.toContain("announcementLiveCoveragePartial")
 
     expect(prDetail).toContain("repoRootHistory.ensureRoot(currentPrId,controller.signal)")
     expect(prDetail).toContain("controller.abort()")
@@ -75,7 +72,7 @@ describe("authoritative repository loading scope", () => {
     expect(prDetail).toContain(
       'hasRepoAnnouncement&&announcementStatus==="complete"&&!$repoCacheHydrationPendingStore&&!$repoCacheHydrationFailedStore&&repoRelays.length===0',
     )
-    expect(prDetail).toContain("announcementLiveCoveragePartial")
+    expect(prDetail).not.toContain("announcementLiveCoveragePartial")
   })
 
   it("keeps child lists and PRView free of initial repository activity ownership", () => {
@@ -105,14 +102,14 @@ describe("authoritative repository loading scope", () => {
       expect(source).toContain("$repoRootHistory")
       expect(source).toContain("$repoAnnouncementStatusStore")
       expect(source).toContain("$repoCacheHydrationFailedStore")
-      expect(source).toContain("$repoLiveCoveragePartialStore")
+      expect(source).not.toContain("$repoLiveCoveragePartialStore")
       expect(source).toContain("retryRootHistory()")
       expect(source).toContain('aria-live="polite"')
     }
   })
 
   it("partitions owned repository state loads without Git relay fallback", () => {
-    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
+    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte"))
     const ownedStateLoad = layout.slice(
       layout.indexOf("constmyRepoStateLoadScopes"),
       layout.indexOf("constbuildRepoBranchUpdate"),
@@ -127,7 +124,7 @@ describe("authoritative repository loading scope", () => {
   })
 
   it("uses stable per-relay live lanes without root-set dependencies", () => {
-    const source = readProjectFile("../../routes/git/[id=naddr]/+layout.svelte")
+    const source = readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte")
     const layout = dense(source)
 
     expect(layout).toContain("buildRepoStableLiveFilters")
@@ -139,17 +136,36 @@ describe("authoritative repository loading scope", () => {
     expect(layout).toContain('owner:"repo-foreground:announcement"')
     expect(layout).toContain('owner:"repo-foreground:exact-thread"')
     expect(layout).toContain("gapFillQueue.catch(()=>undefined).then")
-    expect(layout).toContain("constliveActivityRelays=activityRelays.slice(0,6)")
-    expect(layout).toContain("constliveAnnouncementRelays=announcementRelays.slice(0,6)")
+    expect(layout).toContain(
+      'if($repoRootHistoryState.status!=="complete"||$repoAnnouncementStatus==="loading")return',
+    )
+    expect(layout).toContain("subscribe:repoRootHistoryState.subscribe")
+    expect(layout).toContain(
+      'constliveActivityRelays=$repoAnnouncementStatus==="loading"&&repoActivityLiveByRelay.size===0?[]:activityRelays.slice(0,6)',
+    )
+    expect(layout).toContain(
+      'constliveAnnouncementRelays=$repoAnnouncementStatus==="loading"&&repoAnnouncementLiveByRelay.size===0?[]:announcementRelays.slice(0,6)',
+    )
     expect(layout).toContain("...$discoveredAnnouncementRelays")
     expect(layout).not.toContain("repoLiveSubscriptionFiltersKey")
     expect(layout).not.toContain("buildRepoLiveFilters({addresses,rootIds,viewer})")
   })
 
+  it("groups relay failures and portals their details above repository content", () => {
+    const notice = dense(readProjectFile("../components/RepoRelayFailureNotice.svelte"))
+    const popover = dense(readProjectFile("../../lib/components/InlinePopover.svelte"))
+
+    expect(notice).toContain("constfailuresByRelay=derived(failedRelayRequests")
+    expect(notice).toContain("{#each$failuresByRelayasgroup(group.relay)}")
+    expect(notice).toContain("{#eachgroup.requestsasrequest(request.key)}")
+    expect(popover).toContain("document.body.appendChild(node)")
+    expect(popover).toContain("use:portal")
+  })
+
   it("aborts list and repository layout finite work on route teardown", () => {
     const list = dense(readProjectFile("../../routes/git/+page.svelte"))
     const listLayout = dense(readProjectFile("../../routes/git/+layout.svelte"))
-    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
+    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte"))
 
     expect(list).toContain("constgitPageLoadController=newAbortController()")
     expect(list).toContain("gitPageLoadController.abort()")
@@ -162,7 +178,15 @@ describe("authoritative repository loading scope", () => {
     expect(layout).toContain("retryCacheHydration:hydrateRepoActivityCache")
     expect(layout).toContain("cacheHydrationPending:repoCacheHydrationPending")
     expect(layout).toContain('owner:"repo-foreground:announcement-refresh"')
-    expect(layout).toContain("priority:RELAY_REQUEST_PRIORITY.interactive")
+    expect(layout).toContain("priority:RELAY_REQUEST_PRIORITY.foreground")
+    expect(layout.indexOf("voidhistory.loadRecent()")).toBeLessThan(
+      layout.indexOf("reconcileRepoLiveLane({lanes:repoActivityLiveByRelay"),
+    )
+    expect(layout).toContain(
+      '$repoAnnouncementStatus==="loading"&&repoAnnouncementLiveByRelay.size===0?[]:announcementRelays.slice(0,6)',
+    )
+    expect(layout).not.toContain('label={issuesCount>0?`Issues(${issuesCount})`:"Issues"}')
+    expect(layout).not.toContain('label={prsCount>0?`PRs(${prsCount})`:"PRs"}')
     expect(layout).toContain("disposeActiveRepo(routeRepoClass)")
   })
 
@@ -179,6 +203,7 @@ describe("authoritative repository loading scope", () => {
     expect(preload).toContain("limit:REPO_LIST_ANNOUNCEMENT_LIMIT")
     expect(preload).toContain("priority:RELAY_REQUEST_PRIORITY.background")
     expect(preload).toContain("owner:REPO_LIST_PRELOAD_OWNER")
+    expect(preload).toContain("repositoryCache.hydrateEligibleAnnouncements()")
     expect(page).toContain("if(!$repoListHydrationReadyStore)")
   })
 
@@ -193,10 +218,10 @@ describe("authoritative repository loading scope", () => {
     expect(discovered).not.toContain("$repoAnnouncements")
   })
 
-  it("hydrates the verified repository cache before route activity starts", () => {
-    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
+  it("starts route activity without waiting for repository cache hydration", () => {
+    const layout = dense(readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte"))
     const mountHydration = layout.slice(
-      layout.indexOf("onMount(()=>{letcancelled=false"),
+      layout.indexOf("onMount(()=>{repoActivityHydrationReady.set(true)"),
       layout.indexOf("constrepoStatusKinds"),
     )
     const cacheHydration = layout.slice(
@@ -208,8 +233,8 @@ describe("authoritative repository loading scope", () => {
     expect(cacheHydration).toContain("repoCacheHydrationPending.set(true)")
     expect(cacheHydration).toContain("repoCacheHydrationFailed.set(true)")
     expect(cacheHydration).not.toContain("if(result.timedOut){repoCacheHydrationFailed.set(true)")
-    expect(mountHydration.indexOf("hydrateRepoActivityCache")).toBeLessThan(
-      mountHydration.indexOf("repoActivityHydrationReady.set(true)"),
+    expect(mountHydration.indexOf("repoActivityHydrationReady.set(true)")).toBeLessThan(
+      mountHydration.indexOf("hydrateRepoActivityCache"),
     )
     expect(layout).toContain("receiveRepositoryCacheEvent(event,relay,getStore(repoAddressStore))")
     expect(layout).toContain("mapRepoRelayWork(announcementDiscoveryRelays.filter")

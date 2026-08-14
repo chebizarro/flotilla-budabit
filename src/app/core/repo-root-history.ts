@@ -18,6 +18,7 @@ import {
 } from "@app/core/finite-relay-request"
 import {getRepoPublicationAddress} from "@app/core/repo-publication"
 import {getRelayPolicy} from "@app/core/relay-policy"
+import {normalizeRepoRelay} from "@app/core/repo-relays"
 
 const GIT_COVER_LETTER = 1624
 const STATUS_KINDS = [GIT_STATUS_OPEN, GIT_STATUS_DRAFT, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE]
@@ -59,6 +60,10 @@ export type RepoRootRelayState = {
   pageSize: number
   eventCount: number
   outcome?: FiniteRelayResult["outcome"]
+  reason?: string
+  queuedAt?: number
+  startedAt?: number
+  finishedAt?: number
   operation?: RepoRootLoadOperation
 }
 
@@ -129,6 +134,11 @@ const chunkValues = (values: string[], size: number) => {
   }
   return chunks
 }
+
+const normalizeRequestRelays = (relays: string[]) =>
+  Array.from(
+    new Set(relays.map(relay => normalizeRepoRelay(relay) || relay.trim()).filter(Boolean)),
+  )
 
 export const buildRepoRootPageFilter = ({
   addresses,
@@ -228,10 +238,29 @@ export const createRepoRootResolver =
       relays: string[],
       addresses: string[],
       signal: AbortSignal,
+      onAccepted?: (event: TrustedEvent) => void,
     ) => {
       const resultsByRelay = exactResultsById.get(id) || new Map<string, FiniteRelayResult>()
       exactResultsById.set(id, resultsByRelay)
       const targets = relays.filter(relay => resultsByRelay.get(relay)?.outcome !== "eose")
+      const delivered = new Set<string>()
+      let accepted: TrustedEvent | undefined
+      const receive = (event: TrustedEvent, relay: string) => {
+        if (
+          event.id !== id ||
+          options.isDeleted(event) ||
+          !isAcceptedRepoRootLookupEvent(event, addresses)
+        ) {
+          return
+        }
+
+        accepted ||= event
+        const deliveryKey = `${relay}\u0000${event.id}`
+        if (delivered.has(deliveryKey)) return
+        delivered.add(deliveryKey)
+        options.onEvent(event, relay)
+        onAccepted?.(event)
+      }
       const currentResults = await mapRepoRelayWork(targets, relay =>
         dependencies.requestFiniteRelay({
           relay,
@@ -240,6 +269,7 @@ export const createRepoRootResolver =
           timeoutMs,
           priority: options.priority,
           owner: "repo-roots:exact",
+          onEvent: receive,
         }),
       )
       for (const result of currentResults) resultsByRelay.set(result.relay, result)
@@ -247,19 +277,9 @@ export const createRepoRootResolver =
         const result = resultsByRelay.get(relay)
         return result ? [result] : []
       })
-      let accepted: TrustedEvent | undefined
-
       for (const result of results) {
         for (const event of result.events) {
-          if (
-            event.id !== id ||
-            options.isDeleted(event) ||
-            !isAcceptedRepoRootLookupEvent(event, addresses)
-          ) {
-            continue
-          }
-          accepted ||= event
-          options.onEvent(event, result.relay)
+          receive(event, result.relay)
         }
       }
 
@@ -272,7 +292,7 @@ export const createRepoRootResolver =
     ): Promise<EnsureRepoRootResult> => {
       if (signal.aborted) return {status: "aborted", requestedId}
 
-      const relays = Array.from(new Set(options.getRelays().filter(Boolean)))
+      const relays = normalizeRequestRelays(options.getRelays())
       const addresses = Array.from(new Set(options.getAddresses().filter(Boolean)))
       if (relays.length === 0 || addresses.length === 0) {
         return {status: "unavailable", requestedId}
@@ -280,8 +300,28 @@ export const createRepoRootResolver =
 
       const results: FiniteRelayResult[] = []
       let event = options.getEvent(requestedId)
+      let eagerRootLookup:
+        | Promise<{
+            event: TrustedEvent | undefined
+            results: FiniteRelayResult[]
+          }>
+        | undefined
       if (!event || options.isDeleted(event) || !isAcceptedRepoRootLookupEvent(event, addresses)) {
-        const exact = await requestExact(requestedId, relays, addresses, signal)
+        const exact = await requestExact(requestedId, relays, addresses, signal, accepted => {
+          if (accepted.kind !== GIT_PULL_REQUEST_UPDATE || eagerRootLookup) return
+          const rootId = getPullRequestRootId(accepted)
+          const cachedRoot = rootId ? options.getEvent(rootId) : undefined
+          if (
+            !rootId ||
+            rootId === accepted.id ||
+            (cachedRoot &&
+              !options.isDeleted(cachedRoot) &&
+              isAcceptedRepoRootEvent(cachedRoot, addresses))
+          ) {
+            return
+          }
+          eagerRootLookup = requestExact(rootId, relays, addresses, signal)
+        })
         event = exact.event
         results.push(...exact.results)
       }
@@ -304,7 +344,9 @@ export const createRepoRootResolver =
         ) {
           root = cachedRoot
         } else {
-          const exactRoot = await requestExact(rootId, relays, addresses, signal)
+          const exactRoot = eagerRootLookup
+            ? await eagerRootLookup
+            : await requestExact(rootId, relays, addresses, signal)
           results.push(...exactRoot.results)
           if (!exactRoot.event || !isAcceptedRepoRootEvent(exactRoot.event, addresses)) {
             return {status: summarizeRepoRootResults(results, signal), requestedId}
@@ -388,7 +430,7 @@ const getSnapshot = (
   states: Map<string, RepoRootRelayState>,
   operation: RepoRootLoadOperation | null,
 ): RepoRootHistorySnapshot => {
-  const relays = Array.from(states.values()).sort((left, right) =>
+  const relays = Array.from(states.values(), state => ({...state})).sort((left, right) =>
     left.relay.localeCompare(right.relay),
   )
   const loading = relays.some(state => state.status === "loading")
@@ -421,7 +463,7 @@ export const createRepoRootHistory =
     const pageSize = options.pageSize ?? DEFAULT_REPO_ROOT_PAGE_SIZE
     const timeoutMs = options.timeoutMs ?? DEFAULT_REPO_ROOT_TIMEOUT_MS
     const states = new Map<string, RepoRootRelayState>(
-      Array.from(new Set(options.relays), relay => {
+      normalizeRequestRelays(options.relays).map(relay => {
         const relayLimit = dependencies.getRelayPageLimit?.(relay) ?? pageSize
         const initialPageSize =
           typeof relayLimit === "number" ? Math.min(pageSize, relayLimit) : pageSize
@@ -450,7 +492,9 @@ export const createRepoRootHistory =
         if (retry) {
           return (
             state.operation === nextOperation &&
-            (state.status === "partial" || state.status === "failed")
+            state.outcome !== undefined &&
+            state.outcome !== "eose" &&
+            state.outcome !== "aborted"
           )
         }
         return initial || !state.exhausted
@@ -468,60 +512,73 @@ export const createRepoRootHistory =
         state.boundarySaturated = false
         publish()
 
-        while (!options.signal.aborted) {
-          const result = await dependencies.requestFiniteRelay({
-            relay: state.relay,
-            filters: [
-              buildRepoRootPageFilter({
-                addresses: options.addresses,
-                pageSize: state.pageSize,
-                until: initial ? undefined : state.until,
-              }),
-            ],
-            signal: options.signal,
-            timeoutMs,
-            priority: options.priority,
-            owner: initial ? "repo-roots:recent" : "repo-roots:older",
-            onEvent: options.onEvent,
-          })
-          state.outcome = result.outcome
-          state.eventCount += result.events.length
+        try {
+          while (!options.signal.aborted) {
+            const result = await dependencies.requestFiniteRelay({
+              relay: state.relay,
+              filters: [
+                buildRepoRootPageFilter({
+                  addresses: options.addresses,
+                  pageSize: state.pageSize,
+                  until: initial ? undefined : state.until,
+                }),
+              ],
+              signal: options.signal,
+              timeoutMs,
+              priority: options.priority,
+              owner: initial ? "repo-roots:recent" : "repo-roots:older",
+              onEvent: options.onEvent,
+            })
+            state.outcome = result.outcome
+            state.reason = result.reason
+            state.queuedAt = result.queuedAt
+            state.startedAt = result.startedAt
+            state.finishedAt = result.finishedAt
+            state.eventCount += result.events.length
 
-          if (result.outcome !== "eose") {
-            state.status = result.outcome === "error" ? "failed" : "partial"
-            return
-          }
-
-          if (result.events.length === 0) {
-            state.exhausted = true
-            state.status = "complete"
-            return
-          }
-
-          const oldest = Math.min(...result.events.map(event => event.created_at))
-          const previousUntil = state.until
-          state.until = oldest
-          const boundarySaturated =
-            previousUntil === oldest && result.events.length >= state.pageSize
-          if (boundarySaturated) {
-            const relayLimit = Math.max(
-              state.pageSize,
-              dependencies.getRelayPageLimit?.(state.relay) ?? state.pageSize,
-            )
-            if (result.events.length >= state.pageSize && state.pageSize < relayLimit) {
-              state.pageSize = Math.min(relayLimit, state.pageSize * 2)
-              continue
+            if (result.outcome !== "eose") {
+              state.status = result.outcome === "error" ? "failed" : "partial"
+              return
             }
-          }
 
-          if (previousUntil === oldest && result.events.length < state.pageSize) {
-            state.until = Math.max(0, oldest - 1)
-          }
+            if (result.events.length === 0) {
+              state.exhausted = true
+              state.status = "complete"
+              return
+            }
 
-          state.boundarySaturated = boundarySaturated
-          state.exhausted = false
-          state.status = boundarySaturated ? "partial" : "complete"
-          return
+            const oldest = Math.min(...result.events.map(event => event.created_at))
+            const previousUntil = state.until
+            state.until = oldest
+            if (result.events.length < state.pageSize) {
+              state.exhausted = true
+              state.status = "complete"
+              return
+            }
+            const boundarySaturated =
+              previousUntil === oldest && result.events.length >= state.pageSize
+            if (boundarySaturated) {
+              const relayLimit = Math.max(
+                state.pageSize,
+                dependencies.getRelayPageLimit?.(state.relay) ?? state.pageSize,
+              )
+              if (result.events.length >= state.pageSize && state.pageSize < relayLimit) {
+                state.pageSize = Math.min(relayLimit, state.pageSize * 2)
+                continue
+              }
+            }
+
+            if (previousUntil === oldest && result.events.length < state.pageSize) {
+              state.until = Math.max(0, oldest - 1)
+            }
+
+            state.boundarySaturated = boundarySaturated
+            state.exhausted = false
+            state.status = boundarySaturated ? "partial" : "complete"
+            return
+          }
+        } finally {
+          publish()
         }
       })
         .then(() => undefined)
@@ -566,7 +623,7 @@ export const loadRepoRootGap = async ({
   const filters = buildRepoRootGapFilters(rootIds)
   if (filters.length === 0) return []
 
-  return mapRepoRelayWork(relays, relay =>
+  return mapRepoRelayWork(normalizeRequestRelays(relays), relay =>
     requestFiniteRelay({
       relay,
       filters,

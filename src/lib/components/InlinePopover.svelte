@@ -25,24 +25,35 @@
   let maxHeight = $state(360)
   let ready = $state(false)
   let rafId = 0
+  let anchorElement: HTMLElement | null = null
+
+  const portal = (node: HTMLElement) => {
+    anchorElement = node.parentElement as HTMLElement | null
+    document.body.appendChild(node)
+
+    return {
+      destroy() {
+        node.remove()
+      },
+    }
+  }
 
   const getBottomReservedSpace = () => {
     if (!window.matchMedia("(max-width: 767px)").matches) return viewportMargin
 
-    const bottomNavHeight = Array.from(document.querySelectorAll<HTMLElement>(".bottom-nav")).reduce(
-      (height, node) => {
-        const style = getComputedStyle(node)
+    const bottomNavHeight = Array.from(
+      document.querySelectorAll<HTMLElement>(".bottom-nav"),
+    ).reduce((height, node) => {
+      const style = getComputedStyle(node)
 
-        if (style.display === "none" || style.visibility === "hidden") return height
+      if (style.display === "none" || style.visibility === "hidden") return height
 
-        const rect = node.getBoundingClientRect()
+      const rect = node.getBoundingClientRect()
 
-        if (rect.width === 0 || rect.height === 0) return height
+      if (rect.width === 0 || rect.height === 0) return height
 
-        return Math.max(height, window.innerHeight - rect.top)
-      },
-      0,
-    )
+      return Math.max(height, window.innerHeight - rect.top)
+    }, 0)
 
     return viewportMargin + bottomNavHeight
   }
@@ -50,7 +61,7 @@
   const reposition = () => {
     if (!element) return
 
-    const anchor = element.parentElement as HTMLElement | null
+    const anchor = anchorElement
 
     if (!anchor) return
 
@@ -78,7 +89,10 @@
     const maxTop = Math.max(viewportMargin, viewportHeight - bottomReservedSpace - popupHeight)
     const nextTop = placeAbove
       ? Math.max(viewportMargin, anchorRect.top - gap - popupHeight)
-      : Math.max(viewportMargin, Math.min(Math.max(viewportMargin, anchorRect.bottom + gap), maxTop))
+      : Math.max(
+          viewportMargin,
+          Math.min(Math.max(viewportMargin, anchorRect.bottom + gap), maxTop),
+        )
 
     left = clampedLeft
     top = nextTop
@@ -108,7 +122,7 @@
     if (typeof ResizeObserver !== "undefined" && element) {
       observer = new ResizeObserver(updatePosition)
       observer.observe(element)
-      const anchor = element.parentElement as HTMLElement | null
+      const anchor = anchorElement
 
       if (anchor) {
         observer.observe(anchor)
@@ -131,7 +145,7 @@
 
   const onMouseUp = (event: MouseEvent) => {
     const target = event.target as Node | null
-    const anchor = element?.parentElement as HTMLElement | null
+    const anchor = anchorElement
 
     if (!element?.contains(target) && !anchor?.contains(target)) {
       setTimeout(onClose)
@@ -148,6 +162,7 @@
 <svelte:window onmouseup={onMouseUp} onkeydown={onKeyDown} />
 
 <div
+  use:portal
   bind:this={element}
   class={`fixed z-popover max-w-[calc(100vw-3rem)] ${widthClass}`}
   style={`left:${left}px; top:${top}px; max-height:${maxHeight}px; visibility:${ready ? "visible" : "hidden"};`}>

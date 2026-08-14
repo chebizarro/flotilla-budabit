@@ -36,6 +36,7 @@ const issue = (createdAt = 10, repoAddress = address) =>
 
 class MemoryStorage implements RepositoryCacheStorage {
   state: RepositoryCacheState
+  applyCount = 0
 
   constructor(state: RepositoryCacheState = {repositories: [], events: []}) {
     this.state = structuredClone(state)
@@ -46,6 +47,7 @@ class MemoryStorage implements RepositoryCacheStorage {
   }
 
   async apply(changes: RepositoryCacheChanges) {
+    this.applyCount += 1
     const repositories = new Map(this.state.repositories.map(item => [item.address, item]))
     const events = new Map(this.state.events.map(item => [item.key, item]))
     for (const address of changes.deleteRepositories) repositories.delete(address)
@@ -167,6 +169,35 @@ describe("repository cache", () => {
     await expect(second.cache.hydrateEligible()).resolves.toBe(1)
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({id: event.id}))
     expect(addRelay).toHaveBeenCalledTimes(2)
+  })
+
+  it("hydrates only authority records for the repository list", async () => {
+    const first = makeCache()
+    await first.cache.accessRepository(address)
+    const repoAnnouncement = announcement()
+    const root = issue()
+    await first.cache.storeEvent(address, repoAnnouncement)
+    await first.cache.storeEvent(address, root)
+    const publish = vi.fn()
+    const second = makeCache({storage: first.storage, publish})
+
+    await expect(second.cache.hydrateEligibleAnnouncements()).resolves.toBe(1)
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({id: repoAnnouncement.id}))
+    expect(publish).not.toHaveBeenCalledWith(expect.objectContaining({id: root.id}))
+  })
+
+  it("stores pending event batches in one cache mutation", async () => {
+    const {cache, storage} = makeCache()
+    await cache.accessRepository(address)
+    const before = storage.applyCount
+
+    await cache.storeEvents([
+      {address, event: issue(1), relays: []},
+      {address, event: issue(2), relays: []},
+    ])
+
+    expect(storage.applyCount - before).toBe(1)
+    expect(storage.state.events).toHaveLength(2)
   })
 
   it("retains deterministic recent and watched eligibility independently", async () => {

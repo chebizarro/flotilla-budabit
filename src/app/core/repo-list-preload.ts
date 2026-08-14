@@ -65,6 +65,6 @@ export const createRepoListPreloader = (dependencies: RepoListPreloadDependencie
   }
 
 export const preloadRepositoryList = createRepoListPreloader({
-  hydrateEligible: () => repositoryCache.hydrateEligible(),
+  hydrateEligible: () => repositoryCache.hydrateEligibleAnnouncements(),
   request: welshmanRequest,
 })

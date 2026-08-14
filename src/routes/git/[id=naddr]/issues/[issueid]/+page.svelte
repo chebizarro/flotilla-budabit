@@ -73,6 +73,7 @@
   import {loadBudabitProfile} from "@app/core/profile-resolver"
   import Markdown from "@src/lib/components/Markdown.svelte"
   import RepoRichDescriptionEditor from "@app/components/RepoRichDescriptionEditor.svelte"
+  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
   import {HIDDEN_ROOT_IDS_KEY, REPO_KEY} from "@app/core/git-state"
   import type {Repo} from "@nostr-git/ui"
   import type {Readable} from "svelte/store"
@@ -87,8 +88,7 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoLiveCoveragePartialStore = repoRootHistory.liveCoveragePartial
-  const repoAnnouncementLiveCoveragePartialStore = repoRootHistory.announcementLiveCoveragePartial
+  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -119,9 +119,6 @@
   const issueEvent = $derived.by(() => repoClass.issues.find(i => i.id === issueId))
   const hasRepoAnnouncement = $derived.by(() => Boolean(repoClass.repoEvent))
   const announcementStatus = $derived($repoAnnouncementStatusStore)
-  const liveCoveragePartial = $derived($repoLiveCoveragePartialStore)
-  const announcementLiveCoveragePartial = $derived($repoAnnouncementLiveCoveragePartialStore)
-
   let issueResolution = $state<{
     issueId: string
     status: "loading" | "complete" | "partial" | "failed" | "unavailable" | "aborted"
@@ -148,7 +145,6 @@
     const currentAnnouncementStatus = announcementStatus
     const cacheHydrationPending = $repoCacheHydrationPendingStore
     const cacheHydrationFailed = $repoCacheHydrationFailedStore
-    const liveCoveragePartial = $repoLiveCoveragePartialStore
     const relays = repoBoundRelays
     void issueEvent
     void issueResolutionNonce
@@ -910,18 +906,6 @@
   <title>{repoClass.name} - {issue?.subject}</title>
 </svelte:head>
 
-{#if liveCoveragePartial || announcementLiveCoveragePartial}
-  <div
-    class="mb-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-    role="status">
-    {liveCoveragePartial && announcementLiveCoveragePartial
-      ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
-      : liveCoveragePartial
-        ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
-        : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."}
-  </div>
-{/if}
-
 {#if isHiddenRoot && issueEvent}
   <div class="flex flex-col items-center justify-center px-4 py-8 sm:py-12">
     <SearchX class="mb-2 h-6 w-6 sm:h-8 sm:w-8" />
@@ -929,21 +913,24 @@
   </div>
 {:else if issue}
   <div class="px-2 py-2 sm:px-0 sm:py-4" data-event={issueEvent?.id} transition:slide>
-    {#if issueResolutionStatus !== "complete"}
+    {#if issueResolutionStatus !== "complete" && issueResolutionStatus !== "loading"}
       <div
         class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
         role="status"
         aria-live="polite">
         <span>
-          {issueResolutionStatus === "loading"
-            ? "Refreshing issue activity…"
-            : issueResolutionStatus === "unavailable"
-              ? "Repository relays are unavailable. Showing saved issue content."
-              : issueResolutionStatus === "failed"
-                ? "Issue activity refresh failed. Showing saved issue content."
-                : "Some repository relays did not finish. Issue activity may be incomplete."}
+          {issueResolutionStatus === "unavailable"
+            ? "Repository relays are unavailable. Showing saved issue content."
+            : issueResolutionStatus === "failed"
+              ? "Issue activity refresh failed. Showing saved issue content."
+              : "Some relays did not respond. Showing loaded activity."}
         </span>
-        {#if issueResolutionStatus === "partial" || issueResolutionStatus === "failed"}
+        {#if $repoFailedRelayRequestsStore.length > 0}
+          <RepoRelayFailureNotice
+            onRetry={() => {
+              issueResolutionNonce += 1
+            }} />
+        {:else if issueResolutionStatus === "partial" || issueResolutionStatus === "failed"}
           <button
             class="rounded-md border border-border px-3 py-1 text-sm"
             onclick={retryIssueResolution}>Retry</button>

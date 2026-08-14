@@ -330,7 +330,7 @@ describe("budabit state", () => {
 
       const relays = getRepoScopedRelays(repoEvent, {pubkey: owner, identifier: "repo"})
 
-      expect(relays).toEqual(["wss://repo.relay.example.com"])
+      expect(relays).toEqual(["wss://repo.relay.example.com/"])
     })
 
     it("keeps route hints in announcement discovery only", () => {
@@ -343,7 +343,7 @@ describe("budabit state", () => {
 
       expect(getRepoAnnouncementRelays([hint])).toContain("wss://hint.relay.example.com/")
       expect(getRepoScopedRelays(repoEvent, {pubkey: owner, identifier: "repo"})).toEqual([
-        "wss://repo.relay.example.com",
+        "wss://repo.relay.example.com/",
       ])
     })
 

@@ -193,6 +193,107 @@ test("resolves a pull request update deep link through one repository activity o
   await expect.poll(() => stableActivitySubscriptions).toBe(1)
 })
 
+test("replaces repository ownership during direct in-app repo navigation", async ({page}) => {
+  const secondIdentifier = `${identifier}-second`
+  const secondAddress = getRepoAddress(TEST_PUBKEYS.bob, secondIdentifier)
+  const firstAnnouncement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "First repository",
+      relays: [relayUrl],
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP,
+    }),
+  )
+  const firstIssue = signTestEvent(
+    createIssue({
+      repoAddress,
+      subject: "First repository issue",
+      content: "Must not remain under the second repository URL.",
+      pubkey: TEST_PUBKEYS.charlie,
+      created_at: BASE_TIMESTAMP + 1,
+    }),
+  )
+  const secondAnnouncement = signTestEvent(
+    createRepoAnnouncement({
+      identifier: secondIdentifier,
+      name: "Second repository",
+      relays: [relayUrl],
+      pubkey: TEST_PUBKEYS.bob,
+      created_at: BASE_TIMESTAMP + 2,
+    }),
+  )
+  const secondIssue = signTestEvent(
+    createIssue({
+      repoAddress: secondAddress,
+      subject: "Second repository issue",
+      content: "Rendered by the replacement repository session.",
+      pubkey: TEST_PUBKEYS.charlie,
+      created_at: BASE_TIMESTAMP + 3,
+    }),
+  )
+  const mockRelay = new MockRelay({
+    seedEvents: [firstAnnouncement, firstIssue, secondAnnouncement, secondIssue],
+  })
+
+  await page.addInitScript(() => {
+    localStorage.clear()
+    ;(window as unknown as {__repoNavigationDocument?: string}).__repoNavigationDocument =
+      crypto.randomUUID()
+  })
+  await mockRelay.setup(page)
+  const firstNaddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [relayUrl])
+  const secondNaddr = encodeRepoNaddr(TEST_PUBKEYS.bob, secondIdentifier, [relayUrl])
+  await page.goto(`/git/${firstNaddr}/issues`)
+  await expect(page.getByText("First repository issue", {exact: true})).toBeVisible()
+  const documentId = await page.evaluate(
+    () => (window as unknown as {__repoNavigationDocument?: string}).__repoNavigationDocument,
+  )
+
+  await page.evaluate(href => {
+    const link = document.createElement("a")
+    link.href = href
+    link.textContent = "Open second repository"
+    document.body.append(link)
+  }, `/git/${secondNaddr}/issues`)
+  await page
+    .getByRole("link", {name: "Open second repository"})
+    .evaluate(link => (link as HTMLAnchorElement).click())
+
+  await expect(page).toHaveURL(new RegExp(`/git/${secondNaddr}/issues$`))
+  await expect(page.getByTestId("repo-topbar-home")).toHaveText("Second repository")
+  await expect(page.getByText("Second repository issue", {exact: true})).toBeVisible()
+  await expect(page.getByText("First repository issue", {exact: true})).toHaveCount(0)
+  expect(
+    await page.evaluate(
+      () => (window as unknown as {__repoNavigationDocument?: string}).__repoNavigationDocument,
+    ),
+  ).toBe(documentId)
+  await expect
+    .poll(() =>
+      page.evaluate(firstAddress => {
+        const connections = (
+          window as unknown as {
+            __mockRelayConnections?: Map<
+              string,
+              {subscriptions: Map<string, Array<Record<string, unknown>>>}
+            >
+          }
+        ).__mockRelayConnections
+        return Array.from(connections?.values() || []).some(connection =>
+          Array.from(connection.subscriptions.values()).some(filters =>
+            filters.some(filter =>
+              Array.isArray(filter["#a"])
+                ? (filter["#a"] as string[]).includes(firstAddress)
+                : false,
+            ),
+          ),
+        )
+      }, repoAddress),
+    )
+    .toBe(false)
+})
+
 test("resolves a pull request update when live delivery follows exact EOSE", async ({page}) => {
   const announcement = signTestEvent(
     createRepoAnnouncement({
@@ -292,7 +393,8 @@ test("keeps one stable lane through large root growth and clears it on teardown"
   await expect.poll(() => stableActivitySubscriptions).toBe(1)
 
   await mockRelay.injectEvents(issues)
-  await expect(page.getByRole("link", {name: /Issues \(150\)/})).toBeVisible({timeout: 10_000})
+  await page.getByRole("link", {name: "Issues", exact: true}).click()
+  await expect(page.getByText("Stress issue 150", {exact: true})).toBeVisible({timeout: 10_000})
   expect(stableActivitySubscriptions).toBe(1)
 
   await page.goto("/home")

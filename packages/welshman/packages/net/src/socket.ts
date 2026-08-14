@@ -64,7 +64,8 @@ export class Socket extends EventEmitter {
 
     this._recvQueue = new TaskQueue<RelayMessage>({
       batchSize: Socket.batchSize,
-      batchDelay: Socket.batchDelay,
+      // Relay terminal frames must not sit behind seconds of EVENT batches.
+      batchDelay: 0,
       processItem: (message: RelayMessage) => {
         this.emit(SocketEvent.Receive, message, this.url)
       },

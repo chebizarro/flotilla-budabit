@@ -131,7 +131,7 @@ describe("community profile relay hints", () => {
   })
 
   it("passes repo community profile relays through the repo layout owner profile", () => {
-    const layout = readProjectFile("../../routes/git/[id=naddr]/+layout.svelte")
+    const layout = readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte")
     const overview = readProjectFile("../../routes/git/[id=naddr]/+page.svelte")
     const prs = readProjectFile("../../routes/git/[id=naddr]/prs/+page.svelte")
     const issue = readProjectFile("../../routes/git/[id=naddr]/issues/[issueid]/+page.svelte")

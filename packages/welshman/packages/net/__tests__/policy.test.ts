@@ -116,6 +116,7 @@ describe("policy", () => {
         {id: "123", kind: 1, content: "", tags: [], pubkey: "", sig: ""},
       ]
       socket.emit(SocketEvent.Send, event)
+      socket.auth.setStatus(AuthStatus.PendingResponse)
 
       // Receive auth-required rejection
       const authReqMsg: RelayMessage = ["OK", "123", false, "auth-required: need to auth first"]
@@ -141,6 +142,7 @@ describe("policy", () => {
       // Send a REQ
       const req: ClientMessage = ["REQ", "123", {kinds: [1]}]
       socket.emit(SocketEvent.Send, req)
+      socket.auth.setStatus(AuthStatus.PendingResponse)
 
       // Receive auth-required rejection
       const authReqMsg: RelayMessage = ["OK", "123", false, "auth-required: need to auth first"]
@@ -156,6 +158,41 @@ describe("policy", () => {
       // Should remove the second auth-required message too
       expect(recvQueueRemoveSpy).toHaveBeenCalledWith(authReqMsg2)
 
+      cleanup()
+    })
+
+    it("should deliver EOSE when an optional auth challenge is not accepted", async () => {
+      const cleanup = socketPolicyAuthBuffer(socket)
+      const receiveSpy = vi.fn()
+      socket.on(SocketEvent.Receive, receiveSpy)
+
+      const challenge: RelayMessage = ["AUTH", "challenge"]
+      socket._recvQueue.push(challenge)
+      socket.emit(SocketEvent.Receiving, challenge)
+      await vi.runAllTimersAsync()
+      expect(socket.auth.status).toBe(AuthStatus.Requested)
+
+      const eose: RelayMessage = ["EOSE", "request"]
+      socket._recvQueue.push(eose)
+      socket.emit(SocketEvent.Receiving, eose)
+      await vi.runAllTimersAsync()
+
+      expect(receiveSpy).toHaveBeenCalledWith(eose, "wss://test.relay")
+      cleanup()
+    })
+
+    it("should deliver auth-required closure when optional auth is not accepted", async () => {
+      const cleanup = socketPolicyAuthBuffer(socket)
+      const receiveSpy = vi.fn()
+      socket.on(SocketEvent.Receive, receiveSpy)
+      socket.auth.setStatus(AuthStatus.Requested)
+
+      const closed: RelayMessage = ["CLOSED", "request", "auth-required: sign in"]
+      socket._recvQueue.push(closed)
+      socket.emit(SocketEvent.Receiving, closed)
+      await vi.runAllTimersAsync()
+
+      expect(receiveSpy).toHaveBeenCalledWith(closed, "wss://test.relay")
       cleanup()
     })
 

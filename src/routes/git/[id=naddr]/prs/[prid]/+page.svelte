@@ -20,6 +20,7 @@
   import Icon from "@lib/components/Icon.svelte"
   import AltArrowUp from "@assets/icons/alt-arrow-up.svg?dataurl"
   import PRView from "@app/components/PRView.svelte"
+  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
 
   const repoClass = getContext<Repo>(REPO_KEY)
   const repoRelaysStore = getContext<Readable<string[]>>(REPO_RELAYS_KEY)
@@ -29,8 +30,7 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoLiveCoveragePartialStore = repoRootHistory.liveCoveragePartial
-  const repoAnnouncementLiveCoveragePartialStore = repoRootHistory.announcementLiveCoveragePartial
+  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -43,8 +43,6 @@
   const prEditRelays = $derived(repoRelays)
   const hasRepoAnnouncement = $derived.by(() => Boolean(repoClass.repoEvent))
   const announcementStatus = $derived($repoAnnouncementStatusStore)
-  const liveCoveragePartial = $derived($repoLiveCoveragePartialStore)
-  const announcementLiveCoveragePartial = $derived($repoAnnouncementLiveCoveragePartialStore)
   const repoRelaysUnavailable = $derived(
     hasRepoAnnouncement &&
       announcementStatus === "complete" &&
@@ -106,7 +104,6 @@
     const currentAnnouncementStatus = announcementStatus
     const cacheHydrationPending = $repoCacheHydrationPendingStore
     const cacheHydrationFailed = $repoCacheHydrationFailedStore
-    const liveCoveragePartial = $repoLiveCoveragePartialStore
     const relays = repoRelays
     void requestedRepoEvent
     void $requestedRootEventStore.get(requestedRootReference)
@@ -220,35 +217,27 @@
 </svelte:head>
 
 <div bind:this={pageContainerRef} data-event={resolvedPrEvent?.id}>
-  {#if liveCoveragePartial || announcementLiveCoveragePartial}
-    <div
-      class="mb-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-      role="status">
-      {liveCoveragePartial && announcementLiveCoveragePartial
-        ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
-        : liveCoveragePartial
-          ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
-          : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."}
-    </div>
-  {/if}
   {#if isHiddenRoot && prEvent}
     <div class="p-4 text-center text-muted-foreground">This pull request was hidden as spam.</div>
   {:else if pr && resolvedPrEvent}
-    {#if prResolutionStatus !== "complete"}
+    {#if prResolutionStatus !== "complete" && prResolutionStatus !== "loading"}
       <div
         class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
         role="status"
         aria-live="polite">
         <span>
-          {prResolutionStatus === "loading"
-            ? "Refreshing pull request activity…"
-            : prResolutionStatus === "unavailable"
-              ? "Repository relays are unavailable. Showing saved pull request content."
-              : prResolutionStatus === "failed"
-                ? "Pull request activity refresh failed. Showing saved content."
-                : "Some repository relays did not finish. Pull request activity may be incomplete."}
+          {prResolutionStatus === "unavailable"
+            ? "Repository relays are unavailable. Showing saved pull request content."
+            : prResolutionStatus === "failed"
+              ? "Pull request activity refresh failed. Showing saved content."
+              : "Some relays did not respond. Showing loaded activity."}
         </span>
-        {#if prResolutionStatus === "partial" || prResolutionStatus === "failed"}
+        {#if $repoFailedRelayRequestsStore.length > 0}
+          <RepoRelayFailureNotice
+            onRetry={() => {
+              prResolutionNonce += 1
+            }} />
+        {:else if prResolutionStatus === "partial" || prResolutionStatus === "failed"}
           <button
             class="rounded-md border border-border px-3 py-1 text-sm"
             onclick={retryPrResolution}>Retry</button>

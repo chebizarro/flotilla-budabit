@@ -49,6 +49,18 @@ vi.mock("@nostr-git/core/utils", () => ({
   }),
 }))
 
+vi.mock("@app/core/repo-relays", () => ({
+  normalizeRepoRelays: vi.fn((relays: string[]) =>
+    Array.from(
+      new Set(
+        relays
+          .filter(relay => relay?.startsWith("wss://"))
+          .map(relay => `${relay.trim().replace(/\/+$/, "")}/`),
+      ),
+    ).sort(),
+  ),
+}))
+
 const VALID_PUBKEY = "a".repeat(64)
 const VALID_IDENTIFIER = "flotilla-budabit"
 
@@ -69,15 +81,15 @@ describe("git [id=naddr] layout load", () => {
     const result = (await load(mkLoadEvent({id: naddr}))) as LayoutResult
 
     expect(result).toMatchObject({
-      url: "wss://author.relay.example.com",
+      url: "wss://author.relay.example.com/",
       repoId: `${VALID_PUBKEY}:${VALID_IDENTIFIER}`,
       repoName: VALID_IDENTIFIER,
       repoPubkey: VALID_PUBKEY,
       id: naddr,
     })
     expect(result.announcementDiscoveryRelays).toEqual([
-      "wss://author.relay.example.com",
-      "wss://fallback.relay.example.com",
+      "wss://author.relay.example.com/",
+      "wss://fallback.relay.example.com/",
     ])
     expect(result.naddrRelays).toEqual([])
   })
@@ -93,8 +105,8 @@ describe("git [id=naddr] layout load", () => {
 
     const {load} = await import("./+layout")
     await expect(load(mkLoadEvent({id: naddr}))).resolves.toMatchObject({
-      url: "wss://fallback.relay.example.com",
-      announcementDiscoveryRelays: ["wss://fallback.relay.example.com"],
+      url: "wss://fallback.relay.example.com/",
+      announcementDiscoveryRelays: ["wss://fallback.relay.example.com/"],
     })
   })
 
@@ -109,8 +121,8 @@ describe("git [id=naddr] layout load", () => {
     const result = (await load(mkLoadEvent({id: naddr}))) as LayoutResult
 
     expect(result.naddrRelays).toEqual([
-      "wss://hint.relay.example.com",
-      "wss://other.relay.example.com",
+      "wss://hint.relay.example.com/",
+      "wss://other.relay.example.com/",
     ])
   })
 
@@ -131,7 +143,30 @@ describe("git [id=naddr] layout load", () => {
     const {load} = await import("./+layout")
     const result = (await load(mkLoadEvent({id: naddr}))) as LayoutResult
 
-    expect(result.naddrRelays).toEqual(["wss://valid.relay.com", "wss://also-valid.relay.com"])
+    expect(result.naddrRelays).toEqual(["wss://also-valid.relay.com/", "wss://valid.relay.com/"])
+  })
+
+  it("deduplicates slash aliases across naddr and fallback relays", async () => {
+    const {getRepoAnnouncementRelays} = await import("@app/core/git-state")
+    vi.mocked(getRepoAnnouncementRelays).mockReturnValueOnce([
+      "wss://nos.lol/",
+      "wss://fallback.relay.example.com",
+    ])
+    const naddr = nip19.naddrEncode({
+      kind: 30617,
+      pubkey: VALID_PUBKEY,
+      identifier: VALID_IDENTIFIER,
+      relays: ["wss://nos.lol", "wss://nos.lol/"],
+    })
+
+    const {load} = await import("./+layout")
+    const result = (await load(mkLoadEvent({id: naddr}))) as LayoutResult
+
+    expect(result.naddrRelays).toEqual(["wss://nos.lol/"])
+    expect(result.announcementDiscoveryRelays).toEqual([
+      "wss://fallback.relay.example.com/",
+      "wss://nos.lol/",
+    ])
   })
 
   it("throws when parseRepoId rejects repoId", async () => {

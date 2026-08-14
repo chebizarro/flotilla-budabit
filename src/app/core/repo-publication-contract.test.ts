@@ -98,7 +98,7 @@ describe("repository publication source contract", () => {
 
   it("does not re-expand repository stars or metadata deletes", () => {
     const collect = readProjectFile("../components/RepoCollectButton.svelte")
-    const layout = readProjectFile("../../routes/git/[id=naddr]/+layout.svelte")
+    const layout = readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte")
     const deleteRepo = readProjectFile("../components/DeleteRepoConfirm.svelte")
     const gitPage = readProjectFile("../../routes/git/+page.svelte")
 

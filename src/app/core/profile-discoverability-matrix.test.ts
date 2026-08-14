@@ -58,7 +58,7 @@ describe("profile discoverability test matrix", () => {
     const gitCommandsTests = readProjectFile("./git-commands.test.ts")
     const communityGitPage = dense(readProjectFile("../../routes/c/[community]/git/+page.svelte"))
     const gitPage = dense(readProjectFile("../../routes/git/+page.svelte"))
-    const repoLayout = dense(readProjectFile("../../routes/git/[id=naddr]/+layout.svelte"))
+    const repoLayout = dense(readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte"))
 
     expect(gitStateTests).toContain("adds only h-tagged community relays")
     expect(gitStateTests).toContain(

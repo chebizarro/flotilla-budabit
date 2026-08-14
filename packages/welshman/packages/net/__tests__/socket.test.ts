@@ -127,6 +127,25 @@ describe("Socket", () => {
       expect(receiveSpy).toHaveBeenCalledWith(message, "wss://test.relay")
     })
 
+    it("should drain large receive bursts without recurring delays", async () => {
+      const receiveSpy = vi.fn()
+      socket.on(SocketEvent.Receive, receiveSpy)
+      socket.open()
+
+      for (let index = 0; index < 101; index += 1) {
+        socket._ws?.onmessage?.({
+          data: JSON.stringify(["EVENT", "123", {id: String(index), kind: 1}]),
+        } as unknown as any)
+      }
+      const eose: RelayMessage = ["EOSE", "123"]
+      socket._ws?.onmessage?.({data: JSON.stringify(eose)} as unknown as any)
+
+      await vi.runAllTimersAsync()
+
+      expect(receiveSpy).toHaveBeenCalledTimes(102)
+      expect(receiveSpy).toHaveBeenLastCalledWith(eose, "wss://test.relay")
+    })
+
     it("should emit error on invalid JSON", () => {
       const errorSpy = vi.fn()
       socket.on(SocketEvent.Error, errorSpy)

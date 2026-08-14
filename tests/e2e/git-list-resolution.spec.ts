@@ -51,14 +51,7 @@ test("replaces an EOSE-backed empty issue list when late live activity arrives",
   await page.goto(`/git/${naddr}/issues`)
 
   await expect.poll(() => activitySubscriptions).toBeGreaterThan(0)
-  await expect(
-    page.getByText(
-      "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay.",
-      {
-        exact: true,
-      },
-    ),
-  ).toBeVisible()
+  await expect(page.getByText(/Live announcement updates cover/)).toHaveCount(0)
 
   await mockRelay.injectEvents([issue])
 
@@ -104,12 +97,7 @@ test("replaces an EOSE-backed empty PR list when late live activity arrives", as
   await page.goto(`/git/${naddr}/prs`)
 
   await expect.poll(() => activitySubscriptions).toBeGreaterThan(0)
-  await expect(
-    page.getByText(
-      "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay.",
-      {exact: true},
-    ),
-  ).toBeVisible()
+  await expect(page.getByText(/Live announcement updates cover/)).toHaveCount(0)
 
   await mockRelay.injectEvents([pullRequest])
 
@@ -169,7 +157,13 @@ test("loads a bounded recent issue page before requesting older relay history", 
   await expect(page.getByText("Paginated issue 100", {exact: true})).toBeVisible({timeout: 10_000})
 
   const loadMore = page.getByRole("button", {name: "Load more", exact: true})
-  for (let index = 0; index < 5; index += 1) await loadMore.click()
+  for (
+    let index = 0;
+    index < 6 && !rootRequests.some(request => request.until !== undefined);
+    index += 1
+  ) {
+    await loadMore.click()
+  }
 
   await expect.poll(() => rootRequests.some(request => request.until !== undefined)).toBe(true)
   expect(rootRequests.find(request => request.until !== undefined)?.until).toBe(BASE_TIMESTAMP + 1)
@@ -215,14 +209,72 @@ test("shows partial issue history and retries only current root work", async ({p
   await page.goto(`/git/${naddr}/issues`)
 
   await expect(
-    page.getByText("Some repository relays did not finish. Issue history may be incomplete.", {
+    page.getByText("Some relays did not respond. Showing loaded activity.", {
       exact: true,
     }),
   ).toBeVisible({timeout: 15_000})
   await expect(page.getByText(/No issues exist/)).toHaveCount(0)
   expect(rootRequests).toBe(1)
 
-  await page.getByRole("button", {name: "Retry issue history"}).click()
+  await page.getByRole("button", {name: "Show"}).click()
+  const relayFailure = page.getByText(`${activityRelay}/`, {exact: true})
+  await expect(relayFailure).toBeVisible()
+  expect(
+    await relayFailure.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      const topmost = document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      )
+      return element === topmost || element.contains(topmost)
+    }),
+  ).toBe(true)
+  await page.getByRole("button", {name: "Retry failed"}).click()
   await expect.poll(() => rootRequests).toBeGreaterThan(1)
   expect(stableSubscriptions).toBe(1)
+})
+
+test("settles an empty PR list while cached issue activity is still incomplete", async ({page}) => {
+  const relayUrl = "wss://git-empty-pr-settlement.test"
+  const identifier = "empty-pr-settlement-fixture"
+  const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
+  const announcement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "Empty PR settlement fixture",
+      relays: [relayUrl],
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP,
+    }),
+  )
+  const issue = signTestEvent(
+    createIssue({
+      repoAddress,
+      subject: "Issue with stalled activity",
+      content: "Its activity refresh must not block the empty PR state.",
+      pubkey: TEST_PUBKEYS.charlie,
+      created_at: BASE_TIMESTAMP + 1,
+    }),
+  )
+  const mockRelay = new MockRelay({
+    seedEvents: [announcement, issue],
+    getSubscriptionOutcome: filters =>
+      filters.some(filter =>
+        [filter["#e"], filter["#E"], filter["#q"]].some(
+          values => Array.isArray(values) && (values as unknown[]).includes(issue.id),
+        ),
+      )
+        ? "stall"
+        : undefined,
+  })
+
+  await page.addInitScript(() => localStorage.clear())
+  await mockRelay.setup(page)
+  const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [relayUrl])
+  await page.goto(`/git/${naddr}/prs`)
+
+  await expect(page.getByText("No pull requests yet.", {exact: true})).toBeVisible({
+    timeout: 15_000,
+  })
+  await expect(page.getByText(/Some relays did not respond/)).toHaveCount(0)
 })

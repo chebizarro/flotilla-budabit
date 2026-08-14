@@ -56,7 +56,7 @@
   import {normalizeRelays} from "@app/core/community"
   import {makeEventShareEntityForEvent} from "@app/util/event-share"
 
-  import {getContext} from "svelte"
+  import {getContext, onDestroy} from "svelte"
   import {readable, type Readable} from "svelte/store"
   import type {Repo} from "@nostr-git/ui"
 
@@ -130,6 +130,7 @@
   let copiedUrl = $state<string | null>(null)
   let repoInfoLoaded = $state(false)
   let commitLoadDebounce: ReturnType<typeof setTimeout> | null = null
+  let destroyed = false
   let commitLoadInProgress = $state(false)
   let cloneDetailsElement = $state<HTMLDetailsElement>()
   let cloneDetailsOpen = $state(false)
@@ -204,9 +205,7 @@
     const maintainers = fromEvent.length > 0 ? fromEvent : fallback
 
     return Array.from(
-      new Set(
-        maintainers.map(normalizePubkey).filter(pubkey => pubkey && pubkey !== owner),
-      ),
+      new Set(maintainers.map(normalizePubkey).filter(pubkey => pubkey && pubkey !== owner)),
     )
   })
 
@@ -421,7 +420,7 @@
       // Only run once per repo to prevent duplicate API calls
       repoClass.waitForReady().then(() => {
         // Double-check the key hasn't changed and we haven't already loaded
-        if (repoClass.key === currentKey && !repoInfoLoaded) {
+        if (!destroyed && repoClass.key === currentKey && !repoInfoLoaded) {
           repoInfoLoaded = true
           loadRepoInfo()
         }
@@ -461,6 +460,7 @@
       ;(async () => {
         // Wait for repo to be ready before loading commits
         await repoClass.waitForReady()
+        if (destroyed || seq !== lastCommitReqSeq) return
         await loadLastCommit()
         // Only apply result if this is the latest request
         if (seq !== lastCommitReqSeq) return
@@ -489,16 +489,25 @@
         branch: branchName,
         commit: undefined as any,
       })
+      if (destroyed) return
       readme = readmeContent.content
       renderedReadme = readme ? md.render(readme) : ""
       if (!readme) readmeError = true
     } catch (e) {
+      if (destroyed) return
       console.debug("README: Failed to load", e)
       readmeError = true
     } finally {
-      readmeLoading = false
+      if (!destroyed) readmeLoading = false
     }
   }
+
+  onDestroy(() => {
+    destroyed = true
+    lastCommitReqSeq += 1
+    if (commitLoadDebounce) clearTimeout(commitLoadDebounce)
+    commitLoadDebounce = null
+  })
 
   async function loadLastCommit() {
     // Guard: prevent duplicate calls if already loading
@@ -532,7 +541,7 @@
       try {
         const res = await repoClass.getCommitHistory({branch: mainBranch, depth: 1})
         const list = Array.isArray(res) ? res : res?.commits
-        if (Array.isArray(list) && list.length > 0) {
+        if (!destroyed && Array.isArray(list) && list.length > 0) {
           lastCommit = list[0]
         }
       } catch (e) {
@@ -559,7 +568,10 @@
     const timestamp = [
       commit?.commit?.author?.timestamp,
       commit?.commit?.committer?.timestamp,
-    ].find(value => value !== undefined && value !== null && value !== "" && Number.isFinite(Number(value)))
+    ].find(
+      value =>
+        value !== undefined && value !== null && value !== "" && Number.isFinite(Number(value)),
+    )
     if (timestamp === undefined) return null
 
     const date = new Date(Number(timestamp) * 1000)
@@ -1117,7 +1129,8 @@
                   {#if repoOwnerPubkey}
                     <div class="min-w-0 rounded-lg border border-border/70 bg-secondary/15 p-2">
                       <div class="mb-2 flex items-center justify-between gap-2">
-                        <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                        <span
+                          class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
                           >Owner</span>
                         <span
                           class="rounded-full border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground"
@@ -1144,7 +1157,8 @@
                   {#if repoMaintainerPubkeys.length > 0}
                     <div class="min-w-0 rounded-lg border border-primary/20 bg-primary/5 p-2">
                       <div class="mb-2 flex items-center justify-between gap-2">
-                        <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                        <span
+                          class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
                           >Maintainers</span>
                         <span
                           class="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary"
@@ -1154,7 +1168,7 @@
                       <RepoMaintainerList
                         maintainers={repoMaintainerPubkeys}
                         relays={repoCommunityProfileRelays}
-                        verifiedMaintainers={verifiedMaintainers}
+                        {verifiedMaintainers}
                         repoName={repoClass?.name || ""}
                         previewCount={MAINTAINER_PREVIEW_COUNT}
                         showLabel={false} />
@@ -1225,7 +1239,6 @@
               </div>
             </section>
           {/if}
-
         </Card>
       </div>
 

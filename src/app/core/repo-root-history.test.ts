@@ -8,6 +8,7 @@ import {
   createRepoRootHistory,
   getIncompleteRepoRootGapScopes,
   mapRepoRelayWork,
+  type RepoRootHistorySnapshot,
 } from "./repo-root-history"
 
 const address = `30617:${"a".repeat(64)}:repo`
@@ -113,6 +114,42 @@ describe("repository root history", () => {
     await history.loadRecent()
 
     expect(history.getSnapshot()).toMatchObject({status: "partial", exhausted: false})
+  })
+
+  it("publishes one relay's terminal state while another relay is still loading", async () => {
+    let finishSlow: ((value: FiniteRelayResult) => void) | undefined
+    const snapshots: RepoRootHistorySnapshot[] = []
+    const requestFiniteRelay = vi.fn(options => {
+      if (options.relay === "wss://fast") {
+        return Promise.resolve(result(options.relay, "eose"))
+      }
+      return new Promise<FiniteRelayResult>(resolve => {
+        finishSlow = resolve
+      })
+    })
+    const history = createRepoRootHistory({requestFiniteRelay})({
+      relays: ["wss://fast", "wss://slow"],
+      addresses: [address],
+      signal: new AbortController().signal,
+      priority: 100,
+      onEvent: vi.fn(),
+      onState: snapshot => snapshots.push(snapshot),
+    })
+
+    const loading = history.loadRecent()
+    await vi.waitFor(() =>
+      expect(
+        snapshots.some(snapshot =>
+          snapshot.relays.some(
+            relayState => relayState.relay === "wss://fast" && relayState.status === "complete",
+          ),
+        ),
+      ).toBe(true),
+    )
+    expect(history.getSnapshot().status).toBe("loading")
+
+    finishSlow?.(result("wss://slow", "timeout"))
+    await loading
   })
 
   it("honors relay page limits below the default without claiming exhaustion", async () => {
@@ -232,12 +269,10 @@ describe("repository root history", () => {
     })
   })
 
-  it("advances past a short inclusive boundary before empty EOSE proves exhaustion", async () => {
+  it("treats a short EOSE page as exhausted", async () => {
     const requestFiniteRelay = vi
       .fn()
       .mockResolvedValueOnce(result("wss://short", "eose", [makeEvent("1", 10)]))
-      .mockResolvedValueOnce(result("wss://short", "eose", [makeEvent("1", 10)]))
-      .mockResolvedValueOnce(result("wss://short", "eose"))
     const history = createRepoRootHistory({requestFiniteRelay})({
       relays: ["wss://short"],
       addresses: [address],
@@ -249,11 +284,8 @@ describe("repository root history", () => {
     })
 
     await history.loadRecent()
-    expect(history.getSnapshot()).toMatchObject({hasOlder: true, exhausted: false})
-    await history.loadOlder()
-    expect(history.getSnapshot().relays[0]).toMatchObject({until: 9, exhausted: false})
-    await history.loadOlder()
     expect(history.getSnapshot()).toMatchObject({hasOlder: false, exhausted: true})
+    expect(requestFiniteRelay).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -391,6 +423,32 @@ describe("repository root resolution", () => {
     })
     expect(harness.requestFiniteRelay).toHaveBeenCalledTimes(2)
     expect(harness.loadGap).toHaveBeenCalledWith(root.id)
+  })
+
+  it("publishes an accepted exact root before every relay settles", async () => {
+    const root = makeRootEvent({id: "2"})
+    let finishSlow: ((value: FiniteRelayResult) => void) | undefined
+    const onEvent = vi.fn()
+    const requestFiniteRelay = vi.fn(options => {
+      if (options.relay === "wss://fast") {
+        options.onEvent?.(root, options.relay)
+        return Promise.resolve(result(options.relay, "eose", [root]))
+      }
+      return new Promise<FiniteRelayResult>(resolve => {
+        finishSlow = resolve
+      })
+    })
+    const harness = makeResolver({
+      requestFiniteRelay,
+      relays: ["wss://fast", "wss://slow"],
+      onEvent,
+    })
+
+    const pending = harness.ensureRoot(root.id)
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledWith(root, "wss://fast"))
+
+    finishSlow?.(result("wss://slow", "timeout"))
+    await expect(pending).resolves.toMatchObject({rootId: root.id, status: "partial"})
   })
 
   it("reports unavailable, partial, failed, and aborted outcomes", async () => {

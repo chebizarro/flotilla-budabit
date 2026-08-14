@@ -6,10 +6,17 @@ import type {LayoutLoad} from "./$types"
 export const load: LayoutLoad = async ({params}) => {
   const {id} = params
   // Dynamic imports to avoid SSR issues
-  const {getRepoAnnouncementRelays} = await import("@app/core/git-state")
-  const {getPubkeyOutboxRelays} = await import("@app/core/community-state")
-  const {sanitizeRelays} = await import("@nostr-git/core/utils")
-  const {parseRepoId} = await import("@nostr-git/core/utils")
+  const [
+    {getRepoAnnouncementRelays},
+    {getPubkeyOutboxRelays},
+    {normalizeRepoRelays},
+    {parseRepoId},
+  ] = await Promise.all([
+    import("@app/core/git-state"),
+    import("@app/core/community-state"),
+    import("@app/core/repo-relays"),
+    import("@nostr-git/core/utils"),
+  ])
 
   const decoded = nip19.decode(id).data as AddressPointer
   const repoId = `${decoded.pubkey}:${decoded.identifier}`
@@ -27,13 +34,15 @@ export const load: LayoutLoad = async ({params}) => {
 
   // Extract relays from naddr if present
   const naddrRelays =
-    (decoded.relays?.length ?? 0) > 0 ? sanitizeRelays(decoded.relays as string[]) : []
+    (decoded.relays?.length ?? 0) > 0 ? normalizeRepoRelays(decoded.relays as string[]) : []
 
   const configuredFallbackRelays = getRepoAnnouncementRelays(naddrRelays)
   const targetOutboxRelays = naddrRelays.length === 0 ? getPubkeyOutboxRelays([repoPubkey]) : []
-  const announcementDiscoveryRelays = Array.from(
-    new Set([...naddrRelays, ...targetOutboxRelays, ...configuredFallbackRelays]),
-  )
+  const announcementDiscoveryRelays = normalizeRepoRelays([
+    ...naddrRelays,
+    ...targetOutboxRelays,
+    ...configuredFallbackRelays,
+  ])
   const url = naddrRelays[0] || announcementDiscoveryRelays[0] || ""
 
   return {

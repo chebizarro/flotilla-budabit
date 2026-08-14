@@ -64,6 +64,7 @@
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
   import {postIssue, postStatus} from "@app/core/git-commands"
   import {getRepoRootListPresentation} from "@app/core/repo-root-presentation"
+  import RepoRelayFailureNotice from "@app/components/RepoRelayFailureNotice.svelte"
 
   let showScrollButton = $state(false)
   let pageContainerRef: HTMLElement | undefined = $state()
@@ -100,20 +101,17 @@
   const repoAnnouncementStatusStore = repoRootHistory.announcementStatus
   const repoCacheHydrationPendingStore = repoRootHistory.cacheHydrationPending
   const repoCacheHydrationFailedStore = repoRootHistory.cacheHydrationFailed
-  const repoLiveCoveragePartialStore = repoRootHistory.liveCoveragePartial
-  const repoAnnouncementLiveCoveragePartialStore = repoRootHistory.announcementLiveCoveragePartial
+  const repoFailedRelayRequestsStore = repoRootHistory.failedRelayRequests
   const repoBoundRelays = $derived.by(() => (repoRelaysStore ? $repoRelaysStore : []))
   const repoActivityAuthority = $derived.by(() =>
-    $repoAnnouncementStatusStore === "loading"
-      ? "pending"
-      : $repoAnnouncementStatusStore === "partial"
-        ? "partial"
-        : $repoAnnouncementStatusStore === "failed" || $repoAnnouncementStatusStore === "aborted"
-          ? "failed"
-          : repoClass?.repoEvent && repoBoundRelays.length > 0
-            ? $repoLiveCoveragePartialStore || $repoAnnouncementLiveCoveragePartialStore
-              ? "limited"
-              : "available"
+    repoClass?.repoEvent && repoBoundRelays.length > 0
+      ? "available"
+      : $repoAnnouncementStatusStore === "loading"
+        ? "pending"
+        : $repoAnnouncementStatusStore === "partial"
+          ? "partial"
+          : $repoAnnouncementStatusStore === "failed" || $repoAnnouncementStatusStore === "aborted"
+            ? "failed"
             : "unavailable",
   )
   const repoCommunityProfileRelays = $derived.by(() => {
@@ -622,6 +620,7 @@
   // Compute issueList asynchronously to avoid blocking UI rendering
   let issueList = $state<IssueListItem[]>([])
   let issueListCacheKey = $state<string>("")
+  let issueListHasProjected = false
 
   $effect(() => {
     // Access reactive dependencies synchronously to ensure they're tracked
@@ -633,7 +632,7 @@
     const currentIssueEdits = issueEditsById
     const currentIssueListCacheKey = issueListCacheKey
 
-    const timeout = setTimeout(() => {
+    const projectIssueList = () => {
       if (!currentIssues) {
         issueList = []
         return
@@ -692,7 +691,15 @@
 
       issueList = processed
       issueListCacheKey = currentKey
-    }, 100)
+      if (processed.length > 0) issueListHasProjected = true
+    }
+
+    if (!issueListHasProjected && currentIssues.length > 0) {
+      projectIssueList()
+      return
+    }
+
+    const timeout = setTimeout(projectIssueList, 100)
 
     return () => {
       clearTimeout(timeout)
@@ -703,6 +710,7 @@
   // This is the most critical optimization as it includes search, filtering, and sorting
   let searchedIssues = $state<IssueListItem[]>([])
   let searchedIssuesCacheKey = $state<string>("")
+  let issueSearchHasProjected = false
   let issueSearchSource: IssueListItem[] | null = null
   let issueSearchItems: IssueSearchItem[] = []
   let issueSearchCache: {searchOptions: (query: string) => IssueSearchItem[]} | null = null
@@ -720,7 +728,7 @@
     const currentStatusMap = statusMap
     const currentCacheKey = searchedIssuesCacheKey
 
-    const timeout = setTimeout(() => {
+    const projectSearchedIssues = () => {
       if (!currentIssueList || currentIssueList.length === 0) {
         searchedIssues = []
         issueSearchSource = null
@@ -827,7 +835,15 @@
 
       searchedIssues = result
       searchedIssuesCacheKey = currentKey
-    }, 100)
+      issueSearchHasProjected = true
+    }
+
+    if (!issueSearchHasProjected && currentIssueList.length > 0) {
+      projectSearchedIssues()
+      return
+    }
+
+    const timeout = setTimeout(projectSearchedIssues, 100)
 
     return () => {
       clearTimeout(timeout)
@@ -1090,20 +1106,16 @@
             ? "Loading older issue history…"
             : "Refreshing recent issue history…"}
         {:else if issueListPresentation.notice === "partial"}
-          Some repository relays did not finish. Showing the issues loaded so far.
-        {:else if issueListPresentation.notice === "limited"}
-          {$repoLiveCoveragePartialStore && $repoAnnouncementLiveCoveragePartialStore
-            ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
-            : $repoLiveCoveragePartialStore
-              ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
-              : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."}
+          Some relays did not respond. Showing loaded activity.
         {:else if issueListPresentation.notice === "failed"}
           Issue history refresh failed. Showing saved issues.
         {:else}
           Repository relays are unavailable. Showing saved issues.
         {/if}
       </span>
-      {#if issueListPresentation.canRetry}
+      {#if $repoFailedRelayRequestsStore.length > 0}
+        <RepoRelayFailureNotice />
+      {:else if issueListPresentation.canRetry}
         <GitButton variant="outline" size="sm" onclick={retryIssueHistory}>Retry</GitButton>
       {/if}
     </div>
@@ -1123,15 +1135,11 @@
             ? "Repository relays are unavailable, so issue history cannot be checked."
             : issueListPresentation.notice === "failed"
               ? "Issue history could not be loaded from the repository relays."
-              : issueListPresentation.notice === "limited"
-                ? $repoLiveCoveragePartialStore && $repoAnnouncementLiveCoveragePartialStore
-                  ? "Live activity and announcement updates are capped at six relays per lane. Finite history and announcement refresh still check every relay."
-                  : $repoLiveCoveragePartialStore
-                    ? "Live activity updates cover the first six repository relays; finite history still checks every declared relay."
-                    : "Live announcement updates cover the first six discovery relays; finite announcement refresh still checks every discovery relay."
-                : "Some repository relays did not finish. Issue history may be incomplete."}
+              : "Some relays did not respond. Showing loaded activity."}
         </p>
-        {#if issueListPresentation.canRetry}
+        {#if $repoFailedRelayRequestsStore.length > 0}
+          <RepoRelayFailureNotice />
+        {:else if issueListPresentation.canRetry}
           <GitButton variant="outline" size="sm" onclick={retryIssueHistory}
             >Retry issue history</GitButton>
         {/if}
@@ -1147,7 +1155,7 @@
             ? "No visible issues in the loaded history."
             : issueListPresentation.content === "recent-empty"
               ? "No issues were found in the recent history page. Older history may still contain issues."
-              : "No issues exist in the fully loaded repository history."}
+              : "No issues yet."}
       </p>
       {#if suggestedUnreadStatus}
         <p class="mt-2 max-w-md text-center text-sm text-muted-foreground">

@@ -107,6 +107,11 @@ export interface MockRelayOptions {
   publishResponsesByRelay?: Record<string, MockRelayPublishResponse>
   /** Subscription behavior keyed by exact relay URL */
   subscriptionOutcomesByRelay?: Record<string, "eose" | "stall" | "disconnect">
+  /** Subscription behavior selected from the exact filters */
+  getSubscriptionOutcome?: (
+    filters: NostrFilter[],
+    relayUrl: string,
+  ) => "eose" | "stall" | "disconnect" | undefined
 }
 
 /**
@@ -127,6 +132,7 @@ export class MockRelay {
   private responseLatencyByKind: Record<number, number> = {}
   private publishResponsesByRelay: Record<string, MockRelayPublishResponse> = {}
   private subscriptionOutcomesByRelay: Record<string, "eose" | "stall" | "disconnect"> = {}
+  private getSubscriptionOutcomeCallback?: MockRelayOptions["getSubscriptionOutcome"]
   private eventWaiters: Map<
     number,
     {resolve: (event: NostrEvent) => void; reject: (error: Error) => void}[]
@@ -165,6 +171,7 @@ export class MockRelay {
     if (options?.subscriptionOutcomesByRelay) {
       this.subscriptionOutcomesByRelay = {...options.subscriptionOutcomesByRelay}
     }
+    this.getSubscriptionOutcomeCallback = options?.getSubscriptionOutcome
   }
 
   /**
@@ -214,6 +221,9 @@ export class MockRelay {
         ...options.subscriptionOutcomesByRelay,
       }
     }
+    if (options?.getSubscriptionOutcome) {
+      this.getSubscriptionOutcomeCallback = options.getSubscriptionOutcome
+    }
 
     this.page = page
     this.isSetup = true
@@ -236,6 +246,11 @@ export class MockRelay {
       (subId: string, filters: NostrFilter[], relayUrl: string) => {
         this.onSubscribeCallback?.(subId, filters, relayUrl)
       },
+    )
+    await page.exposeFunction(
+      "__mockRelaySubscriptionOutcome",
+      (filters: NostrFilter[], relayUrl: string) =>
+        this.getSubscriptionOutcomeCallback?.(filters, relayUrl),
     )
 
     // Inject the mock WebSocket before any scripts run
@@ -368,7 +383,7 @@ export class MockRelay {
             }
           }
 
-          private handleReq(params: unknown[]): void {
+          private async handleReq(params: unknown[]): Promise<void> {
             const [subId, ...filters] = params as [string, ...NostrFilter[]]
 
             if (debug) {
@@ -388,7 +403,16 @@ export class MockRelay {
               }
             ).__mockRelaySubscribe?.(subId, filters, this.url)
 
-            const subscriptionOutcome = subscriptionOutcomesByRelay[this.url] || "eose"
+            const callbackOutcome = await (
+              window as unknown as {
+                __mockRelaySubscriptionOutcome?: (
+                  filters: NostrFilter[],
+                  relayUrl: string,
+                ) => Promise<"eose" | "stall" | "disconnect" | undefined>
+              }
+            ).__mockRelaySubscriptionOutcome?.(filters, this.url)
+            const subscriptionOutcome =
+              callbackOutcome || subscriptionOutcomesByRelay[this.url] || "eose"
             if (subscriptionOutcome === "stall") return
             if (subscriptionOutcome === "disconnect") {
               setTimeout(() => this.close(1006, "offline"), latency)
