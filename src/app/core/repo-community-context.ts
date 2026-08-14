@@ -101,7 +101,12 @@ const associationTargetsRepo = ({
     return targeting
   }
 
-  if (!targeting.ref && repoEvent && getTagValue("h", repoEvent.tags || []) === targeting.id) {
+  if (
+    !targeting.ref &&
+    repoEvent &&
+    normalizePubkey(repoEvent.pubkey) === normalizePubkey(event.pubkey) &&
+    getTagValue("h", repoEvent.tags || []) === targeting.id
+  ) {
     return targeting
   }
 

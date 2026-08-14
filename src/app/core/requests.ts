@@ -662,15 +662,19 @@ export const makeCalendarFeed = ({
   url,
   relays,
   filters,
+  relayFilters,
   element,
   onInitialLoad,
+  onIncomplete,
   onExhausted,
 }: {
   url?: string
   relays?: string[]
   filters: Filter[]
+  relayFilters?: Filter[]
   element: HTMLElement
   onInitialLoad?: (result: InitialLoadResult) => void
+  onIncomplete?: (result: InitialLoadResult) => void
   onExhausted?: () => void
 }) => {
   const interval = int(5, DAY)
@@ -678,6 +682,7 @@ export const makeCalendarFeed = ({
   const loadRelays = uniq(
     [...(relays || []), ...(url ? [url] : [])].filter((relay): relay is string => Boolean(relay)),
   )
+  const networkFilters = relayFilters || filters
 
   let exhaustedScrollers = 0
   const initialBackwardWindow = [now() - interval, now()] as const
@@ -775,52 +780,46 @@ export const makeCalendarFeed = ({
     onExhausted?.()
   }
 
-  const loadCalendarFilters = async (requestFilters: Filter[]): Promise<InitialLoadResult> => {
-    if (requestFilters.length === 0 || loadRelays.length === 0) {
+  const loadCalendarFilters = async (
+    requestRelayFilters: Filter[],
+    requestLocalFilters: Filter[],
+  ): Promise<InitialLoadResult> => {
+    if (
+      requestRelayFilters.length === 0 ||
+      requestLocalFilters.length === 0 ||
+      loadRelays.length === 0
+    ) {
       return {complete: true, timedOut: false}
     }
 
-    const requestController = new AbortController()
-    let complete = true
-    let timedOut = false
-    const timeout = setTimeout(() => {
-      complete = false
-      timedOut = true
-      requestController.abort()
-    }, CALENDAR_REQUEST_TIMEOUT)
-
     try {
-      await request({
+      const result = await loadBoundedCommunityHistory({
         relays: loadRelays,
-        autoClose: true,
-        lifetime: "finite",
+        relayFilters: requestRelayFilters,
+        localFilters: requestLocalFilters,
+        timeoutMs: CALENDAR_REQUEST_TIMEOUT,
         priority: RELAY_REQUEST_PRIORITY.interactive,
-        signal: AbortSignal.any([controller.signal, requestController.signal]),
-        filters: requestFilters,
-        onDisconnect: () => {
-          complete = false
-        },
-        onClosed: () => {
-          complete = false
-        },
-        onEvent: (event, relay) => {
-          tracker.addRelay(event.id, relay)
-          repository.publish(event)
-        },
+        owner: "calendar-feed",
+        signal: controller.signal,
       })
-    } catch {
-      complete = false
-    } finally {
-      clearTimeout(timeout)
-    }
 
-    return {complete: complete && !controller.signal.aborted, timedOut}
+      return {complete: result.complete, timedOut: result.timedOut, saturated: result.saturated}
+    } catch {
+      return {complete: false, timedOut: false}
+    }
   }
 
   const loadTimeframe = (since: number, until: number) =>
-    loadCalendarFilters(makeCalendarTimeBasedFilters(filters, since, until))
+    loadCalendarFilters(
+      makeCalendarTimeBasedFilters(networkFilters, since, until),
+      makeCalendarTimeBasedFilters(filters, since, until),
+    )
 
-  const loadDateBasedEvents = () => loadCalendarFilters(makeCalendarDateBasedFilters(filters))
+  const loadDateBasedEvents = () =>
+    loadCalendarFilters(
+      makeCalendarDateBasedFilters(networkFilters),
+      makeCalendarDateBasedFilters(filters),
+    )
 
   const maybeExhausted = () => {
     if (++exhaustedScrollers === 2) {
@@ -837,7 +836,8 @@ export const makeCalendarFeed = ({
       backwardWindow = [since - interval, since]
 
       if (until > now() - int(2, YEAR)) {
-        await loadTimeframe(since, until)
+        const result = await loadTimeframe(since, until)
+        if (!result.complete) onIncomplete?.(result)
       } else {
         backwardScroller.stop()
         maybeExhausted()
@@ -853,7 +853,8 @@ export const makeCalendarFeed = ({
       forwardWindow = [until, until + interval]
 
       if (until < now() + int(2, YEAR)) {
-        await loadTimeframe(since, until)
+        const result = await loadTimeframe(since, until)
+        if (!result.complete) onIncomplete?.(result)
       } else {
         forwardScroller.stop()
         maybeExhausted()
@@ -862,17 +863,21 @@ export const makeCalendarFeed = ({
   })
 
   const initialLoad =
-    filters.length > 0 && loadRelays.length > 0
+    filters.length > 0 && networkFilters.length > 0 && loadRelays.length > 0
       ? Promise.all([
           loadDateBasedEvents(),
           loadTimeframe(...initialBackwardWindow),
           loadTimeframe(...initialForwardWindow),
-        ]).then(results =>
-          markInitialLoadComplete({
+        ]).then(results => {
+          const result: InitialLoadResult = {
             complete: results.every(result => result.complete),
             timedOut: results.some(result => result.timedOut),
-          }),
-        )
+            ...(results.some(result => result.saturated) ? {saturated: true} : {}),
+          }
+
+          if (!result.complete) onIncomplete?.(result)
+          markInitialLoadComplete(result)
+        })
       : Promise.resolve().then(() => {
           markInitialLoadComplete()
           markExhausted()

@@ -5,7 +5,14 @@
   import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {max, partition, pushToMapKey, sortBy, spec} from "@welshman/lib"
-  import {COMMENT, ZAP_GOAL, getTagValue, type Filter, type TrustedEvent} from "@welshman/util"
+  import {
+    COMMENT,
+    ZAP_GOAL,
+    getTagValue,
+    matchFilters,
+    type Filter,
+    type TrustedEvent,
+  } from "@welshman/util"
   import NotesMinimalistic from "@assets/icons/notes-minimalistic.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
@@ -23,23 +30,24 @@
     activeCommunityReportState,
     activeCommunityRelays,
     hasCommunityHydrationCompleted,
-    hydrateCommunityEventsWithStatus,
     markCommunityHydrationCompleted,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
-  import {normalizePubkey, parseTargetedPublication} from "@app/core/community"
   import {
+    makeCommunityContentFilterPlan,
     makeCommunityTargetingFilter,
-    makeTargetedPublicationOriginalFilters,
+    makeTargetedPublicationOriginalFilterPlan,
+    makeTargetedPublicationOriginalRelayHintPlans,
   } from "@app/core/community-feeds"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
+    filterAuthorizedCommunityTargetingEvents,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
-  import {makeFeed} from "@app/core/requests"
+  import {loadBoundedCommunityHistory, makeFeed} from "@app/core/requests"
   import {publicationOperations} from "@app/core/publication-operations"
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -50,6 +58,8 @@
 
   let loadingTargets = $state(false)
   let targetLoadStatus = $state<CommunityHydrationStatus>("idle")
+  let loadingHintedOriginals = $state(false)
+  let hintedOriginalLoadStatus = $state<CommunityHydrationStatus>("idle")
   let loadingEvents = $state(false)
   let feedLoadStatus = $state<CommunityHydrationStatus>("idle")
   let emptyStateSettled = $state(false)
@@ -112,9 +122,6 @@
       ? [makeCommunityTargetingFilter(communityPubkey, [ZAP_GOAL])]
       : [],
   )
-  const targetingEvents = $derived(
-    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
-  )
   const goalAuthorPubkeys = $derived(
     $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
@@ -122,6 +129,25 @@
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.goal,
           reportState: $activeCommunityReportState,
+        })
+      : [],
+  )
+  const targetingFilterPlan = $derived(
+    communityBootstrapReady
+      ? makeCommunityContentFilterPlan(targetingFilters, goalAuthorPubkeys)
+      : {relayFilters: [], localFilters: []},
+  )
+  const targetingEvents = $derived(
+    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
+  )
+  const authorizedTargetingEvents = $derived.by(() =>
+    $activeCommunityDefinition
+      ? filterAuthorizedCommunityTargetingEvents({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: [ZAP_GOAL],
         })
       : [],
   )
@@ -155,51 +181,46 @@
         })
       : [],
   )
-  const targetingIds = $derived.by(() => {
-    const allowedAuthors = new Set(goalAuthorPubkeys.map(normalizePubkey).filter(Boolean))
-
-    return $targetingEvents
-      .map(event => parseTargetedPublication(event))
-      .filter(targeting => targeting?.kind === ZAP_GOAL)
-      .filter(targeting => {
-        if (!targeting?.ref || targeting.ref.type !== "a") return true
-
-        const [, author] = targeting.ref.value.split(":")
-        return allowedAuthors.has(normalizePubkey(author || ""))
-      })
-      .map(targeting => targeting?.id || "")
-      .filter(Boolean)
+  const targetedGoalFilterPlan = $derived(
+    makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents),
+  )
+  const targetedGoalRelayHintPlans = $derived(
+    makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+  )
+  const targetedGoalEvents = $derived(
+    targetedGoalFilterPlan.localFilters.length
+      ? deriveEventsAsc(
+          deriveEventsById({repository, filters: targetedGoalFilterPlan.localFilters}),
+        )
+      : readable<TrustedEvent[]>([]),
+  )
+  const directGoalFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey
+      ? makeCommunityContentFilterPlan(
+          [{kinds: [ZAP_GOAL], "#h": [communityPubkey]}],
+          goalAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
+  )
+  const goalFilterPlan = $derived({
+    relayFilters: [...directGoalFilterPlan.relayFilters, ...targetedGoalFilterPlan.relayFilters],
+    localFilters: [...directGoalFilterPlan.localFilters, ...targetedGoalFilterPlan.localFilters],
   })
-  const goalFilters = $derived(
-    communityBootstrapReady && goalAuthorPubkeys.length
-      ? makeTargetedPublicationOriginalFilters($targetingEvents, goalAuthorPubkeys)
-      : [],
+  const commentFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey
+      ? makeCommunityContentFilterPlan(
+          [{kinds: [COMMENT], "#K": [String(ZAP_GOAL)], "#h": [communityPubkey]}],
+          commentAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
   const goalFeedFilters = $derived.by<Filter[]>(() => {
-    const filters: Filter[] = [...goalFilters]
-
-    if (communityPubkey && goalAuthorPubkeys.length > 0) {
-      filters.unshift({
-        kinds: [ZAP_GOAL],
-        authors: goalAuthorPubkeys,
-        "#h": [communityPubkey],
-      })
-    }
-    if (targetingIds.length > 0 && goalAuthorPubkeys.length > 0) {
-      filters.unshift({kinds: [ZAP_GOAL], authors: goalAuthorPubkeys, "#h": targetingIds})
-    }
-
-    if (filters.length > 0 && commentAuthorPubkeys.length > 0) {
-      filters.push({
-        kinds: [COMMENT],
-        "#K": [String(ZAP_GOAL)],
-        "#h": [communityPubkey],
-        authors: commentAuthorPubkeys,
-      })
-    }
-
-    return filters
+    return [...goalFilterPlan.localFilters, ...commentFilterPlan.localFilters]
   })
+  const goalFeedRelayFilters = $derived([
+    ...goalFilterPlan.relayFilters,
+    ...commentFilterPlan.relayFilters,
+  ] as Filter[])
   const feedKey = $derived.by(() =>
     communityBootstrapReady &&
     communityPubkey &&
@@ -208,9 +229,8 @@
       ? [
           communityPubkey,
           ...$activeCommunityRelays,
-          ...goalAuthorPubkeys,
-          ...commentAuthorPubkeys,
-          ...$targetingEvents.map(event => event.id),
+          JSON.stringify(goalFeedFilters),
+          ...authorizedTargetingEvents.map(event => event.id),
         ].join("|")
       : "",
   )
@@ -232,13 +252,12 @@
 
   const goalProjection = $derived.by(() =>
     projectAuthoredPublicationEvents({
-      events: $events,
+      events: Array.from(
+        new Map([...$events, ...$targetedGoalEvents].map(event => [event.id, event])).values(),
+      ),
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
-      matches: event =>
-        event.kind === ZAP_GOAL &&
-        getTagValue("h", event.tags) === communityPubkey &&
-        goalAuthorPubkeys.some(author => normalizePubkey(author) === normalizePubkey(event.pubkey)),
+      matches: event => matchFilters(goalFeedFilters, event),
     }),
   )
   const items = $derived.by(() => {
@@ -288,7 +307,13 @@
   }
 
   const startFeed = (key: string) => {
-    if (!element || !key || goalFeedFilters.length === 0 || $activeCommunityRelays.length === 0)
+    if (
+      !element ||
+      !key ||
+      goalFeedFilters.length === 0 ||
+      goalFeedRelayFilters.length === 0 ||
+      $activeCommunityRelays.length === 0
+    )
       return
 
     const hydrationKey = `goals:feed:${key}`
@@ -304,11 +329,12 @@
       element,
       relays: $activeCommunityRelays,
       feedFilters: goalFeedFilters,
+      relayFilters: goalFeedRelayFilters,
       subscriptionFilters: goalFeedFilters,
-      onInitialLoad: ({complete, timedOut}) => {
+      onInitialLoad: ({complete}) => {
         if (complete) markCommunityHydrationCompleted(hydrationKey)
         loadingEvents = false
-        feedLoadStatus = complete ? "complete" : timedOut ? "incomplete" : "failed"
+        feedLoadStatus = complete ? "complete" : "incomplete"
       },
       onExhausted: () => {
         markCommunityHydrationCompleted(hydrationKey)
@@ -326,49 +352,101 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
+    const relays = $activeCommunityRelays
+    const relayFilters = targetingFilterPlan.relayFilters
+    const localFilters = targetingFilterPlan.localFilters
 
-    if (
-      !communityBootstrapReady ||
-      !communityPubkey ||
-      $activeCommunityRelays.length === 0 ||
-      targetingFilters.length === 0
-    ) {
+    if (!communityBootstrapReady || !communityPubkey) {
       loadingTargets = false
       targetLoadStatus = "idle"
       emptyStateSettled = false
       clearEmptyStateSettleTimer()
       return
     }
-
-    const controller = new AbortController()
-    const key = JSON.stringify({
-      scope: "goals-targets",
-      relays: $activeCommunityRelays,
-      filters: targetingFilters,
-    })
-
-    if (hasCommunityHydrationCompleted(key)) {
+    if (relayFilters.length === 0 || localFilters.length === 0) {
       loadingTargets = false
       targetLoadStatus = "complete"
       return
     }
+    if (relays.length === 0) {
+      loadingTargets = false
+      targetLoadStatus = "incomplete"
+      return
+    }
+
+    const controller = new AbortController()
 
     loadingTargets = true
-    targetLoadStatus = "queued"
+    targetLoadStatus = "loading"
     startEmptyStateSettleTimer()
-    void hydrateCommunityEventsWithStatus({
-      key,
-      relays: $activeCommunityRelays,
-      filters: targetingFilters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-goal-targets:${communityPubkey}`,
       signal: controller.signal,
-      onStatus: status => {
-        targetLoadStatus = status
-        loadingTargets = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        targetLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-goals] Failed to load targeting history", error)
+        targetLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingTargets = false
+      })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    void historicalLoadRetryVersion
+    const plans = targetedGoalRelayHintPlans
+
+    if (!communityBootstrapReady) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "idle"
+      return
+    }
+    if (plans.length === 0) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "complete"
+      return
+    }
+
+    const controller = new AbortController()
+    loadingHintedOriginals = true
+    hintedOriginalLoadStatus = "loading"
+    void Promise.all(
+      plans.map(plan =>
+        loadBoundedCommunityHistory({
+          ...plan,
+          timeoutMs: REQUEST_HARD_TIMEOUT_MS,
+          priority: RELAY_REQUEST_PRIORITY.interactive,
+          owner: `community-goal-target-originals:${communityPubkey}`,
+          signal: controller.signal,
+        }),
+      ),
+    )
+      .then(results => {
+        if (controller.signal.aborted) return
+        hintedOriginalLoadStatus = results.every(result => result.complete)
+          ? "complete"
+          : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-goals] Failed to load hinted goal originals", error)
+        hintedOriginalLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingHintedOriginals = false
+      })
 
     return () => controller.abort()
   })
@@ -436,6 +514,13 @@
 </PageBar>
 
 <PageContent bind:element class="flex flex-col gap-2 p-2 pt-4">
+  {#if items.length > 0 && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed" || feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
+    <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
+      <p>Goal history is incomplete; some goals may be missing.</p>
+      <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
+        >Retry</button>
+    </div>
+  {/if}
   {#each items as event (event.id)}
     <GoalItem
       url={communityPubkey}
@@ -461,14 +546,18 @@
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>
-  {:else if loadingTargets || waitingForFeed || loadingEvents || (!emptyStateSettled && items.length === 0 && targetLoadStatus !== "incomplete" && targetLoadStatus !== "failed" && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed") || (targetLoadStatus === "idle" && items.length === 0)}
+  {:else if loadingTargets || loadingHintedOriginals || waitingForFeed || loadingEvents || (!emptyStateSettled && items.length === 0 && targetLoadStatus !== "incomplete" && targetLoadStatus !== "failed" && hintedOriginalLoadStatus !== "incomplete" && hintedOriginalLoadStatus !== "failed" && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed") || (targetLoadStatus === "idle" && items.length === 0)}
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading
-        >{!emptyStateSettled && !loadingTargets && !waitingForFeed && !loadingEvents
+        >{!emptyStateSettled &&
+        !loadingTargets &&
+        !loadingHintedOriginals &&
+        !waitingForFeed &&
+        !loadingEvents
           ? "Still looking for goals..."
           : "Looking for goals..."}</Spinner>
     </p>
-  {:else if items.length === 0 && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
+  {:else if items.length === 0 && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed" || feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
     <div class="flex flex-col items-center gap-3 py-20 text-center">
       <p>Goal history is incomplete or temporarily unavailable.</p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}

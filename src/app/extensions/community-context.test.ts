@@ -13,6 +13,7 @@ import {
   makeTargetedPublicationForCommunity,
 } from "@app/core/community-targeting"
 import {
+  filterAuthorizedCommunityDescriptorEvents,
   filterCommunityDescriptorEvents,
   makeCommunityDescriptorQueryPlan,
   makeCommunityWidgetContext,
@@ -85,10 +86,14 @@ const makeCalendarTargetingEvent = ({
   id,
   pubkey,
   identifier,
+  originalPubkey = pubkey,
+  implicit = false,
 }: {
   id: string
   pubkey: string
   identifier: string
+  originalPubkey?: string
+  implicit?: boolean
 }) =>
   makeEvent({
     id,
@@ -97,12 +102,14 @@ const makeCalendarTargetingEvent = ({
     tags: makeTargetedPublicationForCommunity({
       targetingId: id,
       originalKind: EVENT_TIME,
-      originalRef: makeAddressablePublicationRef({
-        kind: EVENT_TIME,
-        pubkey,
-        identifier,
-        relay: "wss://relay.example.com/",
-      }),
+      originalRef: implicit
+        ? undefined
+        : makeAddressablePublicationRef({
+            kind: EVENT_TIME,
+            pubkey: originalPubkey,
+            identifier,
+            relay: "wss://relay.example.com/",
+          }),
       communityPubkey,
       communityRelay: "wss://relay.example.com/",
     }).tags,
@@ -217,6 +224,7 @@ describe("community widget context", () => {
       id: "target-1",
       pubkey: calendarWriterPubkey,
       identifier: "event-1",
+      originalPubkey: outsiderPubkey,
     })
     const unauthorizedTargetingEvent = makeCalendarTargetingEvent({
       id: "target-2",
@@ -233,15 +241,61 @@ describe("community widget context", () => {
 
     expect(plan.descriptors).toEqual([{kind: EVENT_TIME}])
     expect(plan.targetKinds).toEqual([EVENT_TIME])
-    expect(plan.targetingFilter).toMatchObject({
-      kinds: [TARGETED_PUBLICATION_KIND],
-      "#p": [communityPubkey],
-      "#k": [String(EVENT_TIME)],
-    })
-    expect(plan.originalFilters).toEqual([
-      {kinds: [EVENT_TIME], authors: [calendarWriterPubkey], "#d": ["event-1"], limit: 5},
+    expect(plan.relayTargetingFilters).toEqual([
+      {
+        kinds: [TARGETED_PUBLICATION_KIND],
+        "#p": [communityPubkey],
+        "#k": [String(EVENT_TIME)],
+      },
+    ])
+    expect(plan.localTargetingFilters).toEqual([
+      {
+        kinds: [TARGETED_PUBLICATION_KIND],
+        "#p": [communityPubkey],
+        "#k": [String(EVENT_TIME)],
+        authors: [communityPubkey, calendarWriterPubkey, calendarMemberPubkey],
+      },
+    ])
+    expect(plan.localOriginalFilters).toEqual([
+      {kinds: [EVENT_TIME], authors: [outsiderPubkey], "#d": ["event-1"], limit: 5},
       {kinds: [EVENT_TIME], authors: [communityPubkey, calendarWriterPubkey], limit: 5},
     ])
+    expect(plan.relayOriginalFilters).toEqual(plan.localOriginalFilters)
+    expect(plan.originalRelayHints).toEqual(["wss://relay.example.com/"])
+    expect(plan.originalFilters).toBe(plan.localOriginalFilters)
+  })
+
+  it("binds implicit originals to authorized wrapper signers", () => {
+    const authorizedTargetingEvent = makeCalendarTargetingEvent({
+      id: "target-implicit",
+      pubkey: calendarWriterPubkey,
+      identifier: "",
+      implicit: true,
+    })
+    const unauthorizedTargetingEvent = makeCalendarTargetingEvent({
+      id: "target-outsider",
+      pubkey: outsiderPubkey,
+      identifier: "",
+      implicit: true,
+    })
+    const plan = makeCommunityDescriptorQueryPlan({
+      definition,
+      profileListEvents: [calendarProfileList],
+      descriptors: [{kind: EVENT_TIME}],
+      targetingEvents: [authorizedTargetingEvent, unauthorizedTargetingEvent],
+      limit: 5,
+    })
+
+    expect(plan.localOriginalFilters).toEqual([
+      {
+        kinds: [EVENT_TIME],
+        authors: [calendarWriterPubkey],
+        "#h": ["target-implicit"],
+        limit: 5,
+      },
+      {kinds: [EVENT_TIME], authors: [communityPubkey, calendarWriterPubkey], limit: 5},
+    ])
+    expect(plan.relayOriginalFilters).toEqual(plan.localOriginalFilters)
   })
 
   it("builds timed calendar queries when only date-based calendar sections are declared", () => {
@@ -260,15 +314,59 @@ describe("community widget context", () => {
 
     expect(plan.descriptors).toEqual([{kind: EVENT_TIME}, {kind: EVENT_DATE}])
     expect(plan.targetKinds).toEqual([EVENT_TIME, EVENT_DATE])
-    expect(plan.targetingFilter).toMatchObject({
-      kinds: [TARGETED_PUBLICATION_KIND],
-      "#p": [communityPubkey],
-      "#k": [String(EVENT_TIME), String(EVENT_DATE)],
-    })
-    expect(plan.originalFilters).toEqual([
+    expect(plan.relayTargetingFilters).toEqual([
+      {
+        kinds: [TARGETED_PUBLICATION_KIND],
+        "#p": [communityPubkey],
+        "#k": [String(EVENT_TIME)],
+      },
+      {
+        kinds: [TARGETED_PUBLICATION_KIND],
+        "#p": [communityPubkey],
+        "#k": [String(EVENT_DATE)],
+      },
+    ])
+    expect(plan.localTargetingFilters).toEqual(
+      plan.relayTargetingFilters.map(filter => ({
+        ...filter,
+        authors: [communityPubkey, calendarWriterPubkey, calendarMemberPubkey],
+      })),
+    )
+    expect(plan.localOriginalFilters).toEqual([
       {kinds: [EVENT_TIME], authors: [calendarWriterPubkey], "#d": ["timed-event-1"], limit: 5},
       {kinds: [EVENT_TIME], authors: [communityPubkey, calendarWriterPubkey], limit: 5},
       {kinds: [EVENT_DATE], authors: [communityPubkey, calendarWriterPubkey], limit: 5},
+    ])
+    expect(plan.relayOriginalFilters).toEqual(plan.localOriginalFilters)
+  })
+
+  it("uses structural relay filters and author-qualified local filters for direct descriptors", () => {
+    const directDefinition = parseCommunityDefinition(
+      makeEvent({
+        kind: COMMUNITY_DEFINITION_KIND,
+        pubkey: communityPubkey,
+        tags: [
+          ["content", "Events and meetups"],
+          ["k", "1"],
+          ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
+        ],
+      }),
+    )!
+    const plan = makeCommunityDescriptorQueryPlan({
+      definition: directDefinition,
+      profileListEvents: [calendarProfileList],
+      descriptors: [{kind: 1}],
+      limit: 5,
+    })
+
+    expect(plan.relayOriginalFilters).toEqual([{kinds: [1], "#h": [communityPubkey], limit: 5}])
+    expect(plan.localOriginalFilters).toEqual([
+      {
+        kinds: [1],
+        "#h": [communityPubkey],
+        authors: [communityPubkey, calendarWriterPubkey, calendarMemberPubkey],
+        limit: 5,
+      },
     ])
   })
 
@@ -294,5 +392,82 @@ describe("community widget context", () => {
         {kind: THREAD, subtype: COMMUNITY_SUBTYPE_THREADS},
       ]).map(event => event.id),
     ).toEqual(["thread-root"])
+  })
+
+  it("authorizes same-kind direct events only through their matching descriptor", () => {
+    const profileListOwner = calendarWriterPubkey
+    const roomWriter = outsiderPubkey
+    const threadWriter = calendarMemberPubkey
+    const mixedDefinition = parseCommunityDefinition(
+      makeEvent({
+        kind: COMMUNITY_DEFINITION_KIND,
+        pubkey: communityPubkey,
+        tags: [
+          ["content", "Rooms"],
+          ["k", String(THREAD), COMMUNITY_SUBTYPE_ROOM],
+          ["a", `${PROFILE_LIST_KIND}:${profileListOwner}:Rooms`],
+          ["content", "Threads"],
+          ["k", String(THREAD), COMMUNITY_SUBTYPE_THREADS],
+          ["a", `${PROFILE_LIST_KIND}:${profileListOwner}:Threads`],
+        ],
+      }),
+    )!
+    const roomWriters = makeEvent({
+      kind: PROFILE_LIST_KIND,
+      pubkey: profileListOwner,
+      tags: [
+        ["d", "Rooms"],
+        ["p", roomWriter],
+      ],
+    })
+    const threadWriters = makeEvent({
+      kind: PROFILE_LIST_KIND,
+      pubkey: profileListOwner,
+      tags: [
+        ["d", "Threads"],
+        ["p", threadWriter],
+      ],
+    })
+    const descriptors = [
+      {kind: THREAD, subtype: COMMUNITY_SUBTYPE_ROOM},
+      {kind: THREAD, subtype: COMMUNITY_SUBTYPE_THREADS},
+    ]
+    const resolved = resolveCommunityEventDescriptors({
+      definition: mixedDefinition,
+      profileListEvents: [roomWriters, threadWriters],
+      descriptors,
+    })
+    const events = [
+      makeEvent({
+        id: "room-by-room-writer",
+        kind: THREAD,
+        pubkey: roomWriter,
+        tags: [["h", communityPubkey], ["room"]],
+      }),
+      makeEvent({
+        id: "thread-by-thread-writer",
+        kind: THREAD,
+        pubkey: threadWriter,
+        tags: [["h", communityPubkey]],
+      }),
+      makeEvent({
+        id: "room-by-thread-writer",
+        kind: THREAD,
+        pubkey: threadWriter,
+        tags: [["h", communityPubkey], ["room"]],
+      }),
+      makeEvent({
+        id: "thread-by-room-writer",
+        kind: THREAD,
+        pubkey: roomWriter,
+        tags: [["h", communityPubkey]],
+      }),
+    ]
+
+    expect(
+      filterAuthorizedCommunityDescriptorEvents(events, communityPubkey, resolved).map(
+        event => event.id,
+      ),
+    ).toEqual(["room-by-room-writer", "thread-by-thread-writer"])
   })
 })

@@ -20,6 +20,17 @@ export type RepoCollectionReadState = {
   personalStars: RepoStarRef[]
   communityOptions: RepoCollectionCommunityOption[]
   communityStars: RepoCollectionCommunityStar[]
+  communityHistoryComplete: boolean
+}
+
+export type RepoCollectionStatus = "collected" | "uncollected" | "indeterminate"
+
+export const getRepoCollectionStatus = (
+  collected: boolean,
+  communityHistoryComplete: boolean,
+): RepoCollectionStatus => {
+  if (collected) return "collected"
+  return communityHistoryComplete ? "uncollected" : "indeterminate"
 }
 
 export const getDeletedRepoCollectionTargetIds = (
@@ -67,6 +78,10 @@ export const buildRepoCommunityStarCollections = ({
     string,
     Array<{targetEvent: TrustedEvent; community: RepoCollectionCommunityOption}>
   >()
+  const targetsByOriginalAddress = new Map<
+    string,
+    Array<{targetEvent: TrustedEvent; community: RepoCollectionCommunityOption}>
+  >()
 
   const addTarget = (
     map: Map<string, Array<{targetEvent: TrustedEvent; community: RepoCollectionCommunityOption}>>,
@@ -89,9 +104,12 @@ export const buildRepoCommunityStarCollections = ({
       if (!community) continue
 
       const target = {targetEvent: event, community}
-      addTarget(targetsByTargetingId, targeting.id, target)
-      if (targeting.ref?.type === "e") {
+      if (!targeting.ref) {
+        addTarget(targetsByTargetingId, targeting.id, target)
+      } else if (targeting.ref.type === "e") {
         addTarget(targetsByOriginalEventId, targeting.ref.value, target)
+      } else if (targeting.ref.type === "a") {
+        addTarget(targetsByOriginalAddress, targeting.ref.value, target)
       }
     }
   }
@@ -99,13 +117,17 @@ export const buildRepoCommunityStarCollections = ({
   const collectionsByKey = new Map<string, RepoCollectionCommunityStar>()
 
   for (const event of reactionEvents) {
-    if (event.pubkey !== viewerPubkey) continue
     const star = parseRepoStarReaction(event)
     if (!star) continue
+    const identifier = event.tags.find(tag => tag[0] === "d")?.[1] || ""
+    const address = identifier ? `${event.kind}:${event.pubkey}:${identifier}` : ""
 
     const targets = [
-      ...(targetsByTargetingId.get(getPublicationTargetingId(event)) || []),
+      ...(targetsByTargetingId.get(getPublicationTargetingId(event)) || []).filter(
+        target => target.targetEvent.pubkey === event.pubkey,
+      ),
       ...(targetsByOriginalEventId.get(event.id) || []),
+      ...(targetsByOriginalAddress.get(address) || []),
     ]
 
     for (const target of targets) {

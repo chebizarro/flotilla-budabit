@@ -2,6 +2,7 @@
   import WidgetIcon from "@assets/icons/widget.svg?dataurl"
   import {pubkey} from "@welshman/app"
   import {onDestroy, onMount} from "svelte"
+  import {get} from "svelte/store"
   import WidgetModal from "@app/components/WidgetModal.svelte"
   import {normalizePubkey} from "@app/core/community"
   import {
@@ -13,6 +14,7 @@
   } from "@app/core/community-state"
   import {makeCommunityWidgetContext} from "@app/extensions/community-context"
   import {
+    getCommunityWidgetCurationEvidenceKey,
     getEnabledCommunitySlotWidgets,
     loadCachedCommunityCuratedWidgets,
   } from "@app/extensions/community-widget-slots"
@@ -89,23 +91,52 @@
       relayHints,
     })
   })
-  const communityRuntimeContext = $derived.by(() => {
-    const definition = $activeCommunityDefinition
-    if (
-      !communityContext ||
-      !definition ||
-      normalizePubkey(definition.pubkey) !== normalizePubkey(communityPubkey)
-    ) {
+  const getCurrentCommunityRuntimeContext = () => {
+    const definition = get(activeCommunityDefinition)
+    if (!definition || normalizePubkey(definition.pubkey) !== normalizePubkey(communityPubkey)) {
       return undefined
     }
 
+    const profileListEvents = get(activeCommunityProfileListEvents)
+    const reportState = get(activeCommunityReportState)
+    const relays = get(activeCommunityRelays)
+    const currentCommunityContext = makeCommunityWidgetContext({
+      definition,
+      profile: get(activeCommunityProfile),
+      profileListEvents,
+      reportState,
+      userPubkey: get(pubkey) || "",
+      relays: relays.length ? relays : relayHints,
+      relayHints,
+    })
+
     return {
       definition,
-      profileListEvents: $activeCommunityProfileListEvents,
-      reportState: $activeCommunityReportState,
-      relays: $activeCommunityRelays.length ? $activeCommunityRelays : relayHints,
+      profileListEvents,
+      reportState,
+      relays: relays.length ? relays : relayHints,
       relayHints,
-      communityContext,
+      communityContext: currentCommunityContext,
+    }
+  }
+  const curationEvidence = $derived.by(() => {
+    const definition = $activeCommunityDefinition
+    const matchesCommunity =
+      definition && normalizePubkey(definition.pubkey) === normalizePubkey(communityPubkey)
+    const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
+    const reportState = matchesCommunity ? $activeCommunityReportState : undefined
+
+    return {
+      ready: Boolean(matchesCommunity),
+      key: matchesCommunity
+        ? getCommunityWidgetCurationEvidenceKey({
+            definitionEventId: definition.event.id,
+            profileListEvents,
+            reportState,
+          })
+        : "",
+      profileListEvents,
+      reportState,
     }
   })
 
@@ -119,8 +150,8 @@
         slot: {type: slotType, label: widget.slot?.label},
         community: {pubkey: communityPubkey, relays: relayHints},
         ...(communityContext ? {communityContext} : {}),
-        ...(communityRuntimeContext ? {communityRuntimeContext} : {}),
       },
+      communityRuntimeContextProvider: getCurrentCommunityRuntimeContext,
     })
   }
 
@@ -143,7 +174,11 @@
   $effect(() => {
     void loadRefreshNonce
     const input = makeCommunityInputValue({pubkey: communityPubkey, relayHints})
-    const key = input ? `${normalizePubkey($pubkey || "")}:${slotType}:${input}` : ""
+    const evidence = curationEvidence
+    const key =
+      input && evidence.ready
+        ? `${normalizePubkey($pubkey || "")}:${slotType}:${input}:${evidence.key}`
+        : ""
 
     if (!key || !input) {
       curatedWidgets = []
@@ -159,7 +194,12 @@
     forceNextLoad = false
     const requestId = ++loadRequestId
 
-    loadCachedCommunityCuratedWidgets(input, {force})
+    loadCachedCommunityCuratedWidgets(input, {
+      evidenceKey: evidence.key,
+      force,
+      profileListEvents: evidence.profileListEvents,
+      reportState: evidence.reportState,
+    })
       .then(result => {
         if (requestId !== loadRequestId || key !== loadKey) {
           logCommunityWidgetDebug("launcher slot discarded stale curated widgets result", {

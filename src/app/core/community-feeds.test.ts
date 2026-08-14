@@ -25,6 +25,7 @@ import {
   makeCommunityTargetingFilter,
   makeTargetedPublicationOriginalFilters,
   makeTargetedPublicationOriginalFilterPlan,
+  makeTargetedPublicationOriginalRelayHintPlans,
 } from "./community-feeds"
 
 const communityPubkey = "a".repeat(64)
@@ -332,5 +333,134 @@ describe("community feed helpers", () => {
       relayFilters: [],
       localFilters: [],
     })
+  })
+
+  it("binds colliding implicit originals to each wrapper signer while leaving explicit refs exact", () => {
+    const otherWrapperPubkey = "d".repeat(64)
+    const externalAuthorPubkey = "e".repeat(64)
+    const makeTarget = ({
+      id,
+      pubkey,
+      kind,
+      ref,
+    }: {
+      id: string
+      pubkey: string
+      kind: number
+      ref?: {type: "e" | "a"; value: string}
+    }) =>
+      makeEvent({
+        id,
+        pubkey,
+        kind: TARGETED_PUBLICATION_KIND,
+        tags: buildTargetedPublication({
+          id: "shared-targeting-id",
+          kind,
+          ref,
+          communities: [{pubkey: communityPubkey}],
+        }).tags,
+      })
+    const plan = makeTargetedPublicationOriginalFilterPlan([
+      makeTarget({id: "implicit-a", pubkey: authorPubkey, kind: 9041}),
+      makeTarget({id: "implicit-b", pubkey: otherWrapperPubkey, kind: 9041}),
+      makeTarget({
+        id: "explicit-event",
+        pubkey: authorPubkey,
+        kind: 1623,
+        ref: {type: "e", value: "external-event-id"},
+      }),
+      makeTarget({
+        id: "explicit-address",
+        pubkey: authorPubkey,
+        kind: 30033,
+        ref: {type: "a", value: `30033:${externalAuthorPubkey}:external-widget`},
+      }),
+    ])
+
+    expect(plan.relayFilters).toEqual([
+      {
+        kinds: [9041],
+        authors: [authorPubkey],
+        "#h": ["shared-targeting-id"],
+        limit: 1,
+      },
+      {
+        kinds: [9041],
+        authors: [otherWrapperPubkey],
+        "#h": ["shared-targeting-id"],
+        limit: 1,
+      },
+      {kinds: [1623], ids: ["external-event-id"], limit: 1},
+      {
+        kinds: [30033],
+        authors: [externalAuthorPubkey],
+        "#d": ["external-widget"],
+        limit: 1,
+      },
+    ])
+    expect(plan.localFilters).toEqual(plan.relayFilters)
+  })
+
+  it("builds normalized relay-hint-only plans for explicit external originals", () => {
+    const externalAuthor = "e".repeat(64)
+    const explicitEvent = makeEvent({
+      id: "explicit-event",
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: buildTargetedPublication({
+        id: "explicit-event-target",
+        kind: 1623,
+        ref: {type: "e", value: "external-event", relay: "wss://external.example"},
+        communities: [{pubkey: communityPubkey}],
+      }).tags,
+    })
+    const explicitAddress = makeEvent({
+      id: "explicit-address",
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: buildTargetedPublication({
+        id: "explicit-address-target",
+        kind: 30033,
+        ref: {
+          type: "a",
+          value: `30033:${externalAuthor}:external-widget`,
+          relay: "wss://external.example/",
+        },
+        communities: [{pubkey: communityPubkey}],
+      }).tags,
+    })
+    const implicit = makeEvent({
+      id: "implicit",
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: buildTargetedPublication({
+        id: "implicit-target",
+        kind: 9041,
+        communities: [{pubkey: communityPubkey}],
+      }).tags,
+    })
+
+    expect(
+      makeTargetedPublicationOriginalRelayHintPlans([explicitEvent, explicitAddress, implicit]),
+    ).toEqual([
+      {
+        relays: ["wss://external.example/"],
+        relayFilters: [
+          {kinds: [1623], ids: ["external-event"], limit: 1},
+          {
+            kinds: [30033],
+            authors: [externalAuthor],
+            "#d": ["external-widget"],
+            limit: 1,
+          },
+        ],
+        localFilters: [
+          {kinds: [1623], ids: ["external-event"], limit: 1},
+          {
+            kinds: [30033],
+            authors: [externalAuthor],
+            "#d": ["external-widget"],
+            limit: 1,
+          },
+        ],
+      },
+    ])
   })
 })

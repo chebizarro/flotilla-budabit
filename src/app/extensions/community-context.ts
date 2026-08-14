@@ -5,6 +5,7 @@ import {
   COMMUNITY_SUBTYPE_THREADS,
   makeCommunityNcommunity,
   normalizePubkey,
+  normalizeRelays,
   parseTargetedPublication,
   sectionSupportsKind,
   type CommunityDefinition,
@@ -15,9 +16,10 @@ import {
   isRoomMessage,
   isRoomRoot,
   isThreadRoot,
+  makeCommunityContentFilterPlan,
   makeCommunityExclusiveFilter,
   makeCommunityTargetingFilter,
-  makeTargetedPublicationOriginalFilters,
+  makeTargetedPublicationOriginalFilterPlan,
 } from "@app/core/community-feeds"
 import {
   findCommunityProfileListEvent,
@@ -25,6 +27,7 @@ import {
 } from "@app/core/community-admin"
 import {
   canWriteCommunitySection,
+  filterAuthorizedCommunityTargetingEvents,
   getCommunitySectionAuthorityPubkeys,
   getCommunitySectionWriterPubkeys,
 } from "@app/core/community-permissions"
@@ -56,7 +59,11 @@ export type ResolvedCommunityEventDescriptor = {
 export type CommunityDescriptorQueryPlan = {
   descriptors: CommunityEventDescriptor[]
   targetKinds: number[]
-  targetingFilter?: Filter
+  localTargetingFilters: Filter[]
+  relayTargetingFilters: Filter[]
+  originalRelayHints: string[]
+  localOriginalFilters: Filter[]
+  relayOriginalFilters: Filter[]
   originalFilters: Filter[]
 }
 
@@ -263,6 +270,21 @@ export const filterCommunityDescriptorEvents = (
   )
 }
 
+export const filterAuthorizedCommunityDescriptorEvents = (
+  events: TrustedEvent[],
+  communityPubkey: string,
+  descriptorInfos: ResolvedCommunityEventDescriptor[],
+) =>
+  events.filter(event => {
+    const author = normalizePubkey(event.pubkey)
+
+    return descriptorInfos.some(
+      info =>
+        eventMatchesCommunityEventDescriptor(event, communityPubkey, info.descriptor) &&
+        info.writerPubkeys.includes(author),
+    )
+  })
+
 export const resolveCommunityEventDescriptors = ({
   definition,
   profileListEvents,
@@ -456,63 +478,79 @@ export const makeCommunityDescriptorQueryPlan = ({
     info => !COMMUNITY_TARGETABLE_KIND_SET.has(info.descriptor.kind),
   )
   const targetKinds = Array.from(new Set(targetableInfos.map(info => info.descriptor.kind)))
-  const originalFilters: Filter[] = []
+  const localTargetingFilters: Filter[] = []
+  const relayTargetingFilters: Filter[] = []
+  const originalRelayHints: string[] = []
+  const localOriginalFilters: Filter[] = []
+  const relayOriginalFilters: Filter[] = []
 
-  if (targetingEvents.length > 0 && targetableInfos.length > 0) {
-    const authorizedTargetingEvents = targetingEvents.filter(event => {
-      const targeting = parseTargetedPublication(event)
-      if (!targeting) return false
-
-      return targetableInfos.some(info => {
-        if (targeting.kind !== info.descriptor.kind) return false
-        const writerSet = new Set(info.writerPubkeys.map(normalizePubkey).filter(Boolean))
-        if (!writerSet.has(normalizePubkey(event.pubkey))) return false
-
-        if (targeting.ref?.type === "a") {
-          const [, author] = targeting.ref.value.split(":")
-          if (!writerSet.has(normalizePubkey(author || ""))) return false
-        }
-
-        return true
-      })
-    })
-    const allowedAuthors = Array.from(
+  for (const kind of targetKinds) {
+    const writerPubkeys = Array.from(
       new Set(
         targetableInfos
-          .flatMap(info => info.writerPubkeys)
-          .map(normalizePubkey)
-          .filter(Boolean),
+          .filter(info => info.descriptor.kind === kind)
+          .flatMap(info => info.writerPubkeys),
       ),
     )
-
-    originalFilters.push(
-      ...makeTargetedPublicationOriginalFilters(authorizedTargetingEvents, allowedAuthors),
+    const targetingPlan = makeCommunityContentFilterPlan(
+      [makeCommunityTargetingFilter(definition.pubkey, [kind])],
+      writerPubkeys,
     )
+    localTargetingFilters.push(...targetingPlan.localFilters)
+    relayTargetingFilters.push(...targetingPlan.relayFilters)
+  }
+
+  if (targetingEvents.length > 0 && targetableInfos.length > 0) {
+    const authorizedTargetingEvents = filterAuthorizedCommunityTargetingEvents({
+      definition,
+      profileListEvents,
+      events: targetingEvents,
+      reportState,
+      kinds: targetKinds,
+    })
+    const targetedPlan = makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents)
+
+    originalRelayHints.push(
+      ...authorizedTargetingEvents.flatMap(event => {
+        const relay = parseTargetedPublication(event)?.ref?.relay
+        return relay ? [relay] : []
+      }),
+    )
+    localOriginalFilters.push(...targetedPlan.localFilters)
+    relayOriginalFilters.push(...targetedPlan.relayFilters)
   }
 
   for (const info of targetableInfos) {
     if (!COMMUNITY_DIRECT_QUERY_TARGETABLE_KIND_SET.has(info.descriptor.kind)) continue
     if (info.moderatorPubkeys.length === 0) continue
 
-    originalFilters.push({kinds: [info.descriptor.kind], authors: info.moderatorPubkeys})
+    const filter = {kinds: [info.descriptor.kind], authors: info.moderatorPubkeys}
+    localOriginalFilters.push(filter)
+    relayOriginalFilters.push(filter)
   }
 
   for (const info of directInfos) {
     if (info.writerPubkeys.length === 0) continue
 
-    originalFilters.push(
-      makeCommunityExclusiveFilter(definition.pubkey, [info.descriptor.kind], {
-        authors: info.writerPubkeys,
-      }),
+    const directPlan = makeCommunityContentFilterPlan(
+      [makeCommunityExclusiveFilter(definition.pubkey, [info.descriptor.kind])],
+      info.writerPubkeys,
     )
+    localOriginalFilters.push(...directPlan.localFilters)
+    relayOriginalFilters.push(...directPlan.relayFilters)
   }
+
+  const boundedLocalOriginalFilters = withLimit(localOriginalFilters, limit, since, until)
+  const boundedRelayOriginalFilters = withLimit(relayOriginalFilters, limit, since, until)
 
   return {
     descriptors: resolved.map(info => info.descriptor),
     targetKinds,
-    targetingFilter: targetKinds.length
-      ? makeCommunityTargetingFilter(definition.pubkey, targetKinds)
-      : undefined,
-    originalFilters: withLimit(originalFilters, limit, since, until),
+    localTargetingFilters,
+    relayTargetingFilters,
+    originalRelayHints: normalizeRelays(originalRelayHints),
+    localOriginalFilters: boundedLocalOriginalFilters,
+    relayOriginalFilters: boundedRelayOriginalFilters,
+    originalFilters: boundedLocalOriginalFilters,
   }
 }

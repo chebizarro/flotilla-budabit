@@ -189,10 +189,12 @@ describe("strict community publication source contracts", () => {
     )
 
     expect(goals).toContain('"#h": [communityPubkey]')
-    expect(goal).toContain('getTagValue("h", goal.tags) === communityPubkey')
+    expect(goal).toContain("directGoalFilterPlan.localFilters")
+    expect(goal).toContain("matchFilters(goalFilters, event)")
     expect(calendar).toContain('"#h": [communityPubkey]')
     expect(calendar).toContain("calendarProjection.events.toSorted(")
-    expect(calendarEvent).toContain('getTagValue("h", event.tags) === communityPubkey')
+    expect(calendarEvent).toContain("directEventFilterPlan.localFilters")
+    expect(calendarEvent).toContain("matchFilters(eventFilters, event)")
   })
 
   it("keeps dependent publications disabled until authored roots are canonical", () => {

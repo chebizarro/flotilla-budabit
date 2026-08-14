@@ -19,7 +19,7 @@ import {
 import {
   COMMUNITY_EXCLUSIVE_KINDS,
   makeCommunityTargetingFilter,
-  makeTargetedPublicationOriginalFilters,
+  makeTargetedPublicationOriginalFilterPlan,
 } from "@app/core/community-feeds"
 import {COMMUNITY_FORM_REVIEW_KIND} from "@app/core/community-forms"
 import type {ModeratorPromotionRequest} from "@app/core/community-moderator-requests"
@@ -207,7 +207,7 @@ export const buildCommunityFiniteFollowUpFilters = ({
   moderatorRequestReactionEvents,
 }: CommunityFiniteFollowUpFilterInput) => {
   const filters: Filter[] = [
-    ...makeTargetedPublicationOriginalFilters(targetingEvents),
+    ...makeTargetedPublicationOriginalFilterPlan(targetingEvents).relayFilters,
     ...chunkFiltersByTag(
       makeCommunityModeratorRequestReactionFilters(definition, moderatorRequests),
       "#e",
@@ -259,7 +259,7 @@ export const buildCommunityFiniteFollowUpRelayPlans = ({
     relays.map(normalizeCommunityLiveRelay).filter(Boolean),
   )
   const communityRelaySet = new Set(communityRelays)
-  const allOriginalFilters = makeTargetedPublicationOriginalFilters(targetingEvents)
+  const allOriginalFilters = makeTargetedPublicationOriginalFilterPlan(targetingEvents).relayFilters
   const communityFilters = dedupeFilters(
     [...allOriginalFilters, ...buildCommunityWorkflowFollowUpFilters({...input, targetingEvents})],
     false,
@@ -275,7 +275,10 @@ export const buildCommunityFiniteFollowUpRelayPlans = ({
     filtersByRelay.set(
       relay,
       dedupeFilters(
-        [...(filtersByRelay.get(relay) || []), ...makeTargetedPublicationOriginalFilters([event])],
+        [
+          ...(filtersByRelay.get(relay) || []),
+          ...makeTargetedPublicationOriginalFilterPlan([event]).relayFilters,
+        ],
         false,
       ),
     )

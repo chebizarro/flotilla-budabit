@@ -6,6 +6,8 @@ import {LRUCache} from "@welshman/lib"
 import {pubkey} from "@welshman/app"
 import {normalizePubkey, normalizeRelays, parseCommunityInput} from "@app/core/community"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+import type {EffectiveCommunityReportState} from "@app/core/community-reports"
+import type {TrustedEvent} from "@welshman/util"
 import type {SmartWidgetEvent, WidgetCommunitySlotType} from "@app/extensions/types"
 import {logCommunityWidgetDebug} from "./community-widget-debug"
 import {getWidgetLineId} from "./widget-identity"
@@ -24,9 +26,12 @@ type CuratedWidgetCacheEntry = {
 }
 
 export type LoadCachedCommunityCuratedWidgetsOptions = {
+  evidenceKey?: string
   force?: boolean
   now?: number
   priority?: number
+  profileListEvents?: TrustedEvent[]
+  reportState?: EffectiveCommunityReportState
 }
 
 // Bounded LRUs: entries hold full widget events and load promises, keyed by
@@ -34,21 +39,38 @@ export type LoadCachedCommunityCuratedWidgetsOptions = {
 const curatedWidgetLoads = new LRUCache<string, CuratedWidgetCacheEntry>(32)
 const curatedWidgetSnapshots = new LRUCache<string, SmartWidgetEvent[]>(32)
 
-const getCurationCacheKey = (input: string, viewerPubkey: string) => {
+const getCurationCacheKey = (input: string, viewerPubkey: string, evidenceKey: string) => {
   const trimmed = input.trim()
   const parsed = parseCommunityInput(trimmed)
 
   return parsed
-    ? `${normalizePubkey(viewerPubkey)}:${normalizePubkey(parsed.pubkey)}:${normalizeRelays(parsed.relays).join(",")}`
-    : `${normalizePubkey(viewerPubkey)}:${trimmed}`
+    ? `${normalizePubkey(viewerPubkey)}:${normalizePubkey(parsed.pubkey)}:${normalizeRelays(parsed.relays).join(",")}:${evidenceKey}`
+    : `${normalizePubkey(viewerPubkey)}:${trimmed}:${evidenceKey}`
 }
 
-const getCurationSnapshotKey = (input: string, viewerPubkey: string) => {
+const getCurationSnapshotKey = (input: string, viewerPubkey: string, evidenceKey: string) => {
   const trimmed = input.trim()
   const parsed = parseCommunityInput(trimmed)
 
-  return `${normalizePubkey(viewerPubkey)}:${parsed ? normalizePubkey(parsed.pubkey) : trimmed}`
+  return `${normalizePubkey(viewerPubkey)}:${parsed ? normalizePubkey(parsed.pubkey) : trimmed}:${evidenceKey}`
 }
+
+export const getCommunityWidgetCurationEvidenceKey = ({
+  definitionEventId = "",
+  profileListEvents = [],
+  reportState,
+}: {
+  definitionEventId?: string
+  profileListEvents?: Array<Pick<TrustedEvent, "id" | "created_at">>
+  reportState?: EffectiveCommunityReportState
+}) =>
+  JSON.stringify({
+    definitionEventId,
+    profileLists: profileListEvents.map(event => `${event.id}:${event.created_at}`).sort(),
+    reports: [...(reportState?.eventReports || []), ...(reportState?.personReports || [])]
+      .map(report => report.event.id)
+      .sort(),
+  })
 
 const getCuratedWidgetResultTtl = (result: CommunityCuratedExtensionsResult | undefined) =>
   result?.status === "community" && result.widgets.length > 0
@@ -61,14 +83,22 @@ const isFreshCacheEntry = (entry: CuratedWidgetCacheEntry, now: number) =>
 export const loadCachedCommunityCuratedWidgets = (
   input: string,
   {
+    evidenceKey = "",
     force = false,
     now = Date.now(),
     priority = RELAY_REQUEST_PRIORITY.interactive,
+    profileListEvents,
+    reportState,
   }: LoadCachedCommunityCuratedWidgetsOptions = {},
 ) => {
   const viewerPubkey = normalizePubkey(pubkey.get() || "")
-  const key = getCurationCacheKey(input, viewerPubkey)
-  const snapshotKey = getCurationSnapshotKey(input, viewerPubkey)
+  const resolvedEvidenceKey =
+    evidenceKey ||
+    (profileListEvents !== undefined || reportState !== undefined
+      ? getCommunityWidgetCurationEvidenceKey({profileListEvents, reportState})
+      : "")
+  const key = getCurationCacheKey(input, viewerPubkey, resolvedEvidenceKey)
+  const snapshotKey = getCurationSnapshotKey(input, viewerPubkey, resolvedEvidenceKey)
   if (!key) return Promise.resolve(undefined)
 
   const existing = curatedWidgetLoads.get(key)
@@ -79,7 +109,11 @@ export const loadCachedCommunityCuratedWidgets = (
     return existing.promise
   }
 
-  const pending = loadCommunityCuratedWidgets(input.trim(), {priority})
+  const pending = loadCommunityCuratedWidgets(input.trim(), {
+    priority,
+    ...(profileListEvents === undefined ? {} : {profileListEvents}),
+    ...(reportState === undefined ? {} : {reportState}),
+  })
     .then(result => {
       const entry = curatedWidgetLoads.get(key)
       if (entry?.promise === pending) {
@@ -121,7 +155,10 @@ export const clearCommunityWidgetSlotCache = () => {
 export const getLastValidatedCommunityCuratedWidgets = (
   input: string,
   viewerPubkey = pubkey.get() || "",
-) => [...(curatedWidgetSnapshots.get(getCurationSnapshotKey(input, viewerPubkey)) || [])]
+  evidenceKey = "",
+) => [
+  ...(curatedWidgetSnapshots.get(getCurationSnapshotKey(input, viewerPubkey, evidenceKey)) || []),
+]
 
 export const shouldPreserveCuratedWidgetView = (
   currentWidgets: SmartWidgetEvent[],

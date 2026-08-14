@@ -5,6 +5,8 @@ import {
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
+  TARGETED_PUBLICATION_KIND,
+  buildTargetedPublication,
   parseCommunityDefinition,
 } from "./community"
 import {
@@ -21,6 +23,7 @@ import {
   canWriteCommunitySection,
   canWriteCommunityTarget,
   findProfileListEvent,
+  filterAuthorizedCommunityTargetingEvents,
   getCommunityCalendarTargetWriterPubkeys,
   getCommunityCalendarWriteTarget,
   getCommunityCalendarWriteTargetSectionName,
@@ -244,6 +247,58 @@ describe("community permissions", () => {
         target: COMMUNITY_WRITE_TARGETS.permalink,
       }),
     ).toBe(true)
+  })
+
+  it("admits targeting wrappers by current grant, target community, and original kind", () => {
+    const makeTarget = ({
+      id,
+      pubkey,
+      community = communityPubkey,
+      kind = 30617,
+    }: {
+      id: string
+      pubkey: string
+      community?: string
+      kind?: number
+    }) =>
+      makeEvent({
+        id,
+        pubkey,
+        kind: TARGETED_PUBLICATION_KIND,
+        tags: buildTargetedPublication({
+          id: `target-${id}`,
+          kind,
+          ref: {type: "e", value: `original-${id}`},
+          communities: [{pubkey: community}],
+        }).tags,
+      })
+    const authorized = makeTarget({id: "authorized", pubkey: repoManagerPubkey})
+    const unauthorized = makeTarget({id: "unauthorized", pubkey: outsiderPubkey})
+    const otherCommunity = makeTarget({
+      id: "other-community",
+      pubkey: repoManagerPubkey,
+      community: "f".repeat(64),
+    })
+    const otherKind = makeTarget({id: "other-kind", pubkey: repoManagerPubkey, kind: 1623})
+    const events = [authorized, unauthorized, otherCommunity, otherKind]
+
+    expect(
+      filterAuthorizedCommunityTargetingEvents({
+        definition,
+        profileListEvents: [generalProfileList, repoProfileList],
+        events,
+        kinds: [30617],
+      }),
+    ).toEqual([authorized])
+    expect(
+      filterAuthorizedCommunityTargetingEvents({
+        definition,
+        profileListEvents: [generalProfileList, repoProfileList],
+        events,
+        reportState: makePersonBanState(repoManagerPubkey),
+        kinds: [30617],
+      }),
+    ).toEqual([])
   })
 
   it("lets person bans override existing write and grant permissions", () => {

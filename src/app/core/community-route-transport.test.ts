@@ -55,14 +55,21 @@ describe("community room and thread route transport", () => {
     expect(room).toContain('feedLoadStatus = complete ? "complete" : "incomplete"')
   })
 
-  it("uses bounded direct repository history while retaining targeted exact loads", () => {
+  it("uses bounded repository, wrapper, and targeted-original history", () => {
     const communityGit = readProjectFile("../../routes/c/[community]/git/+page.svelte")
     const globalGit = readProjectFile("../../routes/git/+page.svelte")
 
     expect(communityGit).toContain("loadBoundedCommunityHistory({")
     expect(communityGit).toContain("relayFilters,")
     expect(communityGit).toContain("localFilters,")
-    expect(communityGit).toContain("filters: filters as any")
+    expect(communityGit).toContain("communityRepoAssociationFilterPlan.localFilters")
+    expect(communityGit).toContain("communityRepoAssociationFilterPlan.relayFilters")
+    expect(communityGit).toContain("filterAuthorizedCommunityTargetingEvents({")
+    expect(communityGit).toContain("makeTargetedPublicationOriginalFilterPlan(")
+    expect(communityGit).toContain("targetedRepoFilterPlan.localFilters")
+    expect(communityGit).toContain("targetedRepoFilterPlan.relayFilters")
+    expect(communityGit).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
+    expect(communityGit).not.toContain("makeTargetedPublicationOriginalFilters")
     expect(communityGit).toContain("Repository history is incomplete")
     expect(communityGit).toContain("onclick={retryDirectRepoHistory}")
     expect(communityGit.indexOf("Repository history is incomplete")).toBeLessThan(
@@ -71,11 +78,41 @@ describe("community room and thread route transport", () => {
     expect(globalGit).toContain("loadBoundedCommunityHistory({")
     expect(globalGit).toContain("relayFilters,")
     expect(globalGit).toContain("localFilters,")
-    expect(globalGit).toContain("communityRepoHistoryIncomplete = !result.complete")
+    expect(globalGit).toContain("directCommunityRepoHistoryIncomplete = !result.complete")
+    expect(globalGit).toContain("communityRepoTargetFilterPlan.localFilters")
+    expect(globalGit).toContain("communityStarTargetFilterPlan.localFilters")
+    expect(globalGit).toContain("communitySnippetTargetFilterPlan.localFilters")
+    expect(globalGit).toContain("repoCollectionTargetFilterPlan.localFilters")
+    expect(globalGit).toContain("authorizedCommunityRepoTargetEvents")
+    expect(globalGit).toContain("authorizedCommunityStarTargetEvents")
+    expect(globalGit).toContain("authorizedCommunitySnippetTargetEvents")
+    expect(globalGit).toContain("authorizedRepoCollectionTargetEvents")
+    expect(globalGit).toContain("repoCollectionTargetHistoryComplete = result.complete")
+    expect(globalGit).toContain(
+      "repoCollectionOriginalHistoryComplete = results.every(result => result.complete)",
+    )
+    expect(globalGit).toContain("makeTargetedPublicationOriginalFilterPlan(")
+    expect(globalGit).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
+    expect(globalGit).not.toContain("makeTargetedPublicationOriginalFilters")
     expect(globalGit).toContain("Community repository history is incomplete")
     expect(globalGit).toContain("onclick={retryCommunityRepoHistory}")
     expect(globalGit.indexOf("Community repository history is incomplete")).toBeLessThan(
       globalGit.indexOf("{:else if hasRenderedRepoCardsForCurrentScope}"),
     )
+  })
+
+  it("uses authorized wrappers and split original plans for community widgets", () => {
+    const widgets = readProjectFile("../../routes/c/[community]/widgets/+page.svelte")
+
+    expect(widgets).toContain("filterAuthorizedCommunityTargetingEvents({")
+    expect(widgets).toContain("makeTargetedPublicationOriginalFilterPlan(")
+    expect(widgets).toContain("widgetFilterPlan.localFilters")
+    expect(widgets).toContain("const relayFilters = widgetFilterPlan.relayFilters")
+    expect(widgets).toContain("targetHistoryIncomplete = !result.complete")
+    expect(widgets).toContain("Targeted widget history is incomplete")
+    expect(widgets.indexOf("Targeted widget history is incomplete")).toBeLessThan(
+      widgets.indexOf("{#each $widgets as widget"),
+    )
+    expect(widgets).not.toContain("makeTargetedPublicationOriginalFilters")
   })
 })

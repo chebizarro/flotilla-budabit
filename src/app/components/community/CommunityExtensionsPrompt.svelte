@@ -4,7 +4,12 @@
   import Link from "@lib/components/Link.svelte"
   import {normalizePubkey} from "@app/core/community"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
-  import {activeUserCommunityRefs} from "@app/core/community-state"
+  import {
+    activeCommunityDefinition,
+    activeCommunityProfileListEvents,
+    activeCommunityReportState,
+    activeUserCommunityRefs,
+  } from "@app/core/community-state"
   import {
     communityExtensionPrompt,
     clearCommunityExtensionPromptLogin,
@@ -12,7 +17,10 @@
     ensureCommunityExtensionPromptLogin,
     isCommunityExtensionPromptDismissed,
   } from "@app/extensions/community-extension-prompt"
-  import {loadCachedCommunityCuratedWidgets} from "@app/extensions/community-widget-slots"
+  import {
+    getCommunityWidgetCurationEvidenceKey,
+    loadCachedCommunityCuratedWidgets,
+  } from "@app/extensions/community-widget-slots"
   import {getTrustedCommunityWidgets} from "@app/extensions/community-widget-trust"
   import {effectiveExtensionSettings} from "@app/extensions/settings"
   import {logCommunityWidgetDebug} from "@app/extensions/community-widget-debug"
@@ -31,9 +39,30 @@
   let trustedAuthorPubkeys = $state<string[]>([])
   let loadKey = ""
   let loadRequestId = 0
+  let lastLoadEvidenceKey = ""
   let sawLoggedInUser = false
 
   const normalizedCommunityPubkey = $derived(normalizePubkey(communityPubkey))
+  const curationEvidence = $derived.by(() => {
+    const definition = $activeCommunityDefinition
+    const matchesCommunity =
+      definition && normalizePubkey(definition.pubkey) === normalizedCommunityPubkey
+    const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
+    const reportState = matchesCommunity ? $activeCommunityReportState : undefined
+
+    return {
+      ready: Boolean(matchesCommunity),
+      key: matchesCommunity
+        ? getCommunityWidgetCurationEvidenceKey({
+            definitionEventId: definition.event.id,
+            profileListEvents,
+            reportState,
+          })
+        : "",
+      profileListEvents,
+      reportState,
+    }
+  })
   const isCommunityMember = $derived(
     $activeUserCommunityRefs.some(
       ref => normalizePubkey(ref.communityPubkey) === normalizedCommunityPubkey,
@@ -78,9 +107,10 @@
 
   $effect(() => {
     const input = makeCommunityInputValue({pubkey: communityPubkey, relayHints})
+    const evidence = curationEvidence
     const key =
-      $pubkey && isCommunityMember && !dismissed && input
-        ? `${normalizePubkey($pubkey)}:${input}`
+      $pubkey && isCommunityMember && !dismissed && input && evidence.ready
+        ? `${normalizePubkey($pubkey)}:${input}:${evidence.key}`
         : ""
 
     if (!key) {
@@ -95,9 +125,17 @@
     loadKey = key
     widgets = []
     trustedAuthorPubkeys = []
+    const force = Boolean(lastLoadEvidenceKey && lastLoadEvidenceKey !== evidence.key)
+    lastLoadEvidenceKey = evidence.key
     const requestId = ++loadRequestId
 
-    loadCachedCommunityCuratedWidgets(input, {priority: RELAY_REQUEST_PRIORITY.interactive})
+    loadCachedCommunityCuratedWidgets(input, {
+      evidenceKey: evidence.key,
+      force,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      profileListEvents: evidence.profileListEvents,
+      reportState: evidence.reportState,
+    })
       .then(result => {
         if (!result) return
         if (requestId !== loadRequestId || key !== loadKey) {

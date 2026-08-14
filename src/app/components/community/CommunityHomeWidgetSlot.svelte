@@ -20,6 +20,7 @@
   } from "@app/extensions/community-context"
   import {
     COMMUNITY_SHARED_CONFIG_KIND,
+    getCommunityWidgetCurationEvidenceKey,
     getEnabledCommunitySlotWidgetsWithSharedConfig,
     getEnabledCommunitySlotWidgets,
     getLastValidatedCommunityCuratedWidgets,
@@ -44,19 +45,15 @@
 
   const {communityPubkey, relayHints = [], slotType}: Props = $props()
 
-  const initialCurationInput = makeCommunityInputValue({pubkey: communityPubkey, relayHints})
-  let curatedWidgets = $state<SmartWidgetEvent[]>(
-    getLastValidatedCommunityCuratedWidgets(initialCurationInput),
-  )
+  let curatedWidgets = $state<SmartWidgetEvent[]>([])
   let loadKey = ""
   let loadRequestId = 0
   let loadRefreshNonce = $state(0)
   let forceNextLoad = false
   let lastForcedRefreshAt = 0
-  let curatedWidgetsBaseKey = initialCurationInput
-    ? `${slotType}:${normalizePubkey(communityPubkey)}:${normalizePubkey($pubkey || "")}`
-    : ""
+  let curatedWidgetsBaseKey = ""
   let lastLoadReadinessKey = ""
+  let lastLoadEvidenceKey = ""
   let curationRetryTimer: ReturnType<typeof setTimeout> | undefined
   let curationRetryDelay = 1_000
   let initiallyResolvedWidgetLoads = $state<Record<string, true>>({})
@@ -106,6 +103,26 @@
           permissionHasCachedEvents: status.hasCachedEvents,
         })
       : ""
+  })
+  const curationEvidence = $derived.by(() => {
+    const definition = $activeCommunityDefinition
+    const matchesCommunity =
+      definition && normalizePubkey(definition.pubkey) === normalizePubkey(communityPubkey)
+    const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
+    const reportState = matchesCommunity ? $activeCommunityReportState : undefined
+
+    return {
+      ready: Boolean(matchesCommunity),
+      key: matchesCommunity
+        ? getCommunityWidgetCurationEvidenceKey({
+            definitionEventId: definition.event.id,
+            profileListEvents,
+            reportState,
+          })
+        : "",
+      profileListEvents,
+      reportState,
+    }
   })
   const cachedCommunitySharedConfigEvents = $derived.by(() => {
     void communityReadinessKey
@@ -325,9 +342,11 @@
   $effect(() => {
     void loadRefreshNonce
     const input = makeCommunityInputValue({pubkey: communityPubkey, relayHints})
-    const baseKey = input
-      ? `${slotType}:${normalizePubkey(communityPubkey)}:${normalizePubkey($pubkey || "")}:${relayHints.slice().sort().join(",")}`
-      : ""
+    const evidence = curationEvidence
+    const baseKey =
+      input && evidence.ready
+        ? `${slotType}:${normalizePubkey(communityPubkey)}:${normalizePubkey($pubkey || "")}:${relayHints.slice().sort().join(",")}:${evidence.key}`
+        : ""
     const readinessKey = communityReadinessKey
     const key = baseKey ? `${baseKey}:${readinessKey}` : ""
 
@@ -341,10 +360,14 @@
       return
     }
 
+    const evidenceChanged = Boolean(lastLoadEvidenceKey && lastLoadEvidenceKey !== evidence.key)
+
     if (baseKey !== curatedWidgetsBaseKey) {
       clearCurationRetry()
       curationRetryDelay = 1_000
-      curatedWidgets = getLastValidatedCommunityCuratedWidgets(input)
+      curatedWidgets = evidenceChanged
+        ? []
+        : getLastValidatedCommunityCuratedWidgets(input, $pubkey || "", evidence.key)
       curatedWidgetsBaseKey = baseKey
       lastLoadReadinessKey = ""
     }
@@ -353,7 +376,8 @@
     loadKey = key
     const readinessChanged = Boolean(lastLoadReadinessKey && lastLoadReadinessKey !== readinessKey)
     lastLoadReadinessKey = readinessKey
-    const force = forceNextLoad || readinessChanged
+    lastLoadEvidenceKey = evidence.key
+    const force = forceNextLoad || readinessChanged || evidenceChanged
     forceNextLoad = false
     const requestId = ++loadRequestId
 
@@ -367,8 +391,11 @@
     })
 
     loadCachedCommunityCuratedWidgets(input, {
+      evidenceKey: evidence.key,
       force,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      profileListEvents: evidence.profileListEvents,
+      reportState: evidence.reportState,
     })
       .then(result => {
         if (requestId !== loadRequestId || key !== loadKey) {

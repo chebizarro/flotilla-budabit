@@ -60,6 +60,17 @@ const targetingEvent = makeEvent({
   }).tags,
 })
 
+const implicitTargetingEvent = makeEvent({
+  id: "implicit-targeting-event",
+  pubkey: authorPubkey,
+  kind: TARGETED_PUBLICATION_KIND,
+  tags: buildTargetedPublication({
+    id: "implicit-goal-target",
+    kind: ZAP_GOAL,
+    communities: [{pubkey: communityPubkey}],
+  }).tags,
+})
+
 const goalTargetingEvent = makeEvent({
   id: "goal-targeting-event",
   kind: TARGETED_PUBLICATION_KIND,
@@ -129,6 +140,24 @@ describe("community live filters", () => {
     })
     expect(filters.some(filter => filter["#e"]?.includes("response-id"))).toBe(true)
     expect(filters.every(filter => filter.limit !== 0)).toBe(true)
+  })
+
+  it("binds implicit finite originals to the authorized wrapper signer", () => {
+    const filters = buildCommunityFiniteFollowUpFilters({
+      definition,
+      targetingEvents: [implicitTargetingEvent],
+      admissionResponseIds: [],
+      reportEvents: [],
+      moderatorRequests: [],
+      moderatorRequestReactionEvents: [],
+    })
+
+    expect(filters).toContainEqual({
+      kinds: [ZAP_GOAL],
+      authors: [authorPubkey],
+      "#h": ["implicit-goal-target"],
+      limit: 1,
+    })
   })
 
   it("sends external relays only the exact originals they host", () => {

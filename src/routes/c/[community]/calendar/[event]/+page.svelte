@@ -8,6 +8,7 @@
   import {
     COMMENT,
     getTagValue,
+    matchFilters,
     makeEvent,
     type EventContent,
     type Filter,
@@ -47,16 +48,20 @@
     activeCommunityReportState,
     activeCommunityRelays,
     getUserOutboxRelays,
-    hydrateCommunityEventsWithStatus,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
-  import {normalizePubkey, normalizeRelays, parseTargetedPublication} from "@app/core/community"
-  import {makeCommunityTargetingFilter} from "@app/core/community-feeds"
+  import {normalizeRelays} from "@app/core/community"
+  import {
+    makeCommunityContentFilterPlan,
+    makeCommunityTargetingFilter,
+    makeTargetedPublicationOriginalFilterPlan,
+    makeTargetedPublicationOriginalRelayHintPlans,
+  } from "@app/core/community-feeds"
   import {
     COMMUNITY_CALENDAR_WRITE_TARGETS,
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
-    getCommunityCalendarTargetWriterPubkeys,
+    filterAuthorizedCommunityTargetingEvents,
     getCommunityCalendarWriteTargetSectionName,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
@@ -77,6 +82,7 @@
   import {setChecked} from "@app/util/notifications"
   import {pushToast} from "@app/util/toast"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory} from "@app/core/requests"
   import {makeCommunityCalendarPath, parseCommunityRouteParam} from "@app/util/routes"
 
   const REQUEST_HARD_TIMEOUT_MS = 10_000
@@ -140,14 +146,21 @@
     ),
   )
   const commentAccessMessage = $derived(`Request ${commentSectionName} access to comment.`)
-  const calendarAuthorPubkeys = $derived(
-    $activeCommunityDefinition
-      ? getCommunityCalendarTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
-          profileListEvents: $activeCommunityProfileListEvents,
-          reportState: $activeCommunityReportState,
-        })
-      : [],
+  const calendarWriterPubkeysByKind = $derived.by(
+    () =>
+      new Map(
+        COMMUNITY_CALENDAR_WRITE_TARGETS.map(target => [
+          target.kind,
+          $activeCommunityDefinition
+            ? getCommunityTargetWriterPubkeys({
+                definition: $activeCommunityDefinition,
+                profileListEvents: $activeCommunityProfileListEvents,
+                target,
+                reportState: $activeCommunityReportState,
+              })
+            : [],
+        ]),
+      ),
   )
   const commentAuthorPubkeys = $derived(
     $activeCommunityDefinition
@@ -183,21 +196,83 @@
     normalizeRelays([...getUserOutboxRelays(), ...$activeCommunityPublishRelays]),
   )
   const isEventIdParam = $derived(/^[0-9a-f]{64}$/i.test(eventParam))
-  const eventFilters = $derived.by<Filter[]>(() => {
-    if (!communityBootstrapReady || !eventParam) return []
-
-    const filters: Filter[] = []
+  const targetingFilterPlan = $derived.by(() => {
+    const relayFilters: Filter[] = []
+    const localFilters: Filter[] = []
+    if (!communityBootstrapReady || !communityPubkey) return {relayFilters, localFilters}
 
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
-      if (calendarAuthorPubkeys.length === 0) continue
-
-      if (isEventIdParam)
-        filters.push({kinds: [target.kind], ids: [eventParam], authors: calendarAuthorPubkeys})
-      filters.push({kinds: [target.kind], "#d": [eventParam], authors: calendarAuthorPubkeys})
+      const plan = makeCommunityContentFilterPlan(
+        [makeCommunityTargetingFilter(communityPubkey, [target.kind])],
+        calendarWriterPubkeysByKind.get(target.kind) || [],
+      )
+      relayFilters.push(...plan.relayFilters)
+      localFilters.push(...plan.localFilters)
     }
 
-    return filters
+    return {relayFilters, localFilters}
   })
+  const targetingFilters = $derived(targetingFilterPlan.localFilters)
+  const targetingEvents = $derived(
+    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
+  )
+  const authorizedTargetingEvents = $derived.by(() =>
+    $activeCommunityDefinition
+      ? filterAuthorizedCommunityTargetingEvents({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: COMMUNITY_CALENDAR_WRITE_TARGETS.map(target => target.kind),
+        })
+      : [],
+  )
+  const targetedEventFilterPlan = $derived(
+    makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents),
+  )
+  const targetedEventRelayHintPlans = $derived(
+    makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+  )
+  const directEventFilterPlan = $derived.by(() => {
+    const relayFilters: Filter[] = []
+    const localFilters: Filter[] = []
+    if (!communityBootstrapReady || !communityPubkey || !eventParam) {
+      return {relayFilters, localFilters}
+    }
+
+    for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
+      const structuralFilters: Filter[] = [
+        {kinds: [target.kind], "#d": [eventParam], "#h": [communityPubkey]},
+      ]
+      if (isEventIdParam) {
+        structuralFilters.unshift({
+          kinds: [target.kind],
+          ids: [eventParam],
+          "#h": [communityPubkey],
+        })
+      }
+      const plan = makeCommunityContentFilterPlan(
+        structuralFilters,
+        calendarWriterPubkeysByKind.get(target.kind) || [],
+      )
+      relayFilters.push(...plan.relayFilters)
+      localFilters.push(...plan.localFilters)
+    }
+
+    return {relayFilters, localFilters}
+  })
+  const eventFilterPlan = $derived({
+    relayFilters: [
+      ...directEventFilterPlan.relayFilters,
+      ...targetedEventFilterPlan.relayFilters,
+    ] as Filter[],
+    localFilters: [
+      ...directEventFilterPlan.localFilters,
+      ...targetedEventFilterPlan.localFilters,
+    ] as Filter[],
+  })
+  const eventFilters = $derived(eventFilterPlan.localFilters)
+  const eventRelayFilters = $derived(eventFilterPlan.relayFilters)
   const eventEvents = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: eventFilters})),
   )
@@ -209,10 +284,7 @@
       matches: event =>
         isCalendarEventKind(event.kind) &&
         (event.id === eventParam || getTagValue("d", event.tags) === eventParam) &&
-        getTagValue("h", event.tags) === communityPubkey &&
-        calendarAuthorPubkeys.some(
-          author => normalizePubkey(author) === normalizePubkey(event.pubkey),
-        ),
+        matchFilters(eventFilters, event),
     }),
   )
   const event = $derived.by(() => {
@@ -229,39 +301,7 @@
 
     return event && identifier ? `${event.kind}:${event.pubkey}:${identifier}` : ""
   })
-  const eventTargetingId = $derived(event ? getTagValue("h", event.tags) || "" : "")
-  const targetingFilters = $derived<Filter[]>(
-    communityBootstrapReady && communityPubkey && event
-      ? [
-          makeCommunityTargetingFilter(
-            communityPubkey,
-            [event.kind],
-            eventTargetingId ? {"#d": [eventTargetingId]} : {},
-          ),
-        ]
-      : [],
-  )
-  const targetingEvents = $derived(
-    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
-  )
-  const isTargetedToCommunity = $derived.by(() => {
-    if (!event) return false
-
-    const allowedAuthors = new Set(calendarAuthorPubkeys.map(normalizePubkey).filter(Boolean))
-    if (!allowedAuthors.has(normalizePubkey(event.pubkey))) return false
-    if (getTagValue("h", event.tags) === communityPubkey) return true
-
-    return $targetingEvents.some(targetingEvent => {
-      const targeting = parseTargetedPublication(targetingEvent)
-      if (!targeting || targeting.kind !== event.kind) return false
-      if (eventTargetingId && targeting.id === eventTargetingId) return true
-      if (targeting.ref?.type === "e" && targeting.ref.value === event.id) return true
-      if (targeting.ref?.type === "a" && targeting.ref.value === eventAddress) return true
-
-      return false
-    })
-  })
-  const approvedEvent = $derived(event && isTargetedToCommunity ? event : undefined)
+  const approvedEvent = $derived(event)
   const approvedEventSectionName = $derived(
     approvedEvent ? getCalendarEventSectionName(approvedEvent.kind) : calendarSectionName,
   )
@@ -276,40 +316,39 @@
         })
       : undefined,
   )
-  const replyFilters = $derived<Filter[]>(
-    communityBootstrapReady &&
-      approvedEvent &&
-      !approvedEventCensorReason &&
-      commentAuthorPubkeys.length
-      ? [
-          {
-            kinds: [COMMENT],
-            "#E": [approvedEvent.id],
-            "#K": [String(approvedEvent.kind)],
-            "#h": [communityPubkey],
-            authors: commentAuthorPubkeys,
-          },
-          ...(eventAddress
-            ? [
-                {
-                  kinds: [COMMENT],
-                  "#A": [eventAddress],
-                  "#K": [String(approvedEvent.kind)],
-                  "#h": [communityPubkey],
-                  authors: commentAuthorPubkeys,
-                },
-                {
-                  kinds: [COMMENT],
-                  "#a": [eventAddress],
-                  "#K": [String(approvedEvent.kind)],
-                  "#h": [communityPubkey],
-                  authors: commentAuthorPubkeys,
-                },
-              ]
-            : []),
-        ]
-      : [],
+  const replyFilterPlan = $derived(
+    communityBootstrapReady && approvedEvent && !approvedEventCensorReason
+      ? makeCommunityContentFilterPlan(
+          [
+            {
+              kinds: [COMMENT],
+              "#E": [approvedEvent.id],
+              "#K": [String(approvedEvent.kind)],
+              "#h": [communityPubkey],
+            },
+            ...(eventAddress
+              ? [
+                  {
+                    kinds: [COMMENT],
+                    "#A": [eventAddress],
+                    "#K": [String(approvedEvent.kind)],
+                    "#h": [communityPubkey],
+                  },
+                  {
+                    kinds: [COMMENT],
+                    "#a": [eventAddress],
+                    "#K": [String(approvedEvent.kind)],
+                    "#h": [communityPubkey],
+                  },
+                ]
+              : []),
+          ],
+          commentAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
+  const replyFilters = $derived(replyFilterPlan.localFilters)
+  const replyRelayFilters = $derived(replyFilterPlan.relayFilters)
   const replyEventsStore = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: replyFilters})),
   )
@@ -319,6 +358,7 @@
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
       matches: event =>
+        matchFilters(replyFilters, event) &&
         Boolean(
           readCommunityCalendarEventReply(event, communityPubkey, approvedEvent?.id, eventAddress),
         ),
@@ -497,6 +537,8 @@
   let eventLoadStatus = $state<CommunityHydrationStatus>("idle")
   let loadingTargeting = $state(false)
   let targetLoadStatus = $state<CommunityHydrationStatus>("idle")
+  let loadingHintedOriginals = $state(false)
+  let hintedOriginalLoadStatus = $state<CommunityHydrationStatus>("idle")
   let loadingReplies = $state(false)
   let replyLoadStatus = $state<CommunityHydrationStatus>("idle")
   let historicalLoadRetryVersion = $state(0)
@@ -534,33 +576,97 @@
   })
 
   $effect(() => {
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      eventFilters.length === 0
-    ) {
+    void historicalLoadRetryVersion
+    const relays = $activeCommunityRelays
+
+    if (!communityBootstrapReady) {
       loadingEvent = false
       eventLoadStatus = "idle"
+      return
+    }
+    if (eventRelayFilters.length === 0 || eventFilters.length === 0) {
+      loadingEvent = false
+      eventLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingEvent = false
+      eventLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
 
     loadingEvent = true
-    eventLoadStatus = "queued"
-    void hydrateCommunityEventsWithStatus({
-      key: `calendar-event:${eventPath}:${historicalLoadRetryVersion}:${JSON.stringify(eventFilters)}`,
-      relays: $activeCommunityRelays,
-      filters: eventFilters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    eventLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters: eventRelayFilters,
+      localFilters: eventFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-calendar-event:${communityPubkey}:${eventParam}`,
       signal: controller.signal,
-      onStatus: status => {
-        eventLoadStatus = status
-        loadingEvent = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        eventLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-calendar-event] Failed to load event history", error)
+        eventLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingEvent = false
+      })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    void historicalLoadRetryVersion
+    const plans = targetedEventRelayHintPlans
+
+    if (!communityBootstrapReady) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "idle"
+      return
+    }
+    if (plans.length === 0) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "complete"
+      return
+    }
+
+    const controller = new AbortController()
+    loadingHintedOriginals = true
+    hintedOriginalLoadStatus = "loading"
+    void Promise.all(
+      plans.map(plan =>
+        loadBoundedCommunityHistory({
+          ...plan,
+          timeoutMs: REQUEST_HARD_TIMEOUT_MS,
+          priority: RELAY_REQUEST_PRIORITY.interactive,
+          owner: `community-calendar-event-originals:${communityPubkey}:${eventParam}`,
+          signal: controller.signal,
+        }),
+      ),
+    )
+      .then(results => {
+        if (controller.signal.aborted) return
+        hintedOriginalLoadStatus = results.every(result => result.complete)
+          ? "complete"
+          : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-calendar-event] Failed to load hinted event originals", error)
+        hintedOriginalLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingHintedOriginals = false
+      })
 
     return () => controller.abort()
   })
@@ -568,33 +674,51 @@
   $effect(() => {
     void historicalLoadRetryVersion
 
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      targetingFilters.length === 0
-    ) {
+    const relays = $activeCommunityRelays
+    const relayFilters = targetingFilterPlan.relayFilters
+    const localFilters = targetingFilterPlan.localFilters
+
+    if (!communityBootstrapReady) {
       loadingTargeting = false
       targetLoadStatus = "idle"
+      return
+    }
+    if (relayFilters.length === 0 || localFilters.length === 0) {
+      loadingTargeting = false
+      targetLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingTargeting = false
+      targetLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
 
     loadingTargeting = true
-    targetLoadStatus = "queued"
-    void hydrateCommunityEventsWithStatus({
-      key: `calendar-target:${eventPath}:${historicalLoadRetryVersion}:${JSON.stringify(targetingFilters)}`,
-      relays: $activeCommunityRelays,
-      filters: targetingFilters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    targetLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-calendar-event-targets:${communityPubkey}:${eventParam}`,
       signal: controller.signal,
-      onStatus: status => {
-        targetLoadStatus = status
-        loadingTargeting = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        targetLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-calendar-event] Failed to load targeting history", error)
+        targetLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingTargeting = false
+      })
 
     return () => controller.abort()
   })
@@ -602,33 +726,49 @@
   $effect(() => {
     void historicalLoadRetryVersion
 
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      replyFilters.length === 0
-    ) {
+    const relays = $activeCommunityRelays
+
+    if (!communityBootstrapReady) {
       loadingReplies = false
       replyLoadStatus = "idle"
+      return
+    }
+    if (replyRelayFilters.length === 0 || replyFilters.length === 0) {
+      loadingReplies = false
+      replyLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingReplies = false
+      replyLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
 
     loadingReplies = true
-    replyLoadStatus = "queued"
-    void hydrateCommunityEventsWithStatus({
-      key: `calendar-replies:${eventPath}:${historicalLoadRetryVersion}:${JSON.stringify(replyFilters)}`,
-      relays: $activeCommunityRelays,
-      filters: replyFilters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    replyLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters: replyRelayFilters,
+      localFilters: replyFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-calendar-replies:${communityPubkey}:${eventParam}`,
       signal: controller.signal,
-      onStatus: status => {
-        replyLoadStatus = status
-        loadingReplies = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        replyLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-calendar-event] Failed to load reply history", error)
+        replyLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingReplies = false
+      })
 
     return () => controller.abort()
   })
@@ -636,9 +776,6 @@
   $effect(() => {
     if (event) {
       loadingEvent = false
-    }
-    if (approvedEvent) {
-      loadingTargeting = false
     }
     if (replies.length > 0) {
       loadingReplies = false
@@ -697,6 +834,13 @@
 
 <PageContent class="flex flex-col gap-3 p-2 pt-4">
   {#if approvedEvent}
+    {#if eventLoadStatus === "incomplete" || eventLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
+      <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
+        <p>Event history is incomplete; some event data may be missing.</p>
+        <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
+          >Retry</button>
+      </div>
+    {/if}
     <article class="card2 bg-alt col-3 z-feature" data-event={approvedEvent.id}>
       {#if approvedEventCensorReason}
         <ModeratedContent reason={approvedEventCensorReason} />
@@ -746,6 +890,13 @@
 
     {#if !approvedEventCensorReason}
       <div class="col-2">
+        {#if replies.length > 0 && (replyLoadStatus === "incomplete" || replyLoadStatus === "failed")}
+          <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
+            <p>Comment history is incomplete; some comments may be missing.</p>
+            <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
+              >Retry</button>
+          </div>
+        {/if}
         {#each visibleReplies as item (item.id)}
           {@const replyParent = item.parentReplyId
             ? repliesById.get(item.parentReplyId)?.event
@@ -843,11 +994,11 @@
         {/if}
       </div>
     {/if}
-  {:else if communityBootstrapLoading || communityPermissionsLoading || loadingEvent || eventLoadStatus === "queued" || eventLoadStatus === "loading" || (event && (loadingTargeting || targetLoadStatus === "idle" || targetLoadStatus === "queued" || targetLoadStatus === "loading")) || (!event && eventFilters.length > 0 && eventLoadStatus === "idle")}
+  {:else if communityBootstrapLoading || communityPermissionsLoading || loadingEvent || loadingTargeting || loadingHintedOriginals || eventLoadStatus === "queued" || eventLoadStatus === "loading" || (communityBootstrapReady && targetLoadStatus === "idle") || targetLoadStatus === "queued" || targetLoadStatus === "loading" || hintedOriginalLoadStatus === "loading" || (!event && eventFilters.length > 0 && eventLoadStatus === "idle")}
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading event...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityPermissionEvidenceIncomplete || (!event && (eventLoadStatus === "incomplete" || eventLoadStatus === "failed")) || (event && !approvedEvent && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed"))}
+  {:else if communityBootstrapFailed || communityPermissionEvidenceIncomplete || eventLoadStatus === "incomplete" || eventLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
       <p>Event lookup is incomplete or temporarily unavailable.</p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}

@@ -1,6 +1,7 @@
 import {pubkey as activeUserPubkey, publishThunk, repository, signer} from "@welshman/app"
 import {goto} from "$app/navigation"
 import {PublishStatus, load} from "@welshman/net"
+import {matchFilters, type TrustedEvent} from "@welshman/util"
 import {verifyEvent} from "nostr-tools/pure"
 import {pushToast} from "@app/util/toast"
 import {activeRepoClass} from "@app/core/git-state"
@@ -27,11 +28,13 @@ import {
   type CommunityDefinition,
 } from "@app/core/community"
 import {
+  filterAuthorizedCommunityDescriptorEvents,
   filterCommunityDescriptorEvents,
   getCommunityContextRuntimeSnapshot,
   makeCommunityDescriptorQueryPlan,
   normalizeCommunityEventDescriptors,
   resolveCommunityEventDescriptors,
+  type ResolvedCommunityEventDescriptor,
 } from "@app/extensions/community-context"
 import {get} from "svelte/store"
 import type {
@@ -149,6 +152,8 @@ const MAX_NOSTR_QUERY_LIMIT = 500
 const COMMUNITY_SHARED_CONFIG_KIND = 30078
 const COMMUNITY_SHARED_CONFIG_PREFIX = "budabit-community-config"
 const COMMUNITY_BRIDGE_LOAD_TIMEOUT = 5000
+const COMMUNITY_BRIDGE_QUERY_PAGE_SIZE = 100
+const COMMUNITY_BRIDGE_QUERY_MAX_PAGES = 3
 const COMMUNITY_CONTEXT_NOT_READY_CODE = "COMMUNITY_CONTEXT_NOT_READY"
 const COMMUNITY_QUERY_TIMEOUT_CODE = "COMMUNITY_QUERY_TIMEOUT"
 const LIVE_STREAM_KIND = 30311
@@ -746,8 +751,8 @@ const getBridgeEventAddress = (event: any) => {
 
 const normalizeCommunityQueryEventsPayload = (
   payload: unknown,
-): Required<Pick<CommunityQueryEventsRequest, "descriptors">> &
-  Pick<CommunityQueryEventsRequest, "refs" | "limit" | "since" | "until"> => {
+): Required<Pick<CommunityQueryEventsRequest, "descriptors" | "refs" | "limit">> &
+  Pick<CommunityQueryEventsRequest, "since" | "until"> => {
   const {descriptors} = normalizeCommunityDescriptorsPayload(payload)
 
   const limitRaw = (payload as any).limit
@@ -1019,17 +1024,13 @@ const queryCachedBridgeEvents = (filters: Record<string, unknown>[]) => {
 
 const makeExactCommunityEventRefFilters = ({
   refs,
-  descriptors,
-  writerPubkeys,
+  descriptorInfos,
 }: {
   refs: string[]
-  descriptors: CommunityEventDescriptor[]
-  writerPubkeys: string[]
+  descriptorInfos: ResolvedCommunityEventDescriptor[]
 }) => {
-  if (refs.length === 0 || writerPubkeys.length === 0) return []
+  if (refs.length === 0) return []
 
-  const descriptorKinds = new Set(descriptors.map(descriptor => descriptor.kind))
-  const writerSet = new Set(writerPubkeys.map(normalizePubkey).filter(Boolean))
   const ids: string[] = []
   const filters: Record<string, unknown>[] = []
 
@@ -1044,8 +1045,11 @@ const makeExactCommunityEventRefFilters = ({
     const pubkey = normalizePubkey(pubkeyRaw || "")
     const identifier = identifierParts.join(":").trim()
 
-    if (!Number.isInteger(kind) || !descriptorKinds.has(kind) || !pubkey || !identifier) continue
-    if (!writerSet.has(pubkey)) continue
+    if (!Number.isInteger(kind) || !pubkey || !identifier) continue
+    const canWriteMatchingDescriptor = descriptorInfos.some(
+      info => info.descriptor.kind === kind && info.writerPubkeys.includes(pubkey),
+    )
+    if (!canWriteMatchingDescriptor) continue
 
     filters.push({kinds: [kind], authors: [pubkey], "#d": [identifier], limit: 1})
   }
@@ -1055,15 +1059,15 @@ const makeExactCommunityEventRefFilters = ({
   return filters
 }
 
-const filterExactCommunityRefEvents = <T extends {pubkey?: string}>(
-  events: T[],
-  writerPubkeys: string[],
+const filterExactCommunityRefEvents = (
+  events: TrustedEvent[],
+  filters: Record<string, unknown>[],
+  communityPubkey: string,
+  descriptorInfos: ResolvedCommunityEventDescriptor[],
 ) => {
-  const writerSet = new Set(writerPubkeys.map(normalizePubkey).filter(Boolean))
+  const matchingEvents = events.filter(event => matchFilters(filters as any, event))
 
-  return writerSet.size > 0
-    ? events.filter(event => writerSet.has(normalizePubkey(event.pubkey || "")))
-    : []
+  return filterAuthorizedCommunityDescriptorEvents(matchingEvents, communityPubkey, descriptorInfos)
 }
 
 const exactCommunityRefsCovered = (refs: string[], events: any[]) =>
@@ -1098,11 +1102,21 @@ const getExtensionCommunityContext = (ext: LoadedExtension) => {
 const getExtensionCommunityRuntimeContext = (ext: LoadedExtension) => {
   if (ext.type !== "widget") return undefined
 
+  if (ext.communityRuntimeContextProvider) return ext.communityRuntimeContextProvider()
+
   return ext.communityRuntimeContext
 }
 
 const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
   const extensionRuntimeContext = getExtensionCommunityRuntimeContext(ext)
+  if (
+    ext.type === "widget" &&
+    ext.communityRuntimeContextProvider &&
+    !extensionRuntimeContext?.definition
+  ) {
+    throw makeCommunityContextNotReadyError("Community runtime context is not available")
+  }
+
   if (extensionRuntimeContext?.definition) {
     const definition = extensionRuntimeContext.definition
     const profileListEvents = extensionRuntimeContext.profileListEvents || []
@@ -1263,6 +1277,133 @@ const loadBridgeEventsWithStatus = async ({
   }
 }
 
+type BridgeCursorFilterState = {
+  filter: Record<string, unknown>
+  cursor?: number
+  pages: number
+}
+
+const loadBridgeEventsWithCursorPagination = async ({
+  relays,
+  relayFilters,
+  localFilters,
+  admitEvent,
+  pageSize = COMMUNITY_BRIDGE_QUERY_PAGE_SIZE,
+  maxPages = COMMUNITY_BRIDGE_QUERY_MAX_PAGES,
+  timeoutMs = COMMUNITY_BRIDGE_LOAD_TIMEOUT,
+  authenticate = false,
+  priorityAuthRelays = [],
+}: {
+  relays: string[]
+  relayFilters: Record<string, unknown>[]
+  localFilters: Record<string, unknown>[]
+  admitEvent?: (event: TrustedEvent) => boolean
+  pageSize?: number
+  maxPages?: number
+  timeoutMs?: number
+  authenticate?: boolean
+  priorityAuthRelays?: string[]
+}): Promise<CommunityRelayLoadResult> => {
+  if (relays.length === 0 || relayFilters.length === 0 || localFilters.length === 0) {
+    return {events: [], complete: true, timedOutRelays: [], failedRelays: []}
+  }
+
+  const normalizedRelays = normalizeRelays(relays)
+  const authFailedRelays = authenticate
+    ? (await authenticateCommunityRelays(normalizedRelays, {
+        priorityRelays: priorityAuthRelays,
+      })) || []
+    : []
+  const readableRelays = normalizedRelays.filter(relay => !authFailedRelays.includes(relay))
+
+  const scanRelay = async (relay: string): Promise<CommunityRelayLoadResult> => {
+    let active: BridgeCursorFilterState[] = relayFilters.map(filter => ({
+      filter: {...filter},
+      cursor: typeof filter.until === "number" ? filter.until : undefined,
+      pages: 0,
+    }))
+    const admittedEvents: TrustedEvent[] = []
+    const timedOutRelays = new Set<string>()
+    const failedRelays = new Set<string>()
+    let complete = true
+
+    while (active.length > 0) {
+      const pageFilters = active.map(state => ({
+        ...state.filter,
+        limit: pageSize,
+        ...(state.cursor === undefined ? {} : {until: state.cursor}),
+      }))
+      const page = await loadBridgeEventsWithStatus({
+        relays: [relay],
+        filters: pageFilters,
+        timeoutMs,
+        authenticate: false,
+        priorityAuthRelays,
+        settle: "all",
+      })
+      admittedEvents.push(
+        ...page.events.filter(
+          event => matchFilters(localFilters as any, event) && (!admitEvent || admitEvent(event)),
+        ),
+      )
+      page.timedOutRelays.forEach(url => timedOutRelays.add(url))
+      page.failedRelays.forEach(url => failedRelays.add(url))
+
+      if (!page.complete) {
+        complete = false
+        break
+      }
+
+      const nextActive: BridgeCursorFilterState[] = []
+      for (let index = 0; index < active.length; index += 1) {
+        const state = active[index]
+        const pageFilter = pageFilters[index]
+        const rawEvents = page.events.filter(event => matchFilters([pageFilter] as any, event))
+        state.pages += 1
+
+        if (rawEvents.length < pageSize) continue
+
+        // A full page may omit events sharing its oldest timestamp, so it cannot prove exhaustion.
+        complete = false
+        if (state.pages >= maxPages) continue
+
+        const oldestTimestamp = Math.min(...rawEvents.map(event => event.created_at))
+        if (!Number.isSafeInteger(oldestTimestamp) || oldestTimestamp <= 0) continue
+
+        const nextCursor = oldestTimestamp - 1
+        const since = state.filter.since
+        if (typeof since === "number" && nextCursor < since) continue
+
+        state.cursor = nextCursor
+        nextActive.push(state)
+      }
+
+      active = nextActive
+    }
+
+    return {
+      events: dedupeEvents(admittedEvents) as TrustedEvent[],
+      complete,
+      timedOutRelays: Array.from(timedOutRelays),
+      failedRelays: Array.from(failedRelays),
+    }
+  }
+
+  const relayResults = await Promise.all(readableRelays.map(scanRelay))
+
+  return {
+    events: dedupeEvents(relayResults.flatMap(result => result.events)) as TrustedEvent[],
+    complete:
+      authFailedRelays.length === 0 &&
+      relayResults.length === normalizedRelays.length &&
+      relayResults.every(result => result.complete),
+    timedOutRelays: Array.from(new Set(relayResults.flatMap(result => result.timedOutRelays))),
+    failedRelays: Array.from(
+      new Set([...authFailedRelays, ...relayResults.flatMap(result => result.failedRelays)]),
+    ),
+  }
+}
+
 const profileListHydrationPromises = new Map<string, Promise<any[]>>()
 
 const profileListFiltersCovered = (filters: Record<string, unknown>[], events: any[]) =>
@@ -1373,8 +1514,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     )
     const exactRefFilters = makeExactCommunityEventRefFilters({
       refs: request.refs || [],
-      descriptors: descriptorInfos.map(info => info.descriptor),
-      writerPubkeys: exactRefWriterPubkeys,
+      descriptorInfos,
     })
     const cachedExactRefEvents = queryCachedBridgeEvents(exactRefFilters)
     const exactRefAuthorPubkeys = Array.from(
@@ -1396,8 +1536,10 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       ...getCommunityBootstrapRelays(exactRefWriterOutboxRelays),
     ])
     const authorizedCachedExactRefEvents = filterExactCommunityRefEvents(
-      cachedExactRefEvents,
-      exactRefWriterPubkeys,
+      cachedExactRefEvents as TrustedEvent[],
+      exactRefFilters,
+      snapshot.definition.pubkey,
+      descriptorInfos,
     )
 
     if (
@@ -1437,8 +1579,10 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       settle: "all",
     })
     const exactRefEvents = filterExactCommunityRefEvents(
-      dedupeEvents([...cachedExactRefEvents, ...loadedExactRefResult.events]),
-      exactRefWriterPubkeys,
+      dedupeEvents([...cachedExactRefEvents, ...loadedExactRefResult.events]) as TrustedEvent[],
+      exactRefFilters,
+      snapshot.definition.pubkey,
+      descriptorInfos,
     )
 
     if (request.refs?.length) {
@@ -1482,14 +1626,18 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       until: request.until,
     })
 
-    const targetingFilters = initialPlan.targetingFilter
-      ? [{...initialPlan.targetingFilter, limit: Math.max(request.limit || 100, 100)}]
-      : []
-    const cachedTargetingEvents = queryCachedBridgeEvents(targetingFilters)
-    const loadedTargetingResult = targetingFilters.length
-      ? await loadBridgeEventsWithStatus({
+    const descriptorPageSize = Math.max(request.limit || 100, COMMUNITY_BRIDGE_QUERY_PAGE_SIZE)
+    const localTargetingFilters = initialPlan.localTargetingFilters.map(filter => ({
+      ...filter,
+      limit: descriptorPageSize,
+    }))
+    const cachedTargetingEvents = queryCachedBridgeEvents(localTargetingFilters)
+    const loadedTargetingResult = initialPlan.relayTargetingFilters.length
+      ? await loadBridgeEventsWithCursorPagination({
           relays: snapshot.relays,
-          filters: targetingFilters,
+          relayFilters: initialPlan.relayTargetingFilters,
+          localFilters: initialPlan.localTargetingFilters,
+          pageSize: descriptorPageSize,
           authenticate: true,
           priorityAuthRelays: snapshot.relayHints,
         })
@@ -1497,7 +1645,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const targetingEvents = dedupeEvents([
       ...cachedTargetingEvents,
       ...loadedTargetingResult.events,
-    ])
+    ]).filter(event => matchFilters(initialPlan.localTargetingFilters, event))
     const plan = makeCommunityDescriptorQueryPlan({
       definition: snapshot.definition,
       profileListEvents: snapshot.profileListEvents,
@@ -1508,21 +1656,51 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       since: request.since,
       until: request.until,
     })
-    const cachedEvents = queryCachedBridgeEvents(plan.originalFilters)
-    const loadedResult = await loadBridgeEventsWithStatus({
-      relays: snapshot.relays,
-      filters: plan.originalFilters,
+    const targetKindSet = new Set(plan.targetKinds)
+    const admitsOriginalEvent = (event: TrustedEvent) => {
+      if (targetKindSet.has(event.kind)) {
+        return (
+          filterCommunityDescriptorEvents(
+            [event],
+            snapshot.definition.pubkey,
+            plan.descriptors.filter(descriptor => targetKindSet.has(descriptor.kind)),
+          ).length > 0
+        )
+      }
+
+      return (
+        filterAuthorizedCommunityDescriptorEvents(
+          [event],
+          snapshot.definition.pubkey,
+          descriptorInfos,
+        ).length > 0
+      )
+    }
+    const originalRelays = normalizeRelays([...snapshot.relays, ...plan.originalRelayHints])
+    const cachedEvents = queryCachedBridgeEvents(plan.localOriginalFilters)
+    const loadedResult = await loadBridgeEventsWithCursorPagination({
+      relays: originalRelays,
+      relayFilters: plan.relayOriginalFilters,
+      localFilters: plan.localOriginalFilters,
+      admitEvent: admitsOriginalEvent,
+      pageSize: descriptorPageSize,
       authenticate: true,
       priorityAuthRelays: snapshot.relayHints,
     })
+    const admittedOriginalEvents = dedupeEvents([...cachedEvents, ...loadedResult.events]).filter(
+      event => matchFilters(plan.localOriginalFilters, event) && admitsOriginalEvent(event),
+    )
     const events = filterCommunityDescriptorEvents(
-      dedupeEvents([...exactRefEvents, ...cachedEvents, ...loadedResult.events]) as any,
+      dedupeEvents([...exactRefEvents, ...admittedOriginalEvents]) as any,
       snapshot.definition.pubkey,
       plan.descriptors,
     ).sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
     const limitedEvents = events.slice(0, request.limit)
 
-    if (limitedEvents.length === 0 && (!loadedTargetingResult.complete || !loadedResult.complete)) {
+    if (
+      limitedEvents.length < request.limit &&
+      (!loadedTargetingResult.complete || !loadedResult.complete)
+    ) {
       throw makeCommunityQueryTimeoutError()
     }
 
@@ -1533,7 +1711,9 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
         cachedEventCount: cachedEvents.length,
         loadedEventCount: loadedResult.events.length,
         returnedEventCount: limitedEvents.length,
-        filterCount: plan.originalFilters.length,
+        localFilterCount: plan.localOriginalFilters.length,
+        relayFilterCount: plan.relayOriginalFilters.length,
+        originalRelays,
         returnedRefs: limitedEvents.slice(0, 10).map((event: any) => ({
           id: event.id,
           address: getBridgeEventAddress(event),

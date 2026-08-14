@@ -1,9 +1,8 @@
 <script lang="ts">
   import {page} from "$app/stores"
-  import {request} from "@welshman/net"
   import {pubkey, publishThunk, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
-  import {makeEvent, getTagValue} from "@welshman/util"
+  import {makeEvent, getTagValue, type Filter} from "@welshman/util"
   import {randomId} from "@welshman/lib"
   import LinkRound from "@assets/icons/link-round.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
@@ -18,6 +17,7 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityDefinition,
+    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -26,8 +26,10 @@
   import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
   import {
     GIT_PERMALINK_KIND,
+    makeCommunityContentFilterPlan,
     makeCommunityTargetingFilter,
-    makeTargetedPublicationOriginalFilters,
+    makeTargetedPublicationOriginalFilterPlan,
+    makeTargetedPublicationOriginalRelayHintPlans,
   } from "@app/core/community-feeds"
   import {
     makeTargetedPublicationForCommunity,
@@ -36,9 +38,12 @@
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
+    filterAuthorizedCommunityTargetingEvents,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
+  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory} from "@app/core/requests"
   import {parseCommunityRouteParam} from "@app/util/routes"
 
   const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
@@ -54,13 +59,30 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
+  const communityBootstrapFailed = $derived(
+    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+  )
+  const communityPermissionsLoading = $derived(
+    Boolean(
+      communityPubkey &&
+      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
+      $activeCommunityPermissionStatus.loading &&
+      !$activeCommunityPermissionStatus.hasCachedEvents,
+    ),
+  )
+  const communityPermissionEvidenceIncomplete = $derived(
+    Boolean(
+      communityPubkey &&
+      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
+      $activeCommunityPermissionStatus.loaded &&
+      !$activeCommunityPermissionStatus.complete &&
+      !$activeCommunityPermissionStatus.hasCachedEvents,
+    ),
+  )
   const targetingFilters = $derived(
     communityBootstrapReady && communityPubkey
       ? [makeCommunityTargetingFilter(communityPubkey, [GIT_PERMALINK_KIND])]
       : [],
-  )
-  const targetingEvents = $derived(
-    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
   )
   const permalinkAuthorPubkeys = $derived(
     $activeCommunityDefinition
@@ -72,11 +94,51 @@
         })
       : [],
   )
-  const permalinkFilters = $derived(
-    communityBootstrapReady && permalinkAuthorPubkeys.length
-      ? makeTargetedPublicationOriginalFilters($targetingEvents, permalinkAuthorPubkeys)
+  const targetingFilterPlan = $derived(
+    communityBootstrapReady
+      ? makeCommunityContentFilterPlan(targetingFilters, permalinkAuthorPubkeys)
+      : {relayFilters: [], localFilters: []},
+  )
+  const targetingEvents = $derived(
+    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
+  )
+  const authorizedTargetingEvents = $derived.by(() =>
+    $activeCommunityDefinition
+      ? filterAuthorizedCommunityTargetingEvents({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: [GIT_PERMALINK_KIND],
+        })
       : [],
   )
+  const targetedPermalinkFilterPlan = $derived(
+    makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents),
+  )
+  const targetedPermalinkRelayHintPlans = $derived(
+    makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+  )
+  const directPermalinkFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey
+      ? makeCommunityContentFilterPlan(
+          [{kinds: [GIT_PERMALINK_KIND], "#h": [communityPubkey]}],
+          permalinkAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
+  )
+  const permalinkFilterPlan = $derived({
+    relayFilters: [
+      ...directPermalinkFilterPlan.relayFilters,
+      ...targetedPermalinkFilterPlan.relayFilters,
+    ] as Filter[],
+    localFilters: [
+      ...directPermalinkFilterPlan.localFilters,
+      ...targetedPermalinkFilterPlan.localFilters,
+    ] as Filter[],
+  })
+  const permalinkFilters = $derived(permalinkFilterPlan.localFilters)
+  const permalinkRelayFilters = $derived(permalinkFilterPlan.relayFilters)
   const permalinks = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: permalinkFilters})),
   )
@@ -163,73 +225,182 @@
   let line = $state("")
   let description = $state("")
   let loadingTargets = $state(false)
-  let targetRequestDone = $state(false)
-  let loadingPermalinks = $state(false)
-  let permalinkRequestDone = $state(false)
-  const permalinksLoading = $derived(
-    communityBootstrapLoading ||
-      loadingTargets ||
-      loadingPermalinks ||
-      !targetRequestDone ||
-      (permalinkFilters.length > 0 && !permalinkRequestDone && $permalinks.length === 0),
+  let targetLoadStatus = $state<"idle" | "loading" | "complete" | "incomplete" | "failed">("idle")
+  let loadingHintedOriginals = $state(false)
+  let hintedOriginalLoadStatus = $state<"idle" | "loading" | "complete" | "incomplete" | "failed">(
+    "idle",
   )
+  let loadingPermalinks = $state(false)
+  let permalinkLoadStatus = $state<"idle" | "loading" | "complete" | "incomplete" | "failed">(
+    "idle",
+  )
+  let historicalLoadRetryVersion = $state(0)
+  const permalinksLoading = $derived(
+    !communityBootstrapFailed &&
+      !communityPermissionEvidenceIncomplete &&
+      (communityBootstrapLoading ||
+        communityPermissionsLoading ||
+        loadingTargets ||
+        loadingHintedOriginals ||
+        loadingPermalinks ||
+        targetLoadStatus === "idle" ||
+        (permalinkFilters.length > 0 &&
+          permalinkLoadStatus === "idle" &&
+          $permalinks.length === 0)),
+  )
+  const historyIncomplete = $derived(
+    communityBootstrapFailed ||
+      communityPermissionEvidenceIncomplete ||
+      targetLoadStatus === "incomplete" ||
+      targetLoadStatus === "failed" ||
+      hintedOriginalLoadStatus === "incomplete" ||
+      hintedOriginalLoadStatus === "failed" ||
+      permalinkLoadStatus === "incomplete" ||
+      permalinkLoadStatus === "failed",
+  )
+  const retryHistoricalLoad = () => {
+    historicalLoadRetryVersion += 1
+  }
 
   $effect(() => {
-    if (
-      !communityBootstrapReady ||
-      !communityPubkey ||
-      $activeCommunityRelays.length === 0 ||
-      targetingFilters.length === 0
-    ) {
+    void historicalLoadRetryVersion
+    const relays = $activeCommunityRelays
+    const relayFilters = targetingFilterPlan.relayFilters
+    const localFilters = targetingFilterPlan.localFilters
+
+    if (!communityBootstrapReady || !communityPubkey) {
       loadingTargets = false
-      targetRequestDone = false
+      targetLoadStatus = "idle"
+      return
+    }
+    if (relayFilters.length === 0 || localFilters.length === 0) {
+      loadingTargets = false
+      targetLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingTargets = false
+      targetLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
     loadingTargets = true
-    targetRequestDone = false
-    request({
-      relays: $activeCommunityRelays,
-      autoClose: true,
-      filters: targetingFilters,
+    targetLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-permalink-targets:${communityPubkey}`,
       signal: controller.signal,
     })
-      .catch(() => undefined)
+      .then(result => {
+        if (controller.signal.aborted) return
+        targetLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-permalinks] Failed to load targeting history", error)
+        targetLoadStatus = "failed"
+      })
       .finally(() => {
         if (controller.signal.aborted) return
         loadingTargets = false
-        targetRequestDone = true
       })
 
     return () => controller.abort()
   })
 
   $effect(() => {
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      permalinkFilters.length === 0
-    ) {
+    void historicalLoadRetryVersion
+    const plans = targetedPermalinkRelayHintPlans
+
+    if (!communityBootstrapReady) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "idle"
+      return
+    }
+    if (plans.length === 0) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "complete"
+      return
+    }
+
+    const controller = new AbortController()
+    loadingHintedOriginals = true
+    hintedOriginalLoadStatus = "loading"
+    void Promise.all(
+      plans.map(plan =>
+        loadBoundedCommunityHistory({
+          ...plan,
+          priority: RELAY_REQUEST_PRIORITY.interactive,
+          owner: `community-permalink-target-originals:${communityPubkey}`,
+          signal: controller.signal,
+        }),
+      ),
+    )
+      .then(results => {
+        if (controller.signal.aborted) return
+        hintedOriginalLoadStatus = results.every(result => result.complete)
+          ? "complete"
+          : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-permalinks] Failed to load hinted permalink originals", error)
+        hintedOriginalLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingHintedOriginals = false
+      })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    void historicalLoadRetryVersion
+    const relays = $activeCommunityRelays
+
+    if (!communityBootstrapReady) {
       loadingPermalinks = false
-      permalinkRequestDone = false
+      permalinkLoadStatus = "idle"
+      return
+    }
+    if (permalinkRelayFilters.length === 0 || permalinkFilters.length === 0) {
+      loadingPermalinks = false
+      permalinkLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingPermalinks = false
+      permalinkLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
     loadingPermalinks = true
-    permalinkRequestDone = false
-    request({
-      relays: $activeCommunityRelays,
-      autoClose: true,
-      filters: permalinkFilters,
+    permalinkLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters: permalinkRelayFilters,
+      localFilters: permalinkFilters,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-permalinks:${communityPubkey}`,
       signal: controller.signal,
     })
-      .catch(() => undefined)
+      .then(result => {
+        if (controller.signal.aborted) return
+        permalinkLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-permalinks] Failed to load permalink history", error)
+        permalinkLoadStatus = "failed"
+      })
       .finally(() => {
         if (controller.signal.aborted) return
         loadingPermalinks = false
-        permalinkRequestDone = true
       })
 
     return () => controller.abort()
@@ -283,6 +454,13 @@
   </form>
 
   <div class="col-2">
+    {#if $permalinks.length > 0 && historyIncomplete}
+      <div class="flex items-center justify-between gap-3 text-sm opacity-70">
+        <p>Permalink history is incomplete; some permalinks may be missing.</p>
+        <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
+          >Retry</button>
+      </div>
+    {/if}
     {#each $permalinks as permalink (permalink.id)}
       <div class="card2 bg-alt p-4 shadow-md">
         <strong>{getTagValue("file", permalink.tags) || "Permalink"}</strong>
@@ -298,8 +476,14 @@
       <p class="py-8 text-center opacity-70">
         {#if permalinksLoading}
           <Spinner loading>Looking for permalinks...</Spinner>
+        {:else if historyIncomplete}
+          <span class="flex flex-col items-center gap-3">
+            Permalink history is incomplete or temporarily unavailable.
+            <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
+              >Retry</button>
+          </span>
         {:else}
-          No targeted permalinks found.
+          No community permalinks found.
         {/if}
       </p>
     {/each}

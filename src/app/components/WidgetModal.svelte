@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type {SmartWidgetEvent} from "@app/extensions/types"
+  import type {CommunityWidgetRuntimeContext, SmartWidgetEvent} from "@app/extensions/types"
   import WidgetFrame from "@app/components/WidgetFrame.svelte"
   import {clearModals} from "@app/util/modal"
   import Icon from "@lib/components/Icon.svelte"
@@ -8,9 +8,10 @@
   type Props = {
     widget: SmartWidgetEvent
     context?: Record<string, unknown>
+    communityRuntimeContextProvider?: () => CommunityWidgetRuntimeContext | undefined
   }
 
-  const {widget, context = {}}: Props = $props()
+  const {widget, context = {}, communityRuntimeContextProvider}: Props = $props()
 </script>
 
 <div
@@ -34,6 +35,11 @@
   </div>
 
   <div class="relative flex-1 overflow-hidden">
-    <WidgetFrame {widget} {context} class="h-full" minHeight={500} />
+    <WidgetFrame
+      {widget}
+      {context}
+      {communityRuntimeContextProvider}
+      class="h-full"
+      minHeight={500} />
   </div>
 </div>

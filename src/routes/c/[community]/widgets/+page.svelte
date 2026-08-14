@@ -1,9 +1,8 @@
 <script lang="ts">
   import {page} from "$app/stores"
-  import {request} from "@welshman/net"
   import {profilesByPubkey, pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
-  import {DELETE, makeEvent, getTagValue, type Filter, type TrustedEvent} from "@welshman/util"
+  import {DELETE, makeEvent, getTagValue, type TrustedEvent} from "@welshman/util"
   import {randomId} from "@welshman/lib"
   import Widget from "@assets/icons/widget.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
@@ -26,18 +25,23 @@
     activeCommunityRelays,
     activeUserCommunityRefs,
   } from "@app/core/community-state"
-  import {normalizePubkey, normalizeRelays, parseTargetedPublication} from "@app/core/community"
+  import {normalizePubkey} from "@app/core/community"
   import {
     SMART_WIDGET_KIND,
+    makeCommunityContentFilterPlan,
     makeCommunityTargetingFilter,
-    makeTargetedPublicationOriginalFilters,
+    makeTargetedPublicationOriginalFilterPlan,
+    makeTargetedPublicationOriginalRelayHintPlans,
   } from "@app/core/community-feeds"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
     communityWritableSectionsSupportTarget,
+    filterAuthorizedCommunityTargetingEvents,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
+  import {loadBoundedCommunityHistory, makeSameAuthorDeleteFilters} from "@app/core/requests"
+  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {parseCommunityRouteParam} from "@app/util/routes"
   import {isSecureEmbeddableUrl, SECURE_EMBED_URL_REQUIREMENT} from "@app/extensions/url-policy"
   import type {WidgetCommunitySlotType} from "@app/extensions/types"
@@ -66,6 +70,9 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
+  const communityBootstrapFailed = $derived(
+    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+  )
   const communityPermissionsLoading = $derived(
     Boolean(
       communityPubkey &&
@@ -75,48 +82,77 @@
       !$activeCommunityPermissionStatus.hasCachedEvents,
     ),
   )
+  const communityPermissionEvidenceIncomplete = $derived(
+    Boolean(
+      communityPubkey &&
+      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
+      $activeCommunityPermissionStatus.loaded &&
+      !$activeCommunityPermissionStatus.complete &&
+      !$activeCommunityPermissionStatus.hasCachedEvents,
+    ),
+  )
   const targetingFilters = $derived(
     communityBootstrapReady && communityPubkey
       ? [makeCommunityTargetingFilter(communityPubkey, [SMART_WIDGET_KIND])]
       : [],
   )
-  const targetingEvents = $derived(
-    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
+  const targetingFilterPlan = $derived.by(() =>
+    communityBootstrapReady && $activeCommunityDefinition
+      ? makeCommunityContentFilterPlan(
+          targetingFilters,
+          getCommunityTargetWriterPubkeys({
+            definition: $activeCommunityDefinition,
+            profileListEvents: $activeCommunityProfileListEvents,
+            target: COMMUNITY_WRITE_TARGETS.widget,
+            reportState: $activeCommunityReportState,
+          }),
+        )
+      : {relayFilters: [], localFilters: []},
   )
-  const targetDeleteFilters = $derived.by(() => makeTargetDeleteFilters($targetingEvents))
+  const targetingEvents = $derived(
+    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
+  )
+  const authorizedTargetingEvents = $derived.by(() =>
+    communityBootstrapReady && $activeCommunityDefinition
+      ? filterAuthorizedCommunityTargetingEvents({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: [SMART_WIDGET_KIND],
+        })
+      : [],
+  )
+  const targetDeleteFilterPlan = $derived.by(() => {
+    const filters = makeSameAuthorDeleteFilters(authorizedTargetingEvents)
+
+    return {relayFilters: filters, localFilters: filters}
+  })
   const targetDeleteEvents = $derived(
-    targetDeleteFilters.length
-      ? deriveEventsAsc(deriveEventsById({repository, filters: targetDeleteFilters}))
+    targetDeleteFilterPlan.localFilters.length
+      ? deriveEventsAsc(
+          deriveEventsById({repository, filters: targetDeleteFilterPlan.localFilters}),
+        )
       : undefined,
   )
   const deletedTargetIds = $derived.by(() =>
     getDeletedTargetEventIds(
-      $targetingEvents,
+      authorizedTargetingEvents,
       $targetDeleteEvents ? ($targetDeleteEvents as TrustedEvent[]) : [],
     ),
   )
-  const widgetTargetAuthorPubkeys = $derived(
-    $activeCommunityDefinition
-      ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
-          profileListEvents: $activeCommunityProfileListEvents,
-          target: COMMUNITY_WRITE_TARGETS.widget,
-          reportState: $activeCommunityReportState,
-        })
-      : [],
+  const eligibleTargetingEvents = $derived(
+    authorizedTargetingEvents.filter(event => !deletedTargetIds.has(event.id)),
   )
-  const eligibleTargetingEvents = $derived.by(() => {
-    const writerPubkeys = new Set(widgetTargetAuthorPubkeys.map(normalizePubkey))
-
-    return $targetingEvents.filter(
-      event => writerPubkeys.has(normalizePubkey(event.pubkey)) && !deletedTargetIds.has(event.id),
-    )
-  })
-  const widgetFilters = $derived(
+  const widgetFilterPlan = $derived(
     communityBootstrapReady && eligibleTargetingEvents.length
-      ? makeTargetedPublicationOriginalFilters(eligibleTargetingEvents)
-      : [],
+      ? makeTargetedPublicationOriginalFilterPlan(eligibleTargetingEvents)
+      : {relayFilters: [], localFilters: []},
   )
+  const widgetRelayHintPlans = $derived(
+    makeTargetedPublicationOriginalRelayHintPlans(eligibleTargetingEvents),
+  )
+  const widgetFilters = $derived(widgetFilterPlan.localFilters)
   const widgets = $derived(deriveEventsAsc(deriveEventsById({repository, filters: widgetFilters})))
   const canCreateWidget = $derived(
     Boolean(
@@ -173,12 +209,6 @@
 
     return options
   })
-
-  function makeTargetDeleteFilters(events: TrustedEvent[]): Filter[] {
-    const ids = events.map(event => event.id).filter(Boolean)
-
-    return ids.length ? [{kinds: [DELETE], "#e": ids, limit: ids.length * 2}] : []
-  }
 
   function getDeletedTargetEventIds(targetEvents: TrustedEvent[], deleteEvents: TrustedEvent[]) {
     const targetAuthors = new Map(
@@ -362,16 +392,32 @@
   let selectedTargetCommunityPubkeys = $state<string[]>([])
   let targetSelectionKey = ""
   let loadingTargets = $state(false)
-  let targetRequestDone = $state(false)
-  let loadingWidgets = $state(false)
-  let widgetRequestDone = $state(false)
+  let targetRequestSettled = $state(false)
+  let targetHistoryIncomplete = $state(false)
+  let loadingTargetDeletes = $state(false)
+  let targetDeleteRequestSettled = $state(false)
+  let targetDeleteHistoryIncomplete = $state(false)
+  let loadingOriginalWidgets = $state(false)
+  let originalWidgetRequestSettled = $state(false)
+  let originalWidgetHistoryIncomplete = $state(false)
+  const widgetHistoryIncomplete = $derived(
+    communityBootstrapFailed ||
+      communityPermissionEvidenceIncomplete ||
+      targetHistoryIncomplete ||
+      targetDeleteHistoryIncomplete ||
+      originalWidgetHistoryIncomplete,
+  )
   const widgetsLoading = $derived(
-    communityBootstrapLoading ||
-      communityPermissionsLoading ||
-      loadingTargets ||
-      loadingWidgets ||
-      !targetRequestDone ||
-      (widgetFilters.length > 0 && !widgetRequestDone && $widgets.length === 0),
+    !communityBootstrapFailed &&
+      !communityPermissionEvidenceIncomplete &&
+      (communityBootstrapLoading ||
+        communityPermissionsLoading ||
+        loadingTargets ||
+        loadingTargetDeletes ||
+        loadingOriginalWidgets ||
+        !targetRequestSettled ||
+        !targetDeleteRequestSettled ||
+        (widgetFilters.length > 0 && !originalWidgetRequestSettled && $widgets.length === 0)),
   )
   const widgetUploading = $derived(!["idle", "ready", "failed"].includes(widgetUploadStage))
   const canSubmitWidget = $derived(
@@ -387,83 +433,163 @@
     if (
       !communityBootstrapReady ||
       !communityPubkey ||
-      $activeCommunityRelays.length === 0 ||
-      targetingFilters.length === 0
+      targetingFilterPlan.relayFilters.length === 0
     ) {
       loadingTargets = false
-      targetRequestDone = false
+      targetRequestSettled =
+        communityBootstrapReady && targetingFilterPlan.relayFilters.length === 0
+      targetHistoryIncomplete = false
+      return
+    }
+    if ($activeCommunityRelays.length === 0) {
+      loadingTargets = false
+      targetRequestSettled = true
+      targetHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
     loadingTargets = true
-    targetRequestDone = false
-    request({
+    targetRequestSettled = false
+    targetHistoryIncomplete = false
+    void loadBoundedCommunityHistory({
       relays: $activeCommunityRelays,
-      autoClose: true,
-      filters: targetingFilters,
+      relayFilters: targetingFilterPlan.relayFilters,
+      localFilters: targetingFilterPlan.localFilters,
       signal: controller.signal,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-widgets:${communityPubkey}:targets`,
     })
-      .catch(() => undefined)
+      .then(result => {
+        if (!controller.signal.aborted) targetHistoryIncomplete = !result.complete
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        targetHistoryIncomplete = true
+        console.warn("[community-widgets] Failed to load targeting history", error)
+      })
       .finally(() => {
         if (controller.signal.aborted) return
         loadingTargets = false
-        targetRequestDone = true
+        targetRequestSettled = true
       })
 
     return () => controller.abort()
   })
 
   $effect(() => {
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      targetDeleteFilters.length === 0
-    ) {
+    const relays = $activeCommunityRelays
+    const relayFilters = targetDeleteFilterPlan.relayFilters
+    const localFilters = targetDeleteFilterPlan.localFilters
+
+    if (!communityBootstrapReady) {
+      loadingTargetDeletes = false
+      targetDeleteRequestSettled = false
+      targetDeleteHistoryIncomplete = false
+      return
+    }
+    if (relayFilters.length === 0 || localFilters.length === 0) {
+      loadingTargetDeletes = false
+      targetDeleteRequestSettled = true
+      targetDeleteHistoryIncomplete = false
+      return
+    }
+    if (relays.length === 0) {
+      loadingTargetDeletes = false
+      targetDeleteRequestSettled = true
+      targetDeleteHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
-    request({
-      relays: $activeCommunityRelays,
-      autoClose: true,
-      filters: targetDeleteFilters,
+    loadingTargetDeletes = true
+    targetDeleteRequestSettled = false
+    targetDeleteHistoryIncomplete = false
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
       signal: controller.signal,
-    }).catch(() => undefined)
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-widgets:${communityPubkey}:target-deletes`,
+    })
+      .then(result => {
+        if (controller.signal.aborted) return
+        targetDeleteHistoryIncomplete = !result.complete
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        targetDeleteHistoryIncomplete = true
+        console.warn("[community-widgets] Failed to load targeting delete history", error)
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return
+        loadingTargetDeletes = false
+        targetDeleteRequestSettled = true
+      })
 
     return () => controller.abort()
   })
 
   $effect(() => {
-    const widgetRelayHints = normalizeRelays([
-      ...$activeCommunityRelays,
-      ...eligibleTargetingEvents.flatMap(event => {
-        const ref = parseTargetedPublication(event)?.ref
+    const relayFilters = widgetFilterPlan.relayFilters
+    const localFilters = widgetFilterPlan.localFilters
 
-        return ref?.relay ? [ref.relay] : []
-      }),
-    ])
+    if (!communityBootstrapReady) {
+      loadingOriginalWidgets = false
+      originalWidgetRequestSettled = false
+      originalWidgetHistoryIncomplete = false
+      return
+    }
+    if (relayFilters.length === 0 || localFilters.length === 0) {
+      loadingOriginalWidgets = false
+      originalWidgetRequestSettled = true
+      originalWidgetHistoryIncomplete = false
+      return
+    }
 
-    if (!communityBootstrapReady || widgetRelayHints.length === 0 || widgetFilters.length === 0) {
-      loadingWidgets = false
-      widgetRequestDone = false
+    const communityRelaysMissing = $activeCommunityRelays.length === 0
+    const plans = [
+      ...($activeCommunityRelays.length
+        ? [{relays: $activeCommunityRelays, relayFilters, localFilters}]
+        : []),
+      ...widgetRelayHintPlans,
+    ]
+    if (plans.length === 0) {
+      loadingOriginalWidgets = false
+      originalWidgetRequestSettled = true
+      originalWidgetHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
-    loadingWidgets = true
-    widgetRequestDone = false
-    request({
-      relays: widgetRelayHints,
-      autoClose: true,
-      filters: widgetFilters,
-      signal: controller.signal,
-    })
-      .catch(() => undefined)
+    loadingOriginalWidgets = true
+    originalWidgetRequestSettled = false
+    originalWidgetHistoryIncomplete = false
+    void Promise.all(
+      plans.map(plan =>
+        loadBoundedCommunityHistory({
+          ...plan,
+          signal: controller.signal,
+          priority: RELAY_REQUEST_PRIORITY.interactive,
+          owner: `community-widgets:${communityPubkey}:originals`,
+        }),
+      ),
+    )
+      .then(results => {
+        if (controller.signal.aborted) return
+        originalWidgetHistoryIncomplete =
+          communityRelaysMissing || results.some(result => !result.complete)
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        originalWidgetHistoryIncomplete = true
+        console.warn("[community-widgets] Failed to load original widget history", error)
+      })
       .finally(() => {
         if (controller.signal.aborted) return
-        loadingWidgets = false
-        widgetRequestDone = true
+        loadingOriginalWidgets = false
+        originalWidgetRequestSettled = true
       })
 
     return () => controller.abort()
@@ -623,6 +749,12 @@
   </form>
 
   <div class="col-2">
+    {#if widgetHistoryIncomplete}
+      <div class="alert alert-warning text-sm" role="status">
+        Targeted widget history is incomplete. Results below are partial; some widgets or wrapper
+        removals may be missing.
+      </div>
+    {/if}
     {#each $widgets as widget (widget.id)}
       {@const slotLabel = getWidgetSlotLabel(widget.tags.find(tag => tag[0] === "slot")?.[1])}
       <div class="card2 bg-alt p-4 shadow-md" data-event={widget.id}>
@@ -638,6 +770,8 @@
       <p class="py-8 text-center opacity-70">
         {#if widgetsLoading}
           <Spinner loading>Looking for widgets...</Spinner>
+        {:else if widgetHistoryIncomplete}
+          No widgets were found in the partial history loaded so far.
         {:else}
           No targeted widgets found.
         {/if}

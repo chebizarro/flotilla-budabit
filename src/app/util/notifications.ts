@@ -1,9 +1,8 @@
 import {derived, get, readable, writable, type Readable} from "svelte/store"
-import {request} from "@welshman/net"
 import {deriveEventsAsc, deriveEventsById, synced, throttled} from "@welshman/store"
 import {pubkey, repository} from "@welshman/app"
 import {identity, now, prop} from "@welshman/lib"
-import {Address, MESSAGE, THREAD, getTagValue, type TrustedEvent} from "@welshman/util"
+import {Address, MESSAGE, THREAD, getTagValue, type Filter, type TrustedEvent} from "@welshman/util"
 import {chatsById, userSettingsValues} from "@app/core/state"
 import {
   activeCommunityDefinition,
@@ -15,19 +14,24 @@ import {
 } from "@app/core/community-state"
 import {normalizePubkey, parseTargetedPublication} from "@app/core/community"
 import {
+  makeCommunityContentFilterPlan,
   makeCommunityExclusiveFilter,
   makeCommunityTargetingFilter,
-  makeTargetedPublicationOriginalFilters,
+  makeTargetedPublicationOriginalFilterPlan,
+  makeTargetedPublicationOriginalRelayHintPlans,
 } from "@app/core/community-feeds"
 import {readCommunityRoomMessage} from "@app/core/community-messages"
 import {readCommunityThread} from "@app/core/community-threads"
 import {
   COMMUNITY_CALENDAR_WRITE_TARGETS,
   COMMUNITY_WRITE_TARGETS,
+  filterAuthorizedCommunityTargetingEvents,
   getCommunityTargetWriterPubkeys,
   type CommunityWriteTarget,
 } from "@app/core/community-permissions"
 import {isCommunityPersonBanned} from "@app/core/community-reports"
+import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+import {loadBoundedCommunityHistory} from "@app/core/requests"
 import {kv} from "@app/core/storage"
 import {
   makeChatPath,
@@ -371,7 +375,12 @@ const rootMatchesTargetingEvent = (
   if (!targeting || !kinds.includes(targeting.kind) || root.kind !== targeting.kind) return false
 
   const ref = targeting.ref
-  if (!ref) return getTagValue("h", root.tags) === targeting.id
+  if (!ref) {
+    return (
+      getTagValue("h", root.tags) === targeting.id &&
+      normalizePubkey(root.pubkey) === normalizePubkey(targetingEvent.pubkey)
+    )
+  }
   if (ref.type === "e") return root.id === ref.value
 
   const [refKind, refPubkey, ...identifierParts] = ref.value.split(":")
@@ -606,33 +615,41 @@ const makeTargetedPublicationRootNotificationCandidates = ({
       }
 
       const targetKinds = Array.from(new Set(targets.map(target => target.kind)))
-      const authorPubkeysByKind = new Map(
-        targets.map(currentTarget => [
-          currentTarget.kind,
-          getCommunityTargetWriterPubkeys({
-            definition: $activeCommunityDefinition,
-            profileListEvents: $activeCommunityProfileListEvents,
-            target: currentTarget,
-            reportState: $activeCommunityReportState,
-          }),
-        ]),
+      const targetingFilterPlan = targets.reduce(
+        (combined, currentTarget) => {
+          const plan = makeCommunityContentFilterPlan(
+            [makeCommunityTargetingFilter($activeCommunityDefinition.pubkey, [currentTarget.kind])],
+            getCommunityTargetWriterPubkeys({
+              definition: $activeCommunityDefinition,
+              profileListEvents: $activeCommunityProfileListEvents,
+              target: currentTarget,
+              reportState: $activeCommunityReportState,
+            }),
+          )
+          combined.relayFilters.push(...plan.relayFilters)
+          combined.localFilters.push(...plan.localFilters)
+          return combined
+        },
+        {relayFilters: [], localFilters: []} as {
+          relayFilters: Filter[]
+          localFilters: Filter[]
+        },
       )
-      const authorPubkeys = Array.from(new Set(Array.from(authorPubkeysByKind.values()).flat()))
-
-      if (authorPubkeys.length === 0) {
+      if (
+        targetingFilterPlan.relayFilters.length === 0 ||
+        targetingFilterPlan.localFilters.length === 0
+      ) {
         set([])
         return
       }
-
-      const targetingFilters = [
-        makeCommunityTargetingFilter($activeCommunityDefinition.pubkey, targetKinds),
-      ]
       const targetingController = new AbortController()
 
-      request({
+      void loadBoundedCommunityHistory({
         relays: $activeCommunityRelays,
-        filters: targetingFilters,
-        autoClose: true,
+        relayFilters: targetingFilterPlan.relayFilters,
+        localFilters: targetingFilterPlan.localFilters,
+        priority: RELAY_REQUEST_PRIORITY.background,
+        owner: `notifications-community-targets:${$activeCommunityDefinition.pubkey}`,
         signal: targetingController.signal,
       }).catch(error => {
         if (!targetingController.signal.aborted) {
@@ -643,7 +660,7 @@ const makeTargetedPublicationRootNotificationCandidates = ({
       const targetingEvents = deriveEventsAsc(
         deriveEventsById({
           repository,
-          filters: targetingFilters,
+          filters: targetingFilterPlan.localFilters,
         }),
       )
       let rootController: AbortController | undefined
@@ -655,41 +672,51 @@ const makeTargetedPublicationRootNotificationCandidates = ({
         unsubscribeRootEvents?.()
         unsubscribeRootEvents = undefined
 
-        const rootFilters = targets.flatMap(currentTarget => {
-          const authors =
-            targets.length > 1 ? authorPubkeys : authorPubkeysByKind.get(currentTarget.kind) || []
-          if (authors.length === 0) return []
-
-          return makeTargetedPublicationOriginalFilters(
-            $targetingEvents.filter(
-              event => parseTargetedPublication(event)?.kind === currentTarget.kind,
-            ),
-            authors,
-          )
+        const authorizedTargetingEvents = filterAuthorizedCommunityTargetingEvents({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: targetKinds,
         })
-        if (rootFilters.length === 0) {
+        const rootPlan = makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents)
+        if (rootPlan.localFilters.length === 0 || rootPlan.relayFilters.length === 0) {
           set([])
           return
         }
 
         const controller = new AbortController()
         rootController = controller
-        request({
-          relays: $activeCommunityRelays,
-          filters: rootFilters,
-          autoClose: true,
-          signal: controller.signal,
-        }).catch(error => {
+        const rootRelayPlans = [
+          {
+            relays: $activeCommunityRelays,
+            relayFilters: rootPlan.relayFilters,
+            localFilters: rootPlan.localFilters,
+          },
+          ...makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+        ].filter(plan => plan.relays.length > 0)
+        void Promise.all(
+          rootRelayPlans.map(plan =>
+            loadBoundedCommunityHistory({
+              ...plan,
+              priority: RELAY_REQUEST_PRIORITY.background,
+              owner: `notifications-community-originals:${$activeCommunityDefinition.pubkey}`,
+              signal: controller.signal,
+            }),
+          ),
+        ).catch(error => {
           if (!controller.signal.aborted) {
             console.warn("[notifications] Failed to load targeted publication roots", error)
           }
         })
 
-        const rootEvents = deriveEventsAsc(deriveEventsById({repository, filters: rootFilters}))
+        const rootEvents = deriveEventsAsc(
+          deriveEventsById({repository, filters: rootPlan.localFilters}),
+        )
         unsubscribeRootEvents = rootEvents.subscribe($rootEvents => {
           set(
             getTargetedPublicationRootNotificationCandidates({
-              targetingEvents: $targetingEvents,
+              targetingEvents: authorizedTargetingEvents,
               rootEvents: $rootEvents,
               communityPubkey: $activeCommunityDefinition.pubkey,
               path: makePath($activeCommunityDefinition.pubkey),

@@ -23,6 +23,7 @@
     minHeight?: number
     resizeMinHeight?: number
     onResizeRequest?: (request: WidgetResizeRequest) => void
+    communityRuntimeContextProvider?: () => CommunityWidgetRuntimeContext | undefined
   }
 
   const {
@@ -33,6 +34,7 @@
     minHeight = 280,
     resizeMinHeight = minHeight,
     onResizeRequest,
+    communityRuntimeContextProvider,
   }: Props = $props()
 
   let iframeRef: HTMLIFrameElement | undefined = $state()
@@ -183,10 +185,13 @@
       ? (context.communityContext as CommunityWidgetContext)
       : undefined
 
-  const getCommunityRuntimeContext = () =>
-    context.communityRuntimeContext && typeof context.communityRuntimeContext === "object"
+  const getCommunityRuntimeContext = () => {
+    if (communityRuntimeContextProvider) return communityRuntimeContextProvider()
+
+    return context.communityRuntimeContext && typeof context.communityRuntimeContext === "object"
       ? (context.communityRuntimeContext as CommunityWidgetRuntimeContext)
       : undefined
+  }
 
   const getPublicContext = () => {
     const publicContext = {...context}
@@ -469,6 +474,7 @@
         iframe: iframeRef,
         communityContext: getCommunityContext(),
         communityRuntimeContext: getCommunityRuntimeContext(),
+        communityRuntimeContextProvider: communityRuntimeContextProvider || undefined,
         onResizeRequest: handleResizeRequest,
       }
       bridgeExtension = ext

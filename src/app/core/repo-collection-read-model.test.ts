@@ -7,7 +7,10 @@ import {
   withPublicationTargetingId,
 } from "@app/core/community-targeting"
 import {makeRepoStarReaction} from "@app/util/repo-stars"
-import {buildRepoCommunityStarCollections} from "./repo-collection-read-model"
+import {
+  buildRepoCommunityStarCollections,
+  getRepoCollectionStatus,
+} from "./repo-collection-read-model"
 
 const viewer = "a".repeat(64)
 const community = "b".repeat(64)
@@ -52,6 +55,12 @@ const makeCollectionEvents = () => {
 }
 
 describe("repository collection read model", () => {
+  it("keeps known collections while incomplete empty reads remain indeterminate", () => {
+    expect(getRepoCollectionStatus(true, false)).toBe("collected")
+    expect(getRepoCollectionStatus(false, false)).toBe("indeterminate")
+    expect(getRepoCollectionStatus(false, true)).toBe("uncollected")
+  })
+
   it("indexes one community collection from shared target and reaction events", () => {
     const {star, target} = makeCollectionEvents()
     const collections = buildRepoCommunityStarCollections({
@@ -86,6 +95,73 @@ describe("repository collection read model", () => {
         targetEvents: [target],
         targetDeleteEvents: [deletion],
         reactionEvents: [star],
+      }),
+    ).toEqual([])
+  })
+
+  it("allows viewer wrappers to curate external stars through explicit event and address refs", () => {
+    const externalAuthor = "9".repeat(64)
+    const eventStar = {
+      ...makeRepoStarReaction({event: repo}),
+      id: "6".repeat(64),
+      pubkey: externalAuthor,
+      sig: "7".repeat(128),
+    } as TrustedEvent
+    const addressStar = {
+      ...makeRepoStarReaction({event: repo}),
+      id: "8".repeat(64),
+      pubkey: externalAuthor,
+      tags: [...makeRepoStarReaction({event: repo}).tags, ["d", "external-star"]],
+      sig: "9".repeat(128),
+    } as TrustedEvent
+    const makeExplicitTarget = (id: string, originalRef: {type: "e" | "a"; value: string}) =>
+      ({
+        ...makeEvent(TARGETED_PUBLICATION_KIND, {
+          ...makeTargetedPublicationForCommunity({
+            targetingId: `target-${id}`,
+            originalKind: REACTION,
+            originalRef,
+            communityPubkey: community,
+            communityRelay: "wss://community.example",
+          }),
+        }),
+        id,
+        pubkey: viewer,
+        sig: "1".repeat(128),
+      }) as TrustedEvent
+
+    const collections = buildRepoCommunityStarCollections({
+      viewerPubkey: viewer,
+      communityOptions: [{pubkey: community}],
+      targetEvents: [
+        makeExplicitTarget("event-target", {type: "e", value: eventStar.id}),
+        makeExplicitTarget("address-target", {
+          type: "a",
+          value: `${REACTION}:${externalAuthor}:external-star`,
+        }),
+      ],
+      targetDeleteEvents: [],
+      reactionEvents: [eventStar, addressStar],
+    })
+
+    expect(collections).toHaveLength(2)
+    expect(collections.map(collection => collection.star.reaction.pubkey)).toEqual([
+      externalAuthor,
+      externalAuthor,
+    ])
+  })
+
+  it("does not associate an implicit original signed by someone other than its wrapper", () => {
+    const {star, target} = makeCollectionEvents()
+    const externalStar = {...star, pubkey: "9".repeat(64)} as TrustedEvent
+
+    expect(
+      buildRepoCommunityStarCollections({
+        viewerPubkey: viewer,
+        communityOptions: [{pubkey: community}],
+        targetEvents: [target],
+        targetDeleteEvents: [],
+        reactionEvents: [externalStar],
       }),
     ).toEqual([])
   })

@@ -26,6 +26,7 @@ import {
   normalizeCommunitySectionName,
   normalizeCommunitySectionSubtype,
   normalizePubkey,
+  parseTargetedPublication,
   sectionSupportsKind,
   userCanManageProfileList,
 } from "@app/core/community"
@@ -370,6 +371,44 @@ export const canWriteCommunityTarget = ({
       reportState,
     }),
   )
+}
+
+export const filterAuthorizedCommunityTargetingEvents = ({
+  definition,
+  profileListEvents,
+  events,
+  reportState,
+  kinds,
+}: {
+  definition: CommunityDefinition
+  profileListEvents: TrustedEvent[]
+  events: TrustedEvent[]
+  reportState?: EffectiveCommunityReportState
+  kinds?: readonly number[]
+}) => {
+  const communityPubkey = normalizePubkey(definition.pubkey)
+  const allowedKinds = kinds ? new Set(kinds) : undefined
+
+  return events.filter(event => {
+    const targeting = parseTargetedPublication(event)
+    if (!targeting || (allowedKinds && !allowedKinds.has(targeting.kind))) return false
+    if (!targeting.communities.some(community => community.pubkey === communityPubkey)) return false
+
+    const targets =
+      targeting.kind === EVENT_DATE || targeting.kind === EVENT_TIME
+        ? COMMUNITY_CALENDAR_WRITE_TARGETS
+        : [{sectionName: "", kind: targeting.kind}]
+
+    return targets.some(target =>
+      canWriteCommunityTarget({
+        definition,
+        profileListEvents,
+        userPubkey: event.pubkey,
+        target,
+        reportState,
+      }),
+    )
+  })
 }
 
 export const canWriteCommunityCalendarTarget = ({

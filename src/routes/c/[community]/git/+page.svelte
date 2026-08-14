@@ -1,6 +1,5 @@
 <script lang="ts">
   import {page} from "$app/stores"
-  import {request} from "@welshman/net"
   import {pubkey, publishThunk, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {makeEvent, getTagValue, type TrustedEvent} from "@welshman/util"
@@ -25,20 +24,21 @@
     activeCommunityReportState,
     activeCommunityRelays,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND, normalizeRelays} from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
+    filterAuthorizedCommunityTargetingEvents,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
-  import {normalizeRelays} from "@app/core/community"
   import {getRepoAnnouncementPublishRelays} from "@app/core/git-state"
   import {
     makeCommunityContentFilterPlan,
     makeCommunityRepositoryFilter,
     makeCommunityTargetingFilter,
-    makeTargetedPublicationOriginalFilters,
+    makeTargetedPublicationOriginalFilterPlan,
+    makeTargetedPublicationOriginalRelayHintPlans,
   } from "@app/core/community-feeds"
   import {
     makeAddressablePublicationRef,
@@ -105,29 +105,45 @@
       ? [makeCommunityTargetingFilter(communityPubkey, [GIT_REPO_ANNOUNCEMENT])]
       : [],
   )
+  const communityRepoAssociationFilterPlan = $derived(
+    communityBootstrapReady
+      ? makeCommunityContentFilterPlan(communityRepoAssociationFilters, repoAuthorPubkeys)
+      : {relayFilters: [], localFilters: []},
+  )
   const communityRepoAssociationEventsStore = $derived(
-    communityRepoAssociationFilters.length
+    communityRepoAssociationFilterPlan.localFilters.length
       ? deriveEventsAsc(
-          deriveEventsById({repository, filters: communityRepoAssociationFilters as any}),
+          deriveEventsById({
+            repository,
+            filters: communityRepoAssociationFilterPlan.localFilters as any,
+          }),
         )
       : undefined,
   )
-  const targetedRepoFilters = $derived.by(() =>
-    $communityRepoAssociationEventsStore
-      ? makeTargetedPublicationOriginalFilters(
-          $communityRepoAssociationEventsStore as TrustedEvent[],
-        )
+  const authorizedCommunityRepoAssociationEvents = $derived.by(() =>
+    communityBootstrapReady && $activeCommunityDefinition && $communityRepoAssociationEventsStore
+      ? filterAuthorizedCommunityTargetingEvents({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $communityRepoAssociationEventsStore as TrustedEvent[],
+          reportState: $activeCommunityReportState,
+          kinds: [GIT_REPO_ANNOUNCEMENT],
+        })
       : [],
   )
+  const targetedRepoFilterPlan = $derived.by(() =>
+    makeTargetedPublicationOriginalFilterPlan(authorizedCommunityRepoAssociationEvents),
+  )
+  const targetedRepoRelayHintPlans = $derived.by(() =>
+    makeTargetedPublicationOriginalRelayHintPlans(authorizedCommunityRepoAssociationEvents),
+  )
   const targetedRepoEventsStore = $derived(
-    targetedRepoFilters.length
-      ? deriveEventsAsc(deriveEventsById({repository, filters: targetedRepoFilters as any}))
+    targetedRepoFilterPlan.localFilters.length
+      ? deriveEventsAsc(
+          deriveEventsById({repository, filters: targetedRepoFilterPlan.localFilters as any}),
+        )
       : undefined,
   )
-  const targetedRepoLoadFilters = $derived.by(() => [
-    ...communityRepoAssociationFilters,
-    ...targetedRepoFilters,
-  ])
   const repoReportStates = $derived.by(() =>
     communityPubkey && $activeCommunityReportState
       ? new Map([[communityPubkey, $activeCommunityReportState]])
@@ -136,9 +152,7 @@
   const repos = $derived.by(() => {
     if (!communityPubkey || !$activeCommunityDefinition) return []
 
-    const associationEvents = $communityRepoAssociationEventsStore
-      ? ($communityRepoAssociationEventsStore as TrustedEvent[])
-      : []
+    const associationEvents = authorizedCommunityRepoAssociationEvents
     const candidates = [
       ...($legacyRepoEventsStore ? ($legacyRepoEventsStore as TrustedEvent[]) : []),
       ...($targetedRepoEventsStore ? ($targetedRepoEventsStore as TrustedEvent[]) : []),
@@ -258,16 +272,31 @@
   let directRepoRetryVersion = $state(0)
   let targetedRepoLoading = $state(false)
   let targetedRepoRequestDone = $state(false)
+  let targetedRepoHistoryIncomplete = $state(false)
+  let targetedOriginalLoading = $state(false)
+  let targetedOriginalRequestDone = $state(false)
+  let targetedOriginalHistoryIncomplete = $state(false)
   const retryDirectRepoHistory = () => {
-    if (!directRepoLoading) directRepoRetryVersion += 1
+    if (!directRepoLoading && !targetedRepoLoading && !targetedOriginalLoading) {
+      directRepoRetryVersion += 1
+    }
   }
   const reposLoading = $derived(
     communityBootstrapLoading ||
       communityPermissionsLoading ||
       directRepoLoading ||
       targetedRepoLoading ||
+      targetedOriginalLoading ||
       (!directRepoLoadSettled && directRepoFilterPlan.relayFilters.length > 0) ||
-      (!targetedRepoRequestDone && targetedRepoLoadFilters.length > 0 && repos.length === 0),
+      (!targetedRepoRequestDone &&
+        communityRepoAssociationFilterPlan.relayFilters.length > 0 &&
+        repos.length === 0) ||
+      (!targetedOriginalRequestDone && targetedRepoFilterPlan.relayFilters.length > 0),
+  )
+  const repoHistoryIncomplete = $derived(
+    directRepoHistoryIncomplete ||
+      targetedRepoHistoryIncomplete ||
+      targetedOriginalHistoryIncomplete,
   )
 
   $effect(() => {
@@ -326,34 +355,118 @@
   })
 
   $effect(() => {
+    void directRepoRetryVersion
     const relays = $activeCommunityRelays
-    const filters = targetedRepoLoadFilters
+    const relayFilters = communityRepoAssociationFilterPlan.relayFilters
+    const localFilters = communityRepoAssociationFilterPlan.localFilters
+
     if (!communityBootstrapReady) {
       targetedRepoLoading = false
       targetedRepoRequestDone = false
+      targetedRepoHistoryIncomplete = false
       return
     }
-    if (relays.length === 0 || filters.length === 0) {
+    if (relayFilters.length === 0 || localFilters.length === 0) {
       targetedRepoLoading = false
       targetedRepoRequestDone = true
+      targetedRepoHistoryIncomplete = false
+      return
+    }
+    if (relays.length === 0) {
+      targetedRepoLoading = false
+      targetedRepoRequestDone = true
+      targetedRepoHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
     targetedRepoLoading = true
     targetedRepoRequestDone = false
-    request({
+    targetedRepoHistoryIncomplete = false
+    void loadBoundedCommunityHistory({
       relays,
-      autoClose: true,
-      lifetime: "finite",
-      filters: filters as any,
+      relayFilters,
+      localFilters,
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-repository-targets:${communityPubkey}`,
       signal: controller.signal,
     })
-      .catch(() => undefined)
+      .then(result => {
+        if (controller.signal.aborted) return
+        targetedRepoHistoryIncomplete = !result.complete
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        targetedRepoHistoryIncomplete = true
+        console.warn("[community-repositories] Failed to load repository targets", error)
+      })
       .finally(() => {
         if (controller.signal.aborted) return
         targetedRepoLoading = false
         targetedRepoRequestDone = true
+      })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    void directRepoRetryVersion
+
+    if (!communityBootstrapReady) {
+      targetedOriginalLoading = false
+      targetedOriginalRequestDone = false
+      targetedOriginalHistoryIncomplete = false
+      return
+    }
+    if (targetedRepoFilterPlan.relayFilters.length === 0) {
+      targetedOriginalLoading = false
+      targetedOriginalRequestDone = true
+      targetedOriginalHistoryIncomplete = false
+      return
+    }
+
+    const plans = [
+      {
+        relays: $activeCommunityRelays,
+        relayFilters: targetedRepoFilterPlan.relayFilters,
+        localFilters: targetedRepoFilterPlan.localFilters,
+      },
+      ...targetedRepoRelayHintPlans,
+    ].filter(plan => plan.relays.length > 0)
+    if (plans.length === 0) {
+      targetedOriginalLoading = false
+      targetedOriginalRequestDone = true
+      targetedOriginalHistoryIncomplete = true
+      return
+    }
+
+    const controller = new AbortController()
+    targetedOriginalLoading = true
+    targetedOriginalRequestDone = false
+    targetedOriginalHistoryIncomplete = false
+    void Promise.all(
+      plans.map(plan =>
+        loadBoundedCommunityHistory({
+          ...plan,
+          priority: RELAY_REQUEST_PRIORITY.interactive,
+          owner: `community-repository-originals:${communityPubkey}`,
+          signal: controller.signal,
+        }),
+      ),
+    )
+      .then(results => {
+        if (controller.signal.aborted) return
+        targetedOriginalHistoryIncomplete = results.some(result => !result.complete)
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        targetedOriginalHistoryIncomplete = true
+        console.warn("[community-repositories] Failed to load targeted repositories", error)
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return
+        targetedOriginalLoading = false
+        targetedOriginalRequestDone = true
       })
 
     return () => controller.abort()
@@ -418,7 +531,7 @@
   </form>
 
   <div class="col-2">
-    {#if directRepoHistoryIncomplete}
+    {#if repoHistoryIncomplete}
       <div
         class="card2 bg-alt flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
         role="status">
@@ -426,9 +539,11 @@
         <button
           class="btn btn-neutral btn-sm"
           type="button"
-          disabled={directRepoLoading}
+          disabled={directRepoLoading || targetedRepoLoading || targetedOriginalLoading}
           onclick={retryDirectRepoHistory}>
-          {directRepoLoading ? "Retrying..." : "Retry"}
+          {directRepoLoading || targetedRepoLoading || targetedOriginalLoading
+            ? "Retrying..."
+            : "Retry"}
         </button>
       </div>
     {/if}

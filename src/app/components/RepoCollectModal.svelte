@@ -17,6 +17,7 @@
     defaultCommunityPubkeys = [],
     communityOptions = [],
     defaultCommunityPubkey = "",
+    lockedCommunityPubkeys = [],
     allowEmpty = false,
     requireChanges = false,
     onCollect,
@@ -31,6 +32,7 @@
     defaultCommunityPubkeys?: string[]
     communityOptions?: RepoCommunityOption[]
     defaultCommunityPubkey?: string
+    lockedCommunityPubkeys?: string[]
     allowEmpty?: boolean
     requireChanges?: boolean
     onCollect: (selection: CollectSelection) => Promise<void> | void
@@ -41,6 +43,7 @@
     new Set([defaultCommunityPubkey, ...defaultCommunityPubkeys]),
   ).filter(pubkey => communityOptions.some(option => option.pubkey === pubkey))
   const initialCommunityKey = initialCommunityPubkeys.slice().sort().join("\n")
+  const lockedCommunities = new Set(lockedCommunityPubkeys)
 
   let personal = $state(defaultPersonal)
   let selectedCommunities = $state<string[]>(initialCommunityPubkeys)
@@ -89,6 +92,7 @@
         <input
           type="checkbox"
           checked={selectedCommunities.includes(option.pubkey)}
+          disabled={submitting || lockedCommunities.has(option.pubkey)}
           onchange={event => toggleCommunity(option.pubkey, event.currentTarget.checked)} />
         <span class="min-w-0 flex-1 truncate">{option.label || option.pubkey}</span>
       </label>

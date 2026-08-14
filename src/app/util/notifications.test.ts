@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {get, readable} from "svelte/store"
+import {readFileSync} from "node:fs"
 import {nip19} from "nostr-tools"
 import {describe, expect, it, vi} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
@@ -50,6 +51,18 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 describe("notifications", () => {
+  it("uses bounded structural wrapper discovery and relay-hint original plans", () => {
+    const source = readFileSync("src/app/util/notifications.ts", "utf8")
+
+    expect(source).toContain("makeCommunityContentFilterPlan(")
+    expect(source).toContain("relayFilters: targetingFilterPlan.relayFilters")
+    expect(source).toContain("localFilters: targetingFilterPlan.localFilters")
+    expect(source).toContain("filterAuthorizedCommunityTargetingEvents({")
+    expect(source).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
+    expect(source.match(/loadBoundedCommunityHistory\(\{/g)).toHaveLength(2)
+    expect(source).not.toContain("request({")
+  })
+
   it("matches repo notification helpers against canonical git routes", async () => {
     const {getRepoNotificationPaths, hasRepoNotification, setCheckedForRepoNotifications} =
       await import("./notifications")
@@ -360,6 +373,61 @@ describe("notifications", () => {
         currentPubkey,
       }),
     ).toEqual([{path, latestEvent: dateTargeting}])
+  })
+
+  it("allows explicit external roots but binds implicit roots to the wrapper signer", async () => {
+    const {getTargetedPublicationRootNotificationCandidates} = await import("./notifications")
+    const communityPubkey = "a".repeat(64)
+    const wrapperPubkey = "c".repeat(64)
+    const externalPubkey = "e".repeat(64)
+    const path = `/c/${communityPubkey}/goals`
+    const explicitTargeting = makeEvent({
+      id: "explicit-targeting",
+      pubkey: wrapperPubkey,
+      created_at: 20,
+      kind: 30222,
+      tags: [
+        ["d", "explicit-target"],
+        ["k", "9041"],
+        ["a", `9041:${externalPubkey}:external-goal`],
+        ["p", communityPubkey],
+      ],
+    })
+    const externalRoot = makeEvent({
+      id: "external-root",
+      pubkey: externalPubkey,
+      created_at: 19,
+      kind: 9041,
+      tags: [["d", "external-goal"]],
+    })
+    const implicitTargeting = makeEvent({
+      id: "implicit-targeting",
+      pubkey: wrapperPubkey,
+      created_at: 30,
+      kind: 30222,
+      tags: [
+        ["d", "implicit-target"],
+        ["k", "9041"],
+        ["p", communityPubkey],
+      ],
+    })
+    const externalImplicitRoot = makeEvent({
+      id: "external-implicit-root",
+      pubkey: externalPubkey,
+      created_at: 29,
+      kind: 9041,
+      tags: [["h", "implicit-target"]],
+    })
+
+    expect(
+      getTargetedPublicationRootNotificationCandidates({
+        targetingEvents: [explicitTargeting, implicitTargeting],
+        rootEvents: [externalRoot, externalImplicitRoot],
+        communityPubkey,
+        path,
+        kind: 9041,
+      }),
+    ).toEqual([{path, latestEvent: explicitTargeting}])
   })
 
   it("uses community first-encounter baselines as checked timestamps", async () => {

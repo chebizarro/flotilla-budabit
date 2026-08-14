@@ -25,6 +25,11 @@ vi.mock("@welshman/app", async importOriginal => {
   }
 })
 
+vi.mock("@welshman/net", async importOriginal => ({
+  ...(await importOriginal<typeof import("@welshman/net")>()),
+  request: vi.fn(),
+}))
+
 describe("requests", () => {
   it("discoverRelays returns promise for empty lists", async () => {
     const {discoverRelays} = await import("./requests")
@@ -62,6 +67,73 @@ describe("requests", () => {
       {kinds: [EVENT_TIME], authors: ["a"], "#h": ["target"], "#D": ["0"]},
       {kinds: [EVENT_TIME], authors: ["b"], "#D": ["0"]},
     ])
+  })
+
+  it("uses structural calendar relay filters while admitting current writers locally", async () => {
+    const {makeCalendarFeed} = await import("./requests")
+    const {request} = await import("@welshman/net")
+    const {repository} = await import("@welshman/app")
+    const relay = "wss://broad-calendar.test"
+    const allowedAuthor = "1".repeat(64)
+    const makeEvent = (id: string, pubkey: string): TrustedEvent => ({
+      id: id.repeat(64),
+      pubkey,
+      created_at: 100,
+      kind: EVENT_DATE,
+      tags: [
+        ["d", id],
+        ["start", "2026-08-14"],
+        ["h", "community"],
+      ],
+      content: "",
+      sig: "3".repeat(128),
+    })
+    const allowed = makeEvent("4", allowedAuthor)
+    const outsider = makeEvent("5", "2".repeat(64))
+    const requestMock = vi.mocked(request)
+    requestMock.mockImplementation(async options => {
+      expect(options.filters[0]).not.toHaveProperty("authors")
+      options.onEvent?.(outsider, relay)
+      options.onEvent?.(allowed, relay)
+      options.onEose?.(relay)
+      return [outsider, allowed]
+    })
+    const originalAbortSignalAny = AbortSignal.any
+    Object.defineProperty(AbortSignal, "any", {
+      configurable: true,
+      value: (signals: AbortSignal[]) => signals[0],
+    })
+    const onInitialLoad = vi.fn()
+    const feed = makeCalendarFeed({
+      element: document.createElement("div"),
+      relays: [relay],
+      filters: [{kinds: [EVENT_DATE], authors: [allowedAuthor], "#h": ["community"]}],
+      relayFilters: [{kinds: [EVENT_DATE], "#h": ["community"]}],
+      onInitialLoad,
+    })
+
+    try {
+      await vi.waitFor(() => expect(onInitialLoad).toHaveBeenCalledOnce())
+
+      expect(onInitialLoad).toHaveBeenCalledWith({
+        complete: true,
+        timedOut: false,
+      })
+      expect(get(feed.events).map(event => event.id)).toEqual([allowed.id])
+    } finally {
+      feed.cleanup()
+      repository.removeEvent(allowed.id)
+      repository.removeEvent(outsider.id)
+      requestMock.mockReset()
+      if (originalAbortSignalAny) {
+        Object.defineProperty(AbortSignal, "any", {
+          configurable: true,
+          value: originalAbortSignalAny,
+        })
+      } else {
+        Reflect.deleteProperty(AbortSignal, "any")
+      }
+    }
   })
 
   it("keeps a live event visible when its signed replacement uses the same id", async () => {
@@ -424,6 +496,59 @@ describe("requests", () => {
     expect(result).toEqual({events: [allowed], complete: false, timedOut: false, saturated: true})
     expect(track).toHaveBeenCalledWith(allowed.id, relay)
     expect(publish).toHaveBeenCalledWith(allowed)
+  })
+
+  it("does not let one hundred outsider wrappers create a false empty result", async () => {
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://bounded-community-wrappers.test"
+    const community = "a".repeat(64)
+    const allowedAuthor = "b".repeat(64)
+    const makeWrapper = (id: string, pubkey: string, createdAt: number): TrustedEvent => ({
+      id,
+      pubkey,
+      created_at: createdAt,
+      kind: 30222,
+      tags: [
+        ["d", id],
+        ["k", "9041"],
+        ["p", community],
+      ],
+      content: "",
+      sig: "f".repeat(128),
+    })
+    const outsiders = Array.from({length: 100}, (_, index) =>
+      makeWrapper(
+        index.toString(16).padStart(64, "0"),
+        (index + 1).toString(16).padStart(64, "0"),
+        300 - index,
+      ),
+    )
+    const allowed = makeWrapper("f".repeat(64), allowedAuthor, 100)
+    const request = vi.fn(async (options: RequestOptions) => {
+      expect(options.filters[0]).not.toHaveProperty("authors")
+      const events = options.filters[0].until === undefined ? outsiders : [allowed]
+      for (const event of events) options.onEvent?.(event, relay)
+      options.onEose?.(relay)
+      return events
+    })
+    const loadHistory = createBoundedCommunityHistoryLoader({
+      request,
+      publish: vi.fn(),
+      track: vi.fn(),
+    })
+
+    const result = await loadHistory({
+      relays: [relay],
+      relayFilters: [{kinds: [30222], "#p": [community], "#k": ["9041"]}],
+      localFilters: [{kinds: [30222], authors: [allowedAuthor], "#p": [community], "#k": ["9041"]}],
+      pageSize: 100,
+      maxPages: 2,
+      timeoutMs: 1000,
+    })
+
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(result.events).toEqual([allowed])
+    expect(result).toMatchObject({complete: false, saturated: true})
   })
 
   it("stops at the broad history page budget and reports saturation", async () => {

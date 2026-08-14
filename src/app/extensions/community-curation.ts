@@ -1,4 +1,4 @@
-import {DELETE, type Filter, type TrustedEvent} from "@welshman/util"
+import {DELETE, matchFilters, type Filter, type TrustedEvent} from "@welshman/util"
 import {repository} from "@welshman/app"
 import {
   normalizeRelays,
@@ -18,16 +18,21 @@ import {
 } from "@app/core/community-state"
 import {
   SMART_WIDGET_KIND,
+  makeCommunityContentFilterPlan,
   makeCommunityTargetingFilter,
-  makeTargetedPublicationOriginalFilters,
+  makeTargetedPublicationOriginalFilterPlan,
 } from "@app/core/community-feeds"
 import {
   COMMUNITY_WRITE_TARGETS,
+  filterAuthorizedCommunityTargetingEvents,
   getCommunityTargetAuthorityPubkeys,
   getCommunityTargetWriterPubkeys,
   getCommunityWriteTargetSections,
+  isCommunityReportStatePersonBanned,
 } from "@app/core/community-permissions"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+import {loadBoundedCommunityHistory} from "@app/core/requests"
+import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 import {parseSmartWidget} from "@app/extensions/registry"
 import type {SmartWidgetEvent} from "@app/extensions/types"
 import {recordCommunityWidgetRecommendationContext} from "./recommendation-context"
@@ -47,6 +52,8 @@ export type CommunityCuratedExtensionsResult = {
 
 export type CommunityCuratedExtensionsLoadOptions = {
   priority?: number
+  profileListEvents?: TrustedEvent[]
+  reportState?: EffectiveCommunityReportState
 }
 
 const dedupeEvents = (events: TrustedEvent[]) =>
@@ -80,6 +87,38 @@ const loadCurationEvents = async (
   const loaded = await loadCommunityEventsWithStatus(relays, filters, options)
 
   return {...loaded, events: dedupeEvents([...cachedEvents, ...loaded.events])}
+}
+
+const loadTargetingEvents = async ({
+  relays,
+  relayFilters,
+  localFilters,
+  priority,
+  owner,
+}: {
+  relays: string[]
+  relayFilters: Filter[]
+  localFilters: Filter[]
+  priority: number
+  owner: string
+}): Promise<CommunityRelayLoadResult> => {
+  const cachedEvents = queryCachedEvents(localFilters).filter(event =>
+    matchFilters(localFilters, event),
+  )
+  const result = await loadBoundedCommunityHistory({
+    relays,
+    relayFilters,
+    localFilters,
+    priority,
+    owner,
+  })
+
+  return {
+    events: dedupeEvents([...cachedEvents, ...result.events]),
+    complete: result.complete,
+    timedOutRelays: result.timedOut ? relays : [],
+    failedRelays: [],
+  }
 }
 
 const getTargetingRelayHints = (events: TrustedEvent[]) =>
@@ -178,7 +217,11 @@ const getWidgetProfileListOwnerPubkeys = (definition: CommunityDefinition) =>
 
 export const loadCommunityCuratedWidgets = async (
   input: string,
-  {priority = RELAY_REQUEST_PRIORITY.interactive}: CommunityCuratedExtensionsLoadOptions = {},
+  {
+    priority = RELAY_REQUEST_PRIORITY.interactive,
+    profileListEvents: currentProfileListEvents,
+    reportState,
+  }: CommunityCuratedExtensionsLoadOptions = {},
 ): Promise<CommunityCuratedExtensionsResult> => {
   const parsed = parseCommunityInput(input)
 
@@ -238,50 +281,25 @@ export const loadCommunityCuratedWidgets = async (
   }
 
   const profileListFilters = makeWidgetProfileListFilters(definition)
-  const targetingFilters = [makeCommunityTargetingFilter(definition.pubkey, [SMART_WIDGET_KIND])]
-  const profileListPromise = loadCurationEvents(
+  const profileListResult = await loadCurationEvents(
     communityRelays,
     profileListFilters,
     {authenticate: true, priority},
     () => filtersCoveredByCache(profileListFilters),
   )
-  const targetingPromise = loadCurationEvents(communityRelays, targetingFilters, {
-    authenticate: true,
-    priority,
-  })
-  const [profileListResult, targetingResult] = await Promise.all([
-    profileListPromise,
-    targetingPromise,
-  ])
-  const profileListEvents = profileListResult.events
-  const targetingEvents = targetingResult.events
-  logCommunityWidgetDebug("loaded curation sources", {
-    communityPubkey: definition.pubkey,
-    communityRelays,
-    profileListEvents: profileListEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
-    targetingEvents: targetingEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
-  })
-
-  const deleteFilters = makeTargetDeleteFilters(targetingEvents)
-  const deleteResult = deleteFilters.length
-    ? await loadCurationEvents(
-        communityRelays,
-        deleteFilters,
-        {authenticate: true, priority},
-        () => false,
-      )
-    : {events: [], complete: true, timedOutRelays: [], failedRelays: []}
-  const targetDeleteEvents = deleteResult.events
-  const deletedTargetIds = getDeletedTargetEventIds(targetingEvents, targetDeleteEvents)
+  const profileListEvents = currentProfileListEvents ?? profileListResult.events
   const fallbackAuthorityPubkeys = profileListEvents.length
     ? []
-    : getWidgetProfileListOwnerPubkeys(definition)
+    : getWidgetProfileListOwnerPubkeys(definition).filter(
+        pubkey => !isCommunityReportStatePersonBanned(reportState, pubkey),
+      )
   const widgetTargetAuthorPubkeys = Array.from(
     new Set([
       ...getCommunityTargetWriterPubkeys({
         definition,
         profileListEvents,
         target: COMMUNITY_WRITE_TARGETS.widget,
+        reportState,
       }),
       ...fallbackAuthorityPubkeys,
     ]),
@@ -292,14 +310,50 @@ export const loadCommunityCuratedWidgets = async (
         definition,
         profileListEvents,
         target: COMMUNITY_WRITE_TARGETS.widget,
+        reportState,
       }),
       ...fallbackAuthorityPubkeys,
     ]),
   )
-  const widgetTargetAuthorSet = new Set(widgetTargetAuthorPubkeys.map(normalizePubkey))
-  const eligibleTargetingEvents = targetingEvents.filter(
-    event =>
-      widgetTargetAuthorSet.has(normalizePubkey(event.pubkey)) && !deletedTargetIds.has(event.id),
+  const targetingFilterPlan = makeCommunityContentFilterPlan(
+    [makeCommunityTargetingFilter(definition.pubkey, [SMART_WIDGET_KIND])],
+    widgetTargetAuthorPubkeys,
+  )
+  const targetingResult = await loadTargetingEvents({
+    relays: communityRelays,
+    relayFilters: targetingFilterPlan.relayFilters,
+    localFilters: targetingFilterPlan.localFilters,
+    priority,
+    owner: `community-widget-curation:${definition.pubkey}`,
+  })
+  const targetingEvents = targetingResult.events
+  logCommunityWidgetDebug("loaded curation sources", {
+    communityPubkey: definition.pubkey,
+    communityRelays,
+    profileListEvents: profileListEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
+    targetingEvents: targetingEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
+  })
+
+  const authorizedTargetingEvents = filterAuthorizedCommunityTargetingEvents({
+    definition,
+    profileListEvents,
+    events: targetingEvents,
+    reportState,
+    kinds: [SMART_WIDGET_KIND],
+  })
+  const deleteFilters = makeTargetDeleteFilters(authorizedTargetingEvents)
+  const deleteResult = deleteFilters.length
+    ? await loadCurationEvents(
+        communityRelays,
+        deleteFilters,
+        {authenticate: true, priority},
+        () => false,
+      )
+    : {events: [], complete: true, timedOutRelays: [], failedRelays: []}
+  const targetDeleteEvents = deleteResult.events
+  const deletedTargetIds = getDeletedTargetEventIds(authorizedTargetingEvents, targetDeleteEvents)
+  const eligibleTargetingEvents = authorizedTargetingEvents.filter(
+    event => !deletedTargetIds.has(event.id),
   )
   logCommunityWidgetDebug("filtered targeting events", {
     communityPubkey: definition.pubkey,
@@ -314,9 +368,9 @@ export const loadCommunityCuratedWidgets = async (
     })),
   })
 
-  const widgetFilters = makeTargetedPublicationOriginalFilters(eligibleTargetingEvents)
+  const widgetFilterPlan = makeTargetedPublicationOriginalFilterPlan(eligibleTargetingEvents)
 
-  if (widgetFilters.length === 0) {
+  if (widgetFilterPlan.relayFilters.length === 0) {
     logCommunityWidgetDebug("no widget filters after curation filtering", {
       communityPubkey: definition.pubkey,
       targetingEvents: targetingEvents.length,
@@ -343,11 +397,13 @@ export const loadCommunityCuratedWidgets = async (
   ])
   const widgetResult = await loadCurationEvents(
     widgetRelays,
-    widgetFilters,
+    widgetFilterPlan.relayFilters,
     {authenticate: true, priority, settle: "first-non-empty"},
-    () => filtersCoveredByCache(widgetFilters),
+    () => filtersCoveredByCache(widgetFilterPlan.localFilters),
   )
-  const widgetEvents = widgetResult.events
+  const widgetEvents = widgetResult.events.filter(event =>
+    matchFilters(widgetFilterPlan.localFilters, event),
+  )
   const widgets: SmartWidgetEvent[] = []
 
   for (const event of widgetEvents) {
@@ -360,7 +416,7 @@ export const loadCommunityCuratedWidgets = async (
 
   logCommunityWidgetDebug("loaded curated widget events", {
     communityPubkey: definition.pubkey,
-    widgetFilters,
+    widgetFilters: widgetFilterPlan.relayFilters,
     widgetEvents: widgetEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
     widgets: widgets.map(widget => ({
       id: getWidgetLineId(widget),

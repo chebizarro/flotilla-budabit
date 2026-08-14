@@ -189,6 +189,51 @@ describe("repo community context", () => {
     expect(isEndorsedRepoCommunityContext(outsiderContext)).toBe(false)
   })
 
+  it("requires implicit originals to share the authorized wrapper signer", () => {
+    const definition = makeDefinition()
+    const targetingId = "implicit-target"
+    const association = makeEvent({
+      id: "implicit-association",
+      pubkey: granteePubkey,
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: buildTargetedPublication({
+        id: targetingId,
+        kind: GIT_REPO_ANNOUNCEMENT,
+        communities: [{pubkey: communityPubkey}],
+      }).tags,
+    })
+    const externalRepo = makeRepo({
+      tags: [
+        ["d", "demo"],
+        ["h", targetingId],
+      ],
+    })
+    const signerRepo = makeRepo({
+      pubkey: granteePubkey,
+      tags: [
+        ["d", "demo"],
+        ["h", targetingId],
+      ],
+    })
+
+    expect(
+      getPrimaryRepoCommunityContext({
+        repoEvent: externalRepo,
+        associationEvents: [association],
+        definitions: [definition],
+        profileListEvents: [makeProfileList()],
+      }),
+    ).toBeUndefined()
+    expect(
+      getPrimaryRepoCommunityContext({
+        repoEvent: signerRepo,
+        associationEvents: [association],
+        definitions: [definition],
+        profileListEvents: [makeProfileList()],
+      }),
+    ).toMatchObject({validation: "valid", communityPubkey})
+  })
+
   it("suppresses associations when the associator or repo owner is banned in that community", () => {
     const definition = makeDefinition()
     const repoEvent = makeRepo()

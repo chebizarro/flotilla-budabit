@@ -1,12 +1,7 @@
 <script module lang="ts">
   import {DELETE, type Filter, type TrustedEvent as ModuleTrustedEvent} from "@welshman/util"
 
-  const loadedFilterKeys = new Set<string>()
-
-  const makeTargetDeleteFilters = (events: ModuleTrustedEvent[]): Filter[] => {
-    const ids = Array.from(new Set(events.map(event => event.id).filter(Boolean)))
-    return ids.length ? [{kinds: [DELETE], "#e": ids, limit: ids.length}] : []
-  }
+  const loadedFilterRequests = new Map<string, Promise<boolean>>()
 
   const getDeletedTargetEventIds = (
     targetEvents: ModuleTrustedEvent[],
@@ -29,12 +24,19 @@
     return deletedIds
   }
 
-  const getLoadKey = (relays: string[], filters: Filter[], label: string) =>
-    `${label}:${relays.slice().sort().join(",")}:${filters.map(filter => JSON.stringify(filter)).join("|")}`
+  const getLoadKey = (
+    relays: string[],
+    relayFilters: Filter[],
+    localFilters: Filter[],
+    label: string,
+  ) =>
+    `${label}:${relays.slice().sort().join(",")}:${[...relayFilters, ...localFilters]
+      .map(filter => JSON.stringify(filter))
+      .join("|")}`
 </script>
 
 <script lang="ts">
-  import {load, PublishStatus} from "@welshman/net"
+  import {PublishStatus} from "@welshman/net"
   import {Router} from "@welshman/router"
   import {
     getTagValue,
@@ -54,12 +56,17 @@
   import LogIn from "@app/components/LogIn.svelte"
   import {publishDelete} from "@app/core/commands"
   import {activeUserCommunityRefs, hydratePreferredCommunities} from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND, parseTargetedPublication} from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     communityWritableSectionsSupportTarget,
   } from "@app/core/community-permissions"
-  import {makeTargetedPublicationOriginalFilters} from "@app/core/community-feeds"
+  import {
+    makeCommunityContentFilterPlan,
+    makeTargetedPublicationOriginalFilterPlan,
+  } from "@app/core/community-feeds"
+  import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory, makeSameAuthorDeleteFilters} from "@app/core/requests"
   import {
     makeTargetedPublicationForCommunity,
     withPublicationTargetingId,
@@ -77,6 +84,7 @@
   import {pushToast} from "@app/util/toast"
   import {
     buildRepoCommunityStarCollections,
+    getRepoCollectionStatus,
     type RepoCollectionCommunityStar,
     type RepoCollectionReadState,
   } from "@app/core/repo-collection-read-model"
@@ -109,6 +117,12 @@
   }: Props = $props()
 
   let pending = $state(false)
+  let localTargetHistoryComplete = $state(false)
+  let localDeleteHistoryComplete = $state(false)
+  let localOriginalHistoryComplete = $state(false)
+  let localTargetHistoryRequestId = 0
+  let localDeleteHistoryRequestId = 0
+  let localOriginalHistoryRequestId = 0
 
   const repoEvent = $derived(event as RepoAnnouncementEvent)
 
@@ -186,24 +200,29 @@
     ]),
   )
 
-  const userCommunityStarTargetFilters = $derived.by((): Filter[] => {
-    if (collectionState) return []
-    if (!$pubkey || repoStarCommunityOptions.length === 0) return []
+  const userCommunityStarTargetFilterPlan = $derived.by(() => {
+    if (collectionState) return {relayFilters: [], localFilters: []}
+    if (!$pubkey || repoStarCommunityOptions.length === 0) {
+      return {relayFilters: [], localFilters: []}
+    }
 
     const communityPubkeys = Array.from(
       new Set(repoStarCommunityOptions.map(option => option.pubkey).filter(Boolean)),
     )
-    if (communityPubkeys.length === 0) return []
+    if (communityPubkeys.length === 0) return {relayFilters: [], localFilters: []}
 
-    return [
-      {
-        kinds: [TARGETED_PUBLICATION_KIND],
-        authors: [$pubkey],
-        "#p": communityPubkeys,
-        "#k": [String(REACTION)],
-      } as Filter,
-    ]
+    return makeCommunityContentFilterPlan(
+      [
+        {
+          kinds: [TARGETED_PUBLICATION_KIND],
+          "#p": communityPubkeys,
+          "#k": [String(REACTION)],
+        } as Filter,
+      ],
+      [$pubkey],
+    )
   })
+  const userCommunityStarTargetFilters = $derived(userCommunityStarTargetFilterPlan.localFilters)
   const userCommunityStarTargetEvents = $derived.by(() =>
     userCommunityStarTargetFilters.length
       ? deriveEventsDesc(
@@ -212,7 +231,7 @@
       : undefined,
   )
   const userCommunityStarTargetDeleteFilters = $derived.by(() =>
-    makeTargetDeleteFilters(
+    makeSameAuthorDeleteFilters(
       $userCommunityStarTargetEvents ? ($userCommunityStarTargetEvents as TrustedEvent[]) : [],
     ),
   )
@@ -238,10 +257,22 @@
       event => event.pubkey === $pubkey && !deletedUserCommunityStarTargetIds.has(event.id),
     )
   })
-  const userCommunityStarReactionFilters = $derived.by(() =>
+  const userCommunityStarReactionFilterPlan = $derived.by(() =>
     $pubkey && eligibleUserCommunityStarTargetEvents.length
-      ? makeTargetedPublicationOriginalFilters(eligibleUserCommunityStarTargetEvents, [$pubkey])
-      : [],
+      ? makeTargetedPublicationOriginalFilterPlan(eligibleUserCommunityStarTargetEvents)
+      : {relayFilters: [], localFilters: []},
+  )
+  const userCommunityStarReactionFilters = $derived(
+    userCommunityStarReactionFilterPlan.localFilters,
+  )
+  const userCommunityStarReactionRelays = $derived(
+    normalizeRelays([
+      ...repoStarCommunityRelays,
+      ...eligibleUserCommunityStarTargetEvents.flatMap(event => {
+        const relay = parseTargetedPublication(event)?.ref?.relay
+        return relay ? [relay] : []
+      }),
+    ]),
   )
   const userCommunityStarReactionEvents = $derived.by(() =>
     userCommunityStarReactionFilters.length
@@ -288,6 +319,21 @@
     ),
   )
   const collected = $derived(Boolean(existingPersonalStar || existingCommunityStars.length > 0))
+  const communityHistoryComplete = $derived(
+    !$pubkey ||
+      (collectionState?.communityHistoryComplete ??
+        (localTargetHistoryComplete && localDeleteHistoryComplete && localOriginalHistoryComplete)),
+  )
+  const collectionStatus = $derived(getRepoCollectionStatus(collected, communityHistoryComplete))
+  const collectionLabel = $derived.by(() => {
+    if (!communityHistoryComplete) {
+      return collected
+        ? "Edit known repository collections; community history is incomplete"
+        : "Repository collection status unknown; community history is incomplete"
+    }
+
+    return collected ? "Edit repository collections" : "Collect repository"
+  })
 
   const getPublishThunkSucceeded = (thunk?: PublishThunkResult) => {
     if (!thunk) return false
@@ -406,16 +452,37 @@
     return [targetDelete, starDelete] as Array<PublishThunkResult | undefined>
   }
 
-  const loadFilters = (label: string, relays: string[], filters: Filter[]) => {
-    if (relays.length === 0 || filters.length === 0) return
+  const loadFilters = (
+    label: string,
+    relays: string[],
+    relayFilters: Filter[],
+    localFilters = relayFilters,
+  ): Promise<boolean> => {
+    if (relayFilters.length === 0 || localFilters.length === 0) return Promise.resolve(true)
+    if (relays.length === 0) return Promise.resolve(false)
 
-    const key = getLoadKey(relays, filters, label)
-    if (loadedFilterKeys.has(key)) return
+    const key = getLoadKey(relays, relayFilters, localFilters, label)
+    const existing = loadedFilterRequests.get(key)
+    if (existing) return existing
 
-    loadedFilterKeys.add(key)
-    load({relays, filters: filters as any}).catch(error => {
-      console.warn(`[repo-collect] Failed to load ${label}`, error)
+    const request = loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
+      priority: RELAY_REQUEST_PRIORITY.background,
+      owner: `repo-collect:${label}`,
     })
+      .then(result => result.complete)
+      .catch(error => {
+        console.warn(`[repo-collect] Failed to load ${label}`, error)
+        return false
+      })
+      .finally(() => {
+        if (loadedFilterRequests.get(key) === request) loadedFilterRequests.delete(key)
+      })
+
+    loadedFilterRequests.set(key, request)
+    return request
   }
 
   const openCollectModal = () => {
@@ -432,6 +499,7 @@
       communityStars.map(collection => [collection.community.pubkey, collection]),
     )
     const communityOptions = [...repoStarCommunityOptions]
+    const communityHistoryCompleteAtOpen = communityHistoryComplete
 
     for (const collection of communityStars) {
       if (!communityOptions.some(option => option.pubkey === collection.community.pubkey)) {
@@ -441,6 +509,9 @@
 
     pushModal(RepoCollectModal, {
       title: "Edit collections",
+      description: communityHistoryCompleteAtOpen
+        ? "Choose where this repository should be starred or curated."
+        : "Community collection history is incomplete. Known community collections are preserved; you can add destinations, but cannot remove those collections yet.",
       submitLabel: "Update",
       submittingLabel: "editing collections...",
       communityOptions,
@@ -448,6 +519,9 @@
       requireChanges: true,
       defaultPersonal: Boolean(personalStar),
       defaultCommunityPubkeys: Array.from(existingCommunityByPubkey.keys()),
+      lockedCommunityPubkeys: communityHistoryCompleteAtOpen
+        ? []
+        : Array.from(existingCommunityByPubkey.keys()),
       onCancel: clearModals,
       onCollect: async ({
         personal,
@@ -462,6 +536,18 @@
         try {
           const baseCreatedAt = Math.floor(Date.now() / 1000)
           const selectedCommunityPubkeys = new Set(communityPubkeys)
+          if (
+            !communityHistoryCompleteAtOpen &&
+            communityStars.some(
+              collection => !selectedCommunityPubkeys.has(collection.community.pubkey),
+            )
+          ) {
+            pushToast({
+              message: "Known community collections cannot be removed while history is incomplete.",
+              theme: "error",
+            })
+            return
+          }
           const actions: Array<{
             thunks: Array<PublishThunkResult | undefined>
             mode: "all" | "any"
@@ -562,35 +648,70 @@
   })
 
   $effect(() => {
-    if (collectionState) return
-    loadFilters("community star targets", repoStarCommunityRelays, userCommunityStarTargetFilters)
+    if (collectionState) {
+      localTargetHistoryRequestId += 1
+      return
+    }
+
+    const requestId = ++localTargetHistoryRequestId
+    localTargetHistoryComplete = false
+    void loadFilters(
+      "community star targets",
+      repoStarCommunityRelays,
+      userCommunityStarTargetFilterPlan.relayFilters,
+      userCommunityStarTargetFilterPlan.localFilters,
+    ).then(complete => {
+      if (requestId === localTargetHistoryRequestId) localTargetHistoryComplete = complete
+    })
   })
-  $effect(() =>
-    collectionState
-      ? undefined
-      : loadFilters(
-          "community star target deletes",
-          repoStarCommunityRelays,
-          userCommunityStarTargetDeleteFilters,
-        ),
-  )
-  $effect(() =>
-    collectionState
-      ? undefined
-      : loadFilters(
-          "community star reactions",
-          repoStarCommunityRelays,
-          userCommunityStarReactionFilters,
-        ),
-  )
+  $effect(() => {
+    if (collectionState) {
+      localDeleteHistoryRequestId += 1
+      return
+    }
+
+    const requestId = ++localDeleteHistoryRequestId
+    localDeleteHistoryComplete = false
+    void loadFilters(
+      "community star target deletes",
+      repoStarCommunityRelays,
+      userCommunityStarTargetDeleteFilters,
+    ).then(complete => {
+      if (requestId === localDeleteHistoryRequestId) localDeleteHistoryComplete = complete
+    })
+  })
+  $effect(() => {
+    if (collectionState) {
+      localOriginalHistoryRequestId += 1
+      return
+    }
+
+    const requestId = ++localOriginalHistoryRequestId
+    localOriginalHistoryComplete = false
+    void loadFilters(
+      "community star reactions",
+      userCommunityStarReactionRelays,
+      userCommunityStarReactionFilterPlan.relayFilters,
+      userCommunityStarReactionFilterPlan.localFilters,
+    ).then(complete => {
+      if (requestId === localOriginalHistoryRequestId) localOriginalHistoryComplete = complete
+    })
+  })
 </script>
 
 <button
   type="button"
-  class={`${className} ${collected ? "border-amber-400/60 bg-amber-400/10 text-amber-600 dark:text-amber-400" : ""}`}
-  aria-label={collected ? "Edit repository collections" : "Collect repository"}
-  title={collected ? "Edit repository collections" : "Collect repository"}
+  class={`${className} ${collectionStatus === "collected" ? "border-amber-400/60 bg-amber-400/10 text-amber-600 dark:text-amber-400" : collectionStatus === "indeterminate" ? "border-dashed border-amber-400/60 text-amber-600 dark:text-amber-400" : ""}`}
+  aria-label={collectionLabel}
+  title={collectionLabel}
+  data-collection-status={collectionStatus}
   disabled={disabled || pending}
   onclick={openCollectModal}>
-  <Star class={`${iconClass} ${collected ? "fill-current" : ""}`} />
+  <span class="relative inline-flex">
+    <Star class={`${iconClass} ${collected ? "fill-current" : ""}`} />
+    {#if collectionStatus === "indeterminate"}
+      <span class="absolute -right-1 -top-1 text-[10px] font-bold leading-none" aria-hidden="true"
+        >?</span>
+    {/if}
+  </span>
 </button>

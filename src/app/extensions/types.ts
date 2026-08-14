@@ -225,6 +225,7 @@ export type LoadedWidgetExtension = {
   bridge?: import("./bridge").ExtensionBridge
   communityContext?: CommunityWidgetContext
   communityRuntimeContext?: CommunityWidgetRuntimeContext
+  communityRuntimeContextProvider?: () => CommunityWidgetRuntimeContext | undefined
   /** Internal host callback for SDK ui:resize requests. */
   onResizeRequest?: (request: WidgetResizeRequest) => void
   /** Repository context when loaded for a specific repository */

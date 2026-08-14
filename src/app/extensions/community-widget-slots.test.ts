@@ -9,6 +9,7 @@ import {
   getEnabledCommunitySlotWidgetsWithSharedConfig,
   getEnabledCommunitySlotWidgets,
   getEnabledInstalledCommunitySlotWidgets,
+  getCommunityWidgetCurationEvidenceKey,
   getLastValidatedCommunityCuratedWidgets,
   loadCachedCommunityCuratedWidgets,
   shouldPreserveCuratedWidgetView,
@@ -444,6 +445,68 @@ describe("community widget slots", () => {
       widgets: [widget],
     })
     expect(mocks.loadCommunityCuratedWidgets).toHaveBeenCalledTimes(2)
+  })
+
+  it("reloads immediately when grant evidence is revoked and regranted", async () => {
+    const grantedWidget = makeWidget("granted-widget", "global-menu")
+    const regrantedWidget = makeWidget("regranted-widget", "global-menu")
+    const makeProfileListEvent = (id: string, created_at: number) => ({id, created_at}) as any
+    const emptyReportState = {eventReports: [], personReports: []}
+    const revokedReportState = {
+      eventReports: [],
+      personReports: [{event: {id: "writer-revoked"}} as any],
+    } as any
+    const evidenceKey = (profileListEvents: any[], reportState: any = emptyReportState) =>
+      getCommunityWidgetCurationEvidenceKey({
+        definitionEventId: "definition",
+        profileListEvents,
+        reportState,
+      })
+    const grantedProfileLists = [makeProfileListEvent("grant-v1", 1)]
+    const revokedProfileLists = [makeProfileListEvent("revoke", 2)]
+    const regrantedProfileLists = [makeProfileListEvent("grant-v2", 3)]
+    const grantedEvidenceKey = evidenceKey(grantedProfileLists)
+    const revokedEvidenceKey = evidenceKey(revokedProfileLists, revokedReportState)
+    const regrantedEvidenceKey = evidenceKey(regrantedProfileLists)
+    mocks.loadCommunityCuratedWidgets
+      .mockResolvedValueOnce(makeCuratedResult([grantedWidget]))
+      .mockResolvedValueOnce(makeCuratedResult([]))
+      .mockResolvedValueOnce(makeCuratedResult([regrantedWidget]))
+
+    await expect(
+      loadCachedCommunityCuratedWidgets("community-a", {
+        evidenceKey: grantedEvidenceKey,
+        profileListEvents: grantedProfileLists,
+        reportState: emptyReportState,
+      }),
+    ).resolves.toMatchObject({widgets: [grantedWidget]})
+    expect(getLastValidatedCommunityCuratedWidgets("community-a", "", grantedEvidenceKey)).toEqual([
+      grantedWidget,
+    ])
+    await expect(
+      loadCachedCommunityCuratedWidgets("community-a", {
+        evidenceKey: revokedEvidenceKey,
+        profileListEvents: revokedProfileLists,
+        reportState: revokedReportState,
+      }),
+    ).resolves.toMatchObject({widgets: []})
+    expect(getLastValidatedCommunityCuratedWidgets("community-a", "", revokedEvidenceKey)).toEqual(
+      [],
+    )
+    await expect(
+      loadCachedCommunityCuratedWidgets("community-a", {
+        evidenceKey: regrantedEvidenceKey,
+        profileListEvents: regrantedProfileLists,
+        reportState: emptyReportState,
+      }),
+    ).resolves.toMatchObject({widgets: [regrantedWidget]})
+
+    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenCalledTimes(3)
+    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenNthCalledWith(2, "community-a", {
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      profileListEvents: revokedProfileLists,
+      reportState: revokedReportState,
+    })
   })
 
   it("force refresh bypasses fresh curated widget cache entries", async () => {

@@ -14,6 +14,7 @@ import {
   TARGETED_PUBLICATION_KIND,
   TARGETED_PUBLICATION_KINDS,
   normalizePubkey,
+  normalizeRelays,
   parseCommunityInput,
   parseTargetedPublication,
 } from "@app/core/community"
@@ -35,6 +36,10 @@ export const COMMUNITY_TARGETABLE_KINDS = [
 export type CommunityContentFilterPlan = {
   relayFilters: Filter[]
   localFilters: Filter[]
+}
+
+export type TargetedPublicationOriginalRelayHintPlan = CommunityContentFilterPlan & {
+  relays: string[]
 }
 
 export const makeCommunityContentFilterPlan = (
@@ -254,4 +259,27 @@ export const makeTargetedPublicationOriginalFilterPlan = (
   }
 
   return {relayFilters, localFilters}
+}
+
+export const makeTargetedPublicationOriginalRelayHintPlans = (
+  authorizedTargetingEvents: TrustedEvent[],
+): TargetedPublicationOriginalRelayHintPlan[] => {
+  const eventsByRelay = new Map<string, TrustedEvent[]>()
+
+  for (const event of authorizedTargetingEvents) {
+    const ref = parseTargetedPublication(event)?.ref
+    if (!ref?.relay) continue
+
+    const relay = normalizeRelays([ref.relay])[0]
+    if (!relay) continue
+
+    const events = eventsByRelay.get(relay) || []
+    events.push(event)
+    eventsByRelay.set(relay, events)
+  }
+
+  return Array.from(eventsByRelay, ([relay, events]) => ({
+    relays: [relay],
+    ...makeTargetedPublicationOriginalFilterPlan(events),
+  }))
 }

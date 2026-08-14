@@ -8,6 +8,7 @@
     COMMENT,
     ZAP_GOAL,
     getTagValue,
+    matchFilters,
     type EventContent,
     type Filter,
     type TrustedEvent,
@@ -41,14 +42,18 @@
     activeCommunityPublishRelays,
     activeCommunityReportState,
     activeCommunityRelays,
-    hydrateCommunityEventsWithStatus,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
-  import {normalizePubkey, parseTargetedPublication} from "@app/core/community"
-  import {makeCommunityTargetingFilter} from "@app/core/community-feeds"
+  import {
+    makeCommunityContentFilterPlan,
+    makeCommunityTargetingFilter,
+    makeTargetedPublicationOriginalFilterPlan,
+    makeTargetedPublicationOriginalRelayHintPlans,
+  } from "@app/core/community-feeds"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
+    filterAuthorizedCommunityTargetingEvents,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
@@ -68,6 +73,7 @@
   import {setChecked} from "@app/util/notifications"
   import {pushToast} from "@app/util/toast"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {loadBoundedCommunityHistory} from "@app/core/requests"
   import {makeCommunityGoalPath, parseCommunityRouteParam} from "@app/util/routes"
 
   const REQUEST_HARD_TIMEOUT_MS = 10_000
@@ -76,6 +82,8 @@
   let goalLoadStatus = $state<CommunityHydrationStatus>("idle")
   let loadingTargeting = $state(false)
   let targetLoadStatus = $state<CommunityHydrationStatus>("idle")
+  let loadingHintedOriginals = $state(false)
+  let hintedOriginalLoadStatus = $state<CommunityHydrationStatus>("idle")
   let loadingReplies = $state(false)
   let replyLoadStatus = $state<CommunityHydrationStatus>("idle")
   let historicalLoadRetryVersion = $state(0)
@@ -182,11 +190,56 @@
         })
       : [],
   )
-  const goalFilters = $derived<Filter[]>(
-    communityBootstrapReady && goalId && goalAuthorPubkeys.length
-      ? [{kinds: [ZAP_GOAL], ids: [goalId], authors: goalAuthorPubkeys}]
+  const targetingFilters = $derived<Filter[]>(
+    communityBootstrapReady && communityPubkey
+      ? [makeCommunityTargetingFilter(communityPubkey, [ZAP_GOAL])]
       : [],
   )
+  const targetingFilterPlan = $derived(
+    communityBootstrapReady
+      ? makeCommunityContentFilterPlan(targetingFilters, goalAuthorPubkeys)
+      : {relayFilters: [], localFilters: []},
+  )
+  const targetingEvents = $derived(
+    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
+  )
+  const authorizedTargetingEvents = $derived.by(() =>
+    $activeCommunityDefinition
+      ? filterAuthorizedCommunityTargetingEvents({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: [ZAP_GOAL],
+        })
+      : [],
+  )
+  const targetedGoalFilterPlan = $derived(
+    makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents),
+  )
+  const targetedGoalRelayHintPlans = $derived(
+    makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+  )
+  const directGoalFilterPlan = $derived(
+    communityBootstrapReady && communityPubkey && goalId
+      ? makeCommunityContentFilterPlan(
+          [{kinds: [ZAP_GOAL], ids: [goalId], "#h": [communityPubkey]}],
+          goalAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
+  )
+  const goalFilterPlan = $derived({
+    relayFilters: [
+      ...directGoalFilterPlan.relayFilters,
+      ...targetedGoalFilterPlan.relayFilters,
+    ] as Filter[],
+    localFilters: [
+      ...directGoalFilterPlan.localFilters,
+      ...targetedGoalFilterPlan.localFilters,
+    ] as Filter[],
+  })
+  const goalFilters = $derived(goalFilterPlan.localFilters)
+  const goalRelayFilters = $derived(goalFilterPlan.relayFilters)
   const goalEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: goalFilters})))
   const goalProjection = $derived.by(() =>
     projectAuthoredPublicationEvents({
@@ -194,46 +247,12 @@
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
       matches: event =>
-        event.kind === ZAP_GOAL &&
-        event.id === goalId &&
-        getTagValue("h", event.tags) === communityPubkey &&
-        goalAuthorPubkeys.some(author => normalizePubkey(author) === normalizePubkey(event.pubkey)),
+        event.kind === ZAP_GOAL && event.id === goalId && matchFilters(goalFilters, event),
     }),
   )
   const goal = $derived(goalProjection.events[0])
   const goalOperationId = $derived(goal ? goalProjection.operationIds.get(goal.id) : undefined)
-  const goalTargetingId = $derived(goal ? getTagValue("h", goal.tags) || "" : "")
-  const targetingFilters = $derived<Filter[]>(
-    communityBootstrapReady && communityPubkey && goal
-      ? [
-          makeCommunityTargetingFilter(
-            communityPubkey,
-            [ZAP_GOAL],
-            goalTargetingId ? {"#d": [goalTargetingId]} : {},
-          ),
-        ]
-      : [],
-  )
-  const targetingEvents = $derived(
-    deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
-  )
-  const isTargetedToCommunity = $derived.by(() => {
-    if (!goal) return false
-
-    const allowedAuthors = new Set(goalAuthorPubkeys.map(normalizePubkey).filter(Boolean))
-    if (!allowedAuthors.has(normalizePubkey(goal.pubkey))) return false
-    if (getTagValue("h", goal.tags) === communityPubkey) return true
-
-    return $targetingEvents.some(targetingEvent => {
-      const targeting = parseTargetedPublication(targetingEvent)
-      if (!targeting || targeting.kind !== ZAP_GOAL) return false
-      if (goalTargetingId && targeting.id === goalTargetingId) return true
-      if (targeting.ref?.type === "e" && targeting.ref.value === goal.id) return true
-
-      return false
-    })
-  })
-  const approvedGoal = $derived(goal && isTargetedToCommunity ? goal : undefined)
+  const approvedGoal = $derived(goal)
   const approvedGoalCensorReason = $derived.by(() =>
     approvedGoal
       ? getCommunityCensorReason({
@@ -245,22 +264,23 @@
         })
       : undefined,
   )
-  const replyFilters = $derived<Filter[]>(
-    communityBootstrapReady &&
-      approvedGoal &&
-      !approvedGoalCensorReason &&
-      commentAuthorPubkeys.length
-      ? [
-          {
-            kinds: [COMMENT],
-            "#E": [approvedGoal.id],
-            "#K": [String(ZAP_GOAL)],
-            "#h": [communityPubkey],
-            authors: commentAuthorPubkeys,
-          },
-        ]
-      : [],
+  const replyFilterPlan = $derived(
+    communityBootstrapReady && approvedGoal && !approvedGoalCensorReason
+      ? makeCommunityContentFilterPlan(
+          [
+            {
+              kinds: [COMMENT],
+              "#E": [approvedGoal.id],
+              "#K": [String(ZAP_GOAL)],
+              "#h": [communityPubkey],
+            },
+          ],
+          commentAuthorPubkeys,
+        )
+      : {relayFilters: [], localFilters: []},
   )
+  const replyFilters = $derived(replyFilterPlan.localFilters)
+  const replyRelayFilters = $derived(replyFilterPlan.relayFilters)
   const replyEventsStore = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: replyFilters})),
   )
@@ -270,6 +290,7 @@
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
       matches: event =>
+        matchFilters(replyFilters, event) &&
         event.kind === COMMENT &&
         getTagValue("E", event.tags) === approvedGoal?.id &&
         getTagValue("K", event.tags) === String(ZAP_GOAL) &&
@@ -431,102 +452,196 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
+    const relays = $activeCommunityRelays
 
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      goalFilters.length === 0
-    ) {
+    if (!communityBootstrapReady) {
       loadingGoal = false
       goalLoadStatus = "idle"
+      return
+    }
+    if (goalRelayFilters.length === 0 || goalFilters.length === 0) {
+      loadingGoal = false
+      goalLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingGoal = false
+      goalLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
 
     loadingGoal = true
-    goalLoadStatus = "queued"
-    void hydrateCommunityEventsWithStatus({
-      key: `goal:${goalPath}:${historicalLoadRetryVersion}:${JSON.stringify(goalFilters)}`,
-      relays: $activeCommunityRelays,
-      filters: goalFilters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    goalLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters: goalRelayFilters,
+      localFilters: goalFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-goal:${communityPubkey}:${goalId}`,
       signal: controller.signal,
-      onStatus: status => {
-        goalLoadStatus = status
-        loadingGoal = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        goalLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-goal] Failed to load goal history", error)
+        goalLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingGoal = false
+      })
 
     return () => controller.abort()
   })
 
   $effect(() => {
     void historicalLoadRetryVersion
+    const relays = $activeCommunityRelays
+    const relayFilters = targetingFilterPlan.relayFilters
+    const localFilters = targetingFilterPlan.localFilters
 
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      targetingFilters.length === 0
-    ) {
+    if (!communityBootstrapReady) {
       loadingTargeting = false
       targetLoadStatus = "idle"
+      return
+    }
+    if (relayFilters.length === 0 || localFilters.length === 0) {
+      loadingTargeting = false
+      targetLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingTargeting = false
+      targetLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
 
     loadingTargeting = true
-    targetLoadStatus = "queued"
-    void hydrateCommunityEventsWithStatus({
-      key: `goal-target:${goalPath}:${historicalLoadRetryVersion}:${JSON.stringify(targetingFilters)}`,
-      relays: $activeCommunityRelays,
-      filters: targetingFilters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    targetLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters,
+      localFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-goal-targets:${communityPubkey}:${goalId}`,
       signal: controller.signal,
-      onStatus: status => {
-        targetLoadStatus = status
-        loadingTargeting = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        targetLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-goal] Failed to load targeting history", error)
+        targetLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingTargeting = false
+      })
 
     return () => controller.abort()
   })
 
   $effect(() => {
     void historicalLoadRetryVersion
+    const plans = targetedGoalRelayHintPlans
 
-    if (
-      !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
-      replyFilters.length === 0
-    ) {
+    if (!communityBootstrapReady) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "idle"
+      return
+    }
+    if (plans.length === 0) {
+      loadingHintedOriginals = false
+      hintedOriginalLoadStatus = "complete"
+      return
+    }
+
+    const controller = new AbortController()
+    loadingHintedOriginals = true
+    hintedOriginalLoadStatus = "loading"
+    void Promise.all(
+      plans.map(plan =>
+        loadBoundedCommunityHistory({
+          ...plan,
+          timeoutMs: REQUEST_HARD_TIMEOUT_MS,
+          priority: RELAY_REQUEST_PRIORITY.interactive,
+          owner: `community-goal-originals:${communityPubkey}:${goalId}`,
+          signal: controller.signal,
+        }),
+      ),
+    )
+      .then(results => {
+        if (controller.signal.aborted) return
+        hintedOriginalLoadStatus = results.every(result => result.complete)
+          ? "complete"
+          : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-goal] Failed to load hinted goal originals", error)
+        hintedOriginalLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingHintedOriginals = false
+      })
+
+    return () => controller.abort()
+  })
+
+  $effect(() => {
+    void historicalLoadRetryVersion
+    const relays = $activeCommunityRelays
+
+    if (!communityBootstrapReady) {
       loadingReplies = false
       replyLoadStatus = "idle"
+      return
+    }
+    if (replyRelayFilters.length === 0 || replyFilters.length === 0) {
+      loadingReplies = false
+      replyLoadStatus = "complete"
+      return
+    }
+    if (relays.length === 0) {
+      loadingReplies = false
+      replyLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
 
     loadingReplies = true
-    replyLoadStatus = "queued"
-    void hydrateCommunityEventsWithStatus({
-      key: `goal-replies:${goalPath}:${historicalLoadRetryVersion}:${JSON.stringify(replyFilters)}`,
-      relays: $activeCommunityRelays,
-      filters: replyFilters,
-      authenticate: true,
-      timeout: REQUEST_HARD_TIMEOUT_MS,
+    replyLoadStatus = "loading"
+    void loadBoundedCommunityHistory({
+      relays,
+      relayFilters: replyRelayFilters,
+      localFilters: replyFilters,
+      timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner: `community-goal-replies:${communityPubkey}:${goalId}`,
       signal: controller.signal,
-      onStatus: status => {
-        replyLoadStatus = status
-        loadingReplies = status === "queued" || status === "loading"
-      },
     })
+      .then(result => {
+        if (controller.signal.aborted) return
+        replyLoadStatus = result.complete ? "complete" : "incomplete"
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        console.warn("[community-goal] Failed to load reply history", error)
+        replyLoadStatus = "failed"
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loadingReplies = false
+      })
 
     return () => controller.abort()
   })
@@ -534,9 +649,6 @@
   $effect(() => {
     if (goal) {
       loadingGoal = false
-    }
-    if (approvedGoal) {
-      loadingTargeting = false
     }
     if (replies.length > 0) {
       loadingReplies = false
@@ -575,6 +687,13 @@
 
 <PageContent class="flex flex-col gap-3 p-2 pt-4">
   {#if approvedGoal}
+    {#if goalLoadStatus === "incomplete" || goalLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
+      <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
+        <p>Goal history is incomplete; some goal data may be missing.</p>
+        <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
+          >Retry</button>
+      </div>
+    {/if}
     <article class="card2 bg-alt z-feature w-full shadow-md" data-event={approvedGoal.id}>
       {#if approvedGoalCensorReason}
         <ModeratedContent reason={approvedGoalCensorReason} />
@@ -631,6 +750,13 @@
 
     {#if !approvedGoalCensorReason}
       <div class="col-2">
+        {#if replies.length > 0 && (replyLoadStatus === "incomplete" || replyLoadStatus === "failed")}
+          <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
+            <p>Comment history is incomplete; some comments may be missing.</p>
+            <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
+              >Retry</button>
+          </div>
+        {/if}
         {#each visibleReplies as replyEvent (replyEvent.id)}
           {@const censorReason = getCommunityCensorReason({
             reportState: $activeCommunityReportState,
@@ -728,11 +854,11 @@
         {/if}
       </div>
     {/if}
-  {:else if communityBootstrapLoading || communityPermissionsLoading || loadingGoal || goalLoadStatus === "queued" || goalLoadStatus === "loading" || (goal && (loadingTargeting || targetLoadStatus === "idle" || targetLoadStatus === "queued" || targetLoadStatus === "loading")) || (!goal && goalFilters.length > 0 && goalLoadStatus === "idle")}
+  {:else if communityBootstrapLoading || communityPermissionsLoading || loadingGoal || loadingTargeting || loadingHintedOriginals || goalLoadStatus === "queued" || goalLoadStatus === "loading" || (communityBootstrapReady && targetLoadStatus === "idle") || targetLoadStatus === "queued" || targetLoadStatus === "loading" || hintedOriginalLoadStatus === "loading" || (!goal && goalFilters.length > 0 && goalLoadStatus === "idle")}
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading funding goal...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityPermissionEvidenceIncomplete || (!goal && (goalLoadStatus === "incomplete" || goalLoadStatus === "failed")) || (goal && !approvedGoal && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed"))}
+  {:else if communityBootstrapFailed || communityPermissionEvidenceIncomplete || goalLoadStatus === "incomplete" || goalLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
       <p>Goal lookup is incomplete or temporarily unavailable.</p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
