@@ -125,6 +125,7 @@ describe("community live filters", () => {
       kinds: [EVENT_TIME],
       authors: [authorPubkey],
       "#d": ["calendar-event"],
+      limit: 1,
     })
     expect(filters.some(filter => filter["#e"]?.includes("response-id"))).toBe(true)
     expect(filters.every(filter => filter.limit !== 0)).toBe(true)
@@ -165,9 +166,15 @@ describe("community live filters", () => {
       "wss://other-goal-hint.example.com/",
       "wss://relay.budabit.club/",
     ])
-    expect(externalPlan?.filters).toEqual([{kinds: [ZAP_GOAL], ids: ["goal-event-id"]}])
-    expect(otherExternalPlan?.filters).toEqual([{kinds: [ZAP_GOAL], ids: ["other-goal-event-id"]}])
-    expect(communityPlan?.filters).toContainEqual({kinds: [ZAP_GOAL], ids: ["goal-event-id"]})
+    expect(externalPlan?.filters).toEqual([{kinds: [ZAP_GOAL], ids: ["goal-event-id"], limit: 1}])
+    expect(otherExternalPlan?.filters).toEqual([
+      {kinds: [ZAP_GOAL], ids: ["other-goal-event-id"], limit: 1},
+    ])
+    expect(communityPlan?.filters).toContainEqual({
+      kinds: [ZAP_GOAL],
+      ids: ["goal-event-id"],
+      limit: 1,
+    })
     expect(communityPlan?.filters.some(filter => filter["#e"]?.includes("response-id"))).toBe(true)
     expect(externalPlan?.filters.some(filter => filter["#e"]?.includes("response-id"))).toBe(false)
   })

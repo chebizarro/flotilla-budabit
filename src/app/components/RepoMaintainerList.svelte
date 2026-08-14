@@ -16,6 +16,7 @@
     showLabel?: boolean
     label?: string
     class?: string
+    loadProfiles?: boolean
   }
 
   const {
@@ -27,6 +28,7 @@
     showLabel = true,
     label = "Maintainers",
     class: className = "",
+    loadProfiles = true,
   }: Props = $props()
 
   let popoverOpen = $state(false)
@@ -70,9 +72,10 @@
             {relays}
             size={5}
             class="border border-border"
+            loadProfile={loadProfiles}
             verifiedMaintainerForRepo={isVerifiedMaintainer} />
           <span class="min-w-0 max-w-[6rem] truncate hover:underline">
-            <ProfileName pubkey={maintainer} {relays} />
+            <ProfileName pubkey={maintainer} {relays} loadProfile={loadProfiles} />
           </span>
           {#if isVerifiedMaintainer}
             <span

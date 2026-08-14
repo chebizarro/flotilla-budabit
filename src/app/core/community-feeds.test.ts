@@ -184,10 +184,10 @@ describe("community feed helpers", () => {
         goalTarget,
       ]),
     ).toEqual([
-      {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"]},
-      {kinds: [EVENT_TIME], authors: [authorPubkey], "#d": ["calendar-1"]},
-      {kinds: [1623], ids: ["permalink-event-id"]},
-      {kinds: [9041], "#h": ["target-goal"]},
+      {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
+      {kinds: [EVENT_TIME], authors: [authorPubkey], "#d": ["calendar-1"], limit: 1},
+      {kinds: [1623], ids: ["permalink-event-id"], limit: 1},
+      {kinds: [9041], "#h": ["target-goal"], limit: 1},
     ])
     expect(
       makeTargetedPublicationOriginalFilters(
@@ -195,10 +195,10 @@ describe("community feed helpers", () => {
         [authorPubkey],
       ),
     ).toEqual([
-      {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"]},
-      {kinds: [EVENT_TIME], authors: [authorPubkey], "#d": ["calendar-1"]},
-      {kinds: [1623], ids: ["permalink-event-id"], authors: [authorPubkey]},
-      {kinds: [9041], "#h": ["target-goal"], authors: [authorPubkey]},
+      {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
+      {kinds: [EVENT_TIME], authors: [authorPubkey], "#d": ["calendar-1"], limit: 1},
+      {kinds: [1623], ids: ["permalink-event-id"], authors: [authorPubkey], limit: 1},
+      {kinds: [9041], "#h": ["target-goal"], authors: [authorPubkey], limit: 1},
     ])
   })
 })

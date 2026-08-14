@@ -50,8 +50,13 @@ describe("bookmarks helpers", () => {
     ])
 
     expect(filters).toEqual([
-      {kinds: [30617], authors: ["author-a"], "#d": ["repo-one", "repo-three"]},
-      {kinds: [30617], authors: ["author-b"], "#d": ["repo-two"]},
+      {
+        kinds: [30617],
+        authors: ["author-a"],
+        "#d": ["repo-one", "repo-three"],
+        limit: 2,
+      },
+      {kinds: [30617], authors: ["author-b"], "#d": ["repo-two"], limit: 1},
     ])
   })
 

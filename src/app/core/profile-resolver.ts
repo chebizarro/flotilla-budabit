@@ -15,6 +15,7 @@ export type ProfileResolutionOptions = {
   relays?: string[]
   communityRelays?: string[]
   includeActiveCommunityRelays?: boolean
+  load?: boolean
 }
 
 // Bounded LRUs: profile attempt/completion bookkeeping is keyed by pubkey and
@@ -108,6 +109,7 @@ export const deriveBudabitProfile = (
   if (!normalizedPubkey) return readable(undefined)
 
   const profile = derived(profilesByPubkey, $profiles => $profiles.get(normalizedPubkey))
+  if (options.load === false) return profile
   let lastRequestedRelayKey: string | undefined
 
   const requestLoad = (activeCommunityRelays?: string[]) => {

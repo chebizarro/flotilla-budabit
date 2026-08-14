@@ -5,14 +5,10 @@ import {
   extractSelfLabels,
   extractLabelEvents,
   mergeEffectiveLabels,
-  GIT_STATUS_APPLIED,
   GIT_REPO_ANNOUNCEMENT,
   GIT_ISSUE,
-  parseRepoAnnouncementEvent,
   type RepoAnnouncementEvent,
   type IssueEvent,
-  type PullRequestEvent,
-  type StatusEvent,
   type LabelEvent,
   type CoverLetterEvent,
 } from "@nostr-git/core/events"
@@ -45,11 +41,15 @@ import {
   getPreferredGraspServerUrls,
   makeGraspServerListFilters,
 } from "@app/core/grasp-server-events"
-import {getRepoDeclaredMaintainers, getRepoMaintainers} from "@app/core/repo-authority"
+import {getRepoMaintainers} from "@app/core/repo-authority"
 import {getRepoActivityRelays} from "@nostr-git/core/utils"
 import {normalizeRepoRelays} from "@app/core/repo-relays"
-
 export {getRepoDeclaredMaintainers, getRepoMaintainers} from "@app/core/repo-authority"
+export {
+  getStatusRootId,
+  getVerifiedRepoMaintainers,
+  groupStatusEventsByRoot,
+} from "@app/core/repo-maintainer-verification"
 
 export const shouldReloadRepos = writable(false)
 
@@ -204,64 +204,6 @@ const normalizePubkey = (value: string) => {
     }
   }
   return ""
-}
-
-export const getStatusRootId = (status: Pick<StatusEvent, "tags">) =>
-  status.tags.find(tag => tag[0] === "e" && tag[3] === "root")?.[1] ||
-  getTagValue("e", status.tags) ||
-  ""
-
-export const groupStatusEventsByRoot = (events: StatusEvent[] | undefined | null) => {
-  const byId = new Map<string, StatusEvent>()
-
-  for (const event of events || []) {
-    byId.set(event.id, event)
-  }
-
-  const byRoot = new Map<string, StatusEvent[]>()
-  for (const event of byId.values()) {
-    const rootId = getStatusRootId(event)
-    if (!rootId) continue
-
-    const statuses = byRoot.get(rootId) || []
-    statuses.push(event)
-    byRoot.set(rootId, statuses)
-  }
-
-  return byRoot
-}
-
-export const getVerifiedRepoMaintainers = ({
-  repoEvent,
-  pullRequests = [],
-  statusEventsByRoot = new Map<string, StatusEvent[]>(),
-}: {
-  repoEvent?: RepoAnnouncementEvent | null
-  pullRequests?: PullRequestEvent[]
-  statusEventsByRoot?: ReadonlyMap<string, StatusEvent[]>
-}) => {
-  const owner = normalizePubkey(repoEvent?.pubkey || "")
-  const declaredMaintainers = new Set(getRepoDeclaredMaintainers(repoEvent))
-  const verified = new Set<string>()
-
-  if (!owner || declaredMaintainers.size === 0) return verified
-
-  for (const pullRequest of pullRequests || []) {
-    const author = normalizePubkey(pullRequest.pubkey || "")
-    if (!declaredMaintainers.has(author)) continue
-
-    const ownerMerged = (statusEventsByRoot.get(pullRequest.id) || []).some(status => {
-      return (
-        status.kind === GIT_STATUS_APPLIED &&
-        normalizePubkey(status.pubkey || "") === owner &&
-        getStatusRootId(status) === pullRequest.id
-      )
-    })
-
-    if (ownerMerged) verified.add(author)
-  }
-
-  return verified
 }
 
 const GIT_COVER_LETTER_KIND = 1624

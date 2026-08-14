@@ -1,7 +1,14 @@
 import {request as welshmanRequest, type RequestOptions} from "@welshman/net"
 import type {Filter, TrustedEvent} from "@welshman/util"
 
-export type FiniteRelayOutcome = "eose" | "timeout" | "closed" | "disconnect" | "aborted" | "error"
+export type FiniteRelayOutcome =
+  | "eose"
+  | "capped"
+  | "timeout"
+  | "closed"
+  | "disconnect"
+  | "aborted"
+  | "error"
 
 export type FiniteRelayResult = {
   relay: string
@@ -20,6 +27,7 @@ export type FiniteRelayRequestOptions = {
   signal?: AbortSignal
   priority?: number
   owner?: string
+  maxEvents?: number
   onEvent?: (event: TrustedEvent, relay: string) => void
 }
 
@@ -80,7 +88,10 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
         })
       }
 
-      const abortAndFinish = (nextOutcome: "timeout" | "aborted", nextReason?: string) => {
+      const abortAndFinish = (
+        nextOutcome: "capped" | "timeout" | "aborted",
+        nextReason?: string,
+      ) => {
         outcome ||= nextOutcome
         reason ||= nextReason
         requestController.abort()
@@ -106,6 +117,14 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
         return
       }
 
+      if (
+        options.maxEvents !== undefined &&
+        (!Number.isInteger(options.maxEvents) || options.maxEvents <= 0)
+      ) {
+        finish("error", "Finite relay event cap must be a positive integer")
+        return
+      }
+
       options.signal?.addEventListener("abort", onCallerAbort, {once: true})
       startTimer(
         Math.max(30_000, options.timeoutMs),
@@ -114,6 +133,7 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
 
       const receiveEvent = (event: TrustedEvent, relay: string) => {
         if (settled) return
+        const isNewEvent = !eventsById.has(event.id)
         eventsById.set(event.id, event)
 
         try {
@@ -123,6 +143,11 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
           reason = getErrorMessage(error)
           requestController.abort()
           finish(outcome, reason)
+          return
+        }
+
+        if (isNewEvent && options.maxEvents && eventsById.size >= options.maxEvents) {
+          abortAndFinish("capped", `Request reached the ${options.maxEvents}-event cap`)
         }
       }
 

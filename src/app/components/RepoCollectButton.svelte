@@ -54,14 +54,13 @@
   import LogIn from "@app/components/LogIn.svelte"
   import {publishDelete} from "@app/core/commands"
   import {activeUserCommunityRefs, hydratePreferredCommunities} from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND, parseTargetedPublication} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     communityWritableSectionsSupportTarget,
   } from "@app/core/community-permissions"
   import {makeTargetedPublicationOriginalFilters} from "@app/core/community-feeds"
   import {
-    getPublicationTargetingId,
     makeTargetedPublicationForCommunity,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
@@ -73,20 +72,14 @@
     getRepoAddressFromEvent,
     isAnyBookmarked,
   } from "@app/util/bookmarks"
-  import {
-    makeRepoStarReaction,
-    parseRepoStarReaction,
-    repoStarToBookmarkAddress,
-    type RepoStarRef,
-  } from "@app/util/repo-stars"
+  import {makeRepoStarReaction, repoStarToBookmarkAddress} from "@app/util/repo-stars"
   import {clearModals, pushModal} from "@app/util/modal"
   import {pushToast} from "@app/util/toast"
-
-  type RepoCollectionCommunityStar = {
-    targetEvent: TrustedEvent
-    star: RepoStarRef
-    community: RepoCommunityOption
-  }
+  import {
+    buildRepoCommunityStarCollections,
+    type RepoCollectionCommunityStar,
+    type RepoCollectionReadState,
+  } from "@app/core/repo-collection-read-model"
 
   type PublishThunkResult = {
     event?: TrustedEvent
@@ -101,6 +94,7 @@
     class?: string
     iconClass?: string
     disabled?: boolean
+    collectionState?: RepoCollectionReadState
   }
 
   const {
@@ -111,6 +105,7 @@
       className = "rounded-full border border-border bg-background/80 p-1.5 text-muted-foreground transition-colors hover:text-foreground",
     iconClass = "h-4 w-4",
     disabled = false,
+    collectionState,
   }: Props = $props()
 
   let pending = $state(false)
@@ -167,20 +162,22 @@
     )
   }
 
-  const repoStarCommunityOptions = $derived.by((): RepoCommunityOption[] =>
-    $activeUserCommunityRefs
-      .filter(ref =>
-        communityWritableSectionsSupportTarget({
-          definition: ref.definition,
-          writableSections: ref.writableSections,
-          target: COMMUNITY_WRITE_TARGETS.reaction,
-        }),
-      )
-      .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
-        relays: ref.definition.relays,
-      })),
+  const repoStarCommunityOptions = $derived.by(
+    (): RepoCommunityOption[] =>
+      collectionState?.communityOptions ||
+      $activeUserCommunityRefs
+        .filter(ref =>
+          communityWritableSectionsSupportTarget({
+            definition: ref.definition,
+            writableSections: ref.writableSections,
+            target: COMMUNITY_WRITE_TARGETS.reaction,
+          }),
+        )
+        .map(ref => ({
+          pubkey: ref.communityPubkey,
+          label: getCommunityOptionLabel(ref.communityPubkey),
+          relays: ref.definition.relays,
+        })),
   )
   const repoStarCommunityRelays = $derived(
     normalizeRelays([
@@ -190,6 +187,7 @@
   )
 
   const userCommunityStarTargetFilters = $derived.by((): Filter[] => {
+    if (collectionState) return []
     if (!$pubkey || repoStarCommunityOptions.length === 0) return []
 
     const communityPubkeys = Array.from(
@@ -254,75 +252,25 @@
   )
 
   const activeUserAllCommunityRepoStarCollections = $derived.by(
-    (): RepoCollectionCommunityStar[] => {
-      if (
-        !$pubkey ||
-        !$userCommunityStarReactionEvents ||
-        eligibleUserCommunityStarTargetEvents.length === 0
-      ) {
-        return []
-      }
-
-      const communityOptionsByPubkey = new Map(
-        repoStarCommunityOptions.map(option => [option.pubkey, option]),
-      )
-      const targetsByTargetingId = new Map<
-        string,
-        Array<{targetEvent: TrustedEvent; community: RepoCommunityOption}>
-      >()
-      const targetsByOriginalEventId = new Map<
-        string,
-        Array<{targetEvent: TrustedEvent; community: RepoCommunityOption}>
-      >()
-
-      const addTarget = (
-        map: Map<string, Array<{targetEvent: TrustedEvent; community: RepoCommunityOption}>>,
-        key: string,
-        target: {targetEvent: TrustedEvent; community: RepoCommunityOption},
-      ) => {
-        const current = map.get(key) || []
-        current.push(target)
-        map.set(key, current)
-      }
-
-      for (const event of eligibleUserCommunityStarTargetEvents) {
-        const targeting = parseTargetedPublication(event)
-        if (!targeting) continue
-
-        const communities = targeting.communities
-          .map(community => communityOptionsByPubkey.get(community.pubkey))
-          .filter((community): community is RepoCommunityOption => Boolean(community))
-        if (communities.length === 0) continue
-
-        for (const community of communities) {
-          const target = {targetEvent: event, community}
-          addTarget(targetsByTargetingId, targeting.id, target)
-          if (targeting.ref?.type === "e") {
-            addTarget(targetsByOriginalEventId, targeting.ref.value, target)
-          }
-        }
-      }
-
-      if (targetsByTargetingId.size === 0 && targetsByOriginalEventId.size === 0) return []
-
-      return ($userCommunityStarReactionEvents as TrustedEvent[]).flatMap(event => {
-        if (event.pubkey !== $pubkey) return []
-
-        const star = parseRepoStarReaction(event)
-        if (!star) return []
-
-        const targets =
-          targetsByTargetingId.get(getPublicationTargetingId(event)) ||
-          targetsByOriginalEventId.get(event.id) ||
-          []
-
-        return targets.map(target => ({...target, star}))
-      })
-    },
+    (): RepoCollectionCommunityStar[] =>
+      collectionState?.communityStars ||
+      buildRepoCommunityStarCollections({
+        viewerPubkey: $pubkey || "",
+        communityOptions: repoStarCommunityOptions,
+        targetEvents: $userCommunityStarTargetEvents
+          ? ($userCommunityStarTargetEvents as TrustedEvent[])
+          : [],
+        targetDeleteEvents: $userCommunityStarTargetDeleteEvents
+          ? ($userCommunityStarTargetDeleteEvents as TrustedEvent[])
+          : [],
+        reactionEvents: $userCommunityStarReactionEvents
+          ? ($userCommunityStarReactionEvents as TrustedEvent[])
+          : [],
+      }),
   )
 
   const existingPersonalStar = $derived.by(() =>
-    $activeRepoStars.find(star =>
+    (collectionState?.personalStars || $activeRepoStars).find(star =>
       isAnyBookmarked([repoStarToBookmarkAddress(star)], candidateAddresses, {
         candidateRepoKeys,
         getCachedEvent: address =>
@@ -596,6 +544,7 @@
   }
 
   $effect(() => {
+    if (collectionState) return
     if (!$pubkey) return
 
     hydratePreferredCommunities({relayHints: collectionRelays}).catch(error => {
@@ -604,6 +553,7 @@
   })
 
   $effect(() => {
+    if (collectionState) return
     if (!$pubkey || !repoAddress) return
 
     hydrateRepoStars({relayHints: collectionRelays, repoAddress}).catch(error => {
@@ -611,22 +561,27 @@
     })
   })
 
+  $effect(() => {
+    if (collectionState) return
+    loadFilters("community star targets", repoStarCommunityRelays, userCommunityStarTargetFilters)
+  })
   $effect(() =>
-    loadFilters("community star targets", repoStarCommunityRelays, userCommunityStarTargetFilters),
+    collectionState
+      ? undefined
+      : loadFilters(
+          "community star target deletes",
+          repoStarCommunityRelays,
+          userCommunityStarTargetDeleteFilters,
+        ),
   )
   $effect(() =>
-    loadFilters(
-      "community star target deletes",
-      repoStarCommunityRelays,
-      userCommunityStarTargetDeleteFilters,
-    ),
-  )
-  $effect(() =>
-    loadFilters(
-      "community star reactions",
-      repoStarCommunityRelays,
-      userCommunityStarReactionFilters,
-    ),
+    collectionState
+      ? undefined
+      : loadFilters(
+          "community star reactions",
+          repoStarCommunityRelays,
+          userCommunityStarReactionFilters,
+        ),
   )
 </script>
 

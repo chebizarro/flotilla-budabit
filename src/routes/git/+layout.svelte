@@ -1,5 +1,6 @@
 <script lang="ts">
   import {page} from "$app/stores"
+  import {beforeNavigate} from "$app/navigation"
   import type {Snippet} from "svelte"
   import {setContext} from "svelte"
   import {writable} from "svelte/store"
@@ -16,17 +17,32 @@
   const {children}: Props = $props()
   const activeCommunityPubkey = $derived($activeCommunitySession?.communityPubkey || "")
   const repoListHydrationReady = writable(false)
+  let repoListPreloadController: AbortController | null = null
+
+  const stopRepoListPreload = () => {
+    repoListPreloadController?.abort()
+    repoListPreloadController = null
+  }
 
   setContext(REPO_LIST_HYDRATION_READY_KEY, repoListHydrationReady)
+
+  beforeNavigate(navigation => {
+    if (navigation.to?.url.pathname !== "/git") stopRepoListPreload()
+  })
 
   $effect(() => {
     const isRepositoryList = $page.route.id === "/git"
     const relays = $repoAnnouncementRelaysStore
 
     repoListHydrationReady.set(false)
-    if (!isRepositoryList) return
+    if (!isRepositoryList) {
+      stopRepoListPreload()
+      return
+    }
 
+    stopRepoListPreload()
     const controller = new AbortController()
+    repoListPreloadController = controller
     void preloadRepositoryList({
       relays,
       signal: controller.signal,
@@ -44,6 +60,7 @@
 
     return () => {
       controller.abort()
+      if (repoListPreloadController === controller) repoListPreloadController = null
       repoListHydrationReady.set(false)
     }
   })

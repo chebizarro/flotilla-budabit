@@ -5,11 +5,14 @@
     pubkey: string
     url?: string
     relays?: string[]
+    loadProfile?: boolean
   }
 
-  const {pubkey, url, relays = []}: Props = $props()
+  const {pubkey, url, relays = [], loadProfile = true}: Props = $props()
 
-  const profileDisplay = $derived(deriveBudabitProfileDisplay(pubkey, {url, relays}))
+  const profileDisplay = $derived(
+    deriveBudabitProfileDisplay(pubkey, {url, relays, load: loadProfile}),
+  )
 </script>
 
 {$profileDisplay}

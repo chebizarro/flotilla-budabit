@@ -49,22 +49,18 @@
     type RepoPublishTransport,
   } from "@app/core/git-commands"
   import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
-  import {goto, preloadData} from "$app/navigation"
+  import {beforeNavigate, goto, preloadData} from "$app/navigation"
   import {getContext, onMount, onDestroy, untrack} from "svelte"
   import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
   import {ListFilter, X} from "@lucide/svelte"
   import {
-    GIT_PULL_REQUEST,
     GIT_REPO_ANNOUNCEMENT,
     GIT_REPO_STATE,
-    GIT_STATUS_APPLIED,
     parseRepoCommunityBinding,
     parseRepoAnnouncementEvent,
-    type PullRequestEvent,
     type BookmarkAddress,
     type RepoAnnouncementEvent,
-    type StatusEvent,
   } from "@nostr-git/core/events"
   import {getTaggedRelaysFromRepoEvent, resolveRepoRelayPolicy} from "@nostr-git/core/utils"
   import {GIT_PERMALINK} from "@nostr-git/core/types"
@@ -91,8 +87,6 @@
     loadRepoAnnouncements,
     GIT_RELAYS,
     getRepoDeclaredMaintainers,
-    getVerifiedRepoMaintainers,
-    groupStatusEventsByRoot,
     getRepoAnnouncementPublishRelays,
     repoAnnouncementRelaysStore,
     repoAnnouncements,
@@ -119,7 +113,7 @@
     setActiveCommunityInput,
   } from "@app/core/community-state"
   import {userRenouncedCommunityPubkeys} from "@app/core/community-renunciations"
-  import {parseCommunityInput} from "@app/core/community"
+  import {parseCommunityInput, TARGETED_PUBLICATION_KIND} from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     communityWritableSectionsSupportTarget,
@@ -184,6 +178,12 @@
   } from "@app/util/repo-discovery-search"
   import {loadBudabitProfile} from "@app/core/profile-resolver"
   import {peopleDiscoverySearch} from "@app/core/people-discovery-search"
+  import {REPO_LIST_ANNOUNCEMENT_LIMIT, REPO_LIST_MAX_RELAYS} from "@app/core/repo-list-preload"
+  import {
+    buildRepoCommunityStarCollections,
+    type RepoCollectionReadState,
+  } from "@app/core/repo-collection-read-model"
+  import {loadRepoCardVerification} from "@app/core/repo-card-verification"
 
   const url = GIT_RELAYS[0] || ""
   const repoListHydrationReadyStore = getContext<Readable<boolean>>(REPO_LIST_HYDRATION_READY_KEY)
@@ -372,18 +372,20 @@
   const repoLoadTimeoutTimers = new Set<ReturnType<typeof setTimeout>>()
   const gitPageLoadController = new AbortController()
   const load = (options: LoadOptions) =>
-    welshmanLoad({
-      ...options,
-      signal: options.signal
-        ? AbortSignal.any([options.signal, gitPageLoadController.signal])
-        : gitPageLoadController.signal,
-    })
-  let gitPageDestroyed = false
+    gitPageReadWorkStopped
+      ? Promise.resolve([])
+      : welshmanLoad({
+          ...options,
+          signal: options.signal
+            ? AbortSignal.any([options.signal, gitPageLoadController.signal])
+            : gitPageLoadController.signal,
+        })
+  let gitPageReadWorkStopped = false
 
   const afterRepoLoadSettle = (callback: () => void) => {
     const timer = setTimeout(() => {
       repoLoadSettleTimers.delete(timer)
-      if (gitPageDestroyed) return
+      if (gitPageReadWorkStopped) return
       callback()
     }, REPO_LOAD_SETTLE_DELAY_MS)
     repoLoadSettleTimers.add(timer)
@@ -404,7 +406,7 @@
       settled = true
       clearTimeout(timeout)
       repoLoadTimeoutTimers.delete(timeout)
-      if (gitPageDestroyed) return
+      if (gitPageReadWorkStopped) return
       afterRepoLoadSettle(onSettled)
     }
 
@@ -508,6 +510,13 @@
   let personalRepoLoadRequestId = 0
   let personalRepoAnnouncementsSettled = $state(false)
   $effect(() => {
+    if (activeMode !== "personal" || activeTab !== "my-repos") {
+      personalRepoLoadRequestId += 1
+      personalRepoAnnouncementsSettled = true
+      lastLoadedPersonalRepoKey = ""
+      return
+    }
+
     if (!$repoListHydrationReadyStore) {
       personalRepoLoadRequestId += 1
       personalRepoAnnouncementsSettled = false
@@ -522,7 +531,7 @@
       return
     }
 
-    if (!repoAnnouncementRelays.length) {
+    if (!repoListReadRelays.length) {
       personalRepoLoadRequestId += 1
       personalRepoAnnouncementsSettled = true
       lastLoadedPersonalRepoKey = ""
@@ -530,16 +539,20 @@
     }
 
     // Prevent duplicate loads with same relay set
-    const relayKey = repoAnnouncementRelays.slice().sort().join(",")
+    const relayKey = repoListReadRelays.slice().sort().join(",")
     const loadKey = `${$pubkey}:${relayKey}`
     if (loadKey === lastLoadedPersonalRepoKey) return
     lastLoadedPersonalRepoKey = loadKey
     personalRepoAnnouncementsSettled = false
     const requestId = ++personalRepoLoadRequestId
 
-    const filter = {kinds: [GIT_REPO_ANNOUNCEMENT], authors: [$pubkey]}
+    const filter = {
+      kinds: [GIT_REPO_ANNOUNCEMENT],
+      authors: [$pubkey],
+      limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+    }
     settleRepoLoad({
-      promise: load({relays: repoAnnouncementRelays, filters: [filter]}).catch(error => {
+      promise: load({relays: repoListReadRelays, filters: [filter]}).catch(error => {
         console.warn("[git/+page] Failed to load personal repos", error)
       }),
       onSettled: () => {
@@ -571,6 +584,7 @@
     cachedRepoRelays = relays
     return relays
   })
+  const repoListReadRelays = $derived(repoAnnouncementRelays.slice(0, REPO_LIST_MAX_RELAYS))
 
   // Normalize all relay URLs to avoid whitespace/trailing-slash/socket issues.
   // Include resolved repo announcement relays so personal stars retry after user relays load.
@@ -584,6 +598,7 @@
         ),
       ) as string[],
   )
+  const bookmarkListRelays = $derived(bookmarkRelays.slice(0, REPO_LIST_MAX_RELAYS))
 
   $effect(() => {
     if (!$pubkey) return
@@ -743,6 +758,9 @@
       ),
     ),
   )
+  const selectedCommunityListRelays = $derived(
+    selectedCommunityRelays.slice(0, REPO_LIST_MAX_RELAYS),
+  )
 
   const getRepoCardProfileRelays = (event?: RepoAnnouncementEvent | null) => {
     if (!event) return []
@@ -797,21 +815,7 @@
     }
   }
 
-  const hasRepoAddressTag = (event: Pick<NostrEvent, "tags">, address: string) =>
-    Boolean(address && (event.tags || []).some(tag => tag[0] === "a" && tag[1] === address))
-
-  const REPO_CARD_EVIDENCE_FILTER_CHUNK_SIZE = 80
   const EMPTY_VERIFIED_REPO_MAINTAINERS = new Set<string>()
-
-  const chunkBySize = <T,>(items: T[], size: number) => {
-    const chunks: T[][] = []
-
-    for (let i = 0; i < items.length; i += size) {
-      chunks.push(items.slice(i, i + size))
-    }
-
-    return chunks
-  }
 
   const selectedCommunityRef = $derived.by(() =>
     $activeUserCommunityRefs.find(ref => ref.communityPubkey === selectedCommunityPubkey),
@@ -977,7 +981,7 @@
           ...GIT_RELAYS,
         ].filter(Boolean),
       ),
-    ) as string[]
+    ).slice(0, REPO_LIST_MAX_RELAYS) as string[]
 
   const repoStarAddresses = $derived.by((): BookmarkAddress[] =>
     $activeRepoStars.map(repoStarToBookmarkAddress),
@@ -1003,7 +1007,7 @@
 
     const requestId = ++repoStarsHydrationRequestId
     repoStarsHydrationSettled = false
-    hydrateRepoStars({relayHints: bookmarkRelays})
+    hydrateRepoStars({relayHints: bookmarkListRelays})
       .catch(error => {
         console.warn("[git/+page] Failed to hydrate repo stars", error)
       })
@@ -1019,6 +1023,7 @@
   let settledStarredRepoLoadKey = $state("")
 
   const repos = $derived.by(() => {
+    if (activeMode !== "personal" || activeTab !== "bookmarks") return undefined
     if (!$repoListHydrationReadyStore) return undefined
     if (!hasRepoStarAddresses) return undefined
 
@@ -1108,6 +1113,7 @@
           {
             kinds: [GIT_REPO_ANNOUNCEMENT],
             "#h": [selectedCommunityPubkey],
+            limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
           },
         ] as Filter[])
       : [],
@@ -1126,8 +1132,9 @@
     if (
       !$repoListHydrationReadyStore ||
       activeMode !== "community" ||
+      activeTab !== "my-repos" ||
       !selectedCommunityPubkey ||
-      selectedCommunityRelays.length === 0 ||
+      selectedCommunityListRelays.length === 0 ||
       communityRepoFilters.length === 0
     ) {
       communityRepoLoadRequestId += 1
@@ -1136,17 +1143,18 @@
       return
     }
 
-    const key = `${selectedCommunityPubkey}:${selectedCommunityRelays.join(",")}`
+    const key = `${selectedCommunityPubkey}:${selectedCommunityListRelays.join(",")}`
     if (key === communityRepoLoadKey) return
     communityRepoLoadKey = key
     communityRepoAnnouncementsSettled = false
     const requestId = ++communityRepoLoadRequestId
     settleRepoLoad({
-      promise: load({relays: selectedCommunityRelays, filters: communityRepoFilters as any}).catch(
-        error => {
-          console.warn("[git/+page] Failed to load community repos", error)
-        },
-      ),
+      promise: load({
+        relays: selectedCommunityListRelays,
+        filters: communityRepoFilters as any,
+      }).catch(error => {
+        console.warn("[git/+page] Failed to load community repos", error)
+      }),
       onSettled: () => {
         if (requestId === communityRepoLoadRequestId) communityRepoAnnouncementsSettled = true
       },
@@ -1214,7 +1222,11 @@
 
   const communityStarTargetFilters = $derived.by(() =>
     selectedCommunityPubkey
-      ? [makeCommunityTargetingFilter(selectedCommunityPubkey, [REACTION])]
+      ? [
+          makeCommunityTargetingFilter(selectedCommunityPubkey, [REACTION], {
+            limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+          }),
+        ]
       : [],
   )
   const communityStarTargetEvents = $derived.by(() =>
@@ -1319,7 +1331,11 @@
 
   const communitySnippetTargetFilters = $derived.by(() =>
     selectedCommunityPubkey
-      ? [makeCommunityTargetingFilter(selectedCommunityPubkey, [GIT_PERMALINK])]
+      ? [
+          makeCommunityTargetingFilter(selectedCommunityPubkey, [GIT_PERMALINK], {
+            limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+          }),
+        ]
       : [],
   )
   const communitySnippetTargetEvents = $derived.by(() =>
@@ -1408,8 +1424,9 @@
   $effect(() => {
     if (
       activeMode !== "community" ||
+      (activeTab !== "bookmarks" && activeTab !== "snippets") ||
       !selectedCommunityPubkey ||
-      selectedCommunityRelays.length === 0
+      selectedCommunityListRelays.length === 0
     ) {
       communityTargetLoadRequestId += 1
       communityTargetLoadKey = ""
@@ -1417,19 +1434,20 @@
       return
     }
 
-    const filters = [...communityStarTargetFilters, ...communitySnippetTargetFilters]
+    const filters =
+      activeTab === "bookmarks" ? communityStarTargetFilters : communitySnippetTargetFilters
     if (filters.length === 0) {
       communityTargetsSettled = true
       return
     }
 
-    const key = `${selectedCommunityPubkey}:${selectedCommunityRelays.join(",")}:targets`
+    const key = `${activeTab}:${selectedCommunityPubkey}:${selectedCommunityListRelays.join(",")}:targets`
     if (key === communityTargetLoadKey) return
     communityTargetLoadKey = key
     communityTargetsSettled = false
     const requestId = ++communityTargetLoadRequestId
     settleRepoLoad({
-      promise: load({relays: selectedCommunityRelays, filters: filters as any}).catch(error => {
+      promise: load({relays: selectedCommunityListRelays, filters: filters as any}).catch(error => {
         console.warn("[git/+page] Failed to load community curation targets", error)
       }),
       onSettled: () => {
@@ -1444,8 +1462,9 @@
   $effect(() => {
     if (
       activeMode !== "community" ||
+      (activeTab !== "bookmarks" && activeTab !== "snippets") ||
       !selectedCommunityPubkey ||
-      selectedCommunityRelays.length === 0
+      selectedCommunityListRelays.length === 0
     ) {
       communityTargetDeleteLoadRequestId += 1
       communityTargetDeleteLoadKey = ""
@@ -1453,7 +1472,10 @@
       return
     }
 
-    const filters = [...communityStarTargetDeleteFilters, ...communitySnippetTargetDeleteFilters]
+    const filters =
+      activeTab === "bookmarks"
+        ? communityStarTargetDeleteFilters
+        : communitySnippetTargetDeleteFilters
     if (filters.length === 0) {
       communityTargetDeletesSettled = true
       return
@@ -1465,7 +1487,7 @@
     communityTargetDeletesSettled = false
     const requestId = ++communityTargetDeleteLoadRequestId
     settleRepoLoad({
-      promise: load({relays: selectedCommunityRelays, filters: filters as any}).catch(error => {
+      promise: load({relays: selectedCommunityListRelays, filters: filters as any}).catch(error => {
         console.warn("[git/+page] Failed to load community curation deletes", error)
       }),
       onSettled: () => {
@@ -1480,8 +1502,9 @@
   $effect(() => {
     if (
       activeMode !== "community" ||
+      (activeTab !== "bookmarks" && activeTab !== "snippets") ||
       !selectedCommunityPubkey ||
-      selectedCommunityRelays.length === 0
+      selectedCommunityListRelays.length === 0
     ) {
       communityOriginalLoadRequestId += 1
       communityOriginalLoadKey = ""
@@ -1489,7 +1512,8 @@
       return
     }
 
-    const filters = [...communityStarReactionFilters, ...communitySnippetFilters]
+    const filters =
+      activeTab === "bookmarks" ? communityStarReactionFilters : communitySnippetFilters
     if (filters.length === 0) {
       communityOriginalsSettled = true
       return
@@ -1500,7 +1524,7 @@
     communityOriginalsSettled = false
     const requestId = ++communityOriginalLoadRequestId
     settleRepoLoad({
-      promise: load({relays: selectedCommunityRelays, filters: filters as any}).catch(error => {
+      promise: load({relays: selectedCommunityListRelays, filters: filters as any}).catch(error => {
         console.warn("[git/+page] Failed to load community curated originals", error)
       }),
       onSettled: () => {
@@ -1513,7 +1537,11 @@
   let communityStarRepoLoadRequestId = 0
   let communityStarReposSettled = $state(false)
   $effect(() => {
-    if (activeMode !== "community" || communityRepoStarAddresses.length === 0) {
+    if (
+      activeMode !== "community" ||
+      activeTab !== "bookmarks" ||
+      communityRepoStarAddresses.length === 0
+    ) {
       communityStarRepoLoadRequestId += 1
       communityStarRepoLoadKey = ""
       communityStarReposSettled = true
@@ -1557,6 +1585,159 @@
     } else {
       return activeMode === "community" ? latestCommunityRepos : latestMyRepos
     }
+  })
+
+  const repoCollectionCommunityOptions = $derived.by((): RepoCommunityOption[] =>
+    $activeUserCommunityRefs
+      .filter(ref =>
+        communityWritableSectionsSupportTarget({
+          definition: ref.definition,
+          writableSections: ref.writableSections,
+          target: COMMUNITY_WRITE_TARGETS.reaction,
+        }),
+      )
+      .map(ref => ({
+        pubkey: ref.communityPubkey,
+        label: getCommunityOptionLabel(ref.communityPubkey),
+        relays: ref.definition.relays,
+      })),
+  )
+  const repoCollectionRelays = $derived.by(() =>
+    Array.from(
+      new Set(
+        [
+          ...repoCollectionCommunityOptions.flatMap(option => [
+            option.relay || "",
+            ...(option.relays || []),
+          ]),
+          ...bookmarkListRelays,
+        ]
+          .map(relay => safeNormalizeRelay(relay))
+          .filter(Boolean),
+      ),
+    ).slice(0, REPO_LIST_MAX_RELAYS),
+  )
+  const repoCollectionTargetFilters = $derived.by((): Filter[] => {
+    if (!$pubkey || repoCollectionCommunityOptions.length === 0) return []
+
+    return [
+      {
+        kinds: [TARGETED_PUBLICATION_KIND],
+        authors: [$pubkey],
+        "#p": repoCollectionCommunityOptions.map(option => option.pubkey),
+        "#k": [String(REACTION)],
+        limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+      },
+    ]
+  })
+  const repoCollectionTargetEventsStore = $derived.by(() =>
+    repoCollectionTargetFilters.length
+      ? deriveEventsDesc(
+          deriveEventsById({repository, filters: repoCollectionTargetFilters as any}),
+        )
+      : undefined,
+  )
+  const repoCollectionTargetEvents = $derived.by(() =>
+    repoCollectionTargetEventsStore
+      ? (($repoCollectionTargetEventsStore || []) as TrustedEvent[])
+      : [],
+  )
+  const repoCollectionTargetDeleteFilters = $derived.by(() =>
+    makeTargetDeleteFilters(repoCollectionTargetEvents),
+  )
+  const repoCollectionTargetDeleteEventsStore = $derived.by(() =>
+    repoCollectionTargetDeleteFilters.length
+      ? deriveEventsDesc(
+          deriveEventsById({repository, filters: repoCollectionTargetDeleteFilters as any}),
+        )
+      : undefined,
+  )
+  const repoCollectionTargetDeleteEvents = $derived.by(() =>
+    repoCollectionTargetDeleteEventsStore
+      ? (($repoCollectionTargetDeleteEventsStore || []) as TrustedEvent[])
+      : [],
+  )
+  const repoCollectionReactionFilters = $derived.by(() =>
+    repoCollectionTargetEvents.length
+      ? makeTargetedPublicationOriginalFilters(repoCollectionTargetEvents, $pubkey ? [$pubkey] : [])
+      : [],
+  )
+  const repoCollectionReactionEventsStore = $derived.by(() =>
+    repoCollectionReactionFilters.length
+      ? deriveEventsDesc(
+          deriveEventsById({repository, filters: repoCollectionReactionFilters as any}),
+        )
+      : undefined,
+  )
+  const repoCollectionReactionEvents = $derived.by(() =>
+    repoCollectionReactionEventsStore
+      ? (($repoCollectionReactionEventsStore || []) as TrustedEvent[])
+      : [],
+  )
+  const repoCollectionState = $derived.by(
+    (): RepoCollectionReadState => ({
+      personalStars: $activeRepoStars,
+      communityOptions: repoCollectionCommunityOptions,
+      communityStars: buildRepoCommunityStarCollections({
+        viewerPubkey: $pubkey || "",
+        communityOptions: repoCollectionCommunityOptions,
+        targetEvents: repoCollectionTargetEvents,
+        targetDeleteEvents: repoCollectionTargetDeleteEvents,
+        reactionEvents: repoCollectionReactionEvents,
+      }),
+    }),
+  )
+  let repoCollectionTargetLoadKey = ""
+  let repoCollectionFollowupLoadKey = ""
+  let repoCollectionFollowupLoadTimer: ReturnType<typeof setTimeout> | null = null
+
+  $effect(() => {
+    const filters = repoCollectionTargetFilters
+    const relays = repoCollectionRelays
+    const key = `${relays.join(",")}:${filters.map(filter => JSON.stringify(filter)).join("|")}`
+
+    if (!key || filters.length === 0 || relays.length === 0) {
+      repoCollectionTargetLoadKey = ""
+      return
+    }
+    if (key === repoCollectionTargetLoadKey) return
+    repoCollectionTargetLoadKey = key
+
+    load({relays, filters: filters as any}).catch(error => {
+      if (!gitPageReadWorkStopped) {
+        console.warn("[git/+page] Failed to load repository collection targets", error)
+      }
+    })
+  })
+
+  $effect(() => {
+    const filters = [...repoCollectionTargetDeleteFilters, ...repoCollectionReactionFilters]
+    const relays = repoCollectionRelays
+    const key = `${relays.join(",")}:${filters
+      .map(filter => JSON.stringify(filter))
+      .sort()
+      .join("|")}`
+
+    if (repoCollectionFollowupLoadTimer) {
+      clearTimeout(repoCollectionFollowupLoadTimer)
+      repoCollectionFollowupLoadTimer = null
+    }
+    if (!key || filters.length === 0 || relays.length === 0) {
+      repoCollectionFollowupLoadKey = ""
+      return
+    }
+    if (key === repoCollectionFollowupLoadKey) return
+    repoCollectionFollowupLoadKey = key
+
+    repoCollectionFollowupLoadTimer = setTimeout(() => {
+      repoCollectionFollowupLoadTimer = null
+      if (gitPageReadWorkStopped) return
+      load({relays, filters: filters as any}).catch(error => {
+        if (!gitPageReadWorkStopped) {
+          console.warn("[git/+page] Failed to load repository collection state", error)
+        }
+      })
+    }, REPO_CARD_HYDRATION_DELAY_MS)
   })
 
   // Detect if search query is a bech32 account/address search
@@ -2590,83 +2771,24 @@
       .map(card => card?.first as RepoAnnouncementEvent | undefined)
       .filter((event): event is RepoAnnouncementEvent => Boolean(event)),
   )
-  const repoCardEvidenceAddresses = $derived.by(() =>
-    Array.from(new Set(repoCardEvidenceRepoEvents.map(getRepoCardAddress).filter(Boolean))),
+  const repoCardVerificationTargets = $derived.by(() =>
+    repoCardEvidenceRepoEvents.map(event => ({
+      event,
+      relays: Array.from(
+        new Set(
+          [
+            ...getDeclaredRepoRelays(event),
+            ...Array.from(tracker.getRelays(event.id) || []),
+            getRepoCardRelayHint(event),
+            ...GIT_RELAYS,
+          ]
+            .map(relay => safeNormalizeRelay(relay))
+            .filter(Boolean),
+        ),
+      ).slice(0, REPO_LIST_MAX_RELAYS),
+    })),
   )
-  const repoCardEvidenceRelays = $derived.by(() =>
-    Array.from(
-      new Set(
-        repoCardEvidenceRepoEvents
-          .flatMap(event => getRepoCardProfileRelays(event))
-          .map(relay => safeNormalizeRelay(relay))
-          .filter(Boolean),
-      ),
-    ),
-  )
-  const repoCardPullRequestFilters = $derived.by(() =>
-    chunkBySize(repoCardEvidenceAddresses, REPO_CARD_EVIDENCE_FILTER_CHUNK_SIZE).map(
-      addresses => ({kinds: [GIT_PULL_REQUEST], "#a": addresses}) satisfies Filter,
-    ),
-  )
-  const repoCardPullRequestEventsStore = $derived.by(() =>
-    repoCardPullRequestFilters.length > 0
-      ? deriveEventsDesc(deriveEventsById({repository, filters: repoCardPullRequestFilters as any}))
-      : undefined,
-  )
-  const repoCardPullRequests = $derived.by(() =>
-    repoCardPullRequestEventsStore
-      ? (($repoCardPullRequestEventsStore || []) as PullRequestEvent[])
-      : [],
-  )
-  const repoCardPullRequestRootIds = $derived.by(() =>
-    Array.from(new Set(repoCardPullRequests.map(event => event.id).filter(Boolean))),
-  )
-  const repoCardStatusFilters = $derived.by(() => [
-    ...chunkBySize(repoCardEvidenceAddresses, REPO_CARD_EVIDENCE_FILTER_CHUNK_SIZE).map(
-      addresses => ({kinds: [GIT_STATUS_APPLIED], "#a": addresses}) satisfies Filter,
-    ),
-    ...chunkBySize(repoCardPullRequestRootIds, REPO_CARD_EVIDENCE_FILTER_CHUNK_SIZE).map(
-      rootIds => ({kinds: [GIT_STATUS_APPLIED], "#e": rootIds}) satisfies Filter,
-    ),
-  ])
-  const repoCardEvidenceFilters = $derived.by(() => [
-    ...repoCardPullRequestFilters,
-    ...repoCardStatusFilters,
-  ])
-  const repoCardStatusEventsStore = $derived.by(() =>
-    repoCardStatusFilters.length > 0
-      ? deriveEventsDesc(deriveEventsById({repository, filters: repoCardStatusFilters as any}))
-      : undefined,
-  )
-  const repoCardStatusEvents = $derived.by(() =>
-    repoCardStatusEventsStore ? (($repoCardStatusEventsStore || []) as StatusEvent[]) : [],
-  )
-  const repoCardStatusEventsByRoot = $derived.by(() =>
-    groupStatusEventsByRoot(repoCardStatusEvents),
-  )
-  const repoCardVerifiedMaintainersByAddress = $derived.by(() => {
-    const verifiedByAddress = new Map<string, Set<string>>()
-
-    for (const event of repoCardEvidenceRepoEvents) {
-      const address = getRepoCardAddress(event)
-      if (!address) continue
-
-      const pullRequests = repoCardPullRequests.filter(pullRequest =>
-        hasRepoAddressTag(pullRequest, address),
-      )
-
-      verifiedByAddress.set(
-        address,
-        getVerifiedRepoMaintainers({
-          repoEvent: event,
-          pullRequests,
-          statusEventsByRoot: repoCardStatusEventsByRoot,
-        }),
-      )
-    }
-
-    return verifiedByAddress
-  })
+  let repoCardVerifiedMaintainersByAddress = $state(new Map<string, Set<string>>())
   const getRepoCardVerifiedMaintainers = (event?: RepoAnnouncementEvent | null) => {
     const address = getRepoCardAddress(event)
     return address
@@ -2698,16 +2820,16 @@
   }
 
   $effect(() => {
-    const filters = repoCardEvidenceFilters
-    const relays = repoCardEvidenceRelays
-    const key = `${relays.join(",")}:${filters
-      .map(filter => JSON.stringify(filter))
+    const targets = repoCardVerificationTargets
+    const key = targets
+      .map(target => `${target.event.id}:${target.relays.slice().sort().join(",")}`)
       .sort()
-      .join("|")}`
+      .join("|")
 
-    if (filters.length === 0 || relays.length === 0) {
+    if (!key || targets.length === 0) {
       repoCardEvidenceLoadKey = ""
       cancelRepoCardEvidenceLoad()
+      repoCardVerifiedMaintainersByAddress = new Map()
       return
     }
 
@@ -2719,16 +2841,22 @@
     repoCardEvidenceLoadController = controller
     repoCardEvidenceLoadTimer = setTimeout(() => {
       repoCardEvidenceLoadTimer = null
-      if (gitPageDestroyed || controller.signal.aborted) return
+      if (gitPageReadWorkStopped || controller.signal.aborted) return
 
-      load({relays, filters: filters as any, signal: controller.signal}).catch(error => {
-        if (!controller.signal.aborted) {
-          console.warn(
-            "[git/+page] Failed to load repo card maintainer verification evidence",
-            error,
-          )
-        }
-      })
+      loadRepoCardVerification(targets, controller.signal)
+        .then(result => {
+          if (!controller.signal.aborted && repoCardEvidenceLoadKey === key) {
+            repoCardVerifiedMaintainersByAddress = result.verifiedByAddress
+          }
+        })
+        .catch(error => {
+          if (!controller.signal.aborted) {
+            console.warn(
+              "[git/+page] Failed to load repo card maintainer verification evidence",
+              error,
+            )
+          }
+        })
     }, REPO_CARD_HYDRATION_DELAY_MS)
   })
 
@@ -2739,16 +2867,29 @@
       return
     }
 
-    const requests = repoCardsForProfileHydration
-      .flatMap(card => {
-        const event = card?.first as RepoAnnouncementEvent | undefined
-        const owner = String(card?.owner || event?.pubkey || "")
-        const relays = event ? getRepoCardProfileRelays(event) : []
-        const maintainers = getRepoCardMaintainers(event)
+    const relaysByPubkey = new Map<string, Set<string>>()
+    for (const card of repoCardsForProfileHydration) {
+      const event = card?.first as RepoAnnouncementEvent | undefined
+      const owner = String(card?.owner || event?.pubkey || "")
+      const relays = event ? getRepoCardProfileRelays(event) : []
+      const communityPubkey = event ? parseRepoCommunityBinding(event)?.pubkey || "" : ""
+      const pubkeys = [owner, communityPubkey, ...getRepoCardMaintainers(event).slice(0, 3)].filter(
+        Boolean,
+      )
 
-        return [owner, ...maintainers].filter(Boolean).map(pubkey => ({pubkey, relays}))
-      })
-      .filter(({pubkey}) => pubkey)
+      for (const pubkey of pubkeys) {
+        const mergedRelays = relaysByPubkey.get(pubkey) || new Set<string>()
+        for (const relay of relays) {
+          if (mergedRelays.size >= REPO_LIST_MAX_RELAYS) break
+          mergedRelays.add(relay)
+        }
+        relaysByPubkey.set(pubkey, mergedRelays)
+      }
+    }
+    const requests = Array.from(relaysByPubkey, ([pubkey, relays]) => ({
+      pubkey,
+      relays: Array.from(relays),
+    }))
 
     const key = requests
       .map(({pubkey, relays}) => `${pubkey}:${relays.join(",")}`)
@@ -2768,11 +2909,11 @@
 
     repoCardProfileLoadTimer = setTimeout(() => {
       repoCardProfileLoadTimer = null
-      if (gitPageDestroyed || requestId !== repoCardProfileLoadRequestId) return
+      if (gitPageReadWorkStopped || requestId !== repoCardProfileLoadRequestId) return
 
       for (const {pubkey, relays} of requests) {
         loadBudabitProfile(pubkey, {relays}).catch(error => {
-          if (!gitPageDestroyed && requestId === repoCardProfileLoadRequestId) {
+          if (!gitPageReadWorkStopped && requestId === repoCardProfileLoadRequestId) {
             console.warn("[git/+page] Failed to load repo card profile", error)
           }
         })
@@ -2877,11 +3018,10 @@
     }
   })
 
-  onDestroy(() => {
-    gitPageDestroyed = true
+  const stopGitPageReadWork = () => {
+    if (gitPageReadWorkStopped) return
+    gitPageReadWorkStopped = true
     gitPageLoadController.abort()
-    for (const transport of activeRepoPublishTransports) transport.dispose()
-    activeRepoPublishTransports.clear()
     cardsComputeRequestId += 1
     accountSearchCardsComputeRequestId += 1
     if (cardsComputeTimer) {
@@ -2900,6 +3040,10 @@
       repoDiscoveryController.abort()
       repoDiscoveryController = null
     }
+    if (repoCollectionFollowupLoadTimer) {
+      clearTimeout(repoCollectionFollowupLoadTimer)
+      repoCollectionFollowupLoadTimer = null
+    }
     cancelRepoCardEvidenceLoad()
     cancelRepoCardProfileLoad()
     for (const timer of repoLoadSettleTimers) {
@@ -2910,6 +3054,16 @@
       clearTimeout(timer)
     }
     repoLoadTimeoutTimers.clear()
+  }
+
+  beforeNavigate(navigation => {
+    if (navigation.to?.url.pathname !== "/git") stopGitPageReadWork()
+  })
+
+  onDestroy(() => {
+    stopGitPageReadWork()
+    for (const transport of activeRepoPublishTransports) transport.dispose()
+    activeRepoPublishTransports.clear()
   })
 
   const back = () => history.back()
@@ -3897,6 +4051,8 @@
                   showActivity={true}
                   showIssues={true}
                   showActions={true}
+                  collectionState={repoCollectionState}
+                  loadProfiles={false}
                   hideDate={true} />
               {/if}
               <div class="mt-auto flex min-w-0 items-center justify-between gap-2 pt-3">
@@ -3905,6 +4061,7 @@
                     maintainers={repoCardMaintainers}
                     relays={cardProfileRelays}
                     verifiedMaintainers={repoCardVerifiedMaintainers}
+                    loadProfiles={false}
                     repoName={g.title || ""}
                     label="Co-maintainers" />
                 </div>
@@ -4049,6 +4206,8 @@
                   showActivity={true}
                   showIssues={true}
                   showActions={true}
+                  collectionState={repoCollectionState}
+                  loadProfiles={false}
                   hideDate={true} />
               {/if}
 
@@ -4060,6 +4219,7 @@
                     maintainers={repoCardMaintainers}
                     relays={cardProfileRelays}
                     verifiedMaintainers={repoCardVerifiedMaintainers}
+                    loadProfiles={false}
                     repoName={g.title || ""}
                     label="Co-maintainers" />
                   {#if communityStargazers.length > 0}
@@ -4073,7 +4233,11 @@
                             onclick={stopPropagation(
                               preventDefault(() => openRepoCardProfile(pk, cardProfileRelays)),
                             )}>
-                            <ProfileCircle pubkey={pk} relays={cardProfileRelays} size={6} />
+                            <ProfileCircle
+                              pubkey={pk}
+                              relays={cardProfileRelays}
+                              loadProfile={false}
+                              size={6} />
                           </Button>
                         {/each}
                       </div>

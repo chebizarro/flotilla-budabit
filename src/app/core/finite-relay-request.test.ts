@@ -178,6 +178,43 @@ describe("finite relay request", () => {
     expect(result.startedAt).toBeTypeOf("number")
   })
 
+  it("aborts the physical request after reaching the unique event cap", async () => {
+    const secondEvent = {...event, id: "4".repeat(64)}
+    const request = vi.fn((options: RequestOptions) => {
+      options.onStart?.(relay)
+      options.onEvent?.(event, relay)
+      options.onDuplicate?.(event, relay)
+      options.onEvent?.(secondEvent, relay)
+      return waitForAbort(options)
+    })
+    const finiteRequest = createFiniteRelayRequester({request})
+
+    const result = await finiteRequest({
+      relay,
+      filters: [{}],
+      timeoutMs: 1000,
+      maxEvents: 2,
+    })
+
+    expect(result).toMatchObject({outcome: "capped", events: [event, secondEvent]})
+    expect(vi.mocked(request).mock.calls[0][0].signal?.aborted).toBe(true)
+  })
+
+  it("does not count duplicate delivery against the event cap", async () => {
+    const request = vi.fn(async (options: RequestOptions) => {
+      options.onStart?.(relay)
+      options.onEvent?.(event, relay)
+      options.onDuplicate?.(event, relay)
+      options.onEose?.(relay)
+      return [event]
+    })
+    const finiteRequest = createFiniteRelayRequester({request})
+
+    await expect(
+      finiteRequest({relay, filters: [{}], timeoutMs: 1000, maxEvents: 2}),
+    ).resolves.toMatchObject({outcome: "eose", events: [event]})
+  })
+
   it.each([
     {
       label: "synchronous request failure",

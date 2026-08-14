@@ -93,6 +93,7 @@ export const buildBookmarkRepoFilters = (bookmarks: BookmarkAddress[]): Filter[]
     kinds: [GIT_REPO_ANNOUNCEMENT],
     authors: [author],
     "#d": Array.from(identifiers),
+    limit: identifiers.size,
   }))
 }
 

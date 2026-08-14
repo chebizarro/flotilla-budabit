@@ -10,6 +10,7 @@
   import {getInteractiveCardTarget} from "@lib/html"
   import {notifications, hasRepoNotification} from "@app/util/notifications"
   import {makeRepoHrefFromEvent} from "@app/util/repo-links"
+  import type {RepoCollectionReadState} from "@app/core/repo-collection-read-model"
   import {parseRepoCommunityBinding} from "@nostr-git/core/events"
   import {deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
   import RepoCollectButton from "@app/components/RepoCollectButton.svelte"
@@ -28,6 +29,8 @@
     showActions = true,
     hideDate = false,
     profileRelays = [],
+    collectionState,
+    loadProfiles = true,
   }: {
     url: string
     event: TrustedEvent
@@ -41,6 +44,8 @@
     showActions?: boolean
     hideDate?: boolean
     profileRelays?: string[]
+    collectionState?: RepoCollectionReadState
+    loadProfiles?: boolean
   } = $props()
 
   const name = event.tags.find(nthEq(0, "name"))?.[1]
@@ -50,7 +55,10 @@
     Array.from(new Set([community?.relay || "", ...profileRelays].filter(Boolean))),
   )
   const communityDisplay = $derived(
-    deriveBudabitProfileDisplay(community?.pubkey, {communityRelays: communityProfileRelays}),
+    deriveBudabitProfileDisplay(community?.pubkey, {
+      communityRelays: communityProfileRelays,
+      load: loadProfiles,
+    }),
   )
   const communityLabel = $derived.by(() => {
     if (!community) return ""
@@ -184,6 +192,7 @@
       : ''}"
     relays={profileRelays}
     profileRole="Owner"
+    loadProfile={loadProfiles}
     {hideDate}>
     {#if navigating}
       <span
@@ -209,7 +218,11 @@
         </div>
         <div class="flex items-center gap-2 {showActions ? 'mr-9' : ''}">
           {#if showCollectionButton}
-            <RepoCollectButton {event} relayHint={url} relayHints={profileRelays} />
+            <RepoCollectButton
+              {event}
+              relayHint={url}
+              relayHints={profileRelays}
+              {collectionState} />
           {:else if onToggleBookmark}
             <button
               type="button"

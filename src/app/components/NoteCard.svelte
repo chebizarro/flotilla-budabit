@@ -19,6 +19,7 @@
     url,
     relays = [],
     profileRole,
+    loadProfile = true,
     ...restProps
   }: {
     event: TrustedEvent
@@ -29,6 +30,7 @@
     url?: string
     relays?: string[]
     profileRole?: string
+    loadProfile?: boolean
     class?: string
   } = $props()
 
@@ -62,9 +64,9 @@
       {#if !hideProfile}
         <div class="flex gap-2">
           {#if minimal}
-            @<ProfileName pubkey={event.pubkey} {url} {relays} />
+            @<ProfileName pubkey={event.pubkey} {url} {relays} {loadProfile} />
           {:else}
-            <Profile pubkey={event.pubkey} {url} {relays} roleLabel={profileRole} />
+            <Profile pubkey={event.pubkey} {url} {relays} roleLabel={profileRole} {loadProfile} />
           {/if}
         </div>
       {/if}

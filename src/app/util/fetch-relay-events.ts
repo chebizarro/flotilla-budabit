@@ -11,8 +11,11 @@ export async function fetchRelayEventsWithTimeout<TEvent = any>(params: {
   signal?: AbortSignal
   throwOnTimeout?: boolean
   isolated?: boolean
+  maxEvents?: number
+  onOutcome?: (outcome: {timedOut: boolean; sawEose: boolean; capped: boolean}) => void
 }): Promise<TEvent[]> {
   const events: TEvent[] = []
+  const eventIds = new Set<string>()
   let sawEose = false
   let disconnectedRelay = ""
   const controller = new AbortController()
@@ -20,6 +23,7 @@ export async function fetchRelayEventsWithTimeout<TEvent = any>(params: {
   const onAbort = () => controller.abort()
   params.signal?.addEventListener("abort", onAbort, {once: true})
   let timedOut = false
+  let capped = false
   const timeoutId = setTimeout(
     () => {
       timedOut = true
@@ -37,7 +41,15 @@ export async function fetchRelayEventsWithTimeout<TEvent = any>(params: {
       relays,
       filters: params.filters,
       signal: controller.signal,
-      onEvent: event => events.push(event as TEvent),
+      onEvent: event => {
+        if (eventIds.has(event.id)) return
+        eventIds.add(event.id)
+        events.push(event as TEvent)
+        if (params.maxEvents && events.length >= params.maxEvents) {
+          capped = true
+          controller.abort()
+        }
+      },
       onEose: () => {
         sawEose = true
       },
@@ -72,6 +84,7 @@ export async function fetchRelayEventsWithTimeout<TEvent = any>(params: {
     clearTimeout(timeoutId)
     params.signal?.removeEventListener("abort", onAbort)
     isolatedPool?.clear()
+    params.onOutcome?.({timedOut, sawEose, capped})
   }
 
   return events
@@ -142,7 +155,8 @@ export async function fetchCompleteRelayInventory(params: {
           if (!sawEose) terminalError = `Relay disconnected before EOSE: ${url}`
         },
         onClosed: (message, url) => {
-          if (!sawEose) terminalError = `Relay closed before EOSE: ${url}${message ? ` (${message})` : ""}`
+          if (!sawEose)
+            terminalError = `Relay closed before EOSE: ${url}${message ? ` (${message})` : ""}`
         },
       })
     } catch (error) {
@@ -175,7 +189,9 @@ export async function fetchCompleteRelayInventory(params: {
     const events = Array.from(
       new Map(
         settled.flatMap(result =>
-          result.status === "fulfilled" ? result.value.map(event => [event.id, event] as const) : [],
+          result.status === "fulfilled"
+            ? result.value.map(event => [event.id, event] as const)
+            : [],
         ),
       ).values(),
     )

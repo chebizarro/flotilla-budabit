@@ -133,6 +133,7 @@ export const makeTargetedPublicationOriginalFilters = (
       filters.push({
         kinds: [targeting.kind],
         "#h": [targeting.id],
+        limit: 1,
         ...(allowedAuthors?.length ? {authors: allowedAuthors} : {}),
       })
       continue
@@ -142,6 +143,7 @@ export const makeTargetedPublicationOriginalFilters = (
       filters.push({
         kinds: [targeting.kind],
         ids: [targeting.ref.value],
+        limit: 1,
         ...(allowedAuthors?.length ? {authors: allowedAuthors} : {}),
       })
       continue
@@ -154,7 +156,7 @@ export const makeTargetedPublicationOriginalFilters = (
     if (!Number.isInteger(kind) || !author || !identifier) continue
     if (allowedAuthorSet && !allowedAuthorSet.has(normalizePubkey(author))) continue
 
-    filters.push({kinds: [kind], authors: [author], "#d": [identifier]})
+    filters.push({kinds: [kind], authors: [author], "#d": [identifier], limit: 1})
   }
 
   return filters

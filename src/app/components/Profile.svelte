@@ -30,6 +30,7 @@
     hideDetails?: boolean
     roleLabel?: string
     verifiedMaintainerForRepo?: VerifiedMaintainerForRepo | false
+    loadProfile?: boolean
   }
 
   const {
@@ -43,10 +44,11 @@
     hideDetails = false,
     roleLabel,
     verifiedMaintainerForRepo,
+    loadProfile = true,
   }: Props = $props()
 
   const relayHints = $derived(removeUndefined([url, ...relays]))
-  const profile = $derived(deriveBudabitProfile(pubkey, {url, relays}))
+  const profile = $derived(deriveBudabitProfile(pubkey, {url, relays, load: loadProfile}))
   const profileDisplay = $derived(
     profileHasName($profile) ? displayProfile($profile) : fallbackName || displayPubkey(pubkey),
   )
@@ -83,6 +85,7 @@
       {pubkey}
       {url}
       {relays}
+      {loadProfile}
       fallbackSrc={fallbackPicture}
       size={avatarSize}
       verifiedMaintainerForRepo={Boolean(activeVerifiedMaintainerForRepo)} />

@@ -365,7 +365,14 @@ describe("community admission lifecycle integration", () => {
         [approvedTargeting, unauthorizedTargeting],
         calendarAuthors,
       ),
-    ).toEqual([{kinds: [EVENT_TIME], authors: [approvedCalendarPubkey], "#d": ["approved-event"]}])
+    ).toEqual([
+      {
+        kinds: [EVENT_TIME],
+        authors: [approvedCalendarPubkey],
+        "#d": ["approved-event"],
+        limit: 1,
+      },
+    ])
   })
 
   it("ignores grants, forms, and reviews from a removed moderator", () => {

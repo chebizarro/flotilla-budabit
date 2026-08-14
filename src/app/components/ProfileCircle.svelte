@@ -18,6 +18,7 @@
     relays?: string[]
     fallbackSrc?: string
     verifiedMaintainerForRepo?: boolean
+    loadProfile?: boolean
   }
 
   const {
@@ -27,10 +28,11 @@
     size = 7,
     fallbackSrc = UserRounded,
     verifiedMaintainerForRepo,
+    loadProfile = true,
     ...props
   }: Props = $props()
 
-  const profile = $derived(deriveBudabitProfile(pubkey, {url, relays}))
+  const profile = $derived(deriveBudabitProfile(pubkey, {url, relays, load: loadProfile}))
   const repoVerifiedMaintainersContext = getContext<RepoVerifiedMaintainersContext | undefined>(
     REPO_VERIFIED_MAINTAINERS_KEY,
   )

@@ -1,0 +1,118 @@
+import {DELETE, type TrustedEvent} from "@welshman/util"
+import {parseTargetedPublication} from "@app/core/community"
+import {getPublicationTargetingId} from "@app/core/community-targeting"
+import {parseRepoStarReaction, type RepoStarRef} from "@app/util/repo-stars"
+
+export type RepoCollectionCommunityOption = {
+  pubkey: string
+  label?: string
+  relay?: string
+  relays?: string[]
+}
+
+export type RepoCollectionCommunityStar = {
+  targetEvent: TrustedEvent
+  star: RepoStarRef
+  community: RepoCollectionCommunityOption
+}
+
+export type RepoCollectionReadState = {
+  personalStars: RepoStarRef[]
+  communityOptions: RepoCollectionCommunityOption[]
+  communityStars: RepoCollectionCommunityStar[]
+}
+
+export const getDeletedRepoCollectionTargetIds = (
+  targetEvents: TrustedEvent[],
+  deleteEvents: TrustedEvent[],
+) => {
+  const targetsById = new Map(targetEvents.map(event => [event.id, event]))
+  const deletedIds = new Set<string>()
+
+  for (const event of deleteEvents) {
+    if (event.kind !== DELETE) continue
+
+    for (const tag of event.tags) {
+      if (tag[0] !== "e" || !tag[1]) continue
+      const target = targetsById.get(tag[1])
+      if (target?.pubkey === event.pubkey) deletedIds.add(tag[1])
+    }
+  }
+
+  return deletedIds
+}
+
+export const buildRepoCommunityStarCollections = ({
+  viewerPubkey,
+  communityOptions,
+  targetEvents,
+  targetDeleteEvents,
+  reactionEvents,
+}: {
+  viewerPubkey: string
+  communityOptions: RepoCollectionCommunityOption[]
+  targetEvents: TrustedEvent[]
+  targetDeleteEvents: TrustedEvent[]
+  reactionEvents: TrustedEvent[]
+}): RepoCollectionCommunityStar[] => {
+  if (!viewerPubkey || communityOptions.length === 0) return []
+
+  const deletedTargetIds = getDeletedRepoCollectionTargetIds(targetEvents, targetDeleteEvents)
+  const communitiesByPubkey = new Map(communityOptions.map(option => [option.pubkey, option]))
+  const targetsByTargetingId = new Map<
+    string,
+    Array<{targetEvent: TrustedEvent; community: RepoCollectionCommunityOption}>
+  >()
+  const targetsByOriginalEventId = new Map<
+    string,
+    Array<{targetEvent: TrustedEvent; community: RepoCollectionCommunityOption}>
+  >()
+
+  const addTarget = (
+    map: Map<string, Array<{targetEvent: TrustedEvent; community: RepoCollectionCommunityOption}>>,
+    key: string,
+    target: {targetEvent: TrustedEvent; community: RepoCollectionCommunityOption},
+  ) => {
+    if (!key) return
+    const current = map.get(key) || []
+    current.push(target)
+    map.set(key, current)
+  }
+
+  for (const event of targetEvents) {
+    if (event.pubkey !== viewerPubkey || deletedTargetIds.has(event.id)) continue
+    const targeting = parseTargetedPublication(event)
+    if (!targeting) continue
+
+    for (const communityRef of targeting.communities) {
+      const community = communitiesByPubkey.get(communityRef.pubkey)
+      if (!community) continue
+
+      const target = {targetEvent: event, community}
+      addTarget(targetsByTargetingId, targeting.id, target)
+      if (targeting.ref?.type === "e") {
+        addTarget(targetsByOriginalEventId, targeting.ref.value, target)
+      }
+    }
+  }
+
+  const collectionsByKey = new Map<string, RepoCollectionCommunityStar>()
+
+  for (const event of reactionEvents) {
+    if (event.pubkey !== viewerPubkey) continue
+    const star = parseRepoStarReaction(event)
+    if (!star) continue
+
+    const targets = [
+      ...(targetsByTargetingId.get(getPublicationTargetingId(event)) || []),
+      ...(targetsByOriginalEventId.get(event.id) || []),
+    ]
+
+    for (const target of targets) {
+      const key = `${target.targetEvent.id}:${target.community.pubkey}:${star.reaction.id}`
+      collectionsByKey.set(key, {...target, star})
+    }
+  }
+
+  return Array.from(collectionsByKey.values())
+}

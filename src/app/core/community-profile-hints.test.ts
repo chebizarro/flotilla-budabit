@@ -126,7 +126,7 @@ describe("community profile relay hints", () => {
     expect(gitItem).not.toContain("profilesByPubkey")
     expect(noteCard).toContain("relays?: string[]")
     expect(noteCard).toContain(
-      "<Profile pubkey={event.pubkey} {url} {relays} roleLabel={profileRole} />",
+      "<Profile pubkey={event.pubkey} {url} {relays} roleLabel={profileRole} {loadProfile} />",
     )
   })
 
