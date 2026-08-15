@@ -542,7 +542,7 @@
 </script>
 
 {#if frameWidgets.length > 0}
-  <div class="flex flex-col gap-2">
+  <div class="flex flex-col gap-4 px-2 py-3 sm:px-4 sm:py-4">
     {#each frameWidgets as widget (getWidgetLineId(widget))}
       {@const title = getWidgetTitle(widget)}
       {@const description = getWidgetDescription(widget)}
