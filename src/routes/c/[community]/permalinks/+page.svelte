@@ -243,16 +243,6 @@
           permalinkLoadStatus === "idle" &&
           $permalinks.length === 0)),
   )
-  const historyIncomplete = $derived(
-    communityBootstrapFailed ||
-      communityAuthorityUnavailable ||
-      targetLoadStatus === "incomplete" ||
-      targetLoadStatus === "failed" ||
-      hintedOriginalLoadStatus === "incomplete" ||
-      hintedOriginalLoadStatus === "failed" ||
-      permalinkLoadStatus === "incomplete" ||
-      permalinkLoadStatus === "failed",
-  )
   const retryHistoricalLoad = () => {
     if (communityBootstrapFailed || communityAuthorityUnavailable) {
       window.location.reload()
@@ -453,13 +443,6 @@
   </form>
 
   <div class="col-2">
-    {#if $permalinks.length > 0 && historyIncomplete}
-      <div class="flex items-center justify-between gap-3 text-sm opacity-70">
-        <p>Permalink history is incomplete; some permalinks may be missing.</p>
-        <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
-          >Retry</button>
-      </div>
-    {/if}
     {#each $permalinks as permalink (permalink.id)}
       <div class="card2 bg-alt p-4 shadow-md">
         <strong>{getTagValue("file", permalink.tags) || "Permalink"}</strong>
@@ -475,11 +458,9 @@
       <p class="py-8 text-center opacity-70">
         {#if permalinksLoading}
           <Spinner loading>Looking for permalinks...</Spinner>
-        {:else if historyIncomplete}
+        {:else if communityBootstrapFailed || communityAuthorityUnavailable}
           <span class="flex flex-col items-center gap-3">
-            {communityBootstrapFailed || communityAuthorityUnavailable
-              ? "Permalinks unavailable."
-              : "Permalink history is incomplete or temporarily unavailable."}
+            Permalinks unavailable.
             <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
               >Retry</button>
           </span>

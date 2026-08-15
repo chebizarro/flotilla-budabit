@@ -914,6 +914,9 @@
     selectedCommunityDefinition
       ? getEffectiveCommunityReportState({
           definition: selectedCommunityDefinition,
+          profileListEvents: $selectedCommunityProfileListEvents
+            ? ($selectedCommunityProfileListEvents as TrustedEvent[])
+            : [],
           reportEvents: $selectedCommunityReportEvents
             ? ($selectedCommunityReportEvents as TrustedEvent[])
             : [],
@@ -1414,22 +1417,6 @@
 
     return () => controller.abort()
   })
-
-  const retryCommunityRepoHistory = () => {
-    if (
-      communityRepoAnnouncementsSettled &&
-      communityTargetedReposSettled &&
-      communityRepoOriginalsSettled
-    ) {
-      communityRepoRetryVersion += 1
-    }
-  }
-
-  const communityRepoHistoryIncomplete = $derived(
-    directCommunityRepoHistoryIncomplete ||
-      communityRepoTargetHistoryIncomplete ||
-      communityRepoOriginalHistoryIncomplete,
-  )
 
   const latestCommunityRepos = $derived.by(() => {
     if (!selectedCommunityDefinition || !selectedCommunityPubkey) return []
@@ -1933,15 +1920,6 @@
 
     return () => controller.abort()
   })
-
-  const communityCurationHistoryIncomplete = $derived(
-    communityTargetHistoryIncomplete || communityOriginalHistoryIncomplete,
-  )
-  const retryCommunityCurationHistory = () => {
-    if (communityTargetsSettled && communityOriginalsSettled) {
-      communityCurationRetryVersion += 1
-    }
-  }
 
   let communityStarRepoLoadKey = ""
   let communityStarRepoLoadRequestId = 0
@@ -4595,21 +4573,6 @@
     </Tabs>
   </div>
 
-  {#if activeMode === "community" && (activeTab === "bookmarks" || activeTab === "snippets") && selectedCommunityPubkey && communityCurationHistoryIncomplete}
-    <div
-      class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground"
-      role="status">
-      <span>Community curation history is incomplete; some items may be missing.</span>
-      <button
-        class="btn btn-neutral btn-sm"
-        type="button"
-        disabled={!communityTargetsSettled || !communityOriginalsSettled}
-        onclick={retryCommunityCurationHistory}>
-        {communityTargetsSettled && communityOriginalsSettled ? "Retry" : "Retrying..."}
-      </button>
-    </div>
-  {/if}
-
   {#if activeTab === "snippets"}
     <div class="flex min-w-0 flex-col gap-3" in:fade={{duration: 150}}>
       <div class="flex items-center justify-between">
@@ -4765,26 +4728,6 @@
               <span>{repoDiscoveryStatusLabel}</span>
             {/if}
           </div>
-        </div>
-      {/if}
-      {#if activeMode === "community" && activeTab === "my-repos" && selectedCommunityPubkey && communityRepoHistoryIncomplete}
-        <div
-          class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card/70 px-3 py-2 text-sm text-muted-foreground"
-          role="status">
-          <span>Community repository history is incomplete; some repositories may be missing.</span>
-          <button
-            class="btn btn-neutral btn-sm"
-            type="button"
-            disabled={!communityRepoAnnouncementsSettled ||
-              !communityTargetedReposSettled ||
-              !communityRepoOriginalsSettled}
-            onclick={retryCommunityRepoHistory}>
-            {communityRepoAnnouncementsSettled &&
-            communityTargetedReposSettled &&
-            communityRepoOriginalsSettled
-              ? "Retry"
-              : "Retrying..."}
-          </button>
         </div>
       {/if}
       {#if activeMode === "community" && !selectedCommunityPubkey}

@@ -446,15 +446,6 @@
     roomLoadRetryTimer = undefined
   }
 
-  const retryRoomHistory = () => {
-    clearRoomLoadRetry()
-    roomLoadEmptyRetries = 0
-    roomLoadKey = ""
-    roomRootsIncomplete = false
-    roomRootsLoaded = false
-    roomLoadRetryNonce += 1
-  }
-
   const scheduleRoomLoadRetry = () => {
     if (roomLoadRetryTimer || roomLoadEmptyRetries >= ROOM_ROOT_EMPTY_RETRY_LIMIT) return false
 
@@ -974,7 +965,7 @@
               ? "Loading Rooms..."
               : roomsLoading
                 ? "Looking for rooms..."
-                : roomsUnavailable || roomRootsIncomplete
+                : roomsUnavailable
                   ? "Rooms unavailable"
                   : "No rooms found"}
           </h3>
@@ -983,8 +974,8 @@
               ? "Loading community rooms."
               : roomsLoading
                 ? "Loading community rooms."
-                : roomsUnavailable || roomRootsIncomplete
-                  ? "Room history could not be checked completely. Retry when relay access is available."
+                : roomsUnavailable
+                  ? "Rooms could not be loaded."
                   : createRoomPermissionLoading
                     ? "Loading room actions."
                     : canCreateRoom && roomsSettledEmpty
@@ -998,13 +989,6 @@
             disabled={retryingCommunityBootstrap}
             onclick={retryCommunityBootstrap}>
             {retryingCommunityBootstrap ? "Retrying..." : "Retry"}
-          </Button>
-        {:else if roomRootsIncomplete}
-          <Button
-            class="btn btn-neutral shrink-0 justify-center"
-            disabled={roomRootsLoading}
-            onclick={retryRoomHistory}>
-            {roomRootsLoading ? "Retrying..." : "Retry"}
           </Button>
         {:else if canCreateRoom && roomsSettledEmpty}
           <button class="btn btn-primary" type="button" onclick={createRoom}> Create Room </button>

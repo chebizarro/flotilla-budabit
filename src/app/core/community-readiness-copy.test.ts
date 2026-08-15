@@ -51,4 +51,35 @@ describe("community readiness copy", () => {
       "Room unavailable.",
     )
   })
+
+  it("keeps incomplete-history diagnostics out of user-facing states", () => {
+    for (const path of [
+      ...readinessUiFiles,
+      "../../routes/git/+page.svelte",
+      "../components/EventActivity.svelte",
+      "../components/ReactionSummary.svelte",
+      "../components/RepoCollectButton.svelte",
+    ]) {
+      const source = readProjectFile(path)
+
+      expect(source, path).not.toMatch(/history is incomplete/i)
+      expect(source, path).not.toMatch(/lookup is incomplete/i)
+      expect(source, path).not.toMatch(/may be missing/i)
+      expect(source, path).not.toMatch(/partial history/i)
+    }
+  })
+
+  it("recovers community authentication instead of reloading unavailable list routes", () => {
+    for (const path of [
+      "../../routes/c/[community]/calendar/+page.svelte",
+      "../../routes/c/[community]/threads/+page.svelte",
+      "../components/community/PublishGate.svelte",
+    ]) {
+      const source = readProjectFile(path)
+
+      expect(source, path).toContain("recoverCommunityBootstrap")
+      expect(source, path).toContain("recoverAuth: true")
+      expect(source, path).not.toContain("window.location.reload()")
+    }
+  })
 })

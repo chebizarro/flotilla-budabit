@@ -395,13 +395,6 @@
   let originalWidgetRequestSettled = $state(false)
   let originalWidgetHistoryIncomplete = $state(false)
   let widgetHistoryRetryVersion = $state(0)
-  const widgetHistoryIncomplete = $derived(
-    communityBootstrapFailed ||
-      communityAuthorityUnavailable ||
-      targetHistoryIncomplete ||
-      targetDeleteHistoryIncomplete ||
-      originalWidgetHistoryIncomplete,
-  )
   const widgetsLoading = $derived(
     !communityBootstrapFailed &&
       !communityAuthorityUnavailable &&
@@ -423,15 +416,6 @@
       filterSelectedWidgetCommunityOptions(widgetCommunityOptions, selectedTargetCommunityPubkeys)
         .length > 0,
   )
-  const retryWidgetHistory = () => {
-    if (communityBootstrapFailed || communityAuthorityUnavailable) {
-      window.location.reload()
-      return
-    }
-
-    widgetHistoryRetryVersion += 1
-  }
-
   $effect(() => {
     void widgetHistoryRetryVersion
     if (
@@ -753,17 +737,6 @@
   </form>
 
   <div class="col-2">
-    {#if widgetHistoryIncomplete}
-      <div class="alert alert-warning flex-wrap justify-between gap-2 text-sm" role="status">
-        <span>
-          {communityBootstrapFailed || communityAuthorityUnavailable
-            ? "Widgets unavailable."
-            : "Targeted widget history is incomplete. Results below are partial; some widgets or wrapper removals may be missing."}
-        </span>
-        <button class="btn btn-neutral btn-sm" type="button" onclick={retryWidgetHistory}
-          >Retry</button>
-      </div>
-    {/if}
     {#each $widgets as widget (widget.id)}
       {@const slotLabel = getWidgetSlotLabel(widget.tags.find(tag => tag[0] === "slot")?.[1])}
       <div class="card2 bg-alt p-4 shadow-md" data-event={widget.id}>
@@ -779,10 +752,8 @@
       <p class="py-8 text-center opacity-70">
         {#if widgetsLoading}
           <Spinner loading>Looking for widgets...</Spinner>
-        {:else if widgetHistoryIncomplete}
-          {communityBootstrapFailed || communityAuthorityUnavailable
-            ? "Widgets unavailable."
-            : "No widgets were found in the partial history loaded so far."}
+        {:else if communityBootstrapFailed || communityAuthorityUnavailable}
+          Widgets unavailable.
         {:else}
           No targeted widgets found.
         {/if}

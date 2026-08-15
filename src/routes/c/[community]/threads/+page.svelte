@@ -20,8 +20,11 @@
     activeCommunityPublishRelays,
     activeCommunityReportState,
     activeCommunityRelays,
+    activeCommunitySession,
     hasCommunityHydrationCompleted,
+    makeCommunitySession,
     markCommunityHydrationCompleted,
+    recoverCommunityBootstrap,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
   import {
@@ -172,6 +175,7 @@
   let feedInitialized = $state(false)
   let feedEmptySettleTimer: ReturnType<typeof setTimeout> | undefined
   let lastFeedKey = ""
+  let retryingCommunityAccess = $state(false)
   const waitingForFeed = $derived(Boolean(feedKey && !feedInitialized))
 
   const threadProjection = $derived.by(() =>
@@ -314,9 +318,23 @@
     }
   })
 
-  const retryFeed = () => {
+  const retryFeed = async () => {
     if (communityBootstrapFailed || communityAuthorityUnavailable) {
-      window.location.reload()
+      const session =
+        $activeCommunitySession ||
+        (parsedCommunity
+          ? makeCommunitySession(parsedCommunity, $activeCommunityDefinition)
+          : undefined)
+      if (!session || retryingCommunityAccess) return
+
+      retryingCommunityAccess = true
+      try {
+        await recoverCommunityBootstrap(session, {recoverAuth: true})
+      } catch (error) {
+        console.warn("[community-threads] Failed to recover community access", error)
+      } finally {
+        retryingCommunityAccess = false
+      }
       return
     }
 
@@ -384,7 +402,11 @@
     {:else if communityBootstrapFailed || communityAuthorityUnavailable}
       <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
         <p>Threads unavailable.</p>
-        <button class="btn btn-neutral btn-sm" type="button" onclick={retryFeed}>Retry</button>
+        <button
+          class="btn btn-neutral btn-sm"
+          type="button"
+          disabled={retryingCommunityAccess}
+          onclick={retryFeed}>{retryingCommunityAccess ? "Retrying..." : "Retry"}</button>
       </div>
     {:else if waitingForFeed || loadingEvents || (!feedEmptySettled && threads.length === 0 && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed")}
       <p class="flex h-10 items-center justify-center py-20 text-center">
@@ -393,11 +415,6 @@
             ? "Still looking for threads..."
             : "Looking for threads..."}</Spinner>
       </p>
-    {:else if threads.length === 0 && (feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
-      <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-        <p>Thread history is incomplete or temporarily unavailable.</p>
-        <button class="btn btn-neutral btn-sm" type="button" onclick={retryFeed}>Retry</button>
-      </div>
     {:else if threads.length === 0}
       <p class="py-8 text-center opacity-70">No threads found.</p>
     {:else if exhaustedEvents}

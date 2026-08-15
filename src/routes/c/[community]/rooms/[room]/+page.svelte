@@ -1277,28 +1277,11 @@
         {#if roomContentStatus === "loading"}
           <Spinner loading>Loading room...</Spinner>
         {:else if roomContentStatus === "room-incomplete"}
-          <span
-            >{communityAuthorityUnavailable
-              ? "Room unavailable."
-              : "Room lookup is incomplete or temporarily unavailable."}</span>
-          <button
-            class="btn btn-neutral btn-sm"
-            type="button"
-            disabled={retryingRoomLookup}
-            onclick={() => retryRoomLookup()}>
-            {retryingRoomLookup ? "Retrying..." : "Retry"}
-          </button>
+          <span>{communityAuthorityUnavailable ? "Room unavailable." : "Room not found."}</span>
         {:else if roomContentStatus === "room-missing"}
           <span>Room not found or not approved for this community.</span>
         {:else if roomContentStatus === "feed-incomplete"}
-          <span>Message history is incomplete or temporarily unavailable.</span>
-          <button
-            class="btn btn-neutral btn-sm"
-            type="button"
-            disabled={retryingMessageFeed}
-            onclick={() => retryMessageFeed()}>
-            {retryingMessageFeed ? "Retrying..." : "Retry"}
-          </button>
+          <span>No messages yet.</span>
         {:else if roomContentStatus === "empty"}
           <span>No messages yet.</span>
         {:else if roomContentStatus === "exhausted"}

@@ -327,9 +327,7 @@
   const collectionStatus = $derived(getRepoCollectionStatus(collected, communityHistoryComplete))
   const collectionLabel = $derived.by(() => {
     if (!communityHistoryComplete) {
-      return collected
-        ? "Edit known repository collections; community history is incomplete"
-        : "Repository collection status unknown; community history is incomplete"
+      return "Manage repository collections"
     }
 
     return collected ? "Edit repository collections" : "Collect repository"
@@ -511,7 +509,7 @@
       title: "Edit collections",
       description: communityHistoryCompleteAtOpen
         ? "Choose where this repository should be starred or curated."
-        : "Community collection history is incomplete. Known community collections are preserved; you can add destinations, but cannot remove those collections yet.",
+        : "Choose where this repository should be starred or curated. Existing community selections cannot be removed right now.",
       submitLabel: "Update",
       submittingLabel: "editing collections...",
       communityOptions,
@@ -543,7 +541,7 @@
             )
           ) {
             pushToast({
-              message: "Known community collections cannot be removed while history is incomplete.",
+              message: "Known community collections cannot be removed right now.",
               theme: "error",
             })
             return

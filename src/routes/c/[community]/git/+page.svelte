@@ -305,12 +305,6 @@
           repos.length === 0) ||
         (!targetedOriginalRequestDone && targetedRepoFilterPlan.relayFilters.length > 0)),
   )
-  const repoHistoryIncomplete = $derived(
-    directRepoHistoryIncomplete ||
-      targetedRepoHistoryIncomplete ||
-      targetedOriginalHistoryIncomplete,
-  )
-
   $effect(() => {
     void directRepoRetryVersion
     const relays = $activeCommunityRelays
@@ -543,22 +537,6 @@
   </form>
 
   <div class="col-2">
-    {#if repoHistoryIncomplete}
-      <div
-        class="card2 bg-alt flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
-        role="status">
-        <span>Repository history is incomplete; some repositories may be missing.</span>
-        <button
-          class="btn btn-neutral btn-sm"
-          type="button"
-          disabled={directRepoLoading || targetedRepoLoading || targetedOriginalLoading}
-          onclick={retryDirectRepoHistory}>
-          {directRepoLoading || targetedRepoLoading || targetedOriginalLoading
-            ? "Retrying..."
-            : "Retry"}
-        </button>
-      </div>
-    {/if}
     {#each repos as repo (repo.id)}
       <div class="card2 bg-alt p-4 shadow-md">
         <strong

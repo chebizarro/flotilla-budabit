@@ -52,45 +52,26 @@
   const replies = $derived(deriveArray(deriveEventsById({repository, filters})))
   const lastActive = $derived(max([...$replies, event].map(e => e.created_at)))
   const routeScope = $derived(`${$page.route.id || "unknown"}:${$page.url.pathname}`)
-  let historyStatus = $state<"idle" | "loading" | "complete" | "incomplete">("idle")
 
   $effect(() => {
-    if (loadRelays.length === 0 || filters.length === 0) {
-      historyStatus = filters.length === 0 ? "complete" : "incomplete"
-      return
-    }
-
-    historyStatus = scopeH ? "loading" : "complete"
+    if (loadRelays.length === 0 || filters.length === 0) return
 
     return registerEventActivity({
       routeScope,
       relays: loadRelays,
       scopeH,
       filters,
-      ...(scopeH
-        ? {
-            relayFilters,
-            onHistoryResult: (result: {complete: boolean}) => {
-              historyStatus = result.complete ? "complete" : "incomplete"
-            },
-          }
-        : {}),
+      ...(scopeH ? {relayFilters} : {}),
       coreCommunityLiveCovered,
     })
   })
 </script>
 
-<div
-  class="flex-inline btn btn-neutral btn-xs gap-1 rounded-full"
-  title={historyStatus === "incomplete" ? "Reply history is incomplete" : undefined}>
+<div class="flex-inline btn btn-neutral btn-xs gap-1 rounded-full">
   <Icon icon={Reply} />
   <span>
-    {#if historyStatus === "incomplete" && $replies.length === 0}
-      Replies incomplete
-    {:else}
-      {$replies.length}
-      {$replies.length === 1 ? "reply" : "replies"}{historyStatus === "incomplete" ? "+" : ""}
-    {/if}
+    {$replies.length}
+    {$replies.length === 1 ? "reply" : "replies"}
   </span>
 </div>
 <div class="btn btn-neutral btn-xs relative hidden rounded-full sm:flex">

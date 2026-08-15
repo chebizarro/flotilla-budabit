@@ -819,13 +819,6 @@
 
 <PageContent class="flex flex-col gap-3 p-2 pt-4">
   {#if approvedEvent}
-    {#if eventLoadStatus === "incomplete" || eventLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
-      <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
-        <p>Event history is incomplete; some event data may be missing.</p>
-        <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
-          >Retry</button>
-      </div>
-    {/if}
     <article class="card2 bg-alt col-3 z-feature" data-event={approvedEvent.id}>
       {#if approvedEventCensorReason}
         <ModeratedContent reason={approvedEventCensorReason} />
@@ -875,13 +868,6 @@
 
     {#if !approvedEventCensorReason}
       <div class="col-2">
-        {#if replies.length > 0 && (replyLoadStatus === "incomplete" || replyLoadStatus === "failed")}
-          <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
-            <p>Comment history is incomplete; some comments may be missing.</p>
-            <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
-              >Retry</button>
-          </div>
-        {/if}
         {#each visibleReplies as item (item.id)}
           {@const replyParent = item.parentReplyId
             ? repliesById.get(item.parentReplyId)?.event
@@ -914,12 +900,6 @@
             <p class="flex h-10 items-center justify-center py-20 text-center">
               <Spinner loading>Looking for comments...</Spinner>
             </p>
-          {:else if replyLoadStatus === "incomplete" || replyLoadStatus === "failed"}
-            <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-              <p>Comment history is incomplete or temporarily unavailable.</p>
-              <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
-                >Retry</button>
-            </div>
           {:else if communityAuthorityLoading}
             <p class="flex h-10 items-center justify-center py-20 text-center">
               <Spinner loading>Loading comments...</Spinner>
@@ -983,13 +963,9 @@
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading event...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityAuthorityUnavailable || eventLoadStatus === "incomplete" || eventLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
+  {:else if communityBootstrapFailed || communityAuthorityUnavailable}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-      <p>
-        {communityBootstrapFailed || communityAuthorityUnavailable
-          ? "Event unavailable."
-          : "Event lookup is incomplete or temporarily unavailable."}
-      </p>
+      <p>Event unavailable.</p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>

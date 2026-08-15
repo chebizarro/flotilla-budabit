@@ -509,13 +509,6 @@
 </PageBar>
 
 <PageContent bind:element class="flex flex-col gap-2 p-2 pt-4">
-  {#if items.length > 0 && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed" || feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
-    <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
-      <p>Goal history is incomplete; some goals may be missing.</p>
-      <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
-        >Retry</button>
-    </div>
-  {/if}
   {#each items as event (event.id)}
     <GoalItem
       url={communityPubkey}
@@ -552,12 +545,6 @@
           ? "Still looking for goals..."
           : "Looking for goals..."}</Spinner>
     </p>
-  {:else if items.length === 0 && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed" || feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
-    <div class="flex flex-col items-center gap-3 py-20 text-center">
-      <p>Goal history is incomplete or temporarily unavailable.</p>
-      <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
-        >Retry</button>
-    </div>
   {:else if items.length === 0}
     <p class="flex h-10 items-center justify-center py-20 text-center">No goals found.</p>
   {:else if exhaustedEvents}

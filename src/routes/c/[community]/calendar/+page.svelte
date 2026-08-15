@@ -24,9 +24,12 @@
     activeCommunityPublishRelays,
     activeCommunityReportState,
     activeCommunityRelays,
+    activeCommunitySession,
     getUserOutboxRelays,
     hasCommunityHydrationCompleted,
+    makeCommunitySession,
     markCommunityHydrationCompleted,
+    recoverCommunityBootstrap,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
   import {normalizeRelays} from "@app/core/community"
@@ -84,6 +87,7 @@
   let previousFirstEventId = ""
   let initialScrollDone = false
   let historicalLoadRetryVersion = $state(0)
+  let retryingCommunityAccess = $state(false)
 
   const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
   const communityPubkey = $derived(parsedCommunity?.pubkey || "")
@@ -500,9 +504,23 @@
     }
   })
 
-  const retryHistoricalLoad = () => {
+  const retryHistoricalLoad = async () => {
     if (communityBootstrapFailed || communityAuthorityUnavailable) {
-      window.location.reload()
+      const session =
+        $activeCommunitySession ||
+        (parsedCommunity
+          ? makeCommunitySession(parsedCommunity, $activeCommunityDefinition)
+          : undefined)
+      if (!session || retryingCommunityAccess) return
+
+      retryingCommunityAccess = true
+      try {
+        await recoverCommunityBootstrap(session, {recoverAuth: true})
+      } catch (error) {
+        console.warn("[community-calendar] Failed to recover community access", error)
+      } finally {
+        retryingCommunityAccess = false
+      }
       return
     }
 
@@ -581,13 +599,6 @@
 </PageBar>
 
 <PageContent bind:element class="flex flex-col gap-2 p-2 pt-4">
-  {#if items.length > 0 && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed" || feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
-    <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
-      <p>Event history is incomplete; some events may be missing.</p>
-      <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
-        >Retry</button>
-    </div>
-  {/if}
   {#each items as { event, dateDisplay, isFirstFutureEvent } (event.id)}
     <div class={"calendar-event-" + event.id}>
       {#if isFirstFutureEvent}
@@ -623,8 +634,11 @@
   {:else if communityBootstrapFailed || communityAuthorityUnavailable}
     <div class="flex flex-col items-center gap-3 py-20 text-center">
       <p>Calendar unavailable.</p>
-      <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
-        >Retry</button>
+      <button
+        class="btn btn-neutral btn-sm"
+        type="button"
+        disabled={retryingCommunityAccess}
+        onclick={retryHistoricalLoad}>{retryingCommunityAccess ? "Retrying..." : "Retry"}</button>
     </div>
   {:else if loadingTargets || loadingHintedOriginals || waitingForFeed || loadingEvents || (!emptyStateSettled && items.length === 0 && targetLoadStatus !== "incomplete" && targetLoadStatus !== "failed" && hintedOriginalLoadStatus !== "incomplete" && hintedOriginalLoadStatus !== "failed" && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed") || (targetLoadStatus === "idle" && items.length === 0)}
     <p class="flex h-10 items-center justify-center py-20 text-center">
@@ -637,12 +651,6 @@
           ? "Still looking for events..."
           : "Looking for events..."}</Spinner>
     </p>
-  {:else if items.length === 0 && (targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed" || feedLoadStatus === "incomplete" || feedLoadStatus === "failed")}
-    <div class="flex flex-col items-center gap-3 py-20 text-center">
-      <p>Event history is incomplete or temporarily unavailable.</p>
-      <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
-        >Retry</button>
-    </div>
   {:else if items.length === 0}
     <p class="flex h-10 items-center justify-center py-20 text-center">No events found.</p>
   {:else if exhaustedEvents}

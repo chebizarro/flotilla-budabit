@@ -16,7 +16,7 @@ describe("community room and thread route transport", () => {
     expect(home).toContain("roomRootsComplete = result.complete")
     expect(home).not.toContain("rooms.length > 0 && roomRootsIncomplete")
     expect(home).not.toContain("Room history is incomplete; some rooms may be missing.")
-    expect(home).toContain("onclick={retryRoomHistory}")
+    expect(home).not.toContain("retryRoomHistory")
     expect(menu).toContain("const roomFilters = $derived(roomFilterPlan.localFilters)")
   })
 
@@ -36,7 +36,7 @@ describe("community room and thread route transport", () => {
     expect(detail).toContain('threadLoadStatus = result.complete ? "complete" : "incomplete"')
     expect(detail).toContain("threadAuthorPubkeys.includes(event.pubkey)")
     expect(detail).toContain("replyAuthorPubkeys.includes(event.pubkey)")
-    expect(detail).toContain("Reply history is incomplete; some replies may be missing.")
+    expect(detail).not.toContain("Reply history is incomplete")
     expect(detail).not.toContain(
       'replies.length === 0 && (threadLoadStatus === "incomplete" || threadLoadStatus === "failed")',
     )
@@ -70,11 +70,7 @@ describe("community room and thread route transport", () => {
     expect(communityGit).toContain("targetedRepoFilterPlan.relayFilters")
     expect(communityGit).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
     expect(communityGit).not.toContain("makeTargetedPublicationOriginalFilters")
-    expect(communityGit).toContain("Repository history is incomplete")
-    expect(communityGit).toContain("onclick={retryDirectRepoHistory}")
-    expect(communityGit.indexOf("Repository history is incomplete")).toBeLessThan(
-      communityGit.indexOf("{#each repos as repo"),
-    )
+    expect(communityGit).not.toContain("Repository history is incomplete")
     expect(globalGit).toContain("loadBoundedCommunityHistory({")
     expect(globalGit).toContain("relayFilters,")
     expect(globalGit).toContain("localFilters,")
@@ -94,11 +90,8 @@ describe("community room and thread route transport", () => {
     expect(globalGit).toContain("makeTargetedPublicationOriginalFilterPlan(")
     expect(globalGit).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
     expect(globalGit).not.toContain("makeTargetedPublicationOriginalFilters")
-    expect(globalGit).toContain("Community repository history is incomplete")
-    expect(globalGit).toContain("onclick={retryCommunityRepoHistory}")
-    expect(globalGit.indexOf("Community repository history is incomplete")).toBeLessThan(
-      globalGit.indexOf("{:else if hasRenderedRepoCardsForCurrentScope}"),
-    )
+    expect(globalGit).not.toContain("Community repository history is incomplete")
+    expect(globalGit).not.toContain("retryCommunityRepoHistory")
   })
 
   it("uses authorized wrappers and split original plans for community widgets", () => {
@@ -109,10 +102,7 @@ describe("community room and thread route transport", () => {
     expect(widgets).toContain("widgetFilterPlan.localFilters")
     expect(widgets).toContain("const relayFilters = widgetFilterPlan.relayFilters")
     expect(widgets).toContain("targetHistoryIncomplete = !result.complete")
-    expect(widgets).toContain("Targeted widget history is incomplete")
-    expect(widgets.indexOf("Targeted widget history is incomplete")).toBeLessThan(
-      widgets.indexOf("{#each $widgets as widget"),
-    )
+    expect(widgets).not.toContain("Targeted widget history is incomplete")
     expect(widgets).not.toContain("makeTargetedPublicationOriginalFilters")
   })
 })

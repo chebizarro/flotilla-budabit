@@ -681,13 +681,6 @@
 
 <PageContent class="flex flex-col gap-3 p-2 pt-4">
   {#if approvedGoal}
-    {#if goalLoadStatus === "incomplete" || goalLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
-      <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
-        <p>Goal history is incomplete; some goal data may be missing.</p>
-        <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
-          >Retry</button>
-      </div>
-    {/if}
     <article class="card2 bg-alt z-feature w-full shadow-md" data-event={approvedGoal.id}>
       {#if approvedGoalCensorReason}
         <ModeratedContent reason={approvedGoalCensorReason} />
@@ -744,13 +737,6 @@
 
     {#if !approvedGoalCensorReason}
       <div class="col-2">
-        {#if replies.length > 0 && (replyLoadStatus === "incomplete" || replyLoadStatus === "failed")}
-          <div class="flex items-center justify-between gap-3 px-2 py-1 text-sm opacity-70">
-            <p>Comment history is incomplete; some comments may be missing.</p>
-            <button class="btn btn-neutral btn-xs" type="button" onclick={retryHistoricalLoad}
-              >Retry</button>
-          </div>
-        {/if}
         {#each visibleReplies as replyEvent (replyEvent.id)}
           {@const censorReason = getCommunityCensorReason({
             reportState: $activeCommunityReportState,
@@ -788,12 +774,6 @@
             <p class="flex h-10 items-center justify-center py-20 text-center">
               <Spinner loading>Looking for comments...</Spinner>
             </p>
-          {:else if replyLoadStatus === "incomplete" || replyLoadStatus === "failed"}
-            <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-              <p>Comment history is incomplete or temporarily unavailable.</p>
-              <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
-                >Retry</button>
-            </div>
           {:else if communityAuthorityLoading}
             <p class="flex h-10 items-center justify-center py-20 text-center">
               <Spinner loading>Loading comments...</Spinner>
@@ -852,13 +832,9 @@
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading funding goal...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityAuthorityUnavailable || goalLoadStatus === "incomplete" || goalLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
+  {:else if communityBootstrapFailed || communityAuthorityUnavailable}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-      <p>
-        {communityBootstrapFailed || communityAuthorityUnavailable
-          ? "Goal unavailable."
-          : "Goal lookup is incomplete or temporarily unavailable."}
-      </p>
+      <p>Goal unavailable.</p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>

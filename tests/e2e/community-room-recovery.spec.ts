@@ -94,7 +94,9 @@ test("recovers a slow room lookup in the background without duplicate errors", a
   const status = page.locator('[data-component="PageContent"] > p')
   await expect(status).toHaveCount(1)
   await expect(status).toContainText(/loading room/i)
-  await expect(page.getByText("Room lookup is incomplete or temporarily unavailable.")).toBeHidden()
+  await expect(page.getByText("Room lookup is incomplete or temporarily unavailable.")).toHaveCount(
+    0,
+  )
   await expect(page.getByRole("button", {name: "Retry", exact: true})).toHaveCount(0)
   await expect(page.getByText("Checking room access")).toHaveCount(0)
   await expect(page.getByText("Room unavailable")).toHaveCount(0)
@@ -157,7 +159,7 @@ test("prioritizes delayed room history before broad community discovery", async 
 
   await expect(
     page.getByText("Message history is incomplete or temporarily unavailable."),
-  ).toBeHidden()
+  ).toHaveCount(0)
   await expect(page.getByText("Checking room access")).toHaveCount(0)
   expect(broadHistorySubscriptions).toBe(0)
 
@@ -165,7 +167,7 @@ test("prioritizes delayed room history before broad community discovery", async 
   await expect.poll(() => broadHistorySubscriptions, {timeout: 5_000}).toBeGreaterThan(0)
   await expect(
     page.getByText("Message history is incomplete or temporarily unavailable."),
-  ).toBeHidden()
+  ).toHaveCount(0)
 })
 
 test("requests structural room history and rejects an unauthorized matching author", async ({

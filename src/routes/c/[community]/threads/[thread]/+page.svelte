@@ -587,20 +587,6 @@
 
     {#if !threadCensorReason}
       <div class="col-2">
-        {#if threadLoadStatus === "incomplete" || threadLoadStatus === "failed"}
-          <div
-            class="card2 bg-alt flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
-            role="status">
-            <span>Reply history is incomplete; some replies may be missing.</span>
-            <button
-              class="btn btn-neutral btn-sm"
-              type="button"
-              disabled={loadingReplies}
-              onclick={retryHistoricalLoad}>
-              {loadingReplies ? "Retrying..." : "Retry"}
-            </button>
-          </div>
-        {/if}
         {#each visibleReplies as item (item?.id)}
           {#if item}
             {@const replyParent = item.parentReplyId
@@ -697,13 +683,9 @@
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading thread...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityAuthorityUnavailable || threadLoadStatus === "incomplete" || threadLoadStatus === "failed"}
+  {:else if communityBootstrapFailed || communityAuthorityUnavailable}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-      <p>
-        {communityBootstrapFailed || communityAuthorityUnavailable
-          ? "Thread unavailable."
-          : "Thread lookup is incomplete or temporarily unavailable."}
-      </p>
+      <p>Thread unavailable.</p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>

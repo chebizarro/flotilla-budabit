@@ -52,7 +52,7 @@ describe("community targeted publication routes", () => {
     )
   })
 
-  it("uses bounded split-filter detail history and retains incomplete warnings", () => {
+  it("uses bounded split-filter detail history without incomplete-history warnings", () => {
     expect(routes.calendarDetail).toContain("relayFilters: eventRelayFilters")
     expect(routes.calendarDetail).toContain("localFilters: eventFilters")
     expect(routes.calendarDetail).toContain("relayFilters: replyRelayFilters")
@@ -64,7 +64,9 @@ describe("community targeted publication routes", () => {
 
     for (const source of Object.values(routes)) {
       expect(source).toContain("loadBoundedCommunityHistory({")
-      expect(source).toContain("history is incomplete")
+      expect(source).not.toContain("history is incomplete")
+      expect(source).not.toContain("lookup is incomplete")
+      expect(source).not.toContain("may be missing")
     }
   })
 

@@ -44,15 +44,11 @@ describe("community widgets route history", () => {
     expect(source).toContain("originalWidgetHistoryIncomplete = true")
   })
 
-  it("shows one aggregate partial-history warning before existing widgets", () => {
-    expect(source).toContain("targetHistoryIncomplete ||")
-    expect(source).toContain("targetDeleteHistoryIncomplete ||")
-    expect(source).toContain("originalWidgetHistoryIncomplete,")
-    expect(source).toContain("{#if widgetHistoryIncomplete}")
-    expect(source.match(/Targeted widget history is incomplete/g)).toHaveLength(1)
-    expect(source.indexOf("Targeted widget history is incomplete")).toBeLessThan(
-      source.indexOf("{#each $widgets as widget"),
-    )
-    expect(source).toContain("{:else if widgetHistoryIncomplete}")
+  it("keeps partial-history diagnostics out of the widget UI", () => {
+    expect(source).not.toContain("widgetHistoryIncomplete")
+    expect(source).not.toContain("retryWidgetHistory")
+    expect(source).not.toContain("Targeted widget history is incomplete")
+    expect(source).not.toContain("partial history loaded")
+    expect(source).toContain("No targeted widgets found.")
   })
 })

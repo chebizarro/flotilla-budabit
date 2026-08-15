@@ -40,7 +40,8 @@ describe("repository collection button reads", () => {
   it("represents incomplete empty reads as indeterminate and preserves known collections", () => {
     expect(source).toContain("getRepoCollectionStatus(collected, communityHistoryComplete)")
     expect(source).toContain("data-collection-status={collectionStatus}")
-    expect(source).toContain("Community collection history is incomplete")
+    expect(source).toContain("Manage repository collections")
+    expect(source).not.toContain("history is incomplete")
     expect(source).toContain("lockedCommunityPubkeys: communityHistoryCompleteAtOpen")
     expect(modalSource).toContain("lockedCommunities.has(option.pubkey)")
   })

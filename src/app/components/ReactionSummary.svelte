@@ -291,32 +291,13 @@
     }
   }
 
-  let reactionLoadIncomplete = $state(false)
-  let cachedReactionDeleteHistoryIncomplete = $state(false)
-  let reportLoadIncomplete = $state(false)
-  let cachedReportDeleteHistoryIncomplete = $state(false)
-  const reactionHistoryIncomplete = $derived(
-    reactionLoadIncomplete || cachedReactionDeleteHistoryIncomplete,
-  )
-  const reportHistoryIncomplete = $derived(
-    reportLoadIncomplete || cachedReportDeleteHistoryIncomplete,
-  )
-
   $effect(() => {
     const currentRelays = loadRelays
     const filterPlan = reactionLoadFilterPlan
 
-    if (filterPlan.relayFilters.length === 0) {
-      reactionLoadIncomplete = false
-      return
-    }
-    if (currentRelays.length === 0) {
-      reactionLoadIncomplete = Boolean(scopeH)
-      return
-    }
+    if (filterPlan.relayFilters.length === 0 || currentRelays.length === 0) return
 
     const controller = new AbortController()
-    reactionLoadIncomplete = false
 
     if (scopeH) {
       void loadCommunityEngagementHistory(
@@ -324,14 +305,7 @@
         filterPlan,
         controller.signal,
         `reaction-summary:${event.id}`,
-      )
-        .then(result => {
-          if (controller.signal.aborted) return
-          reactionLoadIncomplete = !result.complete
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) reactionLoadIncomplete = true
-        })
+      ).catch(() => undefined)
 
       return () => controller.abort()
     }
@@ -361,17 +335,9 @@
     const cachedReactions = canonicalReactions
     const deleteFilters = makeSameAuthorDeleteFilters(cachedReactions)
 
-    if (deleteFilters.length === 0) {
-      cachedReactionDeleteHistoryIncomplete = false
-      return
-    }
-    if (currentRelays.length === 0) {
-      cachedReactionDeleteHistoryIncomplete = Boolean(scopeH)
-      return
-    }
+    if (deleteFilters.length === 0 || currentRelays.length === 0) return
 
     const controller = new AbortController()
-    cachedReactionDeleteHistoryIncomplete = false
 
     if (scopeH) {
       void loadBoundedCommunityHistory({
@@ -381,15 +347,7 @@
         signal: controller.signal,
         priority: RELAY_REQUEST_PRIORITY.background,
         owner: `reaction-summary:${event.id}:cached-deletes`,
-      })
-        .then(result => {
-          if (!controller.signal.aborted) {
-            cachedReactionDeleteHistoryIncomplete = !result.complete
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) cachedReactionDeleteHistoryIncomplete = true
-        })
+      }).catch(() => undefined)
 
       return () => controller.abort()
     }
@@ -407,17 +365,9 @@
     const currentRelays = loadRelays
     const filterPlan = reportLoadFilterPlan
 
-    if (filterPlan.relayFilters.length === 0) {
-      reportLoadIncomplete = false
-      return
-    }
-    if (currentRelays.length === 0) {
-      reportLoadIncomplete = Boolean(scopeH)
-      return
-    }
+    if (filterPlan.relayFilters.length === 0 || currentRelays.length === 0) return
 
     const controller = new AbortController()
-    reportLoadIncomplete = false
 
     if (scopeH) {
       void loadCommunityEngagementHistory(
@@ -425,13 +375,7 @@
         filterPlan,
         controller.signal,
         `report-summary:${event.id}`,
-      )
-        .then(result => {
-          if (!controller.signal.aborted) reportLoadIncomplete = !result.complete
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) reportLoadIncomplete = true
-        })
+      ).catch(() => undefined)
 
       return () => controller.abort()
     }
@@ -457,17 +401,9 @@
     const cachedReports = scopedReports
     const deleteFilters = makeSameAuthorDeleteFilters(cachedReports)
 
-    if (deleteFilters.length === 0) {
-      cachedReportDeleteHistoryIncomplete = false
-      return
-    }
-    if (currentRelays.length === 0) {
-      cachedReportDeleteHistoryIncomplete = Boolean(scopeH)
-      return
-    }
+    if (deleteFilters.length === 0 || currentRelays.length === 0) return
 
     const controller = new AbortController()
-    cachedReportDeleteHistoryIncomplete = false
 
     if (scopeH) {
       void loadBoundedCommunityHistory({
@@ -477,13 +413,7 @@
         signal: controller.signal,
         priority: RELAY_REQUEST_PRIORITY.background,
         owner: `report-summary:${event.id}:cached-deletes`,
-      })
-        .then(result => {
-          if (!controller.signal.aborted) cachedReportDeleteHistoryIncomplete = !result.complete
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) cachedReportDeleteHistoryIncomplete = true
-        })
+      }).catch(() => undefined)
 
       return () => controller.abort()
     }
@@ -511,15 +441,8 @@
   })
 </script>
 
-{#if scopedReactions.length > 0 || scopedZaps.length || scopedReports.length > 0 || reactionHistoryIncomplete || reportHistoryIncomplete}
+{#if scopedReactions.length > 0 || scopedZaps.length || scopedReports.length > 0}
   <div class="flex min-w-0 flex-wrap gap-2">
-    {#if reactionHistoryIncomplete || reportHistoryIncomplete}
-      <span
-        class="btn btn-neutral btn-xs cursor-default rounded-full font-normal opacity-70"
-        title="Community engagement history is incomplete">
-        Engagement incomplete
-      </span>
-    {/if}
     {#if (url || loadRelays.length > 0) && scopedReports.length > 0}
       <button
         type="button"
