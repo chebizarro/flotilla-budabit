@@ -20,6 +20,10 @@
     relays = [],
     profileRole,
     loadProfile = true,
+    dateInteractive = true,
+    profileAvatarSize = 10,
+    profileHeaderClass = "",
+    profileCenterDetails = false,
     ...restProps
   }: {
     event: TrustedEvent
@@ -31,6 +35,10 @@
     relays?: string[]
     profileRole?: string
     loadProfile?: boolean
+    dateInteractive?: boolean
+    profileAvatarSize?: number
+    profileHeaderClass?: string
+    profileCenterDetails?: boolean
     class?: string
   } = $props()
 
@@ -60,22 +68,35 @@
       <Button class="link ml-8" onclick={ignoreMute}>Show anyway</Button>
     </div>
   {:else}
-    <div class="flex justify-between gap-2">
+    <div class="flex justify-between gap-2 {profileHeaderClass}">
       {#if !hideProfile}
         <div class="flex gap-2">
           {#if minimal}
             @<ProfileName pubkey={event.pubkey} {url} {relays} {loadProfile} />
           {:else}
-            <Profile pubkey={event.pubkey} {url} {relays} roleLabel={profileRole} {loadProfile} />
+            <Profile
+              pubkey={event.pubkey}
+              {url}
+              {relays}
+              roleLabel={profileRole}
+              avatarSize={profileAvatarSize}
+              centerDetails={profileCenterDetails}
+              {loadProfile} />
           {/if}
         </div>
       {/if}
       {#if !hideDate}
-        <Button
-          class="shrink-0 whitespace-nowrap text-xs opacity-75"
-          onclick={() => goToEvent(event)}>
-          {formatShortDate(event.created_at)}
-        </Button>
+        {#if dateInteractive}
+          <Button
+            class="shrink-0 whitespace-nowrap text-xs opacity-75"
+            onclick={() => goToEvent(event)}>
+            {formatShortDate(event.created_at)}
+          </Button>
+        {:else}
+          <span class="mr-2 shrink-0 whitespace-nowrap text-xs opacity-60">
+            {formatShortDate(event.created_at)}
+          </span>
+        {/if}
       {/if}
     </div>
     {@render children()}

@@ -55,7 +55,6 @@
   import {
     getAutoFilledRootVisibleCount,
     getRepoRootListPresentation,
-    isRepoRootFirstPageLoading,
   } from "@app/core/repo-root-presentation"
 
   type PrStatusKey = "open" | "merged" | "closed" | "draft"
@@ -876,14 +875,6 @@
   })
 
   const visiblePrs = $derived.by(() => searchedPrs.slice(0, visiblePrCount))
-  const prFirstPageLoading = $derived.by(() =>
-    isRepoRootFirstPageLoading({
-      historyStatus: $repoRootHistory.status,
-      notice: prListPresentation.notice,
-      visibleCount: visiblePrs.length,
-      pageSize: ITEMS_PER_PAGE,
-    }),
-  )
   const canLoadMorePrs = $derived.by(
     () => visiblePrCount < searchedPrs.length || prListPresentation.canLoadOlder,
   )
@@ -1038,14 +1029,7 @@
       {/each}
     </div>
 
-    {#if prFirstPageLoading}
-      <div
-        class="mt-3 flex justify-center pb-2 text-sm text-muted-foreground"
-        role="status"
-        aria-live="polite">
-        <Spinner loading>Looking for more pull requests…</Spinner>
-      </div>
-    {:else if canLoadMorePrs}
+    {#if canLoadMorePrs}
       <div class="mt-3 flex flex-col items-center gap-1.5 pb-2">
         <GitButton variant="outline" size="sm" class="h-8 min-h-0 gap-2" onclick={loadMorePrs}>
           Load more

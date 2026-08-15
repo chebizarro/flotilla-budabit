@@ -23,7 +23,6 @@
   import {deriveEventsById, deriveEventsDesc} from "@welshman/store"
   import {Router} from "@welshman/router"
   import {load as welshmanLoad, type LoadOptions} from "@welshman/net"
-  import {fly, staggeredFade} from "@lib/transition"
   import {fade} from "svelte/transition"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
@@ -4492,12 +4491,16 @@
     </div>
     <Tabs bind:value={activeTab} class="w-full">
       <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div
+          class="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 xl:flex-row xl:items-center xl:justify-between">
           <TabsList
-            class="grid w-full grid-cols-3 overflow-hidden sm:flex sm:w-fit sm:max-w-full sm:self-start">
+            class="grid !h-auto w-full grid-cols-3 gap-2 !bg-transparent !p-0 sm:flex sm:w-fit sm:max-w-full sm:self-start">
             <TabsTrigger
               value="my-repos"
-              class="min-w-0 justify-center whitespace-nowrap !px-1.5 text-xs leading-tight data-[state=active]:!bg-base-100 data-[state=active]:!text-base-content data-[state=active]:shadow-md data-[state=active]:ring-1 data-[state=active]:ring-border sm:flex-none sm:!px-3 sm:text-base">
+              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs leading-tight {activeTab ===
+              'my-repos'
+                ? 'btn-primary !bg-primary !text-primary-content'
+                : 'btn-ghost !bg-transparent !text-base-content'} sm:flex-none sm:!px-3 sm:text-sm">
               <span class="flex min-w-0 items-center gap-1 sm:gap-2">
                 <Icon icon={FolderWithFiles} size={4} class="sm:hidden" />
                 <Icon icon={FolderWithFiles} class="hidden sm:inline-block" />
@@ -4506,7 +4509,10 @@
             </TabsTrigger>
             <TabsTrigger
               value="bookmarks"
-              class="min-w-0 justify-center whitespace-nowrap !px-1.5 text-xs leading-tight data-[state=active]:!bg-base-100 data-[state=active]:!text-base-content data-[state=active]:shadow-md data-[state=active]:ring-1 data-[state=active]:ring-border sm:flex-none sm:!px-3 sm:text-base">
+              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs leading-tight {activeTab ===
+              'bookmarks'
+                ? 'btn-primary !bg-primary !text-primary-content'
+                : 'btn-ghost !bg-transparent !text-base-content'} sm:flex-none sm:!px-3 sm:text-sm">
               <span class="flex min-w-0 items-center gap-1 sm:gap-2">
                 <Icon icon={Star} size={4} class="sm:hidden" />
                 <Icon icon={Star} class="hidden sm:inline-block" />
@@ -4520,7 +4526,10 @@
             </TabsTrigger>
             <TabsTrigger
               value="snippets"
-              class="min-w-0 justify-center whitespace-nowrap !px-1.5 text-xs leading-tight data-[state=active]:!bg-base-100 data-[state=active]:!text-base-content data-[state=active]:shadow-md data-[state=active]:ring-1 data-[state=active]:ring-border sm:flex-none sm:!px-3 sm:text-base">
+              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs leading-tight {activeTab ===
+              'snippets'
+                ? 'btn-primary !bg-primary !text-primary-content'
+                : 'btn-ghost !bg-transparent !text-base-content'} sm:flex-none sm:!px-3 sm:text-sm">
               <span class="flex min-w-0 items-center gap-1 sm:gap-2">
                 <Icon icon={Code} size={4} class="sm:hidden" />
                 <Icon icon={Code} class="hidden sm:inline-block" />
@@ -4676,8 +4685,8 @@
       {/if}
 
       {#if sortedAccountSearchRepoCards.length > 0}
-        <div class="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {#each sortedAccountSearchRepoCards as g, i (getRepoCardStableKey(g))}
+        <div class="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {#each sortedAccountSearchRepoCards as g (getRepoCardStableKey(g))}
             {@const cardProfileRelays = g.first
               ? getRepoCardProfileRelays(g.first as RepoAnnouncementEvent)
               : []}
@@ -4694,9 +4703,9 @@
               repoCardNavigationKey && navigatingRepoCardKey === repoCardNavigationKey,
             )}
             <div
-              class="relative flex min-w-0 flex-col rounded-md border border-border bg-card p-3 transition {repoCardNavigating
+              class="relative flex min-w-0 flex-col rounded-md border border-border bg-card p-2 text-sm transition {repoCardNavigating
                 ? 'cursor-wait opacity-70 ring-2 ring-primary/40'
-                : ''}"
+                : 'cursor-pointer'}"
               role="link"
               tabindex="0"
               aria-busy={repoCardNavigating}
@@ -4705,8 +4714,7 @@
                 : undefined}
               onkeydown={g.first
                 ? event => handleRepoCardNeutralKeydown(event, g.first as RepoAnnouncementEvent)
-                : undefined}
-              in:staggeredFade={{index: i, staggerDelay: 40, duration: 250}}>
+                : undefined}>
               {#if repoCardNavigating}
                 <span
                   class="z-10 pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary shadow-sm backdrop-blur-sm">
@@ -4722,33 +4730,24 @@
                   showCollectionButton={shouldShowRepoCardBookmark(
                     g.first as RepoAnnouncementEvent,
                   )}
-                  showActivity={true}
-                  showIssues={true}
-                  showActions={true}
+                  showActions={false}
                   collectionState={repoCollectionState}
                   loadProfiles={false}
-                  hideDate={true} />
+                  compact={true} />
               {/if}
-              <div class="mt-auto flex min-w-0 items-center justify-between gap-2 pt-3">
-                <div class="min-w-0 flex-1">
-                  <RepoMaintainerList
-                    maintainers={repoCardMaintainers}
-                    relays={cardProfileRelays}
-                    verifiedMaintainers={repoCardVerifiedMaintainers}
-                    loadProfiles={false}
-                    repoName={g.title || ""}
-                    label="Co-maintainers" />
+              {#if repoCardMaintainers.length > 0}
+                <div class="mt-auto flex min-w-0 items-center justify-between gap-2 pt-2">
+                  <div class="min-w-0 flex-1">
+                    <RepoMaintainerList
+                      maintainers={repoCardMaintainers}
+                      relays={cardProfileRelays}
+                      verifiedMaintainers={repoCardVerifiedMaintainers}
+                      loadProfiles={false}
+                      repoName={g.title || ""}
+                      label="Co-maintainers" />
+                  </div>
                 </div>
-                {#if g.first}
-                  {@const date = new Date(g.first.created_at * 1000)}
-                  <span class="text-xs opacity-60">
-                    {String(date.getDate()).padStart(2, "0")}/{String(date.getMonth() + 1).padStart(
-                      2,
-                      "0",
-                    )}/{String(date.getFullYear()).slice(-2)}
-                  </span>
-                {/if}
-              </div>
+              {/if}
             </div>
           {/each}
         </div>
@@ -4815,7 +4814,7 @@
           {/if}
         </div>
       {:else if repoListLoading}
-        <p class="flex h-10 items-center justify-center py-20" out:fly>
+        <p class="flex h-10 items-center justify-center py-20">
           <Spinner loading={repoListLoading}>
             {activeMode === "community"
               ? "Looking for community Git repos..."
@@ -4842,20 +4841,11 @@
           {/if}
         </p>
       {:else if hasRenderedRepoCardsForCurrentScope}
-        {#if repoSearchUpdating}
-          <div
-            class="mb-3 flex items-center justify-end gap-2 text-xs text-muted-foreground"
-            role="status"
-            aria-live="polite">
-            <Spinner loading={true} />
-            Updating results...
-          </div>
-        {/if}
         <div
           data-testid="repo-card-grid"
-          class="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
+          class="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3"
           aria-busy={repoSearchUpdating}>
-          {#each sortedRepoCards as g, i (getRepoCardStableKey(g))}
+          {#each sortedRepoCards as g (getRepoCardStableKey(g))}
             {@const cardProfileRelays = g.first
               ? getRepoCardProfileRelays(g.first as RepoAnnouncementEvent)
               : []}
@@ -4877,9 +4867,9 @@
             <div
               data-testid="repo-card"
               data-repo-key={getRepoCardStableKey(g)}
-              class="relative flex min-w-0 flex-col rounded-md border border-border bg-card p-3 transition {repoCardNavigating
+              class="relative flex min-w-0 flex-col rounded-md border border-border bg-card p-2 text-sm transition {repoCardNavigating
                 ? 'cursor-wait opacity-70 ring-2 ring-primary/40'
-                : ''}"
+                : 'cursor-pointer'}"
               role="link"
               tabindex="0"
               aria-busy={repoCardNavigating}
@@ -4905,67 +4895,58 @@
                   showCollectionButton={shouldShowRepoCardBookmark(
                     g.first as RepoAnnouncementEvent,
                   )}
-                  showActivity={true}
-                  showIssues={true}
-                  showActions={true}
+                  showActions={false}
                   collectionState={repoCollectionState}
                   loadProfiles={false}
-                  hideDate={true} />
+                  compact={true} />
               {/if}
 
-              <!-- Maintainers, community stargazers, and date -->
-              <div
-                class="mt-auto flex min-w-0 flex-col gap-2 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                <div class="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-                  <RepoMaintainerList
-                    maintainers={repoCardMaintainers}
-                    relays={cardProfileRelays}
-                    verifiedMaintainers={repoCardVerifiedMaintainers}
-                    loadProfiles={false}
-                    repoName={g.title || ""}
-                    label="Co-maintainers" />
-                  {#if communityStargazers.length > 0}
-                    <div class="flex min-w-0 items-center gap-2">
-                      <div class="flex shrink-0 -space-x-2">
-                        {#each communityStargazers.slice(0, 5) as pk (pk)}
-                          <Button
-                            class="rounded-full border border-background p-0"
-                            aria-label="View community stargazer profile"
-                            title="View community stargazer profile"
-                            onclick={stopPropagation(
-                              preventDefault(() => openRepoCardProfile(pk, cardProfileRelays)),
-                            )}>
-                            <ProfileCircle
-                              pubkey={pk}
-                              relays={cardProfileRelays}
-                              loadProfile={false}
-                              size={6} />
-                          </Button>
-                        {/each}
+              <!-- Maintainers and community stargazers -->
+              {#if repoCardMaintainers.length > 0 || communityStargazers.length > 0}
+                <div
+                  class="mt-auto flex min-w-0 flex-col gap-1.5 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+                    <RepoMaintainerList
+                      maintainers={repoCardMaintainers}
+                      relays={cardProfileRelays}
+                      verifiedMaintainers={repoCardVerifiedMaintainers}
+                      loadProfiles={false}
+                      repoName={g.title || ""}
+                      label="Co-maintainers" />
+                    {#if communityStargazers.length > 0}
+                      <div class="flex min-w-0 items-center gap-2">
+                        <div class="flex shrink-0 -space-x-2">
+                          {#each communityStargazers.slice(0, 5) as pk (pk)}
+                            <Button
+                              class="rounded-full border border-background p-0"
+                              aria-label="View community stargazer profile"
+                              title="View community stargazer profile"
+                              onclick={stopPropagation(
+                                preventDefault(() => openRepoCardProfile(pk, cardProfileRelays)),
+                              )}>
+                              <ProfileCircle
+                                pubkey={pk}
+                                relays={cardProfileRelays}
+                                loadProfile={false}
+                                size={6} />
+                            </Button>
+                          {/each}
+                        </div>
+                        <span class="min-w-0 truncate text-[11px] opacity-60">
+                          {#if communityStargazers.length > 5}
+                            + {communityStargazers.length - 5} others
+                          {:else}
+                            {communityStargazers.length} community star{communityStargazers.length !==
+                            1
+                              ? "s"
+                              : ""}
+                          {/if}
+                        </span>
                       </div>
-                      <span class="min-w-0 truncate text-xs opacity-60">
-                        {#if communityStargazers.length > 5}
-                          + {communityStargazers.length - 5} others
-                        {:else}
-                          {communityStargazers.length} community star{communityStargazers.length !==
-                          1
-                            ? "s"
-                            : ""}
-                        {/if}
-                      </span>
-                    </div>
-                  {/if}
+                    {/if}
+                  </div>
                 </div>
-                {#if g.first}
-                  {@const date = new Date(g.first.created_at * 1000)}
-                  <span class="shrink-0 text-xs opacity-60">
-                    {String(date.getDate()).padStart(2, "0")}/{String(date.getMonth() + 1).padStart(
-                      2,
-                      "0",
-                    )}/{String(date.getFullYear()).slice(-2)}
-                  </span>
-                {/if}
-              </div>
+              {/if}
             </div>
           {/each}
         </div>

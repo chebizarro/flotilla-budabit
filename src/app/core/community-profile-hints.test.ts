@@ -125,9 +125,12 @@ describe("community profile relay hints", () => {
     expect(gitItem).toContain("relays={profileRelays}")
     expect(gitItem).not.toContain("profilesByPubkey")
     expect(noteCard).toContain("relays?: string[]")
-    expect(noteCard).toContain(
-      "<Profile pubkey={event.pubkey} {url} {relays} roleLabel={profileRole} {loadProfile} />",
-    )
+    expect(noteCard).toContain("pubkey={event.pubkey}")
+    expect(noteCard).toContain("{url}")
+    expect(noteCard).toContain("{relays}")
+    expect(noteCard).toContain("roleLabel={profileRole}")
+    expect(noteCard).toContain("avatarSize={profileAvatarSize}")
+    expect(noteCard).toContain("{loadProfile}")
   })
 
   it("passes repo community profile relays through the repo layout owner profile", () => {

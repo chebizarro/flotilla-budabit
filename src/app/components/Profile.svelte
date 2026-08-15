@@ -31,6 +31,7 @@
     roleLabel?: string
     verifiedMaintainerForRepo?: VerifiedMaintainerForRepo | false
     loadProfile?: boolean
+    centerDetails?: boolean
   }
 
   const {
@@ -45,6 +46,7 @@
     roleLabel,
     verifiedMaintainerForRepo,
     loadProfile = true,
+    centerDetails = false,
   }: Props = $props()
 
   const relayHints = $derived(removeUndefined([url, ...relays]))
@@ -79,7 +81,7 @@
   const copyPubkey = () => clip(nip19.npubEncode(pubkey))
 </script>
 
-<div class="flex max-w-full items-start gap-3">
+<div class="flex max-w-full gap-3 {centerDetails ? 'items-center' : 'items-start'}">
   <Button onclick={openProfile} class="py-1">
     <ProfileCircle
       {pubkey}

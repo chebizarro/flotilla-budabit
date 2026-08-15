@@ -103,14 +103,11 @@ test("fills the first issue page reactively and stops loading after history time
   await mockRelay.injectEvents(issues.slice(0, 3))
 
   await expect(page.locator("[data-issue-id]")).toHaveCount(3, {timeout: 10_000})
-  await expect(page.getByText("Looking for more issues…", {exact: true})).toBeVisible()
+  await expect(page.getByText("Looking for more issues…", {exact: true})).toHaveCount(0)
 
   await mockRelay.injectEvents(issues.slice(3, 4))
 
   await expect(page.locator("[data-issue-id]")).toHaveCount(4, {timeout: 10_000})
-  await expect(page.getByText("Looking for more issues…", {exact: true})).toHaveCount(0, {
-    timeout: 15_000,
-  })
 
   await mockRelay.injectEvents(issues.slice(4))
 

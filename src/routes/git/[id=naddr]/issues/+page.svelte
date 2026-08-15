@@ -66,7 +66,6 @@
   import {
     getAutoFilledRootVisibleCount,
     getRepoRootListPresentation,
-    isRepoRootFirstPageLoading,
   } from "@app/core/repo-root-presentation"
 
   let showScrollButton = $state(false)
@@ -901,14 +900,6 @@
       cacheHydrationFailed: $repoCacheHydrationFailedStore,
     }),
   )
-  const issueFirstPageLoading = $derived.by(() =>
-    isRepoRootFirstPageLoading({
-      historyStatus: $repoRootHistory.status,
-      notice: issueListPresentation.notice,
-      visibleCount: visibleIssues.length,
-      pageSize: ITEMS_PER_PAGE,
-    }),
-  )
   // CRITICAL: Cleanup on destroy to prevent memory leaks and blocking navigation
   onDestroy(() => {
     const seenAt = getIssuesSeenAt()
@@ -1156,14 +1147,7 @@
       {/each}
     </div>
 
-    {#if issueFirstPageLoading}
-      <div
-        class="mt-3 flex justify-center pb-2 text-sm text-muted-foreground"
-        role="status"
-        aria-live="polite">
-        <Spinner loading>Looking for more issues…</Spinner>
-      </div>
-    {:else if canLoadMoreIssues}
+    {#if canLoadMoreIssues}
       <div class="mt-3 flex flex-col items-center gap-1.5 pb-2">
         <GitButton variant="outline" size="sm" class="h-8 min-h-0 gap-2" onclick={loadMoreIssues}>
           Load more

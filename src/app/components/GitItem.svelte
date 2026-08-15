@@ -31,6 +31,7 @@
     profileRelays = [],
     collectionState,
     loadProfiles = true,
+    compact = false,
   }: {
     url: string
     event: TrustedEvent
@@ -46,6 +47,7 @@
     profileRelays?: string[]
     collectionState?: RepoCollectionReadState
     loadProfiles?: boolean
+    compact?: boolean
   } = $props()
 
   const name = event.tags.find(nthEq(0, "name"))?.[1]
@@ -187,12 +189,16 @@
 {#snippet cardContent()}
   <NoteCard
     {event}
-    class="card2 sm:card2-sm bg-alt relative transition-opacity {navigating
-      ? 'opacity-70 ring-2 ring-primary/40'
-      : ''}"
+    class="card2 bg-alt relative transition-opacity {compact
+      ? '!px-0 !pb-0 !pt-2 text-sm'
+      : 'sm:card2-sm'} {navigating ? 'opacity-70 ring-2 ring-primary/40' : ''}"
     relays={profileRelays}
     profileRole="Owner"
     loadProfile={loadProfiles}
+    dateInteractive={!compact}
+    profileAvatarSize={compact ? 8 : 10}
+    profileHeaderClass={compact ? "pl-2" : ""}
+    profileCenterDetails={compact}
     {hideDate}>
     {#if navigating}
       <span
@@ -201,10 +207,15 @@
       </span>
     {/if}
     {#if name}
-      <div class="flex w-full items-start justify-between gap-2">
+      <div class="flex w-full items-start justify-between gap-2 {compact ? 'px-2' : ''}">
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <a href={browseHref} class="block min-w-0" onclick={handleRepoLinkClick}>
-            <p class="overflow-wrap-anywhere break-words text-xl">{name}</p>
+            <p
+              class="overflow-wrap-anywhere break-words {compact
+                ? 'text-base font-semibold leading-tight'
+                : 'text-xl'}">
+              {name}
+            </p>
           </a>
           {#if community}
             <a
@@ -250,8 +261,14 @@
       <p class="mb-3 h-0 text-xs opacity-75">Name missing!</p>
     {/if}
     {#if description}
-      <div class="flex w-full items-start">
-        <Markdown content={descriptionPreview} {event} {url} variant="comment" />
+      <div
+        class="flex w-full items-start {compact ? 'pointer-events-none px-2 pb-2' : ''}"
+        inert={compact}>
+        <Markdown
+          content={descriptionPreview}
+          {event}
+          {url}
+          variant={compact ? "inline" : "comment"} />
       </div>
     {:else}
       <p class="mb-3 h-0 text-xs opacity-75">Description missing!</p>

@@ -1,10 +1,6 @@
 import {describe, expect, it} from "vitest"
 import type {RepoRootHistorySnapshot} from "./repo-root-history"
-import {
-  getAutoFilledRootVisibleCount,
-  getRepoRootListPresentation,
-  isRepoRootFirstPageLoading,
-} from "./repo-root-presentation"
+import {getAutoFilledRootVisibleCount, getRepoRootListPresentation} from "./repo-root-presentation"
 
 const history = (
   status: RepoRootHistorySnapshot["status"],
@@ -29,30 +25,6 @@ describe("repository root list presentation", () => {
       10,
     )
     expect(getAutoFilledRootVisibleCount({visibleCount: 20, resultCount: 0, pageSize: 20})).toBe(0)
-  })
-
-  it("only shows first-page loading while recent history is active", () => {
-    const isLoading = (historyStatus: RepoRootHistorySnapshot["status"]) =>
-      isRepoRootFirstPageLoading({
-        historyStatus,
-        notice: "loading",
-        visibleCount: 4,
-        pageSize: 20,
-      })
-
-    expect(isLoading("idle")).toBe(true)
-    expect(isLoading("loading")).toBe(true)
-    expect(isLoading("complete")).toBe(false)
-    expect(isLoading("partial")).toBe(false)
-    expect(isLoading("failed")).toBe(false)
-    expect(
-      isRepoRootFirstPageLoading({
-        historyStatus: "loading",
-        notice: "loading",
-        visibleCount: 20,
-        pageSize: 20,
-      }),
-    ).toBe(false)
   })
 
   it("preserves rows while refresh is loading, partial, failed, or unavailable", () => {

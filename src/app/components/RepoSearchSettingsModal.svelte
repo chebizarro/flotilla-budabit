@@ -81,7 +81,7 @@
 </script>
 
 <div
-  class="flex max-h-[85vh] w-[min(42rem,calc(100vw-1.5rem))] flex-col gap-4 overflow-hidden rounded-box border border-border bg-card p-4 shadow-xl">
+  class="flex max-h-[85vh] w-full min-w-0 max-w-full flex-col gap-4 overflow-hidden rounded-box border border-border bg-card p-4 shadow-xl">
   <div class="flex items-start justify-between gap-3">
     <div class="flex min-w-0 items-start gap-3">
       <div

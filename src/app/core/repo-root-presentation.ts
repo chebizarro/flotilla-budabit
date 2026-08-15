@@ -33,22 +33,6 @@ export const getAutoFilledRootVisibleCount = ({
   return Math.min(Math.max(visibleCount, firstPageTarget), boundedResultCount)
 }
 
-export const isRepoRootFirstPageLoading = ({
-  historyStatus,
-  notice,
-  visibleCount,
-  pageSize,
-}: {
-  historyStatus: RepoRootHistorySnapshot["status"]
-  notice: RepoRootListNotice
-  visibleCount: number
-  pageSize: number
-}) =>
-  notice === "loading" &&
-  (historyStatus === "idle" || historyStatus === "loading") &&
-  visibleCount > 0 &&
-  visibleCount < Math.max(1, pageSize)
-
 export const getRepoRootListPresentation = ({
   authority,
   history,
