@@ -28,6 +28,8 @@
   import Link from "@lib/components/Link.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
   import PageContent from "@lib/components/PageContent.svelte"
+  import SecondaryNav from "@lib/components/SecondaryNav.svelte"
+  import CommunityMenu from "@app/components/CommunityMenu.svelte"
   import ProfileAccountSettings from "@app/components/ProfileAccountSettings.svelte"
   import ProfileCircle from "@app/components/ProfileCircle.svelte"
   import ProfileEdit from "@app/components/ProfileEdit.svelte"
@@ -37,7 +39,11 @@
   import ProfileInfo from "@app/components/ProfileInfo.svelte"
   import ProfileBadges from "@app/components/ProfileBadges.svelte"
   import RepoCollectButton from "@app/components/RepoCollectButton.svelte"
-  import {activeUserCommunityRefs, COMMUNITY_DISCOVERY_RELAYS} from "@app/core/community-state"
+  import {
+    activeCommunitySession,
+    activeUserCommunityRefs,
+    COMMUNITY_DISCOVERY_RELAYS,
+  } from "@app/core/community-state"
   import {COMMUNITY_DEFINITION_KIND, PROFILE_LIST_KIND} from "@app/core/community"
   import {selectUserCommunityRefs, type ActiveUserCommunityRef} from "@app/core/community-membership"
   import {makeCommunityDefinitionProfileListRefFilters} from "@app/util/community-preferences"
@@ -196,6 +202,8 @@
   const isSelf = $derived(Boolean(targetPubkey && $sessionPubkey === targetPubkey))
   const chatPath = $derived(targetPubkey ? makeChatPath(targetPubkey) : "")
   const targetNpub = $derived(targetPubkey ? nip19.npubEncode(targetPubkey) : "")
+  const activeCommunityPubkey = $derived($activeCommunitySession?.communityPubkey || "")
+  const profilePageWidthClass = $derived(activeCommunityPubkey ? "" : "cw-full")
 
   let previousProfilePubkey = $state("")
   let communitiesExpanded = $state(false)
@@ -509,7 +517,13 @@
   })
 </script>
 
-<PageBar class="cw-full">
+{#if activeCommunityPubkey}
+  <SecondaryNav>
+    <CommunityMenu community={activeCommunityPubkey} />
+  </SecondaryNav>
+{/if}
+
+<PageBar class={profilePageWidthClass}>
   {#snippet icon()}
     <button type="button" class="center" onclick={openBack} aria-label="Go back">
       <Icon icon={AltArrowLeft} />
@@ -530,7 +544,7 @@
   {/snippet}
 </PageBar>
 
-<PageContent class="cw-full px-1.5 pb-1.5 pt-4 sm:px-4 sm:pb-4 sm:pt-8">
+<PageContent class="{profilePageWidthClass} px-1.5 pb-1.5 pt-4 sm:px-4 sm:pb-4 sm:pt-8">
   {#if targetPubkey}
     <div class="mx-auto flex w-full max-w-7xl flex-col gap-2.5 pb-5 sm:gap-4 sm:pb-8">
       <section class="card2 bg-alt overflow-hidden !p-3 shadow-md sm:!p-6">
