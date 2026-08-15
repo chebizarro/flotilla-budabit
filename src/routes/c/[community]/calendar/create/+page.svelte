@@ -23,6 +23,7 @@
   } from "@app/core/calendar-events"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
@@ -57,6 +58,14 @@
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
   const initialStart = Math.floor(Date.now() / 1000) + HOUR
 
   let title = $state("")
@@ -74,7 +83,7 @@
   const isDateBased = $derived(eventKind === EVENT_DATE)
   const calendarSectionName = $derived(
     getCommunityCalendarWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityReady ? $activeCommunityDefinition : undefined,
     ),
   )
   const calendarAccessMessage = $derived(
@@ -83,7 +92,7 @@
   const canCreateEvent = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityCalendarTarget({
         definition: $activeCommunityDefinition,
@@ -156,8 +165,14 @@
       eventKind: currentEventKind,
       range: currentEventKind === EVENT_DATE ? {startDate, endDate} : {start, end},
     })
-    if (!communityBootstrapReady) {
-      pushToast({theme: "error", message: "Community permissions are still loading."})
+    if (!communityReady) {
+      pushToast({
+        theme: "error",
+        message:
+          communityAuthorityReadiness === "unavailable"
+            ? "Calendar unavailable."
+            : "Calendar is still loading.",
+      })
       return
     }
     if (!canCreateEvent) {

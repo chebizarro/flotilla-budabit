@@ -14,6 +14,8 @@ import {
   activeCommunityPublishRelays,
   activeCommunityReportState,
   authenticateCommunityRelays,
+  getCommunityPermissionReadiness,
+  getCommunityPermissionStatusKeyPrefix,
   getCommunityBootstrapRelays,
   getPubkeyOutboxRelays,
   loadCommunityEvents,
@@ -1080,16 +1082,23 @@ const exactCommunityRefsCovered = (refs: string[], events: any[]) =>
     }),
   )
 
-const isCommunityPermissionEvidenceLoading = (
-  snapshot: ReturnType<typeof getCommunityRequestSnapshot>,
-) => {
-  const status = get(activeCommunityPermissionStatus)
+const isCommunityAuthorityLoading = (snapshot: ReturnType<typeof getCommunityRequestSnapshot>) => {
+  if (snapshot.source === "runtime") return false
 
-  return Boolean(
-    status.communityPubkey &&
-    normalizePubkey(status.communityPubkey) === normalizePubkey(snapshot.definition.pubkey) &&
-    status.loading &&
-    !status.loaded,
+  const status = get(activeCommunityPermissionStatus)
+  if (!status.communityPubkey) return false
+  const expectedKeyPrefix = getCommunityPermissionStatusKeyPrefix(
+    snapshot.definition,
+    snapshot.relays,
+    snapshot.userPubkey,
+  )
+
+  return (
+    getCommunityPermissionReadiness({
+      status,
+      communityPubkey: snapshot.definition.pubkey,
+      expectedKeyPrefix,
+    }) === "loading"
   )
 }
 
@@ -1151,6 +1160,7 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
     const publishRelays = normalizeRelays(definition.relays)
 
     return {
+      source: "runtime" as const,
       definition,
       profileListEvents,
       reportState,
@@ -1204,6 +1214,7 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
   const publishRelays = normalizeRelays(definition.relays)
 
   return {
+    source: "active" as const,
     definition,
     profileListEvents,
     reportState,
@@ -1434,8 +1445,8 @@ const hydrateCommunityRequestSnapshot = async (
   if (profileListFiltersCovered(profileListFilters, cachedProfileListEvents)) {
     return {...snapshot, profileListEvents: cachedProfileListEvents}
   }
-  if (isCommunityPermissionEvidenceLoading(snapshot)) {
-    throw makeCommunityContextNotReadyError("Community permissions are still loading")
+  if (isCommunityAuthorityLoading(snapshot)) {
+    throw makeCommunityContextNotReadyError("Community context is still loading")
   }
 
   const hydrationKey = JSON.stringify({
@@ -1456,12 +1467,17 @@ const hydrateCommunityRequestSnapshot = async (
   }
   const loadedProfileListEvents = await hydration
 
+  const profileListEvents = dedupeEvents([
+    ...cachedProfileListEvents,
+    ...loadedProfileListEvents.filter(event => event.kind === PROFILE_LIST_KIND),
+  ])
+  if (!profileListFiltersCovered(profileListFilters, profileListEvents)) {
+    throw makeCommunityContextNotReadyError("Community context is unavailable")
+  }
+
   return {
     ...snapshot,
-    profileListEvents: dedupeEvents([
-      ...cachedProfileListEvents,
-      ...loadedProfileListEvents.filter(event => event.kind === PROFILE_LIST_KIND),
-    ]),
+    profileListEvents,
   }
 }
 
@@ -1841,7 +1857,7 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
   if (ext) console.log(`[bridge] community:querySharedConfig from ${ext.id}`, payload)
   try {
     const request = normalizeCommunitySharedConfigScope(payload)
-    const snapshot = getCommunityRequestSnapshot(ext)
+    const snapshot = await getHydratedCommunityRequestSnapshot(ext)
     const resolved = resolveCommunityEventDescriptors({
       definition: snapshot.definition,
       profileListEvents: snapshot.profileListEvents,
@@ -1887,35 +1903,27 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
       }
     }
 
-    if (isCommunityPermissionEvidenceLoading(snapshot)) {
-      throw makeCommunityContextNotReadyError("Community permissions are still loading")
-    }
-
-    const hydratedSnapshot = await hydrateCommunityRequestSnapshot(snapshot)
     const hydratedResolved = resolveCommunityEventDescriptors({
-      definition: hydratedSnapshot.definition,
-      profileListEvents: hydratedSnapshot.profileListEvents,
-      reportState: hydratedSnapshot.reportState,
-      userPubkey: hydratedSnapshot.userPubkey,
+      definition: snapshot.definition,
+      profileListEvents: snapshot.profileListEvents,
+      reportState: snapshot.reportState,
+      userPubkey: snapshot.userPubkey,
       descriptors: request.descriptors,
     })
     const hydratedModeratorPubkeys = new Set(
       hydratedResolved.flatMap(info => info.moderatorPubkeys),
     )
     const loadedResult = await loadBridgeEventsWithStatus({
-      relays: hydratedSnapshot.relays,
+      relays: snapshot.relays,
       filters: [sharedConfigFilter],
       authenticate: true,
-      priorityAuthRelays: hydratedSnapshot.relayHints,
+      priorityAuthRelays: snapshot.relayHints,
     })
     const selected = selectCommunitySharedConfigEvent(
       dedupeEvents([...cachedEvents, ...loadedResult.events]),
       hydratedModeratorPubkeys,
     )
 
-    if (!selected && isCommunityPermissionEvidenceLoading(hydratedSnapshot)) {
-      throw makeCommunityContextNotReadyError("Community permissions are still loading")
-    }
     if (!selected && !loadedResult.complete) throw makeCommunityQueryTimeoutError()
 
     if (ext) {
@@ -1933,9 +1941,9 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
     return {
       status: "ok",
       ...(selected ? {event: selected, config: parseSharedConfigContent(selected)} : {}),
-      relays: hydratedSnapshot.relays,
-      contextSessionId: hydratedSnapshot.contextSessionId,
-      contextVersion: hydratedSnapshot.contextVersion,
+      relays: snapshot.relays,
+      contextSessionId: snapshot.contextSessionId,
+      contextVersion: snapshot.contextVersion,
     }
   } catch (err: any) {
     if (!isCommunityLoadingError(err)) {

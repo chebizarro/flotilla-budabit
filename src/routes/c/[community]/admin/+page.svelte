@@ -23,6 +23,7 @@
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
     activeCommunityModeratorRequestReactionEvents,
     activeCommunityModeratorRequestStates,
@@ -103,6 +104,22 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
+  const communityBootstrapFailed = $derived(
+    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+  )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityAdminLoading = $derived(
+    communityBootstrapLoading ||
+      (communityBootstrapReady && communityAuthorityReadiness === "loading"),
+  )
+  const communityAdminUnavailable = $derived(
+    communityBootstrapFailed || communityAuthorityReadiness === "unavailable",
+  )
+  const retryCommunityAdmin = () => window.location.reload()
   let adminTab = $state<CommunityAdminTab>("settings")
   let adminTabHydrated = $state(false)
   let requestStatusFilter = $state<RequestStatusFilter>("pending")
@@ -639,12 +656,15 @@
 </PageBar>
 
 <PageContent class="mx-auto flex w-full max-w-7xl flex-col gap-4 p-4 md:p-8">
-  {#if communityBootstrapLoading}
+  {#if communityAdminLoading}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading>Loading community permissions...</Spinner>
+      <Spinner loading>Loading Community Admin...</Spinner>
     </p>
-  {:else if !communityBootstrapReady || !$activeCommunityDefinition}
-    <p class="py-8 text-center opacity-70">Community definition is not loaded.</p>
+  {:else if communityAdminUnavailable || !communityBootstrapReady || !$activeCommunityDefinition}
+    <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
+      <p>Community Admin unavailable.</p>
+      <Button class="btn btn-neutral btn-sm" onclick={retryCommunityAdmin}>Retry</Button>
+    </div>
   {:else if !canEditCommunity}
     <p class="py-8 text-center opacity-70">
       Log in as this community pubkey to publish community definition updates.

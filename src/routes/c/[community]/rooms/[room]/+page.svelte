@@ -27,8 +27,8 @@
   import RoomName from "@app/components/RoomName.svelte"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -47,7 +47,6 @@
     makeCommunityExclusiveFilter,
     makeCommunityRoomMessagesFilter,
   } from "@app/core/community-feeds"
-  import {normalizePubkey, normalizeRelays} from "@app/core/community"
   import {makeCommunityRoomMessage, readCommunityRoomMessages} from "@app/core/community-messages"
   import {isCommunityRoomLookupIncomplete, readCommunityRoomRoot} from "@app/core/community-rooms"
   import {
@@ -124,11 +123,6 @@
       ? getCommunityBootstrapKey(session, $pubkey || "")
       : ""
   })
-  const expectedCommunityPermissionKeyPrefix = $derived(
-    $activeCommunityDefinition?.pubkey === communityPubkey
-      ? `${normalizePubkey($pubkey || "")}:${$activeCommunityDefinition.event.id}:${normalizeRelays($activeCommunityRelays).join(",")}:`
-      : "",
-  )
   const lastChecked = $derived.by(() =>
     getNotificationCheckedAt({
       checked: $checked,
@@ -207,42 +201,18 @@
         !$activeCommunityBootstrapStatus.error),
     ),
   )
-  const communityPermissionStatusMatches = $derived(
-    Boolean(
-      communityPubkey &&
-      expectedCommunityPermissionKeyPrefix &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.key.startsWith(expectedCommunityPermissionKeyPrefix),
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      communityBootstrapReady &&
-      (!communityPermissionStatusMatches ||
-        ($activeCommunityPermissionStatus.loading &&
-          !$activeCommunityPermissionStatus.loaded &&
-          !$activeCommunityPermissionStatus.hasCachedEvents)),
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
-  const communityPermissionReady = $derived(
-    Boolean(
-      communityPermissionStatusMatches &&
-      ($activeCommunityPermissionStatus.hasCachedEvents ||
-        ($activeCommunityPermissionStatus.loaded && !$activeCommunityPermissionStatus.loading)),
-    ),
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      expectedCommunityPermissionKeyPrefix &&
-      $activeCommunityPermissionStatus.key.startsWith(expectedCommunityPermissionKeyPrefix) &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
-  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
     Boolean(
       communityPubkey &&
@@ -254,13 +224,13 @@
   )
   const roomRootSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.roomRoot,
     ),
   )
   const roomMessageSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.roomMessage,
     ),
   )
@@ -268,7 +238,7 @@
     `Request ${roomMessageSectionName} access to message this room.`,
   )
   const roomFilterPlan = $derived(
-    communityBootstrapReady && communityPermissionReady && communityPubkey && roomId
+    communityAuthorityReady && communityPubkey && roomId
       ? makeCommunityContentFilterPlan(
           [makeCommunityExclusiveFilter(communityPubkey, [THREAD], {ids: [roomId]})],
           roomAuthorPubkeys,
@@ -279,7 +249,9 @@
   const roomRelayFilters = $derived(roomFilterPlan.relayFilters)
   const roomEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: roomFilters})))
   const room = $derived(
-    $roomEvents[0] ? readCommunityRoomRoot($roomEvents[0], communityPubkey) : undefined,
+    communityAuthorityReady && $roomEvents[0]
+      ? readCommunityRoomRoot($roomEvents[0], communityPubkey)
+      : undefined,
   )
   const roomCensorReason = $derived.by(() =>
     communityPubkey && roomId
@@ -293,7 +265,7 @@
       : undefined,
   )
   const messageFilterPlan = $derived(
-    communityBootstrapReady && communityPubkey && room && !roomCensorReason
+    communityAuthorityReady && communityPubkey && room && !roomCensorReason
       ? makeCommunityContentFilterPlan(
           [makeCommunityRoomMessagesFilter(communityPubkey, room.id)],
           messageAuthorPubkeys,
@@ -305,7 +277,7 @@
   const canSendMessage = $derived(
     Boolean(
       room &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !roomCensorReason &&
       $pubkey &&
       $activeCommunityDefinition &&
@@ -321,7 +293,7 @@
   const canReact = $derived(
     Boolean(
       room &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !roomCensorReason &&
       $pubkey &&
       $activeCommunityDefinition &&
@@ -336,7 +308,7 @@
   )
   const feedKey = $derived.by(() =>
     communityPubkey &&
-    communityBootstrapReady &&
+    communityAuthorityReady &&
     room &&
     !roomCensorReason &&
     messageAuthorPubkeys.length &&
@@ -651,7 +623,7 @@
     waitAndScrollToEvent(id, {root, signal, behavior: "auto"})
   const waitingForRoom = $derived(
     Boolean(
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !room &&
       roomFilters.length > 0 &&
       $activeCommunityRelays.length > 0 &&
@@ -666,17 +638,20 @@
     isCommunityRoomLookupIncomplete({
       roomFound: Boolean(room),
       bootstrapFailed: communityBootstrapFailed,
-      permissionEvidenceIncomplete: communityPermissionEvidenceIncomplete,
+      permissionEvidenceIncomplete: communityAuthorityUnavailable,
       loadStatus: roomLoadStatus,
     }),
   )
   const roomRecoveryActive = $derived(retryingRoomLookup || roomAutoRetryScheduled || loadingRoom)
   const roomLookupIncomplete = $derived(
-    roomLookupNeedsRecovery &&
-      !roomRecoveryActive &&
-      roomAutoRetryAttempt >= ROOM_LOAD_RETRY_DELAYS_MS.length,
+    communityAuthorityUnavailable ||
+      (roomLookupNeedsRecovery &&
+        !roomRecoveryActive &&
+        roomAutoRetryAttempt >= ROOM_LOAD_RETRY_DELAYS_MS.length),
   )
-  const recoveringRoomLookup = $derived(roomLookupNeedsRecovery && !roomLookupIncomplete)
+  const recoveringRoomLookup = $derived(
+    roomLookupNeedsRecovery && !communityAuthorityUnavailable && !roomLookupIncomplete,
+  )
 
   const messageEventCandidates = $derived.by(() => {
     const eventsById = new Map<string, TrustedEvent>()
@@ -689,7 +664,7 @@
       eventsById.set(operation.event.id, operation.event as TrustedEvent)
     }
 
-    if (communityPermissionReady && room) {
+    if (communityAuthorityReady && room) {
       for (const event of hashTargetEvents) {
         if (messageAuthorPubkeys.includes(event.pubkey)) eventsById.set(event.id, event)
       }
@@ -819,7 +794,7 @@
       cachedTarget &&
       room &&
       localFilters.length > 0 &&
-      communityPermissionReady &&
+      communityAuthorityReady &&
       matchFilters(localFilters, cachedTarget) &&
       !hashTargetEvents.some(event => event.id === id) &&
       readCommunityRoomMessages([cachedTarget], communityPubkey, roomId).length > 0
@@ -896,7 +871,7 @@
         event =>
           event.id === id &&
           room &&
-          communityPermissionReady &&
+          communityAuthorityReady &&
           matchFilters(localFilters, event) &&
           readCommunityRoomMessages([event], communityPubkey, roomId).length > 0,
       )
@@ -1102,7 +1077,7 @@
   const roomContentStatus = $derived.by(() => {
     if (
       communityBootstrapLoading ||
-      communityPermissionsLoading ||
+      communityAuthorityLoading ||
       waitingForRoom ||
       recoveringRoomLookup
     ) {
@@ -1296,13 +1271,16 @@
         class="flex h-10 flex-col items-center justify-center gap-2 py-20 text-center"
         data-room-loading-stage={roomContentStatus === "loading" &&
         !communityBootstrapLoading &&
-        communityPermissionsLoading
-          ? "permissions"
+        communityAuthorityLoading
+          ? "authority"
           : undefined}>
         {#if roomContentStatus === "loading"}
           <Spinner loading>Loading room...</Spinner>
         {:else if roomContentStatus === "room-incomplete"}
-          <span>Room lookup is incomplete or temporarily unavailable.</span>
+          <span
+            >{communityAuthorityUnavailable
+              ? "Room unavailable."
+              : "Room lookup is incomplete or temporarily unavailable."}</span>
           <button
             class="btn btn-neutral btn-sm"
             type="button"

@@ -702,6 +702,51 @@ export const getCommunityPermissionReadiness = ({
   return "unavailable"
 }
 
+export type ActiveCommunityPermissionReadiness = {
+  communityPubkey: string
+  key: string
+  state: CommunityPermissionReadiness
+}
+
+const deriveActiveCommunityPermissionReadiness = (
+  status: Readable<CommunityPermissionStatus>,
+): Readable<ActiveCommunityPermissionReadiness> =>
+  derived(
+    [activeCommunityDefinition, activeCommunityRelays, pubkey, status],
+    ([$definition, $relays, $pubkey, $status]) => {
+      if (!$definition) {
+        return {
+          communityPubkey: "",
+          key: "",
+          state: "loading" as CommunityPermissionReadiness,
+        }
+      }
+
+      const expectedKeyPrefix = getCommunityPermissionStatusKeyPrefix(
+        $definition,
+        $relays,
+        $pubkey || "",
+      )
+
+      return {
+        communityPubkey: $definition.pubkey,
+        key: $status.key,
+        state: getCommunityPermissionReadiness({
+          status: $status,
+          communityPubkey: $definition.pubkey,
+          expectedKeyPrefix,
+        }),
+      }
+    },
+  )
+
+export const activeCommunityAuthorityReadiness = deriveActiveCommunityPermissionReadiness(
+  activeCommunityPermissionStatus,
+)
+export const activeCommunityAdmissionFormReadiness = deriveActiveCommunityPermissionReadiness(
+  activeCommunityAdmissionFormStatus,
+)
+
 const startCommunityPermissionLoadStatus = ({
   definition,
   relays,

@@ -14,8 +14,8 @@
   import ThreadItem from "@app/components/ThreadItem.svelte"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -104,34 +104,29 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const threadSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.thread,
     ),
   )
   const threadFilterPlan = $derived(
-    communityBootstrapReady && communityPubkey
+    communityAuthorityReady && communityPubkey
       ? makeCommunityContentFilterPlan(
           [makeCommunityThreadsFilter(communityPubkey)],
           threadAuthorPubkeys,
@@ -139,7 +134,7 @@
       : {relayFilters: [], localFilters: []},
   )
   const replyFilterPlan = $derived(
-    communityBootstrapReady && communityPubkey
+    communityAuthorityReady && communityPubkey
       ? makeCommunityContentFilterPlan(
           [makeCommunityThreadRepliesFilter(communityPubkey)],
           replyAuthorPubkeys,
@@ -155,7 +150,7 @@
     ...replyFilterPlan.relayFilters,
   ] as Filter[])
   const feedKey = $derived.by(() =>
-    communityBootstrapReady &&
+    communityAuthorityReady &&
     communityPubkey &&
     feedFilters.length &&
     $activeCommunityRelays.length
@@ -220,7 +215,7 @@
   const canReact = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -320,7 +315,7 @@
   })
 
   const retryFeed = () => {
-    if (communityBootstrapFailed || communityPermissionEvidenceIncomplete) {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
       window.location.reload()
       return
     }
@@ -382,13 +377,13 @@
         operationId={threadProjection.operationIds.get(thread.event.id)}
         event={thread.event} />
     {/each}
-    {#if communityBootstrapLoading || communityPermissionsLoading}
+    {#if communityBootstrapLoading || communityAuthorityLoading}
       <p class="flex h-10 items-center justify-center py-20 text-center">
-        <Spinner loading>Loading community permissions...</Spinner>
+        <Spinner loading>Loading Threads...</Spinner>
       </p>
-    {:else if threads.length === 0 && (communityBootstrapFailed || communityPermissionEvidenceIncomplete)}
+    {:else if communityBootstrapFailed || communityAuthorityUnavailable}
       <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-        <p>Community permissions are incomplete or temporarily unavailable.</p>
+        <p>Threads unavailable.</p>
         <button class="btn btn-neutral btn-sm" type="button" onclick={retryFeed}>Retry</button>
       </div>
     {:else if waitingForFeed || loadingEvents || (!feedEmptySettled && threads.length === 0 && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed")}

@@ -26,6 +26,7 @@
   import {parseCommunityRouteParam} from "@app/util/routes"
   import {
     activeCommunityAdmissionForms,
+    activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
     activeCommunityDefinition,
     activeCommunityModeratorRequestReactionEvents,
@@ -159,6 +160,8 @@
       return Boolean(
         targeting &&
         $activeCommunityDefinition &&
+        $activeCommunityAuthorityReadiness.communityPubkey === $activeCommunityDefinition.pubkey &&
+        $activeCommunityAuthorityReadiness.state === "ready" &&
         canWriteCommunityTarget({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -375,8 +378,8 @@
       definition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
-      $activeCommunityPermissionStatus.communityPubkey === definition.pubkey &&
-      ($activeCommunityPermissionStatus.loaded || $activeCommunityPermissionStatus.hasCachedEvents),
+      $activeCommunityAuthorityReadiness.communityPubkey === definition.pubkey &&
+      $activeCommunityAuthorityReadiness.state === "ready",
     )
 
     if (!definition || !authorityReady || relays.length === 0) {

@@ -41,8 +41,8 @@
   import {isCalendarEventKind} from "@app/core/calendar-events"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -109,39 +109,33 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const calendarSectionName = $derived(
     getCommunityCalendarWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
     ),
   )
   const getCalendarEventSectionName = (_kind: number) =>
     getCommunityCalendarWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
     )
   const commentSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.comment,
     ),
   )
@@ -151,7 +145,7 @@
       new Map(
         COMMUNITY_CALENDAR_WRITE_TARGETS.map(target => [
           target.kind,
-          $activeCommunityDefinition
+          communityAuthorityReady && $activeCommunityDefinition
             ? getCommunityTargetWriterPubkeys({
                 definition: $activeCommunityDefinition,
                 profileListEvents: $activeCommunityProfileListEvents,
@@ -163,7 +157,7 @@
       ),
   )
   const commentAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -173,7 +167,7 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -183,7 +177,7 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -199,7 +193,7 @@
   const targetingFilterPlan = $derived.by(() => {
     const relayFilters: Filter[] = []
     const localFilters: Filter[] = []
-    if (!communityBootstrapReady || !communityPubkey) return {relayFilters, localFilters}
+    if (!communityAuthorityReady || !communityPubkey) return {relayFilters, localFilters}
 
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
@@ -217,7 +211,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? filterAuthorizedCommunityTargetingEvents({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -236,7 +230,7 @@
   const directEventFilterPlan = $derived.by(() => {
     const relayFilters: Filter[] = []
     const localFilters: Filter[] = []
-    if (!communityBootstrapReady || !communityPubkey || !eventParam) {
+    if (!communityAuthorityReady || !communityPubkey || !eventParam) {
       return {relayFilters, localFilters}
     }
 
@@ -301,7 +295,7 @@
 
     return event && identifier ? `${event.kind}:${event.pubkey}:${identifier}` : ""
   })
-  const approvedEvent = $derived(event)
+  const approvedEvent = $derived(communityAuthorityReady ? event : undefined)
   const approvedEventSectionName = $derived(
     approvedEvent ? getCalendarEventSectionName(approvedEvent.kind) : calendarSectionName,
   )
@@ -317,7 +311,7 @@
       : undefined,
   )
   const replyFilterPlan = $derived(
-    communityBootstrapReady && approvedEvent && !approvedEventCensorReason
+    communityAuthorityReady && approvedEvent && !approvedEventCensorReason
       ? makeCommunityContentFilterPlan(
           [
             {
@@ -400,7 +394,7 @@
     Boolean(
       approvedEvent &&
       !eventOperationId &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !approvedEventCensorReason &&
       $pubkey &&
       $activeCommunityPublishRelays.length > 0 &&
@@ -418,7 +412,7 @@
     Boolean(
       approvedEvent &&
       !eventOperationId &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !approvedEventCensorReason &&
       $pubkey &&
       $activeCommunityDefinition &&
@@ -796,7 +790,7 @@
   })
 
   const retryHistoricalLoad = () => {
-    if (communityBootstrapFailed || communityPermissionEvidenceIncomplete) {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
       window.location.reload()
       return
     }
@@ -935,9 +929,9 @@
               <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
                 >Retry</button>
             </div>
-          {:else if communityPermissionsLoading}
+          {:else if communityAuthorityLoading}
             <p class="flex h-10 items-center justify-center py-20 text-center">
-              <Spinner loading>Loading comment permissions...</Spinner>
+              <Spinner loading>Loading comments...</Spinner>
             </p>
           {:else}
             <p class="py-8 text-center opacity-70">No comments yet.</p>
@@ -979,7 +973,7 @@
             <Icon icon={Reply} />
             Comment
           </button>
-        {:else if communityBootstrapLoading || communityPermissionsLoading}
+        {:else if communityBootstrapLoading || communityAuthorityLoading}
           <div class="flex items-center gap-2 text-sm opacity-70">
             <Spinner loading>Checking comment access...</Spinner>
           </div>
@@ -994,13 +988,17 @@
         {/if}
       </div>
     {/if}
-  {:else if communityBootstrapLoading || communityPermissionsLoading || loadingEvent || loadingTargeting || loadingHintedOriginals || eventLoadStatus === "queued" || eventLoadStatus === "loading" || (communityBootstrapReady && targetLoadStatus === "idle") || targetLoadStatus === "queued" || targetLoadStatus === "loading" || hintedOriginalLoadStatus === "loading" || (!event && eventFilters.length > 0 && eventLoadStatus === "idle")}
+  {:else if communityBootstrapLoading || communityAuthorityLoading || loadingEvent || loadingTargeting || loadingHintedOriginals || eventLoadStatus === "queued" || eventLoadStatus === "loading" || (communityBootstrapReady && targetLoadStatus === "idle") || targetLoadStatus === "queued" || targetLoadStatus === "loading" || hintedOriginalLoadStatus === "loading" || (!event && eventFilters.length > 0 && eventLoadStatus === "idle")}
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading event...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityPermissionEvidenceIncomplete || eventLoadStatus === "incomplete" || eventLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
+  {:else if communityBootstrapFailed || communityAuthorityUnavailable || eventLoadStatus === "incomplete" || eventLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-      <p>Event lookup is incomplete or temporarily unavailable.</p>
+      <p>
+        {communityBootstrapFailed || communityAuthorityUnavailable
+          ? "Event unavailable."
+          : "Event lookup is incomplete or temporarily unavailable."}
+      </p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>

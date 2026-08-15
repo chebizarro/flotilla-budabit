@@ -16,8 +16,8 @@
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -62,30 +62,25 @@
   const communityBootstrapFailed = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const targetingFilters = $derived(
-    communityBootstrapReady && communityPubkey
+    communityAuthorityReady && communityPubkey
       ? [makeCommunityTargetingFilter(communityPubkey, [GIT_PERMALINK_KIND])]
       : [],
   )
   const permalinkAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -95,7 +90,7 @@
       : [],
   )
   const targetingFilterPlan = $derived(
-    communityBootstrapReady
+    communityAuthorityReady
       ? makeCommunityContentFilterPlan(targetingFilters, permalinkAuthorPubkeys)
       : {relayFilters: [], localFilters: []},
   )
@@ -103,7 +98,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? filterAuthorizedCommunityTargetingEvents({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -120,7 +115,7 @@
     makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
   )
   const directPermalinkFilterPlan = $derived(
-    communityBootstrapReady && communityPubkey
+    communityAuthorityReady && communityPubkey
       ? makeCommunityContentFilterPlan(
           [{kinds: [GIT_PERMALINK_KIND], "#h": [communityPubkey]}],
           permalinkAuthorPubkeys,
@@ -145,7 +140,7 @@
   const canCreatePermalink = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -158,7 +153,7 @@
   )
   const permalinkSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.permalink,
     ),
   )
@@ -237,9 +232,9 @@
   let historicalLoadRetryVersion = $state(0)
   const permalinksLoading = $derived(
     !communityBootstrapFailed &&
-      !communityPermissionEvidenceIncomplete &&
+      !communityAuthorityUnavailable &&
       (communityBootstrapLoading ||
-        communityPermissionsLoading ||
+        communityAuthorityLoading ||
         loadingTargets ||
         loadingHintedOriginals ||
         loadingPermalinks ||
@@ -250,7 +245,7 @@
   )
   const historyIncomplete = $derived(
     communityBootstrapFailed ||
-      communityPermissionEvidenceIncomplete ||
+      communityAuthorityUnavailable ||
       targetLoadStatus === "incomplete" ||
       targetLoadStatus === "failed" ||
       hintedOriginalLoadStatus === "incomplete" ||
@@ -259,6 +254,10 @@
       permalinkLoadStatus === "failed",
   )
   const retryHistoricalLoad = () => {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
+      window.location.reload()
+      return
+    }
     historicalLoadRetryVersion += 1
   }
 
@@ -478,7 +477,9 @@
           <Spinner loading>Looking for permalinks...</Spinner>
         {:else if historyIncomplete}
           <span class="flex flex-col items-center gap-3">
-            Permalink history is incomplete or temporarily unavailable.
+            {communityBootstrapFailed || communityAuthorityUnavailable
+              ? "Permalinks unavailable."
+              : "Permalink history is incomplete or temporarily unavailable."}
             <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
               >Retry</button>
           </span>

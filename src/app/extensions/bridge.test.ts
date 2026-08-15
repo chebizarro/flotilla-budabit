@@ -192,6 +192,17 @@ vi.mock("@app/core/community-state", () => ({
   activeCommunityReportState: mocks.activeCommunityReportState,
   authenticateCommunityRelays: mocks.authenticateCommunityRelays,
   getCommunityBootstrapRelays: vi.fn((relays: string[] = []) => relays),
+  getCommunityPermissionStatusKeyPrefix: vi.fn(() => "expected:"),
+  getCommunityPermissionReadiness: vi.fn(
+    ({status, communityPubkey}: {status: any; communityPubkey: string}) => {
+      if (status.communityPubkey !== communityPubkey || !status.key.startsWith("expected:")) {
+        return "loading"
+      }
+      if (status.hasCachedEvents) return "ready"
+      if (status.loading && !status.loaded) return "loading"
+      return status.complete ? "ready" : "unavailable"
+    },
+  ),
   getPubkeyOutboxRelays: mocks.getPubkeyOutboxRelays,
   loadCommunityEvents: mocks.loadCommunityEvents,
   loadCommunityEventsWithStatus: mocks.loadCommunityEventsWithStatus,
@@ -960,7 +971,7 @@ describe("ExtensionBridge", () => {
     })
   })
 
-  it("recognizes definition-listed section profile-list owners before their list event is cached", async () => {
+  it("fails closed for definition-listed profile-list owners while their list event is missing", async () => {
     const {ExtensionBridge} = await import("./bridge")
     mocks.activeCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([])
@@ -979,10 +990,11 @@ describe("ExtensionBridge", () => {
       sendBridgeRequest(bridge, extension, "community:checkWriteCapabilities", {
         descriptors: [{kind: EVENT_TIME}],
       }),
-    ).resolves.toMatchObject({
-      status: "ok",
-      capabilities: [expect.objectContaining({canModerate: true})],
+    ).resolves.toEqual({
+      error: "Community context is unavailable",
+      code: "COMMUNITY_CONTEXT_NOT_READY",
     })
+    expect(mocks.loadCommunityEvents).toHaveBeenCalled()
   })
 
   it("hydrates profile-list events before resolving descriptor capabilities", async () => {
@@ -1126,7 +1138,7 @@ describe("ExtensionBridge", () => {
     expect(mocks.loadCommunityEvents).not.toHaveBeenCalled()
   })
 
-  it("returns cached shared config from definition-listed section moderators before their list event is cached", async () => {
+  it("fails closed for cached shared config while its required profile list is missing", async () => {
     const {ExtensionBridge} = await import("./bridge")
     const cachedConfig = makeEvent({
       id: "pending-ref-config",
@@ -1161,12 +1173,11 @@ describe("ExtensionBridge", () => {
         key: "featured-calendar-event",
         descriptors: [{kind: EVENT_TIME}],
       }),
-    ).resolves.toMatchObject({
-      status: "ok",
-      event: {id: "pending-ref-config"},
-      config: {header: "Cached", eventRefs: [calendarEventRef]},
+    ).resolves.toEqual({
+      error: "Community context is unavailable",
+      code: "COMMUNITY_CONTEXT_NOT_READY",
     })
-    expect(mocks.loadCommunityEvents).not.toHaveBeenCalled()
+    expect(mocks.loadCommunityEvents).toHaveBeenCalled()
   })
 
   it("returns not-ready for shared config while cached permission evidence is refreshing", async () => {
@@ -1198,7 +1209,7 @@ describe("ExtensionBridge", () => {
         descriptors: [{kind: EVENT_TIME}],
       }),
     ).resolves.toEqual({
-      error: "Community permissions are still loading",
+      error: "Community context is still loading",
       code: "COMMUNITY_CONTEXT_NOT_READY",
     })
     expect(mocks.loadCommunityEvents).not.toHaveBeenCalled()

@@ -16,6 +16,7 @@
   import {makeCommunityRoomRoot} from "@app/core/community-rooms"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
@@ -48,10 +49,22 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityRoomLoading = $derived(
+    communityBootstrapLoading ||
+      (communityBootstrapReady && communityAuthorityReadiness === "loading"),
+  )
   const canCreateRoom = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -67,7 +80,7 @@
   )
   const roomRootSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.roomRoot,
     ),
   )
@@ -79,8 +92,14 @@
   const createRoom = async () => {
     const trimmed = roomName.trim()
     if (!trimmed || loading) return
-    if (!communityBootstrapReady) {
-      pushToast({theme: "error", message: "Community permissions are still loading."})
+    if (!communityReady) {
+      pushToast({
+        theme: "error",
+        message:
+          communityAuthorityReadiness === "unavailable"
+            ? "Rooms unavailable."
+            : "Rooms are still loading.",
+      })
       return
     }
     if (!canCreateRoom) {
@@ -152,9 +171,9 @@
     {/snippet}
   </ModalHeader>
 
-  {#if communityBootstrapLoading}
+  {#if communityRoomLoading}
     <p class="flex items-center justify-center py-8 text-sm opacity-70">
-      <Spinner loading>Loading room creation permissions...</Spinner>
+      <Spinner loading>Loading room creation...</Spinner>
     </p>
   {:else if canCreateRoom}
     <Field>

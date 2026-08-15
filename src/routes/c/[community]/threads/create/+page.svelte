@@ -15,6 +15,7 @@
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
@@ -44,9 +45,17 @@
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
   const threadSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.thread,
     ),
   )
@@ -54,7 +63,7 @@
   const canCreateThread = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -70,8 +79,14 @@
     const trimmedTitle = title.trim()
     const trimmedContent = content.trim()
     if (!communityPubkey || !trimmedTitle || !trimmedContent || creating) return
-    if (!communityBootstrapReady) {
-      pushToast({theme: "error", message: "Community permissions are still loading."})
+    if (!communityReady) {
+      pushToast({
+        theme: "error",
+        message:
+          communityAuthorityReadiness === "unavailable"
+            ? "Threads unavailable."
+            : "Threads are still loading.",
+      })
       return
     }
     if (!canCreateThread) {

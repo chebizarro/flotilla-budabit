@@ -7,7 +7,7 @@
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityProfile,
     activeCommunityProfileListEvents,
     activeCommunityRelays,
@@ -93,14 +93,13 @@
     ].join(":")
 
   const communityReadinessKey = $derived.by(() => {
-    const status = $activeCommunityPermissionStatus
+    const readiness = $activeCommunityAuthorityReadiness
 
-    return normalizePubkey(status.communityPubkey) === normalizePubkey(communityPubkey)
+    return normalizePubkey(readiness.communityPubkey) === normalizePubkey(communityPubkey) &&
+      readiness.state === "ready"
       ? JSON.stringify({
-          permissionKey: status.key,
-          permissionLoading: status.loading,
-          permissionLoaded: status.loaded,
-          permissionHasCachedEvents: status.hasCachedEvents,
+          authorityKey: readiness.key,
+          authorityState: readiness.state,
         })
       : ""
   })
@@ -112,7 +111,7 @@
     const reportState = matchesCommunity ? $activeCommunityReportState : undefined
 
     return {
-      ready: Boolean(matchesCommunity),
+      ready: Boolean(matchesCommunity && communityReadinessKey),
       key: matchesCommunity
         ? getCommunityWidgetCurationEvidenceKey({
             definitionEventId: definition.event.id,
@@ -179,7 +178,8 @@
   const communityContext = $derived.by(() => {
     if (
       !$activeCommunityDefinition ||
-      normalizePubkey($activeCommunityDefinition.pubkey) !== normalizePubkey(communityPubkey)
+      normalizePubkey($activeCommunityDefinition.pubkey) !== normalizePubkey(communityPubkey) ||
+      !communityReadinessKey
     ) {
       return undefined
     }

@@ -36,8 +36,8 @@
   import {makeComment} from "@app/core/commands"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -116,42 +116,36 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const goalSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.goal,
     ),
   )
   const commentSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.comment,
     ),
   )
   const commentAccessMessage = $derived(`Request ${commentSectionName} access to comment.`)
   const goalAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -161,7 +155,7 @@
       : [],
   )
   const commentAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -171,7 +165,7 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -181,7 +175,7 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -191,12 +185,12 @@
       : [],
   )
   const targetingFilters = $derived<Filter[]>(
-    communityBootstrapReady && communityPubkey
+    communityAuthorityReady && communityPubkey
       ? [makeCommunityTargetingFilter(communityPubkey, [ZAP_GOAL])]
       : [],
   )
   const targetingFilterPlan = $derived(
-    communityBootstrapReady
+    communityAuthorityReady
       ? makeCommunityContentFilterPlan(targetingFilters, goalAuthorPubkeys)
       : {relayFilters: [], localFilters: []},
   )
@@ -204,7 +198,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? filterAuthorizedCommunityTargetingEvents({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -221,7 +215,7 @@
     makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
   )
   const directGoalFilterPlan = $derived(
-    communityBootstrapReady && communityPubkey && goalId
+    communityAuthorityReady && communityPubkey && goalId
       ? makeCommunityContentFilterPlan(
           [{kinds: [ZAP_GOAL], ids: [goalId], "#h": [communityPubkey]}],
           goalAuthorPubkeys,
@@ -252,7 +246,7 @@
   )
   const goal = $derived(goalProjection.events[0])
   const goalOperationId = $derived(goal ? goalProjection.operationIds.get(goal.id) : undefined)
-  const approvedGoal = $derived(goal)
+  const approvedGoal = $derived(communityAuthorityReady ? goal : undefined)
   const approvedGoalCensorReason = $derived.by(() =>
     approvedGoal
       ? getCommunityCensorReason({
@@ -265,7 +259,7 @@
       : undefined,
   )
   const replyFilterPlan = $derived(
-    communityBootstrapReady && approvedGoal && !approvedGoalCensorReason
+    communityAuthorityReady && approvedGoal && !approvedGoalCensorReason
       ? makeCommunityContentFilterPlan(
           [
             {
@@ -310,7 +304,7 @@
     Boolean(
       approvedGoal &&
       !goalOperationId &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !approvedGoalCensorReason &&
       $pubkey &&
       $activeCommunityDefinition &&
@@ -327,7 +321,7 @@
     Boolean(
       approvedGoal &&
       !goalOperationId &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !approvedGoalCensorReason &&
       $pubkey &&
       $activeCommunityDefinition &&
@@ -656,7 +650,7 @@
   })
 
   const retryHistoricalLoad = () => {
-    if (communityBootstrapFailed || communityPermissionEvidenceIncomplete) {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
       window.location.reload()
       return
     }
@@ -800,9 +794,9 @@
               <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
                 >Retry</button>
             </div>
-          {:else if communityPermissionsLoading}
+          {:else if communityAuthorityLoading}
             <p class="flex h-10 items-center justify-center py-20 text-center">
-              <Spinner loading>Loading comment permissions...</Spinner>
+              <Spinner loading>Loading comments...</Spinner>
             </p>
           {:else}
             <p class="py-8 text-center opacity-70">No comments yet.</p>
@@ -839,7 +833,7 @@
             <Icon icon={Reply} />
             Comment on this goal
           </button>
-        {:else if communityBootstrapLoading || communityPermissionsLoading}
+        {:else if communityBootstrapLoading || communityAuthorityLoading}
           <div class="flex items-center gap-2 text-sm opacity-70">
             <Spinner loading>Checking comment access...</Spinner>
           </div>
@@ -854,13 +848,17 @@
         {/if}
       </div>
     {/if}
-  {:else if communityBootstrapLoading || communityPermissionsLoading || loadingGoal || loadingTargeting || loadingHintedOriginals || goalLoadStatus === "queued" || goalLoadStatus === "loading" || (communityBootstrapReady && targetLoadStatus === "idle") || targetLoadStatus === "queued" || targetLoadStatus === "loading" || hintedOriginalLoadStatus === "loading" || (!goal && goalFilters.length > 0 && goalLoadStatus === "idle")}
+  {:else if communityBootstrapLoading || communityAuthorityLoading || loadingGoal || loadingTargeting || loadingHintedOriginals || goalLoadStatus === "queued" || goalLoadStatus === "loading" || (communityBootstrapReady && targetLoadStatus === "idle") || targetLoadStatus === "queued" || targetLoadStatus === "loading" || hintedOriginalLoadStatus === "loading" || (!goal && goalFilters.length > 0 && goalLoadStatus === "idle")}
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading funding goal...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityPermissionEvidenceIncomplete || goalLoadStatus === "incomplete" || goalLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
+  {:else if communityBootstrapFailed || communityAuthorityUnavailable || goalLoadStatus === "incomplete" || goalLoadStatus === "failed" || targetLoadStatus === "incomplete" || targetLoadStatus === "failed" || hintedOriginalLoadStatus === "incomplete" || hintedOriginalLoadStatus === "failed"}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-      <p>Goal lookup is incomplete or temporarily unavailable.</p>
+      <p>
+        {communityBootstrapFailed || communityAuthorityUnavailable
+          ? "Goal unavailable."
+          : "Goal lookup is incomplete or temporarily unavailable."}
+      </p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>

@@ -13,15 +13,14 @@
 
 ## Current Phase
 
-- Phase 2: Consumer Readiness And Copy
+- Phase 3: Aggregate Calendar Admission
 
 ## Phase Exit Criteria
 
-- Community content, governance, menu, and publishing surfaces use generation-aware authority readiness where relevant.
-- Loading copy names the resource and no readiness state exposes community-permission hydration.
-- Terminal authority failure uses generic resource unavailable/retry copy while meaningful access-policy language remains.
-- Extension bridge readiness stays fail-closed, becomes generation-aware, and returns community-context loading copy.
-- Focused tests, root check, formatting, and whitespace checks pass.
+- Calendar list, detail, layout, follow-up, and notification flows use aggregate calendar writer admission for both all-day and timed events.
+- Either calendar-kind grant continues to authorize both calendar event kinds, including creation and selected-kind publication.
+- Structural relay filters remain broad while local admission remains aggregate and fail-closed.
+- Focused regression tests, root check, formatting, and whitespace checks pass.
 - Phase changes and checkpoint advancement are committed, pushed, and reread.
 
 ## Completed With Evidence
@@ -40,6 +39,13 @@
 - Selective retries no longer reset or invalidate the sibling authority/form stream; stale updates are rejected by each status store's generation key.
 - Phase 1 added a shared `loading`/`ready`/`unavailable` classifier with current-community and key-prefix validation.
 - Independent Phase 1 review found no remaining high or medium actionable issue.
+- Phase 2 added generation-aware active authority and admission-form readiness stores and applied them across community content, governance, menu, widget, and publishing surfaces.
+- Community routes now use resource-specific loading copy and generic resource unavailable/retry states without exposing permission hydration internals.
+- Publishing controls and content filters require both current bootstrap and authority readiness, preventing stale generations from remaining interactive.
+- Community-home and top-menu widgets remain hidden until current authority is ready.
+- The extension bridge now distinguishes active and runtime snapshots, blocks stale active generations, independently hydrates runtime evidence, and fails closed when required profile lists remain missing.
+- Phase 2 added a static copy regression test and updated the landing screenshot readiness sentinel.
+- Independent Phase 2 review found no remaining high or medium actionable issue.
 
 ## Decisions
 
@@ -53,13 +59,13 @@
 
 - Repository: `/home/johnd/Work/budabit`.
 - Branch: `dev`, tracking `origin/dev`.
-- Worktree was clean at plan creation.
-- Local branch started three commits ahead of `origin/dev`: `c42ecb8f6`, `19b22b08c`, and `72f31b2f8`.
-- Phase 1 implementation is verified and ready for its closeout commit and push.
+- Phase 1 is committed and pushed as `d0f7654e6 fix: stabilize community authority readiness`.
+- Phase 2 implementation is verified and ready for its closeout commit and push.
+- Unrelated user changes remain in `src/app/components/MenuSettings.svelte`, `src/lib/components/CardButton.svelte`, and `tests/e2e/settings-menu-navigation.spec.ts`; do not stage them.
 
 ## Next Action
 
-- Replace duplicated consumer predicates with shared authority/form readiness and update readiness-only copy, starting with calendar, threads, and goals.
+- Restore aggregate calendar writer admission across list, detail, layout, follow-up, and notification flows without changing section semantics or creation behavior.
 
 ## Verification
 
@@ -70,6 +76,12 @@
 - Phase 1 `pnpm check` passed with 0 errors and 0 warnings.
 - Phase 1 changed-file Prettier and `git diff --check` passed.
 - Phase 1 independent final review approved the lifecycle with no high/medium findings.
+- Phase 2 focused readiness and bridge suites passed 104 tests.
+- Phase 2 broader community and extension suites passed 403 tests; the one static room-retry contract mismatch was corrected and its 7-test rerun passed.
+- Phase 2 `pnpm check` passed with 0 errors and 0 warnings.
+- Phase 2 changed-file Prettier and `git diff --check` passed.
+- Phase 2 static readiness-copy regression passed.
+- Phase 2 independent final review approved the consumer and bridge changes with no high/medium findings.
 
 ## Risks Or Blockers
 
@@ -85,3 +97,7 @@
 - `docs/session-checkpoint.md`
 - `src/app/core/community-state.ts`
 - `src/app/core/community-state-loading.test.ts`
+- `src/app/core/community-readiness-copy.test.ts`
+- `src/app/extensions/bridge.ts`
+- `src/app/extensions/bridge.test.ts`
+- `src/app/extensions/community-home-readiness.ts`

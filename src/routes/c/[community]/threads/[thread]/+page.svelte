@@ -25,8 +25,8 @@
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -89,42 +89,36 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const threadSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.thread,
     ),
   )
   const commentSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.comment,
     ),
   )
   const commentAccessMessage = $derived(`Request ${commentSectionName} access to comment.`)
   const threadAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -134,7 +128,7 @@
       : [],
   )
   const replyAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -144,7 +138,7 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -154,7 +148,7 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -164,7 +158,7 @@
       : [],
   )
   const threadFilterPlan = $derived(
-    communityBootstrapReady && communityPubkey && threadId
+    communityAuthorityReady && communityPubkey && threadId
       ? makeCommunityContentFilterPlan(
           [makeCommunityThreadsFilter(communityPubkey, {ids: [threadId]})],
           threadAuthorPubkeys,
@@ -172,7 +166,7 @@
       : {relayFilters: [], localFilters: []},
   )
   const replyFilterPlan = $derived(
-    communityBootstrapReady && communityPubkey && threadId
+    communityAuthorityReady && communityPubkey && threadId
       ? makeCommunityContentFilterPlan(
           [makeCommunityThreadRepliesFilter(communityPubkey, {"#E": [threadId]})],
           replyAuthorPubkeys,
@@ -214,7 +208,7 @@
     }),
   )
   const thread = $derived(
-    threadProjection.events[0]
+    communityAuthorityReady && threadProjection.events[0]
       ? readCommunityThread(threadProjection.events[0], communityPubkey)
       : undefined,
   )
@@ -254,7 +248,7 @@
     Boolean(
       thread &&
       !threadOperationId &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !threadCensorReason &&
       $pubkey &&
       $activeCommunityDefinition &&
@@ -271,7 +265,7 @@
     Boolean(
       $pubkey &&
       !threadOperationId &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       !threadCensorReason &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
@@ -508,7 +502,7 @@
   })
 
   const retryHistoricalLoad = () => {
-    if (communityBootstrapFailed || communityPermissionEvidenceIncomplete) {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
       window.location.reload()
       return
     }
@@ -641,9 +635,9 @@
           <p class="flex h-10 items-center justify-center py-20 text-center">
             <Spinner loading={loadingReplies}>Looking for replies...</Spinner>
           </p>
-        {:else if communityPermissionsLoading}
+        {:else if communityAuthorityLoading}
           <p class="flex h-10 items-center justify-center py-20 text-center">
-            <Spinner loading>Loading reply permissions...</Spinner>
+            <Spinner loading>Loading replies...</Spinner>
           </p>
         {:else if replies.length === 0}
           <p class="py-8 text-center opacity-70">No replies yet.</p>
@@ -684,7 +678,7 @@
             <Icon icon={Reply} />
             Comment
           </button>
-        {:else if communityBootstrapLoading || communityPermissionsLoading}
+        {:else if communityBootstrapLoading || communityAuthorityLoading}
           <div class="flex items-center gap-2 text-sm opacity-70">
             <Spinner loading>Checking reply access...</Spinner>
           </div>
@@ -699,13 +693,17 @@
         {/if}
       </div>
     {/if}
-  {:else if communityBootstrapLoading || communityPermissionsLoading || loadingThread || (threadFilters.length > 0 && threadLoadStatus === "idle") || threadLoadStatus === "queued" || threadLoadStatus === "loading"}
+  {:else if communityBootstrapLoading || communityAuthorityLoading || loadingThread || (threadFilters.length > 0 && threadLoadStatus === "idle") || threadLoadStatus === "queued" || threadLoadStatus === "loading"}
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading thread...</Spinner>
     </p>
-  {:else if communityBootstrapFailed || communityPermissionEvidenceIncomplete || threadLoadStatus === "incomplete" || threadLoadStatus === "failed"}
+  {:else if communityBootstrapFailed || communityAuthorityUnavailable || threadLoadStatus === "incomplete" || threadLoadStatus === "failed"}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
-      <p>Thread lookup is incomplete or temporarily unavailable.</p>
+      <p>
+        {communityBootstrapFailed || communityAuthorityUnavailable
+          ? "Thread unavailable."
+          : "Thread lookup is incomplete or temporarily unavailable."}
+      </p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>

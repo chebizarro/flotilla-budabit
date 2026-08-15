@@ -17,6 +17,7 @@
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
@@ -47,9 +48,17 @@
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
   const goalSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.goal,
     ),
   )
@@ -57,7 +66,7 @@
   const canCreateGoal = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -90,8 +99,14 @@
       summary: trimmedSummary,
       amount: String(amount),
     })
-    if (!communityBootstrapReady) {
-      pushToast({theme: "error", message: "Community permissions are still loading."})
+    if (!communityReady) {
+      pushToast({
+        theme: "error",
+        message:
+          communityAuthorityReadiness === "unavailable"
+            ? "Goals unavailable."
+            : "Goals are still loading.",
+      })
       return
     }
     if (!canCreateGoal) {

@@ -18,8 +18,8 @@
   import CalendarEventItem from "@app/components/CalendarEventItem.svelte"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -106,36 +106,31 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const getCalendarEventSectionName = (_kind: number) =>
     getCommunityCalendarWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
     )
   const calendarWriterPubkeysByKind = $derived.by(
     () =>
       new Map(
         COMMUNITY_CALENDAR_WRITE_TARGETS.map(target => [
           target.kind,
-          $activeCommunityDefinition
+          communityAuthorityReady && $activeCommunityDefinition
             ? getCommunityTargetWriterPubkeys({
                 definition: $activeCommunityDefinition,
                 profileListEvents: $activeCommunityProfileListEvents,
@@ -149,7 +144,7 @@
   const targetingFilterPlan = $derived.by(() => {
     const relayFilters: Filter[] = []
     const localFilters: Filter[] = []
-    if (!communityBootstrapReady || !communityPubkey) return {relayFilters, localFilters}
+    if (!communityAuthorityReady || !communityPubkey) return {relayFilters, localFilters}
 
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
@@ -167,7 +162,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? filterAuthorizedCommunityTargetingEvents({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -178,7 +173,7 @@
       : [],
   )
   const commentAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -188,7 +183,7 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -198,7 +193,7 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -223,7 +218,7 @@
   const directCalendarFilterPlan = $derived.by(() => {
     const relayFilters: Filter[] = []
     const localFilters: Filter[] = []
-    if (!communityBootstrapReady || !communityPubkey) return {relayFilters, localFilters}
+    if (!communityAuthorityReady || !communityPubkey) return {relayFilters, localFilters}
 
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
@@ -245,7 +240,7 @@
     ...targetedOriginalFilterPlan.relayFilters,
   ] as Filter[])
   const feedKey = $derived.by(() =>
-    communityBootstrapReady &&
+    communityAuthorityReady &&
     communityPubkey &&
     calendarFeedFilters.length &&
     $activeCommunityRelays.length
@@ -261,7 +256,7 @@
   const canReact = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       $activeCommunityPublishRelays.length > 0 &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
@@ -512,7 +507,7 @@
   })
 
   const retryHistoricalLoad = () => {
-    if (communityBootstrapFailed || communityPermissionEvidenceIncomplete) {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
       window.location.reload()
       return
     }
@@ -627,13 +622,13 @@
         {event} />
     </div>
   {/each}
-  {#if communityBootstrapLoading || communityPermissionsLoading}
+  {#if communityBootstrapLoading || communityAuthorityLoading}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading>Loading community permissions...</Spinner>
+      <Spinner loading>Loading Calendar...</Spinner>
     </p>
-  {:else if items.length === 0 && (communityBootstrapFailed || communityPermissionEvidenceIncomplete)}
+  {:else if communityBootstrapFailed || communityAuthorityUnavailable}
     <div class="flex flex-col items-center gap-3 py-20 text-center">
-      <p>Community permissions are incomplete or temporarily unavailable.</p>
+      <p>Calendar unavailable.</p>
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>

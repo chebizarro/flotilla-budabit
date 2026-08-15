@@ -2,19 +2,12 @@ export type CommunityHomeCoreReadinessInput = {
   communityPubkey: string
   definitionPubkey: string
   expectedBootstrapKey: string
-  expectedPermissionKeyPrefix: string
+  permissionReadiness: "loading" | "ready" | "unavailable"
   bootstrapStatus: {
     key: string
     loading: boolean
     loaded: boolean
     error?: string
-  }
-  permissionStatus: {
-    communityPubkey: string
-    key: string
-    loading: boolean
-    loaded: boolean
-    hasCachedEvents: boolean
   }
 }
 
@@ -31,9 +24,8 @@ export const isCommunityHomeCoreReady = ({
   communityPubkey,
   definitionPubkey,
   expectedBootstrapKey,
-  expectedPermissionKeyPrefix,
+  permissionReadiness,
   bootstrapStatus,
-  permissionStatus,
 }: CommunityHomeCoreReadinessInput) =>
   Boolean(
     communityPubkey &&
@@ -43,10 +35,7 @@ export const isCommunityHomeCoreReady = ({
     bootstrapStatus.loaded &&
     !bootstrapStatus.loading &&
     !bootstrapStatus.error &&
-    expectedPermissionKeyPrefix &&
-    permissionStatus.communityPubkey === communityPubkey &&
-    permissionStatus.key.startsWith(expectedPermissionKeyPrefix) &&
-    (permissionStatus.hasCachedEvents || (permissionStatus.loaded && !permissionStatus.loading)),
+    permissionReadiness === "ready",
   )
 
 export const isCommunityHomeExtensionReady = ({

@@ -10,23 +10,16 @@ const readyCore = (): CommunityHomeCoreReadinessInput => ({
   communityPubkey: "community",
   definitionPubkey: "community",
   expectedBootstrapKey: "viewer:community:relay",
-  expectedPermissionKeyPrefix: "viewer:definition:relay:",
+  permissionReadiness: "ready",
   bootstrapStatus: {
     key: "viewer:community:relay",
     loading: false,
     loaded: true,
   },
-  permissionStatus: {
-    communityPubkey: "community",
-    key: "viewer:definition:relay:1",
-    loading: false,
-    loaded: true,
-    hasCachedEvents: false,
-  },
 })
 
 describe("community home readiness", () => {
-  it("requires the current bootstrap and permission generations", () => {
+  it("requires the current bootstrap and ready authority evidence", () => {
     expect(isCommunityHomeCoreReady(readyCore())).toBe(true)
     expect(
       isCommunityHomeCoreReady({
@@ -37,32 +30,22 @@ describe("community home readiness", () => {
     expect(
       isCommunityHomeCoreReady({
         ...readyCore(),
-        permissionStatus: {...readyCore().permissionStatus, key: "viewer:previous-definition:1"},
+        permissionReadiness: "loading",
       }),
     ).toBe(false)
   })
 
-  it("accepts usable cached permissions or a terminal permission load", () => {
+  it("rejects unavailable authority evidence", () => {
     expect(
       isCommunityHomeCoreReady({
         ...readyCore(),
-        permissionStatus: {
-          ...readyCore().permissionStatus,
-          loading: true,
-          loaded: false,
-          hasCachedEvents: true,
-        },
+        permissionReadiness: "unavailable",
       }),
-    ).toBe(true)
+    ).toBe(false)
     expect(
       isCommunityHomeCoreReady({
         ...readyCore(),
-        permissionStatus: {
-          ...readyCore().permissionStatus,
-          loading: false,
-          loaded: false,
-          hasCachedEvents: false,
-        },
+        permissionReadiness: "loading",
       }),
     ).toBe(false)
   })

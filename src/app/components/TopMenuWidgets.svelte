@@ -4,13 +4,12 @@
   import CommunityWidgetSlotLaunchers from "@app/components/community/CommunityWidgetSlotLaunchers.svelte"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityRelays,
     activeCommunitySession,
     getCommunityBootstrapKey,
   } from "@app/core/community-state"
-  import {normalizePubkey, normalizeRelays} from "@app/core/community"
   import {isCommunityHomeCoreReady} from "@app/extensions/community-home-readiness"
   import {parseCommunityRouteParam} from "@app/util/routes"
 
@@ -23,19 +22,18 @@
       ? getCommunityBootstrapKey($activeCommunitySession, $pubkey || "")
       : "",
   )
-  const expectedPermissionKeyPrefix = $derived(
-    parsedCommunity && $activeCommunityDefinition?.pubkey === parsedCommunity.pubkey
-      ? `${normalizePubkey($pubkey || "")}:${$activeCommunityDefinition.event.id}:${normalizeRelays($activeCommunityRelays).join(",")}:`
-      : "",
+  const permissionReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === parsedCommunity?.pubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
   const communityCoreReady = $derived(
     isCommunityHomeCoreReady({
       communityPubkey: parsedCommunity?.pubkey || "",
       definitionPubkey: $activeCommunityDefinition?.pubkey || "",
       expectedBootstrapKey,
-      expectedPermissionKeyPrefix,
+      permissionReadiness,
       bootstrapStatus: $activeCommunityBootstrapStatus,
-      permissionStatus: $activeCommunityPermissionStatus,
     }),
   )
 </script>

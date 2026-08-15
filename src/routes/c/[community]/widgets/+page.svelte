@@ -18,8 +18,8 @@
   import type {BlossomUploadStage} from "@app/core/blossom"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
     activeCommunityRelays,
@@ -73,31 +73,25 @@
   const communityBootstrapFailed = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
   )
-  const communityPermissionEvidenceIncomplete = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.complete &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
   )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const targetingFilters = $derived(
-    communityBootstrapReady && communityPubkey
+    communityAuthorityReady && communityPubkey
       ? [makeCommunityTargetingFilter(communityPubkey, [SMART_WIDGET_KIND])]
       : [],
   )
   const targetingFilterPlan = $derived.by(() =>
-    communityBootstrapReady && $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? makeCommunityContentFilterPlan(
           targetingFilters,
           getCommunityTargetWriterPubkeys({
@@ -113,7 +107,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    communityBootstrapReady && $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? filterAuthorizedCommunityTargetingEvents({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -145,7 +139,7 @@
     authorizedTargetingEvents.filter(event => !deletedTargetIds.has(event.id)),
   )
   const widgetFilterPlan = $derived(
-    communityBootstrapReady && eligibleTargetingEvents.length
+    communityAuthorityReady && eligibleTargetingEvents.length
       ? makeTargetedPublicationOriginalFilterPlan(eligibleTargetingEvents)
       : {relayFilters: [], localFilters: []},
   )
@@ -157,7 +151,7 @@
   const canCreateWidget = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -169,7 +163,7 @@
     ),
   )
   const widgetAccessLoading = $derived(
-    Boolean($pubkey && communityPermissionsLoading && !canCreateWidget),
+    Boolean($pubkey && communityAuthorityLoading && !canCreateWidget),
   )
 
   const getCommunityOptionLabel = (pubkey: string) => {
@@ -400,18 +394,19 @@
   let loadingOriginalWidgets = $state(false)
   let originalWidgetRequestSettled = $state(false)
   let originalWidgetHistoryIncomplete = $state(false)
+  let widgetHistoryRetryVersion = $state(0)
   const widgetHistoryIncomplete = $derived(
     communityBootstrapFailed ||
-      communityPermissionEvidenceIncomplete ||
+      communityAuthorityUnavailable ||
       targetHistoryIncomplete ||
       targetDeleteHistoryIncomplete ||
       originalWidgetHistoryIncomplete,
   )
   const widgetsLoading = $derived(
     !communityBootstrapFailed &&
-      !communityPermissionEvidenceIncomplete &&
+      !communityAuthorityUnavailable &&
       (communityBootstrapLoading ||
-        communityPermissionsLoading ||
+        communityAuthorityLoading ||
         loadingTargets ||
         loadingTargetDeletes ||
         loadingOriginalWidgets ||
@@ -428,8 +423,17 @@
       filterSelectedWidgetCommunityOptions(widgetCommunityOptions, selectedTargetCommunityPubkeys)
         .length > 0,
   )
+  const retryWidgetHistory = () => {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
+      window.location.reload()
+      return
+    }
+
+    widgetHistoryRetryVersion += 1
+  }
 
   $effect(() => {
+    void widgetHistoryRetryVersion
     if (
       !communityBootstrapReady ||
       !communityPubkey ||
@@ -478,6 +482,7 @@
   })
 
   $effect(() => {
+    void widgetHistoryRetryVersion
     const relays = $activeCommunityRelays
     const relayFilters = targetDeleteFilterPlan.relayFilters
     const localFilters = targetDeleteFilterPlan.localFilters
@@ -532,6 +537,7 @@
   })
 
   $effect(() => {
+    void widgetHistoryRetryVersion
     const relayFilters = widgetFilterPlan.relayFilters
     const localFilters = widgetFilterPlan.localFilters
 
@@ -623,9 +629,7 @@
   <form class="card2 bg-alt col-3 p-4 shadow-md" onsubmit={preventDefault(createWidget)}>
     <strong>Create targeted widget</strong>
     {#if widgetAccessLoading}
-      <div class="alert alert-info text-sm">
-        Loading widget permissions before showing publish options.
-      </div>
+      <div class="alert alert-info text-sm">Loading widget access...</div>
     {:else if !canCreateWidget}
       <div class="alert alert-warning text-sm">
         You need widget-write permission in this community to publish or target widgets.
@@ -729,8 +733,8 @@
             </label>
           {/each}
         </div>
-      {:else if communityPermissionsLoading}
-        <p class="text-sm opacity-70">Loading widget-capable community grants...</p>
+      {:else if communityAuthorityLoading}
+        <p class="text-sm opacity-70">Loading widget access...</p>
       {:else}
         <p class="text-sm opacity-70">
           No widget-capable community grants are available for this account.
@@ -750,9 +754,14 @@
 
   <div class="col-2">
     {#if widgetHistoryIncomplete}
-      <div class="alert alert-warning text-sm" role="status">
-        Targeted widget history is incomplete. Results below are partial; some widgets or wrapper
-        removals may be missing.
+      <div class="alert alert-warning flex-wrap justify-between gap-2 text-sm" role="status">
+        <span>
+          {communityBootstrapFailed || communityAuthorityUnavailable
+            ? "Widgets unavailable."
+            : "Targeted widget history is incomplete. Results below are partial; some widgets or wrapper removals may be missing."}
+        </span>
+        <button class="btn btn-neutral btn-sm" type="button" onclick={retryWidgetHistory}
+          >Retry</button>
       </div>
     {/if}
     {#each $widgets as widget (widget.id)}
@@ -771,7 +780,9 @@
         {#if widgetsLoading}
           <Spinner loading>Looking for widgets...</Spinner>
         {:else if widgetHistoryIncomplete}
-          No widgets were found in the partial history loaded so far.
+          {communityBootstrapFailed || communityAuthorityUnavailable
+            ? "Widgets unavailable."
+            : "No widgets were found in the partial history loaded so far."}
         {:else}
           No targeted widgets found.
         {/if}

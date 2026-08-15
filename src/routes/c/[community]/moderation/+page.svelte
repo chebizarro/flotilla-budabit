@@ -36,9 +36,10 @@
   } from "@app/core/community-admin"
   import {
     activeCommunityAdmissionForms,
+    activeCommunityAdmissionFormReadiness,
+    activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityReportDeleteEvents,
     activeCommunityReportEvents,
@@ -118,16 +119,35 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      $pubkey &&
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityBootstrapFailed = $derived(
+    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityAdmissionFormReadiness = $derived(
+    $activeCommunityAdmissionFormReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAdmissionFormReadiness.state
+      : "loading",
+  )
+  const communityModerationLoading = $derived(
+    communityBootstrapLoading ||
+      ($pubkey &&
+        communityBootstrapReady &&
+        (communityAuthorityReadiness === "loading" ||
+          communityAdmissionFormReadiness === "loading")),
+  )
+  const communityModerationUnavailable = $derived(
+    communityBootstrapFailed ||
+      Boolean(
+        $pubkey &&
+        (communityAuthorityReadiness === "unavailable" ||
+          communityAdmissionFormReadiness === "unavailable"),
+      ),
+  )
+  const retryCommunityModeration = () => window.location.reload()
   let pageMode = $state<PageMode>("queue")
   let selectedSectionName = $state("")
   let applicationGroupOpen = $state<Record<string, boolean>>({New: true})
@@ -192,7 +212,7 @@
     return isCommunityAdmin($activeCommunityDefinition, $pubkey)
   })
   const moderationPermissionLoading = $derived(
-    Boolean(communityPermissionsLoading && !canAccessModerationPage),
+    Boolean(communityModerationLoading && !canAccessModerationPage),
   )
   const currentModerationActions = $derived(
     getEffectiveCommunityModerationActionsByReporter($activeCommunityReportState, $pubkey || ""),
@@ -1057,12 +1077,15 @@
 </PageBar>
 
 <PageContent class="col-4 min-w-0 p-3 sm:p-4 lg:p-6">
-  {#if communityBootstrapLoading}
+  {#if communityModerationLoading}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading>Loading community permissions...</Spinner>
+      <Spinner loading>Loading Community Moderation...</Spinner>
     </p>
-  {:else if !communityBootstrapReady || !$activeCommunityDefinition}
-    <p class="py-8 text-center opacity-70">Community definition is not loaded.</p>
+  {:else if communityModerationUnavailable || !communityBootstrapReady || !$activeCommunityDefinition}
+    <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
+      <p>Community Moderation unavailable.</p>
+      <Button class="btn btn-neutral btn-sm" onclick={retryCommunityModeration}>Retry</Button>
+    </div>
   {:else if !$pubkey}
     <p class="py-8 text-center opacity-70">
       Log in with a moderator account to manage applications.

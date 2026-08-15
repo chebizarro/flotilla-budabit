@@ -29,6 +29,7 @@
   import {normalizePubkey, normalizeRelays} from "@app/core/community"
   import {
     activeCommunitySession,
+    activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
     activeCommunityDefinition,
     activeCommunityPermissionStatus,
@@ -142,11 +143,6 @@
       ? getCommunityBootstrapKey(session, $pubkey || "")
       : ""
   })
-  const expectedCommunityPermissionKeyPrefix = $derived(
-    routeCommunityDefinition
-      ? `${normalizePubkey($pubkey || "")}:${routeCommunityDefinition.event.id}:${normalizeRelays($activeCommunityRelays).join(",")}:`
-      : "",
-  )
   const retryCommunityBootstrap = async () => {
     const session =
       $activeCommunitySession || (parsedCommunity && makeCommunitySession(parsedCommunity))
@@ -185,6 +181,18 @@
       !$activeCommunityBootstrapStatus.error,
     ),
   )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityId
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
+  )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapError = $derived(
     $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey
       ? $activeCommunityBootstrapStatus.error || ""
@@ -220,7 +228,7 @@
     ),
   )
   const roomFilterPlan = $derived(
-    communityDefinitionReady && communityId
+    communityDefinitionReady && communityAuthorityReady && communityId
       ? makeCommunityContentFilterPlan(
           [makeCommunityRoomRootsFilter(communityId)],
           roomAuthorPubkeys,
@@ -231,14 +239,16 @@
   const roomRelayFilters = $derived(roomFilterPlan.relayFilters)
   const roomEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: roomFilters})))
   const rooms = $derived(
-    readCommunityRoomRoots($roomEvents, communityId).filter(
-      room => !isCommunityPersonBanned($activeCommunityReportState, room.event.pubkey),
-    ),
+    communityAuthorityReady
+      ? readCommunityRoomRoots($roomEvents, communityId).filter(
+          room => !isCommunityPersonBanned($activeCommunityReportState, room.event.pubkey),
+        )
+      : [],
   )
   const canCreateRoom = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -249,28 +259,14 @@
       }),
     ),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityId &&
-      communityBootstrapReady &&
-      ($activeCommunityPermissionStatus.communityPubkey !== communityId ||
-        !$activeCommunityPermissionStatus.key.startsWith(expectedCommunityPermissionKeyPrefix) ||
-        ($activeCommunityPermissionStatus.loading &&
-          !$activeCommunityPermissionStatus.loaded &&
-          !$activeCommunityPermissionStatus.hasCachedEvents)),
-    ),
-  )
-  const createRoomPermissionLoading = $derived(
-    Boolean(communityPermissionsLoading && !canCreateRoom),
-  )
+  const createRoomPermissionLoading = $derived(Boolean(communityAuthorityLoading && !canCreateRoom))
   const communityHomeCoreReady = $derived(
     isCommunityHomeCoreReady({
       communityPubkey: communityId,
       definitionPubkey: routeCommunityDefinition?.pubkey || "",
       expectedBootstrapKey: expectedCommunityBootstrapKey,
-      expectedPermissionKeyPrefix: expectedCommunityPermissionKeyPrefix,
+      permissionReadiness: communityAuthorityReadiness,
       bootstrapStatus: $activeCommunityBootstrapStatus,
-      permissionStatus: $activeCommunityPermissionStatus,
     }),
   )
   let moderatorInviteEvidenceState = $state<{
@@ -341,7 +337,7 @@
       : ""
   })
   const showPendingModeratorInvites = $derived(
-    !communityPermissionsLoading &&
+    communityAuthorityReadiness === "ready" &&
       isCompleteCommunityModeratorEvidence(
         moderatorInviteEvidenceExpectedKey,
         moderatorInviteEvidenceState,
@@ -381,9 +377,8 @@
       communityPubkey: communityId,
       definitionPubkey: routeCommunityDefinition?.pubkey || "",
       expectedBootstrapKey: expectedCommunityBootstrapKey,
-      expectedPermissionKeyPrefix: expectedCommunityPermissionKeyPrefix,
+      permissionReadiness: communityAuthorityReadiness,
       bootstrapStatus: $activeCommunityBootstrapStatus,
-      permissionStatus: $activeCommunityPermissionStatus,
       roomsPresent: rooms.length > 0,
       expectedRoomCatalogKey: roomCatalogReadinessKey,
       firstRoomCatalogKey: roomRootsFirstAttemptKey,
@@ -398,14 +393,17 @@
     ),
   )
   const roomsUnavailable = $derived(
-    Boolean(communityId && !communityDefinitionReady && showCommunityUnavailable),
+    Boolean(
+      communityId &&
+      ((!communityDefinitionReady && showCommunityUnavailable) || communityAuthorityUnavailable),
+    ),
   )
   const roomsWaitingForRequest = $derived(
     Boolean(roomFilters.length > 0 && (roomRootsLoading || !roomRootsLoaded)),
   )
   const roomsWaitingForPermissions = $derived(
     Boolean(
-      communityPermissionsLoading &&
+      communityAuthorityLoading &&
       communityDefinitionReady &&
       rooms.length === 0 &&
       roomFilters.length === 0,
@@ -973,7 +971,7 @@
           <h3 class="flex items-center gap-2 text-lg font-semibold">
             <Icon icon={Hashtag} />
             {roomsWaitingForPermissions
-              ? "Loading room permissions..."
+              ? "Loading Rooms..."
               : roomsLoading
                 ? "Looking for rooms..."
                 : roomsUnavailable || roomRootsIncomplete
@@ -982,19 +980,26 @@
           </h3>
           <p class="text-sm opacity-70">
             {roomsWaitingForPermissions
-              ? "Checking who can publish rooms before showing room actions."
+              ? "Loading community rooms."
               : roomsLoading
                 ? "Loading community rooms."
                 : roomsUnavailable || roomRootsIncomplete
                   ? "Room history could not be checked completely. Retry when relay access is available."
                   : createRoomPermissionLoading
-                    ? "Loading permissions before showing room actions."
+                    ? "Loading room actions."
                     : canCreateRoom && roomsSettledEmpty
                       ? "Create the first room for this community."
                       : "No rooms have been published yet."}
           </p>
         </div>
-        {#if roomRootsIncomplete}
+        {#if roomsUnavailable}
+          <Button
+            class="btn btn-neutral shrink-0 justify-center"
+            disabled={retryingCommunityBootstrap}
+            onclick={retryCommunityBootstrap}>
+            {retryingCommunityBootstrap ? "Retrying..." : "Retry"}
+          </Button>
+        {:else if roomRootsIncomplete}
           <Button
             class="btn btn-neutral shrink-0 justify-center"
             disabled={roomRootsLoading}

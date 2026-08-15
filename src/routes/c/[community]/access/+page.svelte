@@ -35,6 +35,8 @@
   import {FORM_RESPONSE_KIND, getCommunitySectionDisplayName} from "@app/core/community"
   import {
     activeCommunityAdmissionForms,
+    activeCommunityAdmissionFormReadiness,
+    activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
     activeCommunityDefinition,
     activeCommunityProfileListEvents,
@@ -117,6 +119,27 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
+  const communityBootstrapFailed = $derived(
+    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+  )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityAdmissionFormReadiness = $derived(
+    $activeCommunityAdmissionFormReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAdmissionFormReadiness.state
+      : "loading",
+  )
+  const communityAccessLoading = $derived(
+    communityBootstrapLoading ||
+      (communityBootstrapReady && communityAuthorityReadiness === "loading"),
+  )
+  const communityAccessUnavailable = $derived(
+    communityBootstrapFailed || communityAuthorityReadiness === "unavailable",
+  )
+  const retryCommunityAccess = () => window.location.reload()
   let answers = $state<Record<string, Record<string, string>>>({})
   let otherAnswers = $state<Record<string, Record<string, Record<string, string>>>>({})
   let publishingAccessOpen = $state(true)
@@ -565,8 +588,19 @@
       return
     }
 
-    if (!communityBootstrapReady) {
-      pushToast({theme: "error", message: "Community permissions are still loading."})
+    if (
+      !communityBootstrapReady ||
+      communityAuthorityReadiness !== "ready" ||
+      communityAdmissionFormReadiness !== "ready"
+    ) {
+      pushToast({
+        theme: "error",
+        message:
+          communityAuthorityReadiness === "unavailable" ||
+          communityAdmissionFormReadiness === "unavailable"
+            ? "Membership unavailable."
+            : "Membership is still loading.",
+      })
       return
     }
 
@@ -1023,12 +1057,15 @@
 </PageBar>
 
 <PageContent class="content col-4 p-4">
-  {#if communityBootstrapLoading}
+  {#if communityAccessLoading}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading>Loading community permissions...</Spinner>
+      <Spinner loading>Loading Membership...</Spinner>
     </p>
-  {:else if !communityBootstrapReady || !$activeCommunityDefinition}
-    <p class="py-8 text-center opacity-70">Community definition is not loaded.</p>
+  {:else if communityAccessUnavailable || !communityBootstrapReady || !$activeCommunityDefinition}
+    <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
+      <p>Membership unavailable.</p>
+      <Button class="btn btn-neutral btn-sm" onclick={retryCommunityAccess}>Retry</Button>
+    </div>
   {:else}
     <div class="card2 bg-alt shrink-0 p-4 shadow-md">
       <h2 class="text-xl font-semibold">Your membership and permissions</h2>
@@ -1383,6 +1420,17 @@
                     <p class="rounded-box bg-success/10 p-3 text-sm text-success">
                       Access is granted for this section.
                     </p>
+                  {:else if communityAdmissionFormReadiness === "loading"}
+                    <p class="rounded-box bg-base-200 p-3 text-sm opacity-75">
+                      Loading applications...
+                    </p>
+                  {:else if communityAdmissionFormReadiness === "unavailable"}
+                    <div
+                      class="flex flex-wrap items-center justify-between gap-2 rounded-box bg-base-200 p-3 text-sm">
+                      <span>Applications unavailable.</span>
+                      <Button class="btn btn-neutral btn-sm" onclick={retryCommunityAccess}
+                        >Retry</Button>
+                    </div>
                   {:else if item.form}
                     <form
                       class="flex flex-col gap-3"

@@ -44,7 +44,7 @@ const routes = [
     name: "moderation-access",
     path: `/c/${community}/access`,
     readyText: /Membership|Publishing requests|Your membership and permissions/i,
-    waitForNoText: /Loading community permissions/i,
+    waitForNoText: /Loading Membership/i,
     waitForText: /General|Rooms|Threads|Calendar|8 sections/i,
     finalDelayMs: 3_500,
   },

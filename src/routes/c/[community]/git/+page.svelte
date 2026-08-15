@@ -17,8 +17,8 @@
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
+    activeCommunityAuthorityReadiness,
     activeCommunityDefinition,
-    activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityPublishRelays,
     activeCommunityReportState,
@@ -66,17 +66,23 @@
   const communityBootstrapLoading = $derived(
     Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      communityPubkey &&
-      $activeCommunityPermissionStatus.communityPubkey === communityPubkey &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityBootstrapFailed = $derived(
+    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityAuthorityLoading = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "loading",
+  )
+  const communityAuthorityReady = $derived(
+    communityBootstrapReady && communityAuthorityReadiness === "ready",
+  )
+  const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const repoAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -86,7 +92,7 @@
       : [],
   )
   const directRepoFilterPlan = $derived.by(() =>
-    communityBootstrapReady
+    communityAuthorityReady
       ? makeCommunityContentFilterPlan(
           [makeCommunityRepositoryFilter(communityPubkey)],
           repoAuthorPubkeys,
@@ -101,12 +107,12 @@
       : undefined,
   )
   const communityRepoAssociationFilters = $derived(
-    communityBootstrapReady && communityPubkey
+    communityAuthorityReady && communityPubkey
       ? [makeCommunityTargetingFilter(communityPubkey, [GIT_REPO_ANNOUNCEMENT])]
       : [],
   )
   const communityRepoAssociationFilterPlan = $derived(
-    communityBootstrapReady
+    communityAuthorityReady
       ? makeCommunityContentFilterPlan(communityRepoAssociationFilters, repoAuthorPubkeys)
       : {relayFilters: [], localFilters: []},
   )
@@ -121,7 +127,7 @@
       : undefined,
   )
   const authorizedCommunityRepoAssociationEvents = $derived.by(() =>
-    communityBootstrapReady && $activeCommunityDefinition && $communityRepoAssociationEventsStore
+    communityAuthorityReady && $activeCommunityDefinition && $communityRepoAssociationEventsStore
       ? filterAuthorizedCommunityTargetingEvents({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -150,7 +156,7 @@
       : undefined,
   )
   const repos = $derived.by(() => {
-    if (!communityPubkey || !$activeCommunityDefinition) return []
+    if (!communityPubkey || !communityAuthorityReady || !$activeCommunityDefinition) return []
 
     const associationEvents = authorizedCommunityRepoAssociationEvents
     const candidates = [
@@ -184,7 +190,7 @@
   const canCreateRepo = $derived(
     Boolean(
       $pubkey &&
-      communityBootstrapReady &&
+      communityAuthorityReady &&
       $activeCommunityDefinition &&
       canWriteCommunityTarget({
         definition: $activeCommunityDefinition,
@@ -197,7 +203,7 @@
   )
   const repoSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityBootstrapReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? $activeCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.repository,
     ),
   )
@@ -277,21 +283,27 @@
   let targetedOriginalRequestDone = $state(false)
   let targetedOriginalHistoryIncomplete = $state(false)
   const retryDirectRepoHistory = () => {
+    if (communityBootstrapFailed || communityAuthorityUnavailable) {
+      window.location.reload()
+      return
+    }
     if (!directRepoLoading && !targetedRepoLoading && !targetedOriginalLoading) {
       directRepoRetryVersion += 1
     }
   }
   const reposLoading = $derived(
-    communityBootstrapLoading ||
-      communityPermissionsLoading ||
-      directRepoLoading ||
-      targetedRepoLoading ||
-      targetedOriginalLoading ||
-      (!directRepoLoadSettled && directRepoFilterPlan.relayFilters.length > 0) ||
-      (!targetedRepoRequestDone &&
-        communityRepoAssociationFilterPlan.relayFilters.length > 0 &&
-        repos.length === 0) ||
-      (!targetedOriginalRequestDone && targetedRepoFilterPlan.relayFilters.length > 0),
+    !communityBootstrapFailed &&
+      !communityAuthorityUnavailable &&
+      (communityBootstrapLoading ||
+        communityAuthorityLoading ||
+        directRepoLoading ||
+        targetedRepoLoading ||
+        targetedOriginalLoading ||
+        (!directRepoLoadSettled && directRepoFilterPlan.relayFilters.length > 0) ||
+        (!targetedRepoRequestDone &&
+          communityRepoAssociationFilterPlan.relayFilters.length > 0 &&
+          repos.length === 0) ||
+        (!targetedOriginalRequestDone && targetedRepoFilterPlan.relayFilters.length > 0)),
   )
   const repoHistoryIncomplete = $derived(
     directRepoHistoryIncomplete ||
@@ -560,6 +572,12 @@
       <p class="py-8 text-center opacity-70">
         {#if reposLoading}
           <Spinner loading>Looking for repositories...</Spinner>
+        {:else if communityBootstrapFailed || communityAuthorityUnavailable}
+          <span class="flex flex-col items-center gap-3">
+            Repositories unavailable.
+            <button class="btn btn-neutral btn-sm" type="button" onclick={retryDirectRepoHistory}
+              >Retry</button>
+          </span>
         {:else}
           No repositories found.
         {/if}

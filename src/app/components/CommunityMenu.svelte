@@ -27,7 +27,8 @@
   import {
     activeCommunityDefinition,
     activeCommunityAdmissionForms,
-    activeCommunityPermissionStatus,
+    activeCommunityAdmissionFormReadiness,
+    activeCommunityAuthorityReadiness,
     activeCommunityProfile,
     activeCommunityProfileListEvents,
     activeCommunityReportDeleteEvents,
@@ -108,6 +109,17 @@
     Boolean(communityPicture && failedPicture !== communityPicture),
   )
   const mainRelay = $derived($activeCommunityDefinition?.relays[0] || "")
+  const communityAuthorityReadiness = $derived(
+    $activeCommunityAuthorityReadiness.communityPubkey === community
+      ? $activeCommunityAuthorityReadiness.state
+      : "loading",
+  )
+  const communityAdmissionFormReadiness = $derived(
+    $activeCommunityAdmissionFormReadiness.communityPubkey === community
+      ? $activeCommunityAdmissionFormReadiness.state
+      : "loading",
+  )
+  const communityAuthorityReady = $derived(communityAuthorityReadiness === "ready")
   const homePath = $derived(makeCommunityPath(community))
   const threadsPath = $derived(makeCommunityThreadPath(community))
   const calendarPath = $derived(makeCommunityCalendarPath(community))
@@ -127,7 +139,7 @@
     Boolean($pubkey && normalizePubkey($pubkey) === normalizePubkey(community)),
   )
   const roomAuthorPubkeys = $derived(
-    $activeCommunityDefinition?.pubkey === community
+    communityAuthorityReady && $activeCommunityDefinition?.pubkey === community
       ? getCommunityTargetWriterPubkeys({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -137,7 +149,7 @@
       : [],
   )
   const roomFilterPlan = $derived(
-    community
+    communityAuthorityReady && community
       ? makeCommunityContentFilterPlan([makeCommunityRoomRootsFilter(community)], roomAuthorPubkeys)
       : {relayFilters: [], localFilters: []},
   )
@@ -149,7 +161,7 @@
     ),
   )
   const badgeDefinitionFilters = $derived(
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? makeCommunityBadgeDefinitionFilters({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -161,7 +173,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: badgeDefinitionFilters})),
   )
   const badgeDefinitions = $derived.by(() =>
-    $activeCommunityDefinition
+    communityAuthorityReady && $activeCommunityDefinition
       ? selectCommunityBadgeDefinitions({
           definition: $activeCommunityDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
@@ -187,7 +199,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: profileBadgeFilters})),
   )
   const pendingBadgeAwardCount = $derived.by(() =>
-    $activeCommunityDefinition && $pubkey
+    communityAuthorityReady && $activeCommunityDefinition && $pubkey
       ? getPendingCommunityBadgeAwards({
           definition: $activeCommunityDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
@@ -204,7 +216,7 @@
     const definition = $activeCommunityDefinition
     const userPubkey = $pubkey
 
-    if (!definition || !userPubkey) return false
+    if (!definition || !userPubkey || !communityAuthorityReady) return false
 
     return definition.sections.some(
       section =>
@@ -217,17 +229,13 @@
         }).canGrant,
     )
   })
-  const communityPermissionsLoading = $derived(
-    Boolean(
-      $pubkey &&
-      community &&
-      $activeCommunityPermissionStatus.communityPubkey === community &&
-      $activeCommunityPermissionStatus.loading &&
-      !$activeCommunityPermissionStatus.loaded &&
-      !$activeCommunityPermissionStatus.hasCachedEvents,
-    ),
+  const communityAuthorityLoading = $derived(
+    Boolean($pubkey && community && communityAuthorityReadiness === "loading"),
   )
-  const moderationPermissionLoading = $derived(Boolean(communityPermissionsLoading && !canModerate))
+  const communityAuthorityUnavailable = $derived(
+    Boolean($pubkey && community && communityAuthorityReadiness === "unavailable"),
+  )
+  const moderationAccessLoading = $derived(Boolean(communityAuthorityLoading && !canModerate))
   const grantableAdmissionForms = $derived.by(() => {
     const definition = $activeCommunityDefinition
     const userPubkey = $pubkey
@@ -353,7 +361,11 @@
     return getCommunityContentReportGroups(reports).filter(group => !group.reviewed).length
   })
   const moderationEvidenceLoading = $derived(
-    Boolean(admissionReviewEvidenceLoading || reportReviewEvidenceLoading),
+    Boolean(
+      communityAdmissionFormReadiness === "loading" ||
+      admissionReviewEvidenceLoading ||
+      reportReviewEvidenceLoading,
+    ),
   )
   const pendingModerationReviewCount = $derived(
     pendingModerationApplicationCount + pendingContentReportGroupCount,
@@ -361,6 +373,7 @@
   const canCreateRoom = $derived(
     Boolean(
       $pubkey &&
+      communityAuthorityReady &&
       $activeCommunityDefinition &&
       $activeCommunityDefinition.pubkey === community &&
       canWriteCommunityTarget({
@@ -372,7 +385,7 @@
       }),
     ),
   )
-  const roomPermissionLoading = $derived(Boolean(communityPermissionsLoading && !canCreateRoom))
+  const roomAccessLoading = $derived(Boolean(communityAuthorityLoading && !canCreateRoom))
 
   const goHome = () => goto(homePath, {replaceState})
   const login = () => pushModal(LogIn, {}, {replaceState})
@@ -574,7 +587,7 @@
         </SecondaryNavItem>
       {/if}
 
-      {#if rooms.length > 0 || canCreateRoom || roomPermissionLoading}
+      {#if rooms.length > 0 || canCreateRoom || roomAccessLoading || communityAuthorityUnavailable}
         <SecondaryNavHeader>Rooms</SecondaryNavHeader>
       {/if}
 
@@ -593,9 +606,13 @@
         <SecondaryNavItem {replaceState} onclick={createRoom}>
           <Icon icon={AddCircle} /> Create room
         </SecondaryNavItem>
-      {:else if roomPermissionLoading}
-        <SecondaryNavItem disabled title="Loading room permissions">
-          <Icon icon={AddCircle} /> Loading room permissions
+      {:else if roomAccessLoading}
+        <SecondaryNavItem disabled title="Loading room access">
+          <Icon icon={AddCircle} /> Loading room access
+        </SecondaryNavItem>
+      {:else if communityAuthorityUnavailable}
+        <SecondaryNavItem disabled title="Rooms unavailable">
+          <Icon icon={AddCircle} /> Rooms unavailable
         </SecondaryNavItem>
       {/if}
 
@@ -637,9 +654,13 @@
             {/if}
           </span>
         </SecondaryNavItem>
-      {:else if moderationPermissionLoading}
-        <SecondaryNavItem disabled title="Loading moderation permissions">
+      {:else if moderationAccessLoading}
+        <SecondaryNavItem disabled title="Loading moderation access">
           <Icon icon={ShieldUser} /> Loading moderation access
+        </SecondaryNavItem>
+      {:else if communityAuthorityUnavailable}
+        <SecondaryNavItem {replaceState} href={moderationPath} title="Moderation unavailable">
+          <Icon icon={ShieldUser} /> Moderation unavailable
         </SecondaryNavItem>
       {/if}
 
