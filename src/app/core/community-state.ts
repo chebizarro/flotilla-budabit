@@ -27,7 +27,10 @@ import {
   parseCommunityDefinition,
   parseCommunityInput,
 } from "@app/core/community"
-import {getGrantCapableSectionModeratorPubkeys} from "@app/core/community-permissions"
+import {
+  getCommunityModeratorRefPubkeys,
+  getGrantCapableSectionModeratorPubkeys,
+} from "@app/core/community-permissions"
 import {
   type CommunityAdmissionForm,
   makeCommunityDefinitionAddress,
@@ -77,6 +80,8 @@ import {
   RelayAuthenticationError,
   getRelayPolicy,
 } from "@app/core/relay-policy"
+import {FINITE_RELAY_ADMISSION_TIMEOUT_MS} from "@app/core/finite-relay-request"
+import {recoverActiveNip46Receiver} from "@app/util/nip46"
 
 export const COMMUNITY_SESSION_STORAGE_KEY = "budabit/community-session"
 
@@ -635,8 +640,10 @@ const getCommunityLoadFailure = (results: CommunityRelayLoadResult[]) => {
     : undefined
 }
 
+// Missing profile lists can be pending moderator invitations. Existing list
+// evidence is enough for a safe partial projection; absent lists stay inactive.
 const hasCachedCommunityEventsForFilters = (filters: Filter[]) =>
-  filters.length === 0 || filters.every(filter => repository.query([filter]).length > 0)
+  filters.length === 0 || filters.some(filter => repository.query([filter]).length > 0)
 
 type CommunityPermissionLoadContext = {
   viewerPubkey: string
@@ -1080,10 +1087,30 @@ export const loadCommunityEventsWithStatus = async (
     let disconnected = false
     let rejected = false
     let aborted = false
+    let started = false
+    let terminated = false
     let timeout: ReturnType<typeof setTimeout> | undefined
+    let resolveTermination:
+      | ((outcome: {status: "timeout" | "aborted"; events: TrustedEvent[]}) => void)
+      | undefined
+    const termination = new Promise<{status: "timeout" | "aborted"; events: TrustedEvent[]}>(
+      resolve => {
+        resolveTermination = resolve
+      },
+    )
+    const startTimeout = (delay: number) => {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(() => terminate("timeout"), delay)
+    }
+    const terminate = (status: "timeout" | "aborted") => {
+      if (terminated) return
+      terminated = true
+      resolveTermination?.({status, events: []})
+      controller.abort()
+    }
     const handleAbort = () => {
       aborted = true
-      controller.abort()
+      terminate("aborted")
     }
 
     try {
@@ -1098,13 +1125,21 @@ export const loadCommunityEventsWithStatus = async (
       }
 
       options.signal?.addEventListener("abort", handleAbort, {once: true})
+      startTimeout(Math.max(FINITE_RELAY_ADMISSION_TIMEOUT_MS, timeoutMs))
       const outcome = await Promise.race([
         getCommunityStateLoader(options.priority)({
           relays: [relay],
           filters,
           signal: controller.signal,
           priority: options.priority,
-          onStart: url => options.onStart?.(url),
+          onStart: url => {
+            if (terminated) return
+            if (!started) {
+              started = true
+              startTimeout(timeoutMs)
+            }
+            options.onStart?.(url)
+          },
           onEvent: (event, url) => {
             tracker.addRelay(event.id, url)
             receivedEvents.push(event)
@@ -1119,12 +1154,7 @@ export const loadCommunityEventsWithStatus = async (
         })
           .then(events => ({status: "complete" as const, events}))
           .catch(() => ({status: "failed" as const, events: [] as TrustedEvent[]})),
-        new Promise<{status: "timeout"; events: TrustedEvent[]}>(resolve => {
-          timeout = setTimeout(() => {
-            controller.abort()
-            resolve({status: "timeout", events: []})
-          }, timeoutMs)
-        }),
+        termination,
       ])
       const events = dedupeCommunityEvents([...receivedEvents, ...outcome.events])
       if (options.publishEvents !== false) publishCommunityEvents(events)
@@ -1739,11 +1769,15 @@ export const communityMemberReportStates: Readable<Map<string, EffectiveCommunit
   derived(
     [
       activeUserCommunityDefinitionEvents,
+      communityMemberProfileListEvents,
+      communityModeratorProfileListEvents,
       communityMemberReportEvents,
       communityMemberReportDeleteEvents,
     ],
     ([
       $activeUserCommunityDefinitionEvents,
+      $communityMemberProfileListEvents,
+      $communityModeratorProfileListEvents,
       $communityMemberReportEvents,
       $communityMemberReportDeleteEvents,
     ]) => {
@@ -1756,6 +1790,10 @@ export const communityMemberReportStates: Readable<Map<string, EffectiveCommunit
           definition.pubkey,
           getEffectiveCommunityReportState({
             definition,
+            profileListEvents: dedupeTrustedEvents([
+              ...$communityMemberProfileListEvents,
+              ...$communityModeratorProfileListEvents,
+            ]),
             reportEvents: $communityMemberReportEvents,
             deleteEvents: $communityMemberReportDeleteEvents,
           }),
@@ -2250,13 +2288,7 @@ export const activeUserCommunityProfileListEvents: Readable<TrustedEvent[]> = de
 )
 
 export const getAdmissionFormModeratorPubkeys = (definition: CommunityDefinition) =>
-  Array.from(
-    new Set(
-      definition.sections.flatMap(section =>
-        getGrantCapableSectionModeratorPubkeys({definition, sectionName: section.name}),
-      ),
-    ),
-  )
+  Array.from(new Set([definition.pubkey, ...getCommunityModeratorRefPubkeys({definition})]))
 
 export const makeCommunityAdmissionFormFilters = (definition: CommunityDefinition): Filter[] => {
   const authors = getAdmissionFormModeratorPubkeys(definition)
@@ -2469,15 +2501,22 @@ export const activeCommunityReportReviewEvents: Readable<TrustedEvent[]> = deriv
 )
 
 export const activeCommunityReportState: Readable<EffectiveCommunityReportState> = derived(
-  [activeCommunityDefinition, activeCommunityReportEvents, activeCommunityReportDeleteEvents],
+  [
+    activeCommunityDefinition,
+    activeCommunityProfileListEvents,
+    activeCommunityReportEvents,
+    activeCommunityReportDeleteEvents,
+  ],
   ([
     $activeCommunityDefinition,
+    $activeCommunityProfileListEvents,
     $activeCommunityReportEvents,
     $activeCommunityReportDeleteEvents,
   ]) =>
     $activeCommunityDefinition
       ? getEffectiveCommunityReportState({
           definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
           reportEvents: $activeCommunityReportEvents,
           deleteEvents: $activeCommunityReportDeleteEvents,
         })
@@ -3369,6 +3408,7 @@ export const recoverCommunityBootstrap = async (
   startCommunityPermissionLoadContext()
 
   if (options.recoverAuth && get(pubkey)) {
+    await recoverActiveNip46Receiver().catch(() => false)
     const definition = readCachedCommunityDefinition(session.communityPubkey)
     const relays = normalizeRelays([...(definition?.relays || []), ...session.communityRelayHints])
 

@@ -22,10 +22,6 @@ import {
   makeTargetedPublicationOriginalFilterPlan,
 } from "@app/core/community-feeds"
 import {
-  findCommunityProfileListEvent,
-  isActiveCommunityProfileListEvent,
-} from "@app/core/community-admin"
-import {
   canWriteCommunitySection,
   filterAuthorizedCommunityTargetingEvents,
   getCommunitySectionAuthorityPubkeys,
@@ -209,33 +205,6 @@ const getSectionPermissionDescriptor = (
 const getDescriptorLabel = (descriptor: CommunityEventDescriptor) =>
   descriptor.subtype ? `${descriptor.kind}/${descriptor.subtype}` : String(descriptor.kind)
 
-export const getSectionAuthorityPubkeysWithPendingRefs = ({
-  definition,
-  section,
-  profileListEvents,
-  reportState,
-}: {
-  definition: CommunityDefinition
-  section: CommunitySection
-  profileListEvents: TrustedEvent[]
-  reportState?: EffectiveCommunityReportState
-}) => {
-  const ownerPubkey = normalizePubkey(definition.pubkey)
-  const pubkeys = new Set<string>([ownerPubkey])
-
-  for (const ref of section.profileLists) {
-    const event = findCommunityProfileListEvent(ref, profileListEvents)
-    if (event && !isActiveCommunityProfileListEvent(event)) continue
-
-    const pubkey = normalizePubkey(ref.pubkey)
-    if (pubkey) pubkeys.add(pubkey)
-  }
-
-  return Array.from(pubkeys).filter(
-    pubkey => pubkey === ownerPubkey || !isCommunityPersonBanned(reportState, pubkey),
-  )
-}
-
 export const eventMatchesCommunityEventDescriptor = (
   event: TrustedEvent,
   communityPubkey: string,
@@ -323,20 +292,12 @@ export const resolveCommunityEventDescriptors = ({
     const moderatorPubkeys = Array.from(
       new Set(
         sections.flatMap(section =>
-          [
-            ...getCommunitySectionAuthorityPubkeys({
-              definition,
-              profileListEvents,
-              sectionName: section.name,
-              reportState,
-            }),
-            ...getSectionAuthorityPubkeysWithPendingRefs({
-              definition,
-              section,
-              profileListEvents,
-              reportState,
-            }),
-          ].map(normalizePubkey),
+          getCommunitySectionAuthorityPubkeys({
+            definition,
+            profileListEvents,
+            sectionName: section.name,
+            reportState,
+          }).map(normalizePubkey),
         ),
       ),
     ).filter(Boolean)
@@ -357,10 +318,10 @@ export const resolveCommunityEventDescriptors = ({
       : []
     const moderatorSections = normalizedUser
       ? sections.filter(section =>
-          getSectionAuthorityPubkeysWithPendingRefs({
+          getCommunitySectionAuthorityPubkeys({
             definition,
-            section,
             profileListEvents,
+            sectionName: section.name,
             reportState,
           }).includes(normalizedUser),
         )

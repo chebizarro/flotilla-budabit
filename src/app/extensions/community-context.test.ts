@@ -180,6 +180,34 @@ describe("community widget context", () => {
     })
   })
 
+  it("only grants profile-list manager authority when its active list event exists", () => {
+    const missingManager = resolveCommunityEventDescriptors({
+      definition,
+      profileListEvents: [],
+      userPubkey: calendarWriterPubkey,
+      descriptors: [{kind: EVENT_TIME}],
+    })[0]
+    const owner = resolveCommunityEventDescriptors({
+      definition,
+      profileListEvents: [],
+      userPubkey: communityPubkey,
+      descriptors: [{kind: EVENT_TIME}],
+    })[0]
+    const activeManager = resolveCommunityEventDescriptors({
+      definition,
+      profileListEvents: [calendarProfileList],
+      userPubkey: calendarWriterPubkey,
+      descriptors: [{kind: EVENT_TIME}],
+    })[0]
+
+    expect(missingManager.moderatorPubkeys).toEqual([communityPubkey])
+    expect(missingManager.writerPubkeys).toContain(calendarWriterPubkey)
+    expect(missingManager.capability).toMatchObject({canWrite: true, canModerate: false})
+    expect(owner.capability).toMatchObject({canWrite: true, canModerate: true})
+    expect(activeManager.moderatorPubkeys).toEqual([communityPubkey, calendarWriterPubkey])
+    expect(activeManager.capability).toMatchObject({canWrite: true, canModerate: true})
+  })
+
   it("treats time and date calendar descriptors as one section capability family", () => {
     const resolved = resolveCommunityEventDescriptors({
       definition: dateOnlyCalendarDefinition,

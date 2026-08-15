@@ -40,6 +40,8 @@ export type FiniteRelayRequestDependencies = {
   clearTimer?: (timer: Timer) => void
 }
 
+export const FINITE_RELAY_ADMISSION_TIMEOUT_MS = 30_000
+
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error || "Unknown request error")
 
@@ -127,7 +129,7 @@ export const createFiniteRelayRequester = (dependencies: FiniteRelayRequestDepen
 
       options.signal?.addEventListener("abort", onCallerAbort, {once: true})
       startTimer(
-        Math.max(30_000, options.timeoutMs),
+        Math.max(FINITE_RELAY_ADMISSION_TIMEOUT_MS, options.timeoutMs),
         "Request could not start because the relay subscription queue remained full",
       )
 

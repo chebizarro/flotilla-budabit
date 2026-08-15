@@ -23,6 +23,7 @@ import {
 } from "@app/core/event-edits"
 import {CALENDAR_EVENT_KINDS, getCalendarEventRange} from "@app/core/calendar-events"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+import {FINITE_RELAY_ADMISSION_TIMEOUT_MS} from "@app/core/finite-relay-request"
 
 // Utils
 
@@ -211,22 +212,28 @@ export const createBoundedCommunityHistoryLoader = (
       filters: Filter[],
     ): Promise<CommunityHistoryPageResult> => {
       const controller = new AbortController()
-      const requestSignal = signal
-        ? AbortSignal.any([signal, controller.signal])
-        : controller.signal
       const eventsById = new Map<string, TrustedEvent>()
       let sawEose = false
       let interrupted = false
       let timedOut = false
+      let started = false
+      let terminated = false
       let timer: ReturnType<typeof setTimeout> | undefined
       let resolveTermination: (() => void) | undefined
 
       const termination = new Promise<void>(resolve => {
         resolveTermination = resolve
       })
-      const terminate = () => {
-        controller.abort()
+      const startTimeout = (delay: number) => {
+        if (timer) clearTimer(timer)
+        timer = setTimer(() => terminate(true), delay)
+      }
+      const terminate = (timeout = false) => {
+        if (terminated) return
+        terminated = true
+        timedOut ||= timeout
         resolveTermination?.()
+        controller.abort()
       }
       const onCallerAbort = () => terminate()
       const receiveEvent = (event: TrustedEvent, eventRelay: string) => {
@@ -236,10 +243,7 @@ export const createBoundedCommunityHistoryLoader = (
       }
 
       signal?.addEventListener("abort", onCallerAbort, {once: true})
-      timer = setTimer(() => {
-        timedOut = true
-        terminate()
-      }, timeoutMs)
+      startTimeout(Math.max(FINITE_RELAY_ADMISSION_TIMEOUT_MS, timeoutMs))
 
       const pending = Promise.resolve()
         .then(() =>
@@ -250,7 +254,12 @@ export const createBoundedCommunityHistoryLoader = (
             lifetime: "finite",
             priority,
             owner,
-            signal: requestSignal,
+            signal: controller.signal,
+            onStart: () => {
+              if (terminated || started) return
+              started = true
+              startTimeout(timeoutMs)
+            },
             onEvent: receiveEvent,
             onDuplicate: receiveEvent,
             onEose: () => {

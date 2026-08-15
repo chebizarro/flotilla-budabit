@@ -15,6 +15,9 @@
     activeCommunityProfileListEvents,
     activeCommunityReportState,
     activeCommunityRelays,
+    activeCommunitySession,
+    makeCommunitySession,
+    recoverCommunityBootstrap,
   } from "@app/core/community-state"
   import {FORM_RESPONSE_KIND} from "@app/core/community"
   import {
@@ -239,9 +242,26 @@
               ? "Request access"
               : "Access options",
   )
+  let retryingAccess = $state(false)
 
   const login = () => pushModal(LogIn)
-  const retryAccess = () => window.location.reload()
+  const retryAccess = async () => {
+    const session =
+      $activeCommunitySession ||
+      (parsedCommunity
+        ? makeCommunitySession(parsedCommunity, $activeCommunityDefinition)
+        : undefined)
+    if (!session || retryingAccess) return
+
+    retryingAccess = true
+    try {
+      await recoverCommunityBootstrap(session, {recoverAuth: true})
+    } catch (error) {
+      console.warn("[community-access] Failed to recover community access", error)
+    } finally {
+      retryingAccess = false
+    }
+  }
 
   $effect(() => {
     if (!communityBootstrapReady || $activeCommunityRelays.length === 0) return
@@ -264,9 +284,10 @@
   <Button
     type="button"
     class={className}
+    disabled={retryingAccess}
     title={$activeCommunityBootstrapStatus.error || reason}
     onclick={retryAccess}>
-    {compact ? "Retry" : "Retry access"}
+    {retryingAccess ? "Retrying..." : compact ? "Retry" : "Retry access"}
   </Button>
 {:else if gateAccessLoading}
   <Button type="button" class={className} disabled title={reason}>

@@ -449,9 +449,12 @@ describe("community relay loading", () => {
       result: {complete: boolean; timedOutRelays: string[]}
       terminal: boolean
     }> = []
-    loadMock.mockImplementation(({relays}: {relays: string[]}) =>
-      relays[0] === relayB ? new Promise(() => undefined) : Promise.resolve([profileListEvent]),
-    )
+    loadMock.mockImplementation(({relays, onStart}: {relays: string[]; onStart?: () => void}) => {
+      onStart?.()
+      return relays[0] === relayB
+        ? new Promise(() => undefined)
+        : Promise.resolve([profileListEvent])
+    })
 
     await loadCommunityEventsWithStatus([relayA, relayB], [{kinds: [PROFILE_LIST_KIND]}], {
       timeout: 100,
@@ -516,7 +519,10 @@ describe("community relay loading", () => {
       loadCommunityEventsWithStatus([relayA], [{kinds: [PROFILE_LIST_KIND]}]),
     ).resolves.toEqual({events: [], complete: true, timedOutRelays: [], failedRelays: []})
 
-    loadMock.mockReturnValueOnce(new Promise(() => undefined))
+    loadMock.mockImplementationOnce(({onStart}: {onStart?: () => void}) => {
+      onStart?.()
+      return new Promise(() => undefined)
+    })
     const pending = loadCommunityEventsWithStatus([relayA], [{kinds: [PROFILE_LIST_KIND]}], {
       timeout: 100,
     })
@@ -528,6 +534,82 @@ describe("community relay loading", () => {
       timedOutRelays: [relayA],
       failedRelays: [],
     })
+  })
+
+  it("starts the relay timeout when queued work physically starts", async () => {
+    loadMock.mockImplementationOnce(
+      ({onStart, signal}: any) =>
+        new Promise(resolve => {
+          setTimeout(() => onStart?.(relayA), 5000)
+          signal?.addEventListener("abort", () => resolve([]), {once: true})
+        }),
+    )
+    let settled = false
+    const pending = loadCommunityEventsWithStatus([relayA], [{kinds: [PROFILE_LIST_KIND]}], {
+      timeout: 100,
+    }).then(result => {
+      settled = true
+      return result
+    })
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(99)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(pending).resolves.toMatchObject({
+      complete: false,
+      timedOutRelays: [relayA],
+    })
+  })
+
+  it("uses a separate admission deadline while relay work remains queued", async () => {
+    loadMock.mockImplementationOnce(
+      ({signal}: any) =>
+        new Promise(resolve => {
+          signal?.addEventListener("abort", () => resolve([]), {once: true})
+        }),
+    )
+    let settled = false
+    const pending = loadCommunityEventsWithStatus([relayA], [{kinds: [PROFILE_LIST_KIND]}], {
+      timeout: 100,
+    }).then(result => {
+      settled = true
+      return result
+    })
+
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(pending).resolves.toMatchObject({
+      complete: false,
+      timedOutRelays: [relayA],
+    })
+  })
+
+  it("settles queued relay work immediately when the caller aborts", async () => {
+    const controller = new AbortController()
+    loadMock.mockImplementationOnce(
+      ({signal}: any) =>
+        new Promise(resolve => {
+          signal?.addEventListener("abort", () => resolve([]), {once: true})
+        }),
+    )
+    const pending = loadCommunityEventsWithStatus([relayA], [{kinds: [PROFILE_LIST_KIND]}], {
+      signal: controller.signal,
+      timeout: 100,
+    })
+
+    controller.abort()
+
+    await expect(pending).resolves.toEqual({
+      events: [],
+      complete: false,
+      timedOutRelays: [],
+      failedRelays: [],
+    })
+    expect(loadMock.mock.calls[0][0].signal.aborted).toBe(true)
   })
 
   it("does not treat non-empty authority filters as complete without relays", async () => {
@@ -581,7 +663,8 @@ describe("community relay loading", () => {
   })
 
   it("retains and publishes events received before a timeout", async () => {
-    loadMock.mockImplementationOnce(({onEvent}: any) => {
+    loadMock.mockImplementationOnce(({onEvent, onStart}: any) => {
+      onStart?.(relayA)
       onEvent(profileListEvent, relayA)
       return new Promise(() => undefined)
     })
@@ -978,13 +1061,16 @@ describe("community relay loading", () => {
 
   it("times out community definition loads after three seconds", async () => {
     fromPubkeysMock.mockReturnValue({getUrls: () => [relayA]})
-    loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
-      if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
-        return new Promise(() => undefined)
-      }
+    loadMock.mockImplementation(
+      ({relays, filters, onStart}: {relays: string[]; filters: Filter[]; onStart?: () => void}) => {
+        if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
+          onStart?.()
+          return new Promise(() => undefined)
+        }
 
-      return Promise.resolve([])
-    })
+        return Promise.resolve([])
+      },
+    )
 
     let settled = false
     const definitionPromise = loadCommunityDefinitionWithOutboxFallback(communityPubkey, {
@@ -1035,7 +1121,47 @@ describe("community relay loading", () => {
     })
   })
 
-  it("stays loading until slower relays cover every authority filter", async () => {
+  it("keeps partial authority evidence usable when other referenced lists are pending", async () => {
+    loadMock.mockImplementation(({relays, filters, onClosed, onEvent}: any) => {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
+        return Promise.resolve([twoListDefinitionEvent])
+      }
+      if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([])
+      if (hasKind(filters, PROFILE_LIST_KIND)) {
+        if (relays[0] === relayA) {
+          onEvent?.(profileListEvent, relayA)
+          return Promise.resolve([profileListEvent])
+        }
+
+        onClosed?.("temporarily unavailable", relayB)
+        return Promise.resolve([])
+      }
+
+      return Promise.resolve([])
+    })
+
+    await loadCommunityBootstrap({
+      communityPubkey,
+      communityRelayHints: [relayA, relayB],
+    })
+    await flushPromises()
+
+    const status = get(activeCommunityPermissionStatus)
+    expect(status).toMatchObject({
+      loaded: true,
+      complete: false,
+      hasCachedEvents: true,
+    })
+    expect(
+      getCommunityPermissionReadiness({
+        status,
+        communityPubkey,
+        expectedKeyPrefix: `${status.key.slice(0, status.key.lastIndexOf(":"))}:`,
+      }),
+    ).toBe("ready")
+  })
+
+  it("keeps refreshing slower relays after partial authority becomes usable", async () => {
     let resolveSecondaryList: (events: TrustedEvent[]) => void = () => {}
     const secondaryListLoad = new Promise<TrustedEvent[]>(resolve => {
       resolveSecondaryList = resolve
@@ -1059,9 +1185,9 @@ describe("community relay loading", () => {
 
     expect(get(activeCommunityPermissionStatus)).toMatchObject({
       loading: true,
-      loaded: false,
+      loaded: true,
       complete: false,
-      hasCachedEvents: false,
+      hasCachedEvents: true,
     })
 
     resolveSecondaryList([secondProfileListEvent])

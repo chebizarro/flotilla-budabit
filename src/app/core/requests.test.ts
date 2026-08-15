@@ -666,6 +666,123 @@ describe("requests", () => {
     ).resolves.toEqual({events: [], complete: false, timedOut: false, saturated: false})
   })
 
+  it("does not consume the bounded history timeout while a request remains queued", async () => {
+    vi.useFakeTimers()
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://queued-bounded-history.test"
+    const request = vi.fn(
+      (options: RequestOptions) =>
+        new Promise(resolve => {
+          options.signal?.addEventListener("abort", () => resolve([]), {once: true})
+        }),
+    )
+    const loadHistory = createBoundedCommunityHistoryLoader({
+      request,
+      publish: vi.fn(),
+      track: vi.fn(),
+    })
+    let settled = false
+
+    try {
+      const pending = loadHistory({
+        relays: [relay],
+        relayFilters: [{kinds: [9]}],
+        localFilters: [{kinds: [9]}],
+        timeoutMs: 1000,
+      }).then(result => {
+        settled = true
+        return result
+      })
+
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toEqual({
+        events: [],
+        complete: false,
+        timedOut: true,
+        saturated: false,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("starts the bounded history timeout when queued work physically starts", async () => {
+    vi.useFakeTimers()
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://delayed-bounded-history.test"
+    const request = vi.fn(
+      (options: RequestOptions) =>
+        new Promise(resolve => {
+          setTimeout(() => options.onStart?.(relay), 5000)
+          options.signal?.addEventListener("abort", () => resolve([]), {once: true})
+        }),
+    )
+    const loadHistory = createBoundedCommunityHistoryLoader({
+      request,
+      publish: vi.fn(),
+      track: vi.fn(),
+    })
+    let settled = false
+
+    try {
+      const pending = loadHistory({
+        relays: [relay],
+        relayFilters: [{kinds: [9]}],
+        localFilters: [{kinds: [9]}],
+        timeoutMs: 1000,
+      }).then(result => {
+        settled = true
+        return result
+      })
+
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toMatchObject({complete: false, timedOut: true})
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("settles queued bounded history immediately when the caller aborts", async () => {
+    const {createBoundedCommunityHistoryLoader} = await import("./requests")
+    const relay = "wss://aborted-bounded-history.test"
+    const controller = new AbortController()
+    const request = vi.fn(
+      (options: RequestOptions) =>
+        new Promise(resolve => {
+          options.signal?.addEventListener("abort", () => resolve([]), {once: true})
+        }),
+    )
+    const loadHistory = createBoundedCommunityHistoryLoader({
+      request,
+      publish: vi.fn(),
+      track: vi.fn(),
+    })
+    const pending = loadHistory({
+      relays: [relay],
+      relayFilters: [{kinds: [9]}],
+      localFilters: [{kinds: [9]}],
+      signal: controller.signal,
+      timeoutMs: 1000,
+    })
+
+    controller.abort()
+
+    await expect(pending).resolves.toEqual({
+      events: [],
+      complete: false,
+      timedOut: false,
+      saturated: false,
+    })
+    expect(request.mock.calls[0][0].signal?.aborted).toBe(true)
+  })
+
   it("admits a writer beyond one thousand without putting the ACL on the wire", async () => {
     const {createBoundedCommunityHistoryLoader} = await import("./requests")
     const relay = "wss://large-community-history.test"
