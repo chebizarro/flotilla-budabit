@@ -1,5 +1,11 @@
 import {describe, expect, it} from "vitest"
-import {BADGE_DEFINITION, EVENT_DATE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
+import {
+  BADGE_DEFINITION,
+  EVENT_DATE,
+  EVENT_TIME,
+  matchFilters,
+  type TrustedEvent,
+} from "@welshman/util"
 import {
   COMMUNITY_DEFINITION_KIND,
   FORM_RESPONSE_KIND,
@@ -42,6 +48,7 @@ import {
   getGrantCapability,
 } from "./community-permissions"
 import type {EffectiveCommunityReportState} from "./community-reports"
+import {makeCommunityContentFilterPlan} from "./community-feeds"
 
 const communityPubkey = "a".repeat(64)
 const memberPubkey = "b".repeat(64)
@@ -733,7 +740,7 @@ describe("community permissions", () => {
     ).toBe("Events")
   })
 
-  it("keeps date-based and time-based calendar permissions distinct", () => {
+  it("keeps calendar mappings distinct while either grant admits both event kinds", () => {
     const dateOnlyDefinition = parseCommunityDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
@@ -837,12 +844,64 @@ describe("community permissions", () => {
         userPubkey: outsiderPubkey,
       }),
     ).toBe(false)
-    expect(
-      getCommunityCalendarTargetWriterPubkeys({
+    const dateGrantWriters = getCommunityCalendarTargetWriterPubkeys({
+      definition: dateOnlyDefinition,
+      profileListEvents: [dateProfileList],
+    })
+    const timeGrantWriters = getCommunityCalendarTargetWriterPubkeys({
+      definition: timeOnlyDefinition,
+      profileListEvents: [timeProfileList],
+    })
+    expect(dateGrantWriters).toContain(memberPubkey)
+    expect(timeGrantWriters).toContain(memberPubkey)
+
+    for (const {definition, profileListEvents, writers, admittedKind} of [
+      {
         definition: dateOnlyDefinition,
         profileListEvents: [dateProfileList],
-      }),
-    ).toContain(memberPubkey)
+        writers: dateGrantWriters,
+        admittedKind: EVENT_TIME,
+      },
+      {
+        definition: timeOnlyDefinition,
+        profileListEvents: [timeProfileList],
+        writers: timeGrantWriters,
+        admittedKind: EVENT_DATE,
+      },
+    ]) {
+      const directEvent = makeEvent({
+        pubkey: memberPubkey,
+        kind: admittedKind,
+        tags: [
+          ["d", `calendar-${admittedKind}`],
+          ["h", communityPubkey],
+        ],
+      })
+      const directPlan = makeCommunityContentFilterPlan(
+        [{kinds: [admittedKind], "#h": [communityPubkey]}],
+        writers,
+      )
+      expect(matchFilters(directPlan.localFilters, directEvent)).toBe(true)
+
+      const wrapper = makeEvent({
+        pubkey: memberPubkey,
+        kind: TARGETED_PUBLICATION_KIND,
+        tags: buildTargetedPublication({
+          id: `calendar-wrapper-${admittedKind}`,
+          kind: admittedKind,
+          ref: {type: "e", value: directEvent.id},
+          communities: [{pubkey: communityPubkey}],
+        }).tags,
+      })
+      expect(
+        filterAuthorizedCommunityTargetingEvents({
+          definition,
+          profileListEvents,
+          events: [wrapper],
+          kinds: [admittedKind],
+        }),
+      ).toEqual([wrapper])
+    }
   })
 
   it("matches widget grants in the custom section assigned to kind 30033", () => {

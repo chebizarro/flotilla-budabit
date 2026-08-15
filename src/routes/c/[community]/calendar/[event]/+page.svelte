@@ -62,6 +62,7 @@
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
     filterAuthorizedCommunityTargetingEvents,
+    getCommunityCalendarTargetWriterPubkeys,
     getCommunityCalendarWriteTargetSectionName,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
@@ -140,21 +141,14 @@
     ),
   )
   const commentAccessMessage = $derived(`Request ${commentSectionName} access to comment.`)
-  const calendarWriterPubkeysByKind = $derived.by(
-    () =>
-      new Map(
-        COMMUNITY_CALENDAR_WRITE_TARGETS.map(target => [
-          target.kind,
-          communityAuthorityReady && $activeCommunityDefinition
-            ? getCommunityTargetWriterPubkeys({
-                definition: $activeCommunityDefinition,
-                profileListEvents: $activeCommunityProfileListEvents,
-                target,
-                reportState: $activeCommunityReportState,
-              })
-            : [],
-        ]),
-      ),
+  const calendarWriterPubkeys = $derived(
+    communityAuthorityReady && $activeCommunityDefinition
+      ? getCommunityCalendarTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
   )
   const commentAuthorPubkeys = $derived(
     communityAuthorityReady && $activeCommunityDefinition
@@ -198,7 +192,7 @@
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
         [makeCommunityTargetingFilter(communityPubkey, [target.kind])],
-        calendarWriterPubkeysByKind.get(target.kind) || [],
+        calendarWriterPubkeys,
       )
       relayFilters.push(...plan.relayFilters)
       localFilters.push(...plan.localFilters)
@@ -245,10 +239,7 @@
           "#h": [communityPubkey],
         })
       }
-      const plan = makeCommunityContentFilterPlan(
-        structuralFilters,
-        calendarWriterPubkeysByKind.get(target.kind) || [],
-      )
+      const plan = makeCommunityContentFilterPlan(structuralFilters, calendarWriterPubkeys)
       relayFilters.push(...plan.relayFilters)
       localFilters.push(...plan.localFilters)
     }

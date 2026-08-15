@@ -34,6 +34,24 @@ describe("community targeted publication routes", () => {
     expect(routes.permalinks).toContain("targetedPermalinkFilterPlan.localFilters")
   })
 
+  it("uses aggregate calendar writers for both direct events and wrappers", () => {
+    for (const source of [routes.calendar, routes.calendarDetail]) {
+      expect(source).toContain("getCommunityCalendarTargetWriterPubkeys({")
+      expect(source).toContain("calendarWriterPubkeys")
+      expect(source).not.toContain("calendarWriterPubkeysByKind")
+    }
+  })
+
+  it("passes centrally authorized wrappers into layout follow-up discovery", () => {
+    const layout = readProjectFile("../../routes/c/[community]/+layout.svelte")
+
+    expect(layout).toContain("filterAuthorizedCommunityTargetingEvents({")
+    expect(layout).toContain("targetingEvents: authorizedCommunityTargetingEvents")
+    expect(layout.indexOf("filterAuthorizedCommunityTargetingEvents({")).toBeLessThan(
+      layout.indexOf("buildCommunityFiniteFollowUpRelayPlans({"),
+    )
+  })
+
   it("uses bounded split-filter detail history and retains incomplete warnings", () => {
     expect(routes.calendarDetail).toContain("relayFilters: eventRelayFilters")
     expect(routes.calendarDetail).toContain("localFilters: eventFilters")

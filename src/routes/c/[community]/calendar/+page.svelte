@@ -46,6 +46,7 @@
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
     filterAuthorizedCommunityTargetingEvents,
+    getCommunityCalendarTargetWriterPubkeys,
     getCommunityCalendarWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
@@ -125,21 +126,14 @@
     getCommunityCalendarWriteTargetSectionName(
       communityAuthorityReady ? $activeCommunityDefinition : undefined,
     )
-  const calendarWriterPubkeysByKind = $derived.by(
-    () =>
-      new Map(
-        COMMUNITY_CALENDAR_WRITE_TARGETS.map(target => [
-          target.kind,
-          communityAuthorityReady && $activeCommunityDefinition
-            ? getCommunityTargetWriterPubkeys({
-                definition: $activeCommunityDefinition,
-                profileListEvents: $activeCommunityProfileListEvents,
-                target,
-                reportState: $activeCommunityReportState,
-              })
-            : [],
-        ]),
-      ),
+  const calendarWriterPubkeys = $derived(
+    communityAuthorityReady && $activeCommunityDefinition
+      ? getCommunityCalendarTargetWriterPubkeys({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          reportState: $activeCommunityReportState,
+        })
+      : [],
   )
   const targetingFilterPlan = $derived.by(() => {
     const relayFilters: Filter[] = []
@@ -149,7 +143,7 @@
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
         [makeCommunityTargetingFilter(communityPubkey, [target.kind])],
-        calendarWriterPubkeysByKind.get(target.kind) || [],
+        calendarWriterPubkeys,
       )
       relayFilters.push(...plan.relayFilters)
       localFilters.push(...plan.localFilters)
@@ -223,7 +217,7 @@
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
         [{kinds: [target.kind], "#h": [communityPubkey]}],
-        calendarWriterPubkeysByKind.get(target.kind) || [],
+        calendarWriterPubkeys,
       )
       relayFilters.push(...plan.relayFilters)
       localFilters.push(...plan.localFilters)

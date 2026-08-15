@@ -15,6 +15,7 @@ import type {TrustedEvent} from "@welshman/util"
 import {
   COMMENT,
   DELETE,
+  EVENT_DATE,
   EVENT_TIME,
   MESSAGE,
   REACTION,
@@ -2633,6 +2634,65 @@ describe("notification sources", () => {
         targetEvents: [implicitCalendar, implicitWrapper],
       }),
     ).toEqual([])
+  })
+
+  it("admits either calendar event kind through the opposite calendar grant", async () => {
+    const {buildEngagementNotificationRows} = await import("./notification-sources")
+
+    for (const [grantedKind, admittedKind] of [
+      [EVENT_TIME, EVENT_DATE],
+      [EVENT_DATE, EVENT_TIME],
+    ] as const) {
+      const ref = makeCommunityRef()
+      const calendarSection = ref.definition.sections.find(
+        section => section.name === COMMUNITY_SECTION_CALENDAR,
+      )!
+      const calendar = makeEvent({
+        id: `cross-kind-calendar-${admittedKind}`,
+        kind: admittedKind,
+        pubkey: viewer,
+        tags: [["d", `cross-kind-calendar-${admittedKind}`]],
+      })
+      const reaction = makeEvent({
+        id: `cross-kind-reaction-${admittedKind}`,
+        kind: REACTION,
+        pubkey: writer,
+        tags: [
+          ["e", calendar.id],
+          ["p", viewer],
+        ],
+      })
+      const wrapper = makeTargetingEvent({
+        id: `cross-kind-wrapper-${admittedKind}`,
+        kind: admittedKind,
+        originalId: calendar.id,
+        pubkey: writer,
+      })
+
+      ref.definition = {
+        ...ref.definition,
+        sections: ref.definition.sections.map(section =>
+          section === calendarSection ? {...section, kinds: [{kind: grantedKind}]} : section,
+        ),
+      }
+
+      expect(
+        buildEngagementNotificationRows({
+          events: [reaction],
+          targetEvents: [calendar, wrapper],
+          refs: [ref],
+          profileListEvents: [makeProfileList(), makeProfileList(calendarProfileListAddress)],
+          reportStates: new Map([[communityPubkey, emptyReportState]]),
+          currentPubkey: viewer,
+        }),
+      ).toEqual([
+        expect.objectContaining({
+          type: "reaction",
+          source: "community",
+          path: expect.stringContaining(`/calendar/${calendar.id}`),
+        }),
+      ])
+    }
   })
 
   it("uses current same-author wrapper replacements and deletions", async () => {

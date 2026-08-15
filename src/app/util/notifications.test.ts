@@ -159,6 +159,27 @@ describe("notifications", () => {
     expect(targetedStore).toContain("localFilters: targetingFilterPlan.localFilters")
     expect(targetedStore).toContain("owner: `notifications-community-targets:${permissionKey}`")
     expect(targetedStore).toContain("owner: `notifications-community-originals:${permissionKey}`")
+    expect(targetedStore).toContain("getCommunityCalendarTargetWriterPubkeys({")
+    expect(targetedStore).toContain("aggregateCalendarWriters")
+
+    const calendarStore = source.slice(
+      source.indexOf("const calendarRootNotificationCandidates"),
+      source.indexOf("const goalRootNotificationCandidates"),
+    )
+    expect(calendarStore).toContain("aggregateCalendarWriters: true")
+  })
+
+  it("uses aggregate calendar admission in global notification discovery", () => {
+    const source = readFileSync("src/app/util/notification-sources.ts", "utf8")
+    const targetingSources = source.slice(
+      source.indexOf("const globalCommunityTargetingSources"),
+      source.indexOf("const globalCommunityTargetingCandidateLoad"),
+    )
+
+    expect(source).toContain("hasCommunityCalendarGrantEvidence")
+    expect(targetingSources).toContain("getCommunityCalendarTargetWriterPubkeys({")
+    expect(targetingSources).toContain("calendarGrantEvidenceComplete")
+    expect(targetingSources).not.toContain("calendarWriterPubkeysByKind")
   })
 
   it("matches repo notification helpers against canonical git routes", async () => {

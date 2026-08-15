@@ -42,8 +42,8 @@
     makeCommunitySession,
     setActiveCommunityInput,
   } from "@app/core/community-state"
-  import {FORM_RESPONSE_KIND, normalizePubkey, parseTargetedPublication} from "@app/core/community"
-  import {canWriteCommunityTarget} from "@app/core/community-permissions"
+  import {FORM_RESPONSE_KIND, normalizePubkey} from "@app/core/community"
+  import {filterAuthorizedCommunityTargetingEvents} from "@app/core/community-permissions"
   import {
     COMMUNITY_EXCLUSIVE_KINDS,
     COMMUNITY_TARGETABLE_KINDS,
@@ -154,23 +154,16 @@
     deriveEventsAsc(deriveEventsById({repository, filters: communityTargetingFilters})),
   )
   const authorizedCommunityTargetingEvents = $derived(
-    $communityTargetingEventsStore.filter(event => {
-      const targeting = parseTargetedPublication(event)
-
-      return Boolean(
-        targeting &&
-        $activeCommunityDefinition &&
-        $activeCommunityAuthorityReadiness.communityPubkey === $activeCommunityDefinition.pubkey &&
-        $activeCommunityAuthorityReadiness.state === "ready" &&
-        canWriteCommunityTarget({
+    $activeCommunityDefinition &&
+      $activeCommunityAuthorityReadiness.communityPubkey === $activeCommunityDefinition.pubkey &&
+      $activeCommunityAuthorityReadiness.state === "ready"
+      ? filterAuthorizedCommunityTargetingEvents({
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
-          userPubkey: event.pubkey,
-          target: {sectionName: "", kind: targeting.kind},
+          events: $communityTargetingEventsStore,
           reportState: $activeCommunityReportState,
-        }),
-      )
-    }),
+        })
+      : [],
   )
   const effectiveCommunityReportEvents = $derived(
     [...$activeCommunityReportState.eventReports, ...$activeCommunityReportState.personReports].map(

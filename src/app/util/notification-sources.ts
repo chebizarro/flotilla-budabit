@@ -101,9 +101,12 @@ import {readCommunityCalendarEventReply} from "@app/core/community-calendar"
 import {readCommunityRoomMessage} from "@app/core/community-messages"
 import {readCommunityThread, readCommunityThreadReply} from "@app/core/community-threads"
 import {
+  COMMUNITY_CALENDAR_WRITE_TARGETS,
   COMMUNITY_WRITE_TARGETS,
   canWriteCommunityTarget,
   filterAuthorizedCommunityTargetingEvents,
+  getCommunityCalendarTargetWriterPubkeys,
+  getCommunityCalendarWriteTargetSections,
   getGrantCapability,
   getGrantCapableSectionModeratorPubkeys,
   getCommunityWriteTarget,
@@ -510,6 +513,30 @@ const hasCommunityGrantEvidence = ({
   )
 }
 
+const hasCommunityCalendarGrantEvidence = ({
+  ref,
+  profileListEvents,
+  reportStates,
+}: {
+  ref: ActiveUserCommunityRef
+  profileListEvents: TrustedEvent[]
+  reportStates?: UserCommunityReportStates
+}) => {
+  const sections = getCommunityCalendarWriteTargetSections(ref.definition)
+
+  return (
+    sections.length > 0 &&
+    sections.every(section =>
+      hasCommunitySectionEvidence({
+        ref,
+        sectionName: section.name,
+        profileListEvents,
+        reportStates,
+      }),
+    )
+  )
+}
+
 const isCommunityEventAdmitted = ({
   event,
   ref,
@@ -558,10 +585,11 @@ const isTargetableCommunityOriginalAdmitted = ({
 }) => {
   if (!COMMUNITY_TARGETABLE_KIND_SET.has(event.kind)) return false
   const target = getCommunityWriteTarget(event.kind)
-  if (
-    requireCompleteEvidence &&
-    (!target || !hasCommunityGrantEvidence({ref, target, profileListEvents, reportStates}))
-  ) {
+  const hasGrantEvidence =
+    event.kind === EVENT_DATE || event.kind === EVENT_TIME
+      ? hasCommunityCalendarGrantEvidence({ref, profileListEvents, reportStates})
+      : Boolean(target && hasCommunityGrantEvidence({ref, target, profileListEvents, reportStates}))
+  if (requireCompleteEvidence && !hasGrantEvidence) {
     return false
   }
 
@@ -4501,29 +4529,46 @@ const globalCommunityTargetingSources = derived(
       const reportState = getReportState($reportStates, ref.communityPubkey)
       const relayFilters: Filter[] = []
       const localFilters: Filter[] = []
+      const calendarGrantEvidenceComplete = hasCommunityCalendarGrantEvidence({
+        ref,
+        profileListEvents: $profileListEvents,
+        reportStates: $reportStates,
+      })
+      const calendarWriterPubkeys = calendarGrantEvidenceComplete
+        ? getCommunityCalendarTargetWriterPubkeys({
+            definition: ref.definition,
+            profileListEvents: $profileListEvents,
+            reportState,
+          })
+        : []
 
       for (const kind of TARGETED_PUBLICATION_KINDS) {
         const target = getCommunityWriteTarget(kind)
         if (!target) continue
+        const calendarKind = COMMUNITY_CALENDAR_WRITE_TARGETS.some(target => target.kind === kind)
 
         const structuralFilters = [makeCommunityTargetingFilter(ref.communityPubkey, [kind])]
         relayFilters.push(...structuralFilters)
         if (
-          !hasCommunityGrantEvidence({
-            ref,
-            target,
-            profileListEvents: $profileListEvents,
-            reportStates: $reportStates,
-          })
+          calendarKind
+            ? !calendarGrantEvidenceComplete
+            : !hasCommunityGrantEvidence({
+                ref,
+                target,
+                profileListEvents: $profileListEvents,
+                reportStates: $reportStates,
+              })
         ) {
           continue
         }
-        const authors = getCommunityTargetWriterPubkeys({
-          definition: ref.definition,
-          profileListEvents: $profileListEvents,
-          target,
-          reportState,
-        })
+        const authors = calendarKind
+          ? calendarWriterPubkeys
+          : getCommunityTargetWriterPubkeys({
+              definition: ref.definition,
+              profileListEvents: $profileListEvents,
+              target,
+              reportState,
+            })
         localFilters.push(
           ...makeCommunityContentFilterPlan(structuralFilters, authors).localFilters,
         )

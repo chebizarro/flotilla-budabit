@@ -32,6 +32,7 @@ import {
   COMMUNITY_CALENDAR_WRITE_TARGETS,
   COMMUNITY_WRITE_TARGETS,
   filterAuthorizedCommunityTargetingEvents,
+  getCommunityCalendarTargetWriterPubkeys,
   getCommunityTargetWriterPubkeys,
   type CommunityWriteTarget,
 } from "@app/core/community-permissions"
@@ -641,10 +642,12 @@ const threadRootNotificationCandidates: Readable<NotificationCandidate[]> = deri
 const makeTargetedPublicationRootNotificationCandidates = ({
   target,
   targets = [target],
+  aggregateCalendarWriters = false,
   makePath,
 }: {
   target: CommunityWriteTarget
   targets?: readonly CommunityWriteTarget[]
+  aggregateCalendarWriters?: boolean
   makePath: (communityPubkey: string) => string
 }): Readable<NotificationCandidate[]> =>
   derived(
@@ -683,16 +686,25 @@ const makeTargetedPublicationRootNotificationCandidates = ({
       }
 
       const targetKinds = Array.from(new Set(targets.map(target => target.kind)))
+      const calendarWriterPubkeys = aggregateCalendarWriters
+        ? getCommunityCalendarTargetWriterPubkeys({
+            definition: $activeCommunityDefinition,
+            profileListEvents: $activeCommunityProfileListEvents,
+            reportState: $activeCommunityReportState,
+          })
+        : []
       const targetingFilterPlan = targets.reduce(
         (combined, currentTarget) => {
           const plan = makeCommunityContentFilterPlan(
             [makeCommunityTargetingFilter($activeCommunityDefinition.pubkey, [currentTarget.kind])],
-            getCommunityTargetWriterPubkeys({
-              definition: $activeCommunityDefinition,
-              profileListEvents: $activeCommunityProfileListEvents,
-              target: currentTarget,
-              reportState: $activeCommunityReportState,
-            }),
+            aggregateCalendarWriters
+              ? calendarWriterPubkeys
+              : getCommunityTargetWriterPubkeys({
+                  definition: $activeCommunityDefinition,
+                  profileListEvents: $activeCommunityProfileListEvents,
+                  target: currentTarget,
+                  reportState: $activeCommunityReportState,
+                }),
           )
           combined.relayFilters.push(...plan.relayFilters)
           combined.localFilters.push(...plan.localFilters)
@@ -810,6 +822,7 @@ const makeTargetedPublicationRootNotificationCandidates = ({
 const calendarRootNotificationCandidates = makeTargetedPublicationRootNotificationCandidates({
   target: COMMUNITY_WRITE_TARGETS.calendar,
   targets: COMMUNITY_CALENDAR_WRITE_TARGETS,
+  aggregateCalendarWriters: true,
   makePath: makeCommunityCalendarPath,
 })
 
