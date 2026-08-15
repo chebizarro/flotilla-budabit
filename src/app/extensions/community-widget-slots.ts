@@ -11,6 +11,10 @@ import type {TrustedEvent} from "@welshman/util"
 import type {SmartWidgetEvent, WidgetCommunitySlotType} from "@app/extensions/types"
 import {logCommunityWidgetDebug} from "./community-widget-debug"
 import {getWidgetLineId} from "./widget-identity"
+import {
+  isAuthorizedCommunitySharedConfigEvent,
+  type CommunitySharedConfigDescriptorAuthority,
+} from "./community-shared-config"
 
 export const COMMUNITY_WIDGET_EMPTY_CACHE_TTL_MS = 30_000
 export const COMMUNITY_WIDGET_SUCCESS_CACHE_TTL_MS = 5 * 60_000
@@ -274,8 +278,26 @@ const getTagValue = (tags: string[][] | undefined, tagName: string) =>
 const getTags = (tags: string[][] | undefined, tagName: string) =>
   tags?.filter(tag => tag[0] === tagName) || []
 
-const normalizeSharedConfigMatchPart = (value: string | undefined) =>
-  value?.trim().toLowerCase() || ""
+const normalizeSharedConfigMatchPart = (value: string | undefined) => value?.trim() || ""
+
+export const makeCommunitySharedConfigRecoveryFilter = (
+  authorizedPubkeys: Iterable<string>,
+  limit = 200,
+) => ({
+  kinds: [COMMUNITY_SHARED_CONFIG_KIND],
+  authors: Array.from(
+    new Set(Array.from(authorizedPubkeys, normalizePubkey).filter(Boolean)),
+  ).sort(),
+  limit,
+})
+
+export const shouldRetryCommunitySharedConfigRecovery = ({
+  events,
+  complete,
+}: {
+  events: unknown[]
+  complete: boolean
+}) => !complete || events.length === 0
 
 const parseCommunitySharedConfigRef = (
   event: CommunitySharedConfigEvent,
@@ -313,7 +335,8 @@ const widgetDeclaresSharedConfigRef = (widget: SmartWidgetEvent, ref: CommunityS
 }
 
 const widgetMatchesSharedConfigRef = (widget: SmartWidgetEvent, ref: CommunitySharedConfigRef) => {
-  if (widgetDeclaresSharedConfigRef(widget, ref)) return true
+  const declarations = getTags(widget.tags, "shared-config")
+  if (declarations.length > 0) return widgetDeclaresSharedConfigRef(widget, ref)
 
   const names = new Set([
     normalizeSharedConfigMatchPart(widget.identifier),
@@ -324,6 +347,19 @@ const widgetMatchesSharedConfigRef = (widget: SmartWidgetEvent, ref: CommunitySh
     names.has(normalizeSharedConfigMatchPart(ref.key)) ||
     names.has(normalizeSharedConfigMatchPart(ref.namespace))
   )
+}
+
+export const mergeCommunitySlotWidgets = (
+  curatedWidgets: SmartWidgetEvent[],
+  sharedConfigWidgets: SmartWidgetEvent[],
+) => {
+  const selected = new Map<string, SmartWidgetEvent>()
+  for (const widget of [...curatedWidgets, ...sharedConfigWidgets]) {
+    const lineId = getWidgetLineId(widget)
+    if (!selected.has(lineId)) selected.set(lineId, widget)
+  }
+
+  return Array.from(selected.values())
 }
 
 export const getEnabledInstalledCommunitySlotWidgets = ({
@@ -354,6 +390,8 @@ export const getEnabledCommunitySlotWidgetsWithSharedConfig = ({
   communityPubkey,
   sharedConfigEvents,
   authorizedPubkeys,
+  descriptorAuthorities = [],
+  legacyAuthorizedPubkeys = authorizedPubkeys,
   installedWidgets,
   enabledIds,
   slotType,
@@ -361,6 +399,8 @@ export const getEnabledCommunitySlotWidgetsWithSharedConfig = ({
   communityPubkey: string
   sharedConfigEvents: CommunitySharedConfigEvent[]
   authorizedPubkeys: Set<string>
+  descriptorAuthorities?: CommunitySharedConfigDescriptorAuthority[]
+  legacyAuthorizedPubkeys?: Set<string>
   installedWidgets: Record<string, SmartWidgetEvent>
   enabledIds: Set<string>
   slotType: WidgetCommunitySlotType
@@ -371,6 +411,13 @@ export const getEnabledCommunitySlotWidgetsWithSharedConfig = ({
   )
   const sharedConfigRefs = sharedConfigEvents
     .filter(event => normalizedAuthorizedPubkeys.has(normalizePubkey(event.pubkey || "")))
+    .filter(event =>
+      isAuthorizedCommunitySharedConfigEvent({
+        event,
+        descriptorAuthorities,
+        legacyAuthorizedPubkeys,
+      }),
+    )
     .map(parseCommunitySharedConfigRef)
     .filter((ref): ref is CommunitySharedConfigRef =>
       Boolean(ref && normalizePubkey(ref.communityPubkey) === normalizedCommunityPubkey),

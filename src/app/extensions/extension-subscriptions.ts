@@ -5,6 +5,7 @@ import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 export const MAX_EXTENSION_SUBSCRIPTIONS = 10
 export const MAX_EXTENSION_RELAYS_PER_SUBSCRIPTION = 8
 export const MAX_EXTENSION_SUBSCRIPTIONS_PER_RELAY = 20
+export const MAX_EXTENSION_EVENTS_PER_FILTER = 500
 
 type Request = (options: RequestOptions) => Promise<TrustedEvent[]>
 
@@ -14,11 +15,17 @@ type LogicalSubscription = {
   relays: string[]
   filters: Filter[]
   onEvent: (subscriptionId: string, event: TrustedEvent) => void
+  onEose?: (subscriptionId: string, relay: string) => void
+  eoseRelays: Set<string>
 }
 
 type PhysicalRequest = {
-  controller: AbortController
+  liveController?: AbortController
+  liveRetryTimer?: ReturnType<typeof setTimeout>
+  backfillController: AbortController
+  backfillTimer?: ReturnType<typeof setTimeout>
   signature: string
+  subscriptionIds: Set<string>
 }
 
 type RelayGroup = {
@@ -27,7 +34,6 @@ type RelayGroup = {
   subscriptionIds: Set<string>
   active?: PhysicalRequest
   pending?: PhysicalRequest
-  retryTimer?: ReturnType<typeof setTimeout>
   seenDeliveryKeys: Set<string>
   seenDeliveryOrder: string[]
 }
@@ -37,6 +43,7 @@ type ExtensionSubscriptionRegistryOptions = {
   makeSubscriptionId?: (extensionId: string) => string
   onError?: (relay: string, extensionId: string, error: unknown) => void
   retryDelayMs?: number
+  backfillTimeoutMs?: number
 }
 
 const cloneFilter = (filter: Filter): Filter => JSON.parse(JSON.stringify(filter)) as Filter
@@ -56,13 +63,16 @@ const normalizeRelay = (relay: string) => {
 }
 
 let subscriptionSequence = 0
-const MAX_SEEN_EXTENSION_EVENT_DELIVERIES = 1_000
+const MAX_SEEN_EXTENSION_EVENT_DELIVERIES =
+  MAX_EXTENSION_SUBSCRIPTIONS * MAX_EXTENSION_EVENTS_PER_FILTER
+const DEFAULT_EXTENSION_BACKFILL_TIMEOUT_MS = 5_000
 
 export class ExtensionSubscriptionRegistry {
   private readonly request: Request
   private readonly makeSubscriptionId: (extensionId: string) => string
   private readonly onError: (relay: string, extensionId: string, error: unknown) => void
   private readonly retryDelayMs: number
+  private readonly backfillTimeoutMs: number
   private readonly subscriptions = new Map<string, LogicalSubscription>()
   private readonly subscriptionIdsByExtension = new Map<string, Set<string>>()
   private readonly groups = new Map<string, RelayGroup>()
@@ -75,6 +85,7 @@ export class ExtensionSubscriptionRegistry {
       (extensionId => `sub-${extensionId.slice(0, 8)}-${++subscriptionSequence}`)
     this.onError = options.onError || (() => {})
     this.retryDelayMs = options.retryDelayMs ?? 5_000
+    this.backfillTimeoutMs = options.backfillTimeoutMs ?? DEFAULT_EXTENSION_BACKFILL_TIMEOUT_MS
   }
 
   subscribe({
@@ -82,11 +93,13 @@ export class ExtensionSubscriptionRegistry {
     relays,
     filters,
     onEvent,
+    onEose,
   }: {
     extensionId: string
     relays: string[]
     filters: Filter[]
     onEvent: (subscriptionId: string, event: TrustedEvent) => void
+    onEose?: (subscriptionId: string, relay: string) => void
   }): string {
     const normalizedRelays = Array.from(new Set(relays.map(normalizeRelay).filter(Boolean)))
     const extensionIds = this.subscriptionIdsByExtension.get(extensionId)
@@ -119,6 +132,8 @@ export class ExtensionSubscriptionRegistry {
       relays: normalizedRelays,
       filters: filters.map(cloneFilter),
       onEvent,
+      onEose,
+      eoseRelays: new Set(),
     }
     this.subscriptions.set(id, subscription)
 
@@ -155,9 +170,8 @@ export class ExtensionSubscriptionRegistry {
       if (!group) continue
       group.subscriptionIds.delete(subscriptionId)
       if (group.subscriptionIds.size === 0) {
-        if (group.retryTimer) clearTimeout(group.retryTimer)
-        group.pending?.controller.abort()
-        group.active?.controller.abort()
+        if (group.pending) this.abortPhysicalRequest(group.pending)
+        if (group.active) this.abortPhysicalRequest(group.active)
         this.groups.delete(key)
       } else {
         this.reconcile(group)
@@ -175,9 +189,8 @@ export class ExtensionSubscriptionRegistry {
 
   close(): void {
     for (const group of this.groups.values()) {
-      if (group.retryTimer) clearTimeout(group.retryTimer)
-      group.pending?.controller.abort()
-      group.active?.controller.abort()
+      if (group.pending) this.abortPhysicalRequest(group.pending)
+      if (group.active) this.abortPhysicalRequest(group.active)
     }
     this.subscriptions.clear()
     this.subscriptionIdsByExtension.clear()
@@ -229,62 +242,156 @@ export class ExtensionSubscriptionRegistry {
   }
 
   private reconcile(group: RelayGroup) {
-    if (group.retryTimer) {
-      clearTimeout(group.retryTimer)
-      group.retryTimer = undefined
-    }
     const filters = this.getPhysicalFilters(group)
     const filterKeys = filters.map(getFilterKey)
-    const signature = filterKeys.slice().sort().join("|")
+    // Membership is part of the generation. An identical late subscriber must
+    // receive its own stored history rather than only joining an existing tail.
+    const signature = `${filterKeys.slice().sort().join("|")}\u0000${Array.from(
+      group.subscriptionIds,
+    )
+      .sort()
+      .join("|")}`
     if (group.active?.signature === signature && !group.pending) return
     if (group.pending?.signature === signature) return
 
-    group.pending?.controller.abort()
+    if (group.pending) this.abortPhysicalRequest(group.pending)
     const candidate: PhysicalRequest = {
-      controller: new AbortController(),
+      liveController: new AbortController(),
+      backfillController: new AbortController(),
       signature,
+      subscriptionIds: new Set(group.subscriptionIds),
     }
     group.pending = candidate
 
-    const promote = () => {
-      if (group.pending !== candidate) return
-      const previous = group.active
-      group.active = candidate
-      group.pending = undefined
-      previous?.controller.abort()
+    const promote = (eose: boolean) => {
+      if (group.pending === candidate) {
+        const previous = group.active
+        group.active = candidate
+        group.pending = undefined
+        if (previous) this.abortPhysicalRequest(previous)
+      } else if (group.active !== candidate) {
+        return
+      }
+
+      if (eose) this.dispatchEose(group, candidate)
     }
 
+    const handleError = (controller: AbortController, error: unknown) => {
+      if (!controller.signal.aborted) this.onError(group.relay, group.extensionId, error)
+    }
+
+    const isCurrentCandidate = () => group.pending === candidate || group.active === candidate
+
+    const completeEose = () => {
+      promote(true)
+      candidate.backfillController.abort()
+    }
+
+    const startBackfillDeadline = () => {
+      if (
+        candidate.backfillTimer ||
+        candidate.backfillController.signal.aborted ||
+        !isCurrentCandidate()
+      ) {
+        return
+      }
+
+      candidate.backfillTimer = setTimeout(() => {
+        candidate.backfillTimer = undefined
+        candidate.backfillController.abort()
+        promote(false)
+      }, this.backfillTimeoutMs)
+    }
+
+    // A bounded, normal-priority request prevents initial history from being
+    // starved by the background live-request budget.
     void this.request({
       relays: [group.relay],
       filters,
-      lifetime: "live",
-      priority: RELAY_REQUEST_PRIORITY.background,
+      lifetime: "finite",
+      autoClose: true,
+      priority: RELAY_REQUEST_PRIORITY.default,
       owner: `extension:${group.extensionId}`,
-      signal: candidate.controller.signal,
-      onEose: promote,
+      signal: candidate.backfillController.signal,
+      onStart: startBackfillDeadline,
+      onEose: completeEose,
       onEvent: event => this.dispatch(group, event),
       onDuplicate: event => this.dispatch(group, event),
     })
-      .catch(error => {
-        if (!candidate.controller.signal.aborted) {
-          this.onError(group.relay, group.extensionId, error)
-        }
-      })
+      .catch(error => handleError(candidate.backfillController, error))
       .finally(() => {
-        if (group.pending === candidate) group.pending = undefined
-        if (group.active === candidate) group.active = undefined
-        const key = this.getGroupKey(group.extensionId, group.relay)
-        if (
-          !candidate.controller.signal.aborted &&
-          this.groups.get(key) === group &&
-          group.subscriptionIds.size > 0
-        ) {
-          group.retryTimer = setTimeout(() => {
-            group.retryTimer = undefined
-            this.reconcile(group)
-          }, this.retryDelayMs)
-        }
+        if (candidate.backfillTimer) clearTimeout(candidate.backfillTimer)
+        candidate.backfillTimer = undefined
+        if (!candidate.backfillController.signal.aborted) promote(false)
       })
+
+    const startLive = () => {
+      candidate.liveRetryTimer = undefined
+      if (
+        !isCurrentCandidate() ||
+        this.groups.get(this.getGroupKey(group.extensionId, group.relay)) !== group
+      ) {
+        return
+      }
+
+      const controller = new AbortController()
+      candidate.liveController = controller
+
+      // The ongoing tail has an independent lifecycle. A failed tail retries
+      // without cancelling a queued or in-progress finite backfill.
+      void this.request({
+        relays: [group.relay],
+        filters,
+        lifetime: "live",
+        priority: RELAY_REQUEST_PRIORITY.background,
+        owner: `extension:${group.extensionId}`,
+        signal: controller.signal,
+        onEose: completeEose,
+        onEvent: event => this.dispatch(group, event),
+        onDuplicate: event => this.dispatch(group, event),
+      })
+        .catch(error => handleError(controller, error))
+        .finally(() => {
+          if (candidate.liveController !== controller) return
+          candidate.liveController = undefined
+          if (
+            !controller.signal.aborted &&
+            isCurrentCandidate() &&
+            this.groups.get(this.getGroupKey(group.extensionId, group.relay)) === group &&
+            group.subscriptionIds.size > 0
+          ) {
+            candidate.liveRetryTimer = setTimeout(startLive, this.retryDelayMs)
+          }
+        })
+    }
+
+    startLive()
+  }
+
+  private abortPhysicalRequest(request: PhysicalRequest) {
+    if (request.backfillTimer) clearTimeout(request.backfillTimer)
+    if (request.liveRetryTimer) clearTimeout(request.liveRetryTimer)
+    request.backfillTimer = undefined
+    request.liveRetryTimer = undefined
+    request.backfillController.abort()
+    request.liveController?.abort()
+    request.liveController = undefined
+  }
+
+  private dispatchEose(group: RelayGroup, request: PhysicalRequest) {
+    for (const id of request.subscriptionIds) {
+      const subscription = this.subscriptions.get(id)
+      if (
+        !subscription ||
+        !group.subscriptionIds.has(id) ||
+        subscription.eoseRelays.has(group.relay)
+      ) {
+        continue
+      }
+
+      subscription.eoseRelays.add(group.relay)
+      subscription.onEose?.(subscription.id, group.relay)
+    }
   }
 
   private dispatch(group: RelayGroup, event: TrustedEvent) {

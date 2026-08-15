@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import {afterEach, describe, expect, it} from "vitest"
+import {afterEach, describe, expect, it, vi} from "vitest"
 import {extensionRegistry, parseSmartWidget} from "./registry"
+import {registerBridgeHandler, removeBridgeHandler} from "./host-capabilities"
 import {getWidgetLineId} from "./widget-identity"
 
 const makeWidgetEvent = (slotTag?: string[]) => ({
@@ -148,5 +149,37 @@ describe("extension registry", () => {
     expect(extensionRegistry.get(firstExt.id)).toBe(firstExt)
     expect(extensionRegistry.get(secondExt.id)).toBe(secondExt)
     expect(firstExt.id).not.toBe(secondExt.id)
+  })
+
+  it("includes the current capability snapshot in registry widget:init", () => {
+    const action = "test:registry-lifecycle"
+    const post = vi.fn()
+    registerBridgeHandler(action, () => ({status: "ok"}))
+
+    try {
+      const widget = parseSmartWidget(makeWidgetEvent(["slot", "global-menu", "Test"] as string[]))
+      ;(extensionRegistry as any).sendLifecycleInit({
+        type: "widget",
+        id: "test-widget",
+        widget,
+        origin: "https://widget.example.com",
+        bridge: {post},
+      })
+
+      expect(post).toHaveBeenNthCalledWith(
+        1,
+        "widget:init",
+        expect.objectContaining({
+          capabilities: expect.objectContaining({
+            schemaVersion: 1,
+            protocolVersion: 1,
+            actions: expect.arrayContaining([action]),
+            surface: {kind: "widget", resize: false, slot: "global-menu"},
+          }),
+        }),
+      )
+    } finally {
+      removeBridgeHandler(action)
+    }
   })
 })

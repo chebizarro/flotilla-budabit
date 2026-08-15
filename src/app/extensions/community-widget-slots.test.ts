@@ -12,6 +12,9 @@ import {
   getCommunityWidgetCurationEvidenceKey,
   getLastValidatedCommunityCuratedWidgets,
   loadCachedCommunityCuratedWidgets,
+  makeCommunitySharedConfigRecoveryFilter,
+  mergeCommunitySlotWidgets,
+  shouldRetryCommunitySharedConfigRecovery,
   shouldPreserveCuratedWidgetView,
 } from "./community-widget-slots"
 import type {SmartWidgetEvent, WidgetCommunitySlotType} from "./types"
@@ -302,6 +305,158 @@ describe("community widget slots", () => {
     })
 
     expect(unrelatedCommunity).toEqual([])
+  })
+
+  it("treats explicit shared-config declarations as authoritative", () => {
+    const communityPubkey = "c".repeat(64)
+    const widget = makeWidget(
+      "featured-calendar-event",
+      "community-home-after-quicklinks",
+      undefined,
+      undefined,
+      undefined,
+      {
+        permissions: ["community:querySharedConfig"],
+        tags: [
+          ["d", "featured-calendar-event"],
+          ["shared-config", "other-namespace", "other-key"],
+        ],
+      },
+    )
+    const sharedConfigEvent = {
+      kind: COMMUNITY_SHARED_CONFIG_KIND,
+      pubkey: communityPubkey,
+      tags: [
+        [
+          "d",
+          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+        ],
+        ["p", communityPubkey],
+        ["namespace", "budabit-calendar-widget"],
+        ["key", "featured-calendar-event"],
+      ],
+    }
+
+    expect(
+      getEnabledCommunitySlotWidgetsWithSharedConfig({
+        communityPubkey,
+        sharedConfigEvents: [sharedConfigEvent],
+        authorizedPubkeys: new Set([communityPubkey]),
+        installedWidgets: {[getWidgetLineId(widget)]: widget},
+        enabledIds: new Set([getWidgetLineId(widget)]),
+        slotType: "community-home-after-quicklinks",
+      }),
+    ).toEqual([])
+  })
+
+  it("matches explicit shared-config declarations with trimmed case-sensitive scope", () => {
+    const communityPubkey = "c".repeat(64)
+    const sharedConfigEvent = {
+      kind: COMMUNITY_SHARED_CONFIG_KIND,
+      pubkey: communityPubkey,
+      tags: [
+        ["d", `budabit-community-config:${communityPubkey}:Calendar:Featured`],
+        ["namespace", "Calendar"],
+        ["key", "Featured"],
+      ],
+    }
+    const exact = makeWidget("exact", "community-home-after-quicklinks", undefined, undefined, 1, {
+      permissions: ["community:querySharedConfig"],
+      tags: [
+        ["d", "exact"],
+        ["shared-config", " Calendar ", "Featured"],
+      ],
+    })
+    const wrongCase = makeWidget(
+      "wrong-case",
+      "community-home-after-quicklinks",
+      undefined,
+      undefined,
+      1,
+      {
+        permissions: ["community:querySharedConfig"],
+        tags: [
+          ["d", "wrong-case"],
+          ["shared-config", "calendar", "featured"],
+        ],
+      },
+    )
+
+    const selected = getEnabledCommunitySlotWidgetsWithSharedConfig({
+      communityPubkey,
+      sharedConfigEvents: [sharedConfigEvent],
+      authorizedPubkeys: new Set([communityPubkey]),
+      installedWidgets: {
+        [getWidgetLineId(exact)]: exact,
+        [getWidgetLineId(wrongCase)]: wrongCase,
+      },
+      enabledIds: new Set([getWidgetLineId(exact), getWidgetLineId(wrongCase)]),
+      slotType: "community-home-after-quicklinks",
+    })
+
+    expect(selected).toEqual([exact])
+  })
+
+  it("rejects configs authored by a moderator of an unrelated descriptor", () => {
+    const communityPubkey = "c".repeat(64)
+    const unrelatedModerator = "d".repeat(64)
+    const widget = makeWidget(
+      "featured-calendar-event",
+      "community-home-after-quicklinks",
+      undefined,
+      undefined,
+      1,
+      {permissions: ["community:querySharedConfig"]},
+    )
+    const event = {
+      kind: COMMUNITY_SHARED_CONFIG_KIND,
+      pubkey: unrelatedModerator,
+      tags: [
+        [
+          "d",
+          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+        ],
+        ["descriptor", "1"],
+      ],
+    }
+
+    expect(
+      getEnabledCommunitySlotWidgetsWithSharedConfig({
+        communityPubkey,
+        sharedConfigEvents: [event],
+        authorizedPubkeys: new Set([communityPubkey, unrelatedModerator]),
+        descriptorAuthorities: [
+          {descriptor: {kind: 1}, moderatorPubkeys: [communityPubkey]},
+          {descriptor: {kind: 2}, moderatorPubkeys: [unrelatedModerator]},
+        ],
+        legacyAuthorizedPubkeys: new Set([communityPubkey]),
+        installedWidgets: {[getWidgetLineId(widget)]: widget},
+        enabledIds: new Set([getWidgetLineId(widget)]),
+        slotType: "community-home-after-quicklinks",
+      }),
+    ).toEqual([])
+  })
+
+  it("author-filters recovery and retries empty or incomplete loads", () => {
+    expect(makeCommunitySharedConfigRecoveryFilter(["b".repeat(64), "a".repeat(64)])).toEqual({
+      kinds: [COMMUNITY_SHARED_CONFIG_KIND],
+      authors: ["a".repeat(64), "b".repeat(64)],
+      limit: 200,
+    })
+    expect(shouldRetryCommunitySharedConfigRecovery({events: [], complete: true})).toBe(true)
+    expect(shouldRetryCommunitySharedConfigRecovery({events: [{}], complete: false})).toBe(true)
+    expect(shouldRetryCommunitySharedConfigRecovery({events: [{}], complete: true})).toBe(false)
+  })
+
+  it("merges curated and shared-config-recovered widgets by widget line", () => {
+    const curated = makeWidget("curated", "community-home-after-quicklinks")
+    const recovered = makeWidget("recovered", "community-home-after-quicklinks")
+    const duplicate = {...curated, content: "Recovered duplicate"}
+
+    expect(mergeCommunitySlotWidgets([curated], [duplicate, recovered])).toEqual([
+      curated,
+      recovered,
+    ])
   })
 
   it("reuses cached curated widget loads while they are fresh", async () => {

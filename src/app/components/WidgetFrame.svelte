@@ -10,6 +10,10 @@
     WidgetResizeRequest,
   } from "@app/extensions/types"
   import {ExtensionBridge} from "@app/extensions/bridge"
+  import {
+    MAX_WIDGET_RESIZE_HEIGHT,
+    getHostCapabilitySnapshot,
+  } from "@app/extensions/host-capabilities"
   import {logCommunityWidgetDebug} from "@app/extensions/community-widget-debug"
   import {getWidgetLineId} from "@app/extensions/widget-identity"
   import {isSecureEmbeddableUrl, SECURE_EMBED_URL_REQUIREMENT} from "@app/extensions/url-policy"
@@ -58,7 +62,7 @@
   let lastLifecycleRetryAt = 0
   let lastAppUrl = ""
   let requestedHeight: number | undefined = $state()
-  const maxRequestedHeight = 2400
+  const maxRequestedHeight = MAX_WIDGET_RESIZE_HEIGHT
   const iframeLoadTimeoutMs = 15_000
   const maxAutomaticRetries = 2
   const lifecycleRetryDebounceMs = 5_000
@@ -380,6 +384,15 @@
       theme: appTheme,
       themeBackground: getHostBackgroundColor(),
       hostVersion: "1.0.0",
+      capabilities: getHostCapabilitySnapshot({
+        widget,
+        resize: true,
+        media: true,
+        slot:
+          publicContext.slot && typeof publicContext.slot === "object"
+            ? String((publicContext.slot as any).type || "")
+            : widget.slot?.type,
+      }),
       pubkey: user.pubkey,
       relays,
       user,

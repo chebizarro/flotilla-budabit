@@ -12,22 +12,26 @@
     activeCommunityProfileListEvents,
     activeCommunityRelays,
     activeCommunityReportState,
-    loadCommunityEvents,
+    loadCommunityEventsWithStatus,
   } from "@app/core/community-state"
+  import {getCommunitySectionAuthorityPubkeys} from "@app/core/community-permissions"
+  import {makeCommunityWidgetContext} from "@app/extensions/community-context"
   import {
-    getSectionAuthorityPubkeysWithPendingRefs,
-    makeCommunityWidgetContext,
-  } from "@app/extensions/community-context"
-  import {
-    COMMUNITY_SHARED_CONFIG_KIND,
     getCommunityWidgetCurationEvidenceKey,
     getEnabledCommunitySlotWidgetsWithSharedConfig,
     getEnabledCommunitySlotWidgets,
     getLastValidatedCommunityCuratedWidgets,
     loadCachedCommunityCuratedWidgets,
+    makeCommunitySharedConfigRecoveryFilter,
+    mergeCommunitySlotWidgets,
+    shouldRetryCommunitySharedConfigRecovery,
     shouldPreserveCuratedWidgetView,
   } from "@app/extensions/community-widget-slots"
   import {logCommunityWidgetDebug} from "@app/extensions/community-widget-debug"
+  import {
+    getCommunitySharedConfigDescriptorKey,
+    type CommunitySharedConfigDescriptorAuthority,
+  } from "@app/extensions/community-shared-config"
   import {effectiveExtensionSettings} from "@app/extensions/settings"
   import {getWidgetLineId} from "@app/extensions/widget-identity"
   import type {
@@ -61,9 +65,12 @@
   let loadedCommunitySharedConfigEvents = $state<any[]>([])
   let sharedConfigLoadKey = ""
   let sharedConfigLoadRequestId = 0
+  let sharedConfigRetryTimer: ReturnType<typeof setTimeout> | undefined
+  let sharedConfigRetryDelay = 1_000
   const FORCED_REFRESH_DEBOUNCE_MS = 1_000
   const MAX_CURATION_RETRY_DELAY_MS = 15_000
   const INITIAL_WIDGET_RESIZE_TIMEOUT_MS = 15_000
+  const MAX_SHARED_CONFIG_RETRY_DELAY_MS = 15_000
 
   const installedWidgets = $derived($effectiveExtensionSettings.installed?.widget || {})
   const enabledWidgetIds = $derived(new Set($effectiveExtensionSettings.enabled || []))
@@ -123,12 +130,59 @@
       reportState,
     }
   })
+  const communitySharedConfigAuthority = $derived.by(() => {
+    const definition = $activeCommunityDefinition
+    if (!definition || normalizePubkey(definition.pubkey) !== normalizePubkey(communityPubkey)) {
+      return {
+        authorizedPubkeys: new Set<string>(),
+        legacyAuthorizedPubkeys: new Set<string>(),
+        descriptorAuthorities: [] as CommunitySharedConfigDescriptorAuthority[],
+      }
+    }
+
+    const moderatorsByDescriptor = new Map<string, CommunitySharedConfigDescriptorAuthority>()
+    for (const section of definition.sections) {
+      const moderatorPubkeys = getCommunitySectionAuthorityPubkeys({
+        definition,
+        sectionName: section.name,
+        profileListEvents: $activeCommunityProfileListEvents,
+        reportState: $activeCommunityReportState,
+      })
+      for (const descriptor of section.kinds) {
+        const key = getCommunitySharedConfigDescriptorKey(descriptor)
+        const current = moderatorsByDescriptor.get(key)
+        moderatorsByDescriptor.set(key, {
+          descriptor,
+          moderatorPubkeys: new Set([
+            ...(current ? Array.from(current.moderatorPubkeys) : []),
+            ...moderatorPubkeys,
+          ]),
+        })
+      }
+    }
+
+    const descriptorAuthorities = Array.from(moderatorsByDescriptor.values())
+    return {
+      authorizedPubkeys: new Set([
+        normalizePubkey(definition.pubkey),
+        ...descriptorAuthorities.flatMap(authority => Array.from(authority.moderatorPubkeys)),
+      ]),
+      // Untagged legacy configs cannot be scoped to a section, so only the
+      // community owner is accepted for home-slot recovery.
+      legacyAuthorizedPubkeys: new Set([normalizePubkey(definition.pubkey)]),
+      descriptorAuthorities,
+    }
+  })
   const cachedCommunitySharedConfigEvents = $derived.by(() => {
     void communityReadinessKey
     void loadRefreshNonce
 
     try {
-      return repository.query([{kinds: [COMMUNITY_SHARED_CONFIG_KIND], limit: 200}] as any)
+      return repository.query([
+        makeCommunitySharedConfigRecoveryFilter(
+          communitySharedConfigAuthority.authorizedPubkeys,
+        ) as any,
+      ])
     } catch (error) {
       console.warn("[community-home-widgets] Failed to query cached shared config", error)
       return []
@@ -147,28 +201,13 @@
 
     return Array.from(byId.values())
   })
-  const communitySharedConfigAuthorPubkeys = $derived.by(() => {
-    const definition = $activeCommunityDefinition
-    if (!definition || normalizePubkey(definition.pubkey) !== normalizePubkey(communityPubkey)) {
-      return new Set<string>()
-    }
-
-    return new Set(
-      definition.sections.flatMap(section =>
-        getSectionAuthorityPubkeysWithPendingRefs({
-          definition,
-          section,
-          profileListEvents: $activeCommunityProfileListEvents,
-          reportState: $activeCommunityReportState,
-        }),
-      ),
-    )
-  })
   const sharedConfigSlotWidgets = $derived.by(() => {
     return getEnabledCommunitySlotWidgetsWithSharedConfig({
       communityPubkey,
       sharedConfigEvents: communitySharedConfigEvents,
-      authorizedPubkeys: communitySharedConfigAuthorPubkeys,
+      authorizedPubkeys: communitySharedConfigAuthority.authorizedPubkeys,
+      descriptorAuthorities: communitySharedConfigAuthority.descriptorAuthorities,
+      legacyAuthorizedPubkeys: communitySharedConfigAuthority.legacyAuthorizedPubkeys,
       installedWidgets,
       enabledIds: enabledWidgetIds,
       slotType,
@@ -208,6 +247,7 @@
     return {
       definition,
       profileListEvents: $activeCommunityProfileListEvents,
+      authorityEvidenceSettled: true,
       reportState: $activeCommunityReportState,
       relays: $activeCommunityRelays.length ? $activeCommunityRelays : relayHints,
       relayHints,
@@ -215,9 +255,7 @@
     }
   })
   const frameWidgets = $derived.by(() => {
-    if (slotWidgets.length > 0) return slotWidgets
-
-    return sharedConfigSlotWidgets
+    return mergeCommunitySlotWidgets(slotWidgets, sharedConfigSlotWidgets)
   })
 
   const makeWidgetContext = (widget: SmartWidgetEvent) => ({
@@ -291,14 +329,32 @@
     curationRetryDelay = Math.min(curationRetryDelay * 2, MAX_CURATION_RETRY_DELAY_MS)
   }
 
+  const clearSharedConfigRetry = () => {
+    if (sharedConfigRetryTimer) clearTimeout(sharedConfigRetryTimer)
+    sharedConfigRetryTimer = undefined
+  }
+
+  const scheduleSharedConfigRetry = () => {
+    if (sharedConfigRetryTimer) return
+    sharedConfigRetryTimer = setTimeout(() => {
+      sharedConfigRetryTimer = undefined
+      sharedConfigLoadKey = ""
+      loadRefreshNonce += 1
+    }, sharedConfigRetryDelay)
+    sharedConfigRetryDelay = Math.min(sharedConfigRetryDelay * 2, MAX_SHARED_CONFIG_RETRY_DELAY_MS)
+  }
+
   $effect(() => {
+    void loadRefreshNonce
     const normalizedCommunityPubkey = normalizePubkey(communityPubkey)
     const relays = $activeCommunityRelays.length ? $activeCommunityRelays : relayHints
+    const authorizedPubkeys = communitySharedConfigAuthority.authorizedPubkeys
     const key = normalizedCommunityPubkey
-      ? `${normalizedCommunityPubkey}:${relays.join("|")}:${communityReadinessKey}`
+      ? `${normalizedCommunityPubkey}:${relays.join("|")}:${Array.from(authorizedPubkeys).sort().join("|")}:${communityReadinessKey}`
       : ""
 
-    if (!key || relays.length === 0) {
+    if (!key || relays.length === 0 || authorizedPubkeys.size === 0) {
+      clearSharedConfigRetry()
       loadedCommunitySharedConfigEvents = []
       sharedConfigLoadKey = ""
       sharedConfigLoadRequestId += 1
@@ -306,29 +362,30 @@
     }
 
     if (key === sharedConfigLoadKey) return
+    clearSharedConfigRetry()
     sharedConfigLoadKey = key
     const requestId = ++sharedConfigLoadRequestId
 
-    loadCommunityEvents(
+    loadCommunityEventsWithStatus(
       relays,
-      [
-        {
-          kinds: [COMMUNITY_SHARED_CONFIG_KIND],
-          "#p": [normalizedCommunityPubkey],
-          limit: 200,
-        } as any,
-      ],
+      [makeCommunitySharedConfigRecoveryFilter(authorizedPubkeys) as any],
       {
         authenticate: true,
         priority: RELAY_REQUEST_PRIORITY.interactive,
         priorityAuthRelays: relayHints,
-        settle: "first-non-empty",
+        settle: "all",
         timeout: 3_000,
       },
     )
-      .then(events => {
+      .then(result => {
         if (requestId === sharedConfigLoadRequestId && key === sharedConfigLoadKey) {
-          loadedCommunitySharedConfigEvents = events
+          loadedCommunitySharedConfigEvents = result.events
+          if (shouldRetryCommunitySharedConfigRecovery(result)) {
+            scheduleSharedConfigRetry()
+          } else {
+            clearSharedConfigRetry()
+            sharedConfigRetryDelay = 1_000
+          }
         }
       })
       .catch(error => {
@@ -336,6 +393,7 @@
 
         console.warn("[community-home-widgets] Failed to load shared config hints", error)
         loadedCommunitySharedConfigEvents = []
+        scheduleSharedConfigRetry()
       })
   })
 
@@ -477,6 +535,7 @@
   onDestroy(() => {
     loadRequestId += 1
     clearCurationRetry()
+    clearSharedConfigRetry()
     for (const timer of initialWidgetResizeTimers.values()) clearTimeout(timer)
     initialWidgetResizeTimers.clear()
   })

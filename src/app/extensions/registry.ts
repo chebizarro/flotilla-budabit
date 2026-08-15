@@ -11,6 +11,7 @@ import type {
 import {getRepoAddress} from "./types"
 import {assertSecureEmbeddableUrl} from "./url-policy"
 import {getWidgetLineId} from "./widget-identity"
+import {getHostCapabilitySnapshot} from "./host-capabilities"
 
 const getTag = (tags: string[][], name: string) => tags.find(t => t[0] === name)
 const getTags = (tags: string[][], name: string) => tags.filter(t => t[0] === name)
@@ -62,9 +63,7 @@ const getHostBackgroundColor = (hostTheme: HostTheme): string => {
     const bodyBackground = visibleColor(getComputedStyle(document.body).backgroundColor)
     if (bodyBackground) return bodyBackground
 
-    const rootBackground = visibleColor(
-      getComputedStyle(document.documentElement).backgroundColor,
-    )
+    const rootBackground = visibleColor(getComputedStyle(document.documentElement).backgroundColor)
     if (rootBackground) return rootBackground
   }
 
@@ -315,6 +314,11 @@ class ExtensionRegistry {
       type: ext.type,
       origin: ext.origin,
       hostVersion: "1.0.0", // Could be pulled from package.json
+      capabilities: getHostCapabilitySnapshot({
+        widget: ext.widget,
+        resize: Boolean(ext.onResizeRequest),
+        slot: ext.widget.slot?.type,
+      }),
       theme: hostTheme,
       themeBackground: getHostBackgroundColor(hostTheme),
     }

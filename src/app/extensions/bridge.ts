@@ -52,6 +52,22 @@ import type {
 } from "./types"
 import {getRepoAddress} from "./types"
 import {extensionSubscriptionRegistry} from "./extension-subscriptions"
+import {BoundedRefreshCache} from "./bounded-refresh-cache"
+import {
+  getCommunitySharedConfigDescriptorKey,
+  isAuthorizedCommunitySharedConfigEvent,
+} from "./community-shared-config"
+import {
+  MAX_NOSTR_QUERY_LIMIT,
+  MAX_STORAGE_KEY_LENGTH,
+  MAX_STORAGE_VALUE_SIZE,
+  getBridgeHandler,
+  getRegisteredBridgeActions,
+  registerBridgeHandler,
+  removeBridgeHandler,
+} from "./host-capabilities"
+
+export {getRegisteredBridgeActions, registerBridgeHandler, removeBridgeHandler}
 
 export type ExtensionMessage = {
   id?: string
@@ -59,10 +75,6 @@ export type ExtensionMessage = {
   action: string
   payload?: any
 }
-
-type BridgeHandler = (payload: any, ext: LoadedExtension) => Promise<any> | any
-
-const bridgeHandlers = new Map<string, BridgeHandler>()
 
 /**
  * Deep copy that unwraps Proxy values (e.g. Svelte 5 `$state`) while preserving
@@ -128,14 +140,6 @@ const safePostMessage = (target: Window, message: unknown, origin: string): void
   }
 }
 
-export const registerBridgeHandler = (action: string, handler: BridgeHandler) => {
-  bridgeHandlers.set(action, handler)
-}
-
-export const removeBridgeHandler = (action: string) => {
-  bridgeHandlers.delete(action)
-}
-
 let messageCounter = 0
 
 // Using @welshman/net load() for queries - better relay connection management
@@ -150,7 +154,6 @@ const NIP100_ALLOWED_KINDS = new Set<number>([
   30100, // Loom status
   10100, // Loom worker advertisement
 ])
-const MAX_NOSTR_QUERY_LIMIT = 500
 const COMMUNITY_SHARED_CONFIG_KIND = 30078
 const COMMUNITY_SHARED_CONFIG_PREFIX = "budabit-community-config"
 const COMMUNITY_BRIDGE_LOAD_TIMEOUT = 5000
@@ -482,7 +485,9 @@ export class ExtensionBridge {
 
   private enforcePolicy(action: string): void {
     if (this.isPrivileged(action) && !this.allowedActions.has(action)) {
-      throw new Error(`Extension not permitted to perform "${action}"`)
+      throw Object.assign(new Error(`Extension not permitted to perform "${action}"`), {
+        code: "CAPABILITY_NOT_AUTHORIZED",
+      })
     }
   }
 
@@ -511,9 +516,13 @@ export class ExtensionBridge {
     if (msg.type === "request") {
       try {
         this.enforcePolicy(msg.action)
-        const handler = bridgeHandlers.get(msg.action)
-        let result
-        if (handler) result = await handler(msg.payload, this.extension)
+        const handler = getBridgeHandler(msg.action)
+        if (!handler) {
+          throw Object.assign(new Error(`Host does not support "${msg.action}"`), {
+            code: "UNSUPPORTED_CAPABILITY",
+          })
+        }
+        const result = await handler(msg.payload, this.extension)
         const win = source as Window | null
         if (win) {
           safePostMessage(
@@ -528,7 +537,12 @@ export class ExtensionBridge {
         if (win) {
           safePostMessage(
             win,
-            {id: msg.id, type: "response", action: msg.action, payload: {error: e.message}},
+            {
+              id: msg.id,
+              type: "response",
+              action: msg.action,
+              payload: {error: e.message, ...(e.code ? {code: e.code} : {})},
+            },
             origin,
           )
         }
@@ -984,25 +998,59 @@ const selectAuthorizedLiveStreams = ({
     )
     .slice(0, limit)
 
-const selectCommunitySharedConfigEvent = (events: any[], moderatorPubkeys: Set<string>) =>
-  events
-    .filter(event => moderatorPubkeys.has(normalizePubkey(event.pubkey || "")))
+const getLegacySharedConfigAuthors = (resolved: ResolvedCommunityEventDescriptor[]) => {
+  return new Set(
+    resolved
+      .flatMap(info => info.moderatorPubkeys)
+      .map(normalizePubkey)
+      .filter(Boolean),
+  )
+}
+
+const selectCommunitySharedConfigEvent = (
+  events: any[],
+  resolved: ResolvedCommunityEventDescriptor[],
+) => {
+  const legacyAuthorizedPubkeys = getLegacySharedConfigAuthors(resolved)
+
+  return events
+    .filter(event =>
+      isAuthorizedCommunitySharedConfigEvent({
+        event,
+        descriptorAuthorities: resolved,
+        legacyAuthorizedPubkeys,
+        requireExactDescriptors: true,
+      }),
+    )
     .reduce(
       (current, event) => (isPreferredEvent(event, current) ? event : current),
       undefined as any,
     )
+}
+
+const SHARED_CONFIG_REFRESH_TTL_MS = 30_000
+const MAX_SHARED_CONFIG_REFRESH_SCOPES = 100
+const sharedConfigRefreshCache = new BoundedRefreshCache<CommunityRelayLoadResult>(
+  SHARED_CONFIG_REFRESH_TTL_MS,
+  MAX_SHARED_CONFIG_REFRESH_SCOPES,
+  Date.now,
+  result => result.complete && result.events.length > 0,
+)
 
 const queryCachedCommunitySharedConfigEvents = ({
   identifier,
+  authors,
   limit,
 }: {
   identifier: string
+  authors: string[]
   limit?: number
 }) => {
   try {
     return repository.query([
       {
         kinds: [COMMUNITY_SHARED_CONFIG_KIND],
+        authors,
         "#d": [identifier],
         limit,
       } as any,
@@ -1163,6 +1211,7 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
       source: "runtime" as const,
       definition,
       profileListEvents,
+      authorityEvidenceSettled: extensionRuntimeContext.authorityEvidenceSettled === true,
       reportState,
       relays,
       relayHints,
@@ -1212,11 +1261,20 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
   })
 
   const publishRelays = normalizeRelays(definition.relays)
+  const permissionStatus = get(activeCommunityPermissionStatus)
+  const permissionKeyPrefix = getCommunityPermissionStatusKeyPrefix(definition, relays, userPubkey)
+  const authorityEvidenceSettled =
+    getCommunityPermissionReadiness({
+      status: permissionStatus,
+      communityPubkey: definition.pubkey,
+      expectedKeyPrefix: permissionKeyPrefix,
+    }) === "ready"
 
   return {
     source: "active" as const,
     definition,
     profileListEvents,
+    authorityEvidenceSettled,
     reportState,
     relays,
     relayHints,
@@ -1286,6 +1344,27 @@ const loadBridgeEventsWithStatus = async ({
     console.warn("[bridge] community query load failed", error?.message || error)
     return {events: [], complete: false, timedOutRelays: [], failedRelays: relays}
   }
+}
+
+const refreshCommunitySharedConfig = ({
+  refreshKey,
+  relays,
+  relayHints,
+  filter,
+}: {
+  refreshKey: string
+  relays: string[]
+  relayHints: string[]
+  filter: Record<string, unknown>
+}) => {
+  return sharedConfigRefreshCache.refresh(refreshKey, () =>
+    loadBridgeEventsWithStatus({
+      relays,
+      filters: [filter],
+      authenticate: true,
+      priorityAuthRelays: relayHints,
+    }),
+  )
 }
 
 type BridgeCursorFilterState = {
@@ -1471,7 +1550,10 @@ const hydrateCommunityRequestSnapshot = async (
     ...cachedProfileListEvents,
     ...loadedProfileListEvents.filter(event => event.kind === PROFILE_LIST_KIND),
   ])
-  if (!profileListFiltersCovered(profileListFilters, profileListEvents)) {
+  if (
+    !profileListFiltersCovered(profileListFilters, profileListEvents) &&
+    !snapshot.authorityEvidenceSettled
+  ) {
     throw makeCommunityContextNotReadyError("Community context is unavailable")
   }
 
@@ -1865,7 +1947,14 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
       userPubkey: snapshot.userPubkey,
       descriptors: request.descriptors,
     })
-    const moderatorPubkeys = new Set(resolved.flatMap(info => info.moderatorPubkeys))
+    const moderatorAuthors = Array.from(
+      new Set(
+        resolved
+          .flatMap(info => info.moderatorPubkeys)
+          .map(normalizePubkey)
+          .filter(Boolean),
+      ),
+    ).sort()
     const identifier = makeCommunitySharedConfigIdentifier({
       definition: snapshot.definition,
       namespace: request.namespace,
@@ -1873,23 +1962,41 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
     })
     const sharedConfigFilter = {
       kinds: [COMMUNITY_SHARED_CONFIG_KIND],
+      authors: moderatorAuthors,
       "#d": [identifier],
       limit: request.limit,
     }
-    const cachedEvents = queryCachedCommunitySharedConfigEvents({
+    const refreshKey = JSON.stringify([
       identifier,
-      limit: request.limit,
-    })
-    const cachedSelected = selectCommunitySharedConfigEvent(cachedEvents, moderatorPubkeys)
+      resolved.map(info => getCommunitySharedConfigDescriptorKey(info.descriptor)).sort(),
+      moderatorAuthors,
+      snapshot.relays.slice().sort(),
+    ])
+    const refreshedResult = sharedConfigRefreshCache.getLatest(refreshKey)
+    const cachedEvents = dedupeEvents([
+      ...queryCachedCommunitySharedConfigEvents({
+        identifier,
+        authors: moderatorAuthors,
+        limit: request.limit,
+      }),
+      ...(refreshedResult?.events || []),
+    ])
+    const cachedSelected = selectCommunitySharedConfigEvent(cachedEvents, resolved)
 
     if (cachedSelected) {
+      void refreshCommunitySharedConfig({
+        refreshKey,
+        relays: snapshot.relays,
+        relayHints: snapshot.relayHints,
+        filter: sharedConfigFilter,
+      })
       if (ext) {
         console.log(`[bridge] community:querySharedConfig result from ${ext.id}`, {
           source: "cache",
           hasConfig: true,
           eventId: cachedSelected.id,
           author: cachedSelected.pubkey,
-          moderatorPubkeyCount: moderatorPubkeys.size,
+          moderatorPubkeyCount: moderatorAuthors.length,
         })
       }
 
@@ -1903,25 +2010,15 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
       }
     }
 
-    const hydratedResolved = resolveCommunityEventDescriptors({
-      definition: snapshot.definition,
-      profileListEvents: snapshot.profileListEvents,
-      reportState: snapshot.reportState,
-      userPubkey: snapshot.userPubkey,
-      descriptors: request.descriptors,
-    })
-    const hydratedModeratorPubkeys = new Set(
-      hydratedResolved.flatMap(info => info.moderatorPubkeys),
-    )
-    const loadedResult = await loadBridgeEventsWithStatus({
+    const loadedResult = await refreshCommunitySharedConfig({
+      refreshKey,
       relays: snapshot.relays,
-      filters: [sharedConfigFilter],
-      authenticate: true,
-      priorityAuthRelays: snapshot.relayHints,
+      relayHints: snapshot.relayHints,
+      filter: sharedConfigFilter,
     })
     const selected = selectCommunitySharedConfigEvent(
       dedupeEvents([...cachedEvents, ...loadedResult.events]),
-      hydratedModeratorPubkeys,
+      resolved,
     )
 
     if (!selected && !loadedResult.complete) throw makeCommunityQueryTimeoutError()
@@ -1934,7 +2031,7 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
         author: selected?.pubkey,
         cachedEventCount: cachedEvents.length,
         loadedEventCount: loadedResult.events.length,
-        moderatorPubkeyCount: hydratedModeratorPubkeys.size,
+        moderatorPubkeyCount: moderatorAuthors.length,
       })
     }
 
@@ -2079,9 +2176,6 @@ registerBridgeHandler("ui:resize", (payload, ext) => {
 // v2 keys receive all new writes; legacy flotilla keys remain readable during migration.
 const STORAGE_PREFIX = "budabit:ext:v2:"
 const LEGACY_STORAGE_PREFIX = "flotilla:ext:"
-const MAX_STORAGE_KEY_LENGTH = 256
-const MAX_STORAGE_VALUE_SIZE = 1024 * 1024 // 1MB per value
-
 const encodeStorageComponent = (value: string): string => encodeURIComponent(value)
 
 const decodeStorageComponent = (value: string): string => {
@@ -2185,7 +2279,7 @@ registerBridgeHandler("storage:set", (payload, ext) => {
       return {status: "ok"}
     }
     const serialized = JSON.stringify(data)
-    if (serialized.length > MAX_STORAGE_VALUE_SIZE) {
+    if (new TextEncoder().encode(serialized).byteLength > MAX_STORAGE_VALUE_SIZE) {
       throw new Error(`Value exceeds maximum size of ${MAX_STORAGE_VALUE_SIZE} bytes`)
     }
     localStorage.setItem(getV2StorageKey(ext, repoScoped, key), serialized)
@@ -2401,6 +2495,9 @@ registerBridgeHandler("nostr:subscribe", async (payload, ext) => {
           subscriptionId,
           event,
         })
+      },
+      onEose(subscriptionId, relay) {
+        postEventToExtension(ext, "nostr:eose", {subscriptionId, relay})
       },
     })
 
