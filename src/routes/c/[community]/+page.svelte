@@ -967,19 +967,6 @@
         {/if}
       </Link>
     {/each}
-    {#if communityId && rooms.length > 0 && roomRootsIncomplete}
-      <div
-        class="card2 bg-alt col-span-full flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
-        role="status">
-        <span>Room history is incomplete; some rooms may be missing.</span>
-        <Button
-          class="btn btn-neutral btn-sm shrink-0 justify-center"
-          disabled={roomRootsLoading}
-          onclick={retryRoomHistory}>
-          {roomRootsLoading ? "Retrying..." : "Retry"}
-        </Button>
-      </div>
-    {/if}
     {#if communityId && rooms.length === 0 && (roomsSkeletonDelayElapsed || !roomsLoading)}
       <div class="card2 bg-alt col-span-full flex flex-wrap items-center justify-between gap-3 p-4">
         <div>

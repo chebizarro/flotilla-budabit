@@ -60,7 +60,6 @@
   import {
     latestNotificationCenterTimestamp,
     notificationCenterRows,
-    notificationHistoryIncomplete,
   } from "@app/util/notification-sources"
   import {
     filterNotificationRows,
@@ -361,12 +360,6 @@
       </Button>
     </div>
   </div>
-
-  {#if $notificationHistoryIncomplete}
-    <div class="alert alert-warning py-2 text-sm" role="status">
-      Notification history is partial; some activity may be missing.
-    </div>
-  {/if}
 
   <div class="scroll-container -mx-2 min-h-0 flex-1 overflow-auto px-2">
     <div class="grid gap-3 pb-2">
