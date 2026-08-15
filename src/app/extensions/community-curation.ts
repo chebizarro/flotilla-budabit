@@ -206,15 +206,6 @@ const makeWidgetProfileListFilters = (definition: CommunityDefinition) => {
   return makeCommunityProfileListFilters({...definition, sections})
 }
 
-const getWidgetProfileListOwnerPubkeys = (definition: CommunityDefinition) =>
-  Array.from(
-    new Set(
-      getCommunityWriteTargetSections(definition, COMMUNITY_WRITE_TARGETS.widget)
-        .flatMap(section => section.profileLists.map(ref => normalizePubkey(ref.pubkey)))
-        .filter(Boolean),
-    ),
-  )
-
 export const loadCommunityCuratedWidgets = async (
   input: string,
   {
@@ -288,11 +279,6 @@ export const loadCommunityCuratedWidgets = async (
     () => filtersCoveredByCache(profileListFilters),
   )
   const profileListEvents = currentProfileListEvents ?? profileListResult.events
-  const fallbackAuthorityPubkeys = profileListEvents.length
-    ? []
-    : getWidgetProfileListOwnerPubkeys(definition).filter(
-        pubkey => !isCommunityReportStatePersonBanned(reportState, pubkey),
-      )
   const widgetTargetAuthorPubkeys = Array.from(
     new Set([
       ...getCommunityTargetWriterPubkeys({
@@ -301,7 +287,6 @@ export const loadCommunityCuratedWidgets = async (
         target: COMMUNITY_WRITE_TARGETS.widget,
         reportState,
       }),
-      ...fallbackAuthorityPubkeys,
     ]),
   )
   const trustedWidgetAuthorPubkeys = Array.from(
@@ -312,7 +297,6 @@ export const loadCommunityCuratedWidgets = async (
         target: COMMUNITY_WRITE_TARGETS.widget,
         reportState,
       }),
-      ...fallbackAuthorityPubkeys,
     ]),
   )
   const targetingFilterPlan = makeCommunityContentFilterPlan(
@@ -357,7 +341,6 @@ export const loadCommunityCuratedWidgets = async (
   )
   logCommunityWidgetDebug("filtered targeting events", {
     communityPubkey: definition.pubkey,
-    fallbackAuthorityPubkeys,
     widgetTargetAuthorPubkeys,
     trustedWidgetAuthorPubkeys,
     deletedTargetIds: Array.from(deletedTargetIds),
@@ -445,7 +428,6 @@ export const loadCommunityCuratedWidgets = async (
       profileListEvents,
       trustedWidgetAuthorPubkeys,
       widgetTargetAuthorPubkeys,
-      fallbackAuthorityPubkeys,
       targetingEventIds: targetingSources.map(event => event.id).filter(Boolean),
       targetingRelayHints: getTargetingRelayHints(targetingSources),
     })

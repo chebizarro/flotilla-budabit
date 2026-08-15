@@ -199,6 +199,7 @@ const getModeratorEvidence = ({
       definition,
       userPubkey: author,
       sectionName: section.name,
+      profileListEvents: Array.from(moderatorProfileListEvents.values()),
     })
     if (!capability.canGrant) continue
 
@@ -266,6 +267,7 @@ export const selectPreferredCommunities = ({
               definition,
               userPubkey: normalizedAuthor,
               sectionName: section.name,
+              profileListEvents: Array.from(moderatorProfileListEventMap.values()),
             }).canGrant,
         )
       : true

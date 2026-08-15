@@ -279,7 +279,7 @@ describe("community curated widgets", () => {
     ])
   })
 
-  it("falls back to widget profile-list owners when profile-list events are unavailable", async () => {
+  it("keeps pending widget-list owners as writers without trusting them as moderators", async () => {
     const definition = makeEvent({
       id: "community-definition",
       pubkey: communityPubkey,
@@ -319,7 +319,8 @@ describe("community curated widgets", () => {
     const result = await loadCommunityCuratedWidgets(communityPubkey)
 
     expect(result.widgets.map(item => item.identifier)).toEqual(["valid-widget"])
-    expect(result.trustedWidgetAuthorPubkeys).toContain(managerPubkey)
+    expect(result.trustedWidgetAuthorPubkeys).not.toContain(managerPubkey)
+    expect(result.trustedWidgetAuthorPubkeys).toContain(communityPubkey)
   })
 
   it("rejects a broad implicit widget result signed by someone other than the wrapper", async () => {

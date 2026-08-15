@@ -89,6 +89,27 @@ const generalProfileList = makeEvent({
     ["p", outsiderPubkey],
   ],
 })
+const moderatorProfileListEvents = [
+  generalProfileList,
+  makeEvent({
+    id: "all-section-general-profile-list",
+    kind: PROFILE_LIST_KIND,
+    pubkey: allSectionModeratorPubkey,
+    tags: [["d", "General"]],
+  }),
+  makeEvent({
+    id: "all-section-threads-profile-list",
+    kind: PROFILE_LIST_KIND,
+    pubkey: allSectionModeratorPubkey,
+    tags: [["d", COMMUNITY_SECTION_THREADS]],
+  }),
+  makeEvent({
+    id: "other-section-threads-profile-list",
+    kind: PROFILE_LIST_KIND,
+    pubkey: otherSectionModeratorPubkey,
+    tags: [["d", COMMUNITY_SECTION_THREADS]],
+  }),
+]
 
 describe("community reports", () => {
   it("builds and parses community event and person spam reports", () => {
@@ -200,7 +221,11 @@ describe("community reports", () => {
         eventKind: 31922,
       }).tags,
     })
-    const state = getEffectiveCommunityReportState({definition, reportEvents: [report]})
+    const state = getEffectiveCommunityReportState({
+      definition,
+      profileListEvents: moderatorProfileListEvents,
+      reportEvents: [report],
+    })
 
     expect(state.eventReports[0]).toMatchObject({
       targetEventId: "calendar-event-v1",
@@ -291,6 +316,7 @@ describe("community reports", () => {
     })
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [report],
       targetEvents: [targetEvent],
     })
@@ -335,10 +361,11 @@ describe("community reports", () => {
     })
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [adminEventReport, sectionModeratorEventReport, allSectionPersonReport],
     })
 
-    expect(getAllSectionModeratorPubkeys(definition)).toEqual([
+    expect(getAllSectionModeratorPubkeys(definition, moderatorProfileListEvents)).toEqual([
       communityPubkey,
       allSectionModeratorPubkey,
     ])
@@ -360,6 +387,46 @@ describe("community reports", () => {
       }),
     ).toBe("event")
     expect(getCommunityCensorReason({reportState: state, pubkey: targetPubkey})).toBe("person")
+  })
+
+  it("keeps pending invitees as member reporters without moderator authority", () => {
+    const definition = makeDefinition()
+    const report = makeEvent({
+      id: "pending-invitee-report",
+      kind: COMMUNITY_REPORT_KIND,
+      pubkey: sectionModeratorPubkey,
+      tags: makeCommunityEventReport({
+        communityPubkey,
+        sectionName: "General",
+        eventId: "reported-event",
+        eventPubkey: targetPubkey,
+      }).tags,
+    })
+
+    expect(
+      canPublishCommunityContentReport({
+        definition,
+        profileListEvents: [],
+        reporterPubkey: sectionModeratorPubkey,
+        targetPubkey,
+      }),
+    ).toBe(true)
+    expect(
+      canPublishCommunityEventReport({
+        definition,
+        profileListEvents: [],
+        reporterPubkey: sectionModeratorPubkey,
+        targetPubkey,
+        sectionName: "General",
+      }),
+    ).toBe(false)
+    expect(
+      getEffectiveCommunityReportState({
+        definition,
+        profileListEvents: [],
+        reportEvents: [report],
+      }).eventReports,
+    ).toEqual([])
   })
 
   it("ignores unauthorized person reports, deleted reports, and reports from removed moderators", () => {
@@ -402,11 +469,13 @@ describe("community reports", () => {
 
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [unauthorizedPersonReport, deletedEventReport],
       deleteEvents: [deleteEvent],
     })
     const removedState = getEffectiveCommunityReportState({
       definition: removedDefinition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [removedModeratorReport],
     })
 
@@ -443,10 +512,12 @@ describe("community reports", () => {
     })
     const activeState = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [personReport],
     })
     const revokedState = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [personReport],
       deleteEvents: [deleteEvent],
     })
@@ -479,6 +550,7 @@ describe("community reports", () => {
     })
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [moderatorReport, adminReport],
     })
 
@@ -515,6 +587,7 @@ describe("community reports", () => {
     })
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [moderatorEventReport, moderatorPersonReport],
     })
 
@@ -555,6 +628,7 @@ describe("community reports", () => {
     })
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [bannedModeratorPersonReport, bannedModeratorEventReport, adminBan],
     })
 
@@ -572,6 +646,7 @@ describe("community reports", () => {
         definition,
         reporterPubkey: allSectionModeratorPubkey,
         targetPubkey,
+        profileListEvents: moderatorProfileListEvents,
         reportState: state,
       }),
     ).toBe(false)
@@ -601,6 +676,7 @@ describe("community reports", () => {
     })
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [ownEventReport, ownPersonReport],
     })
 
@@ -621,6 +697,7 @@ describe("community reports", () => {
         reporterPubkey: sectionModeratorPubkey,
         targetPubkey,
         sectionName: "General",
+        profileListEvents: moderatorProfileListEvents,
       }),
     ).toBe(true)
     expect(
@@ -629,6 +706,7 @@ describe("community reports", () => {
         reporterPubkey: sectionModeratorPubkey,
         targetPubkey,
         sectionName: COMMUNITY_SECTION_THREADS,
+        profileListEvents: moderatorProfileListEvents,
       }),
     ).toBe(false)
     expect(
@@ -636,6 +714,7 @@ describe("community reports", () => {
         definition,
         reporterPubkey: allSectionModeratorPubkey,
         targetPubkey,
+        profileListEvents: moderatorProfileListEvents,
       }),
     ).toBe(true)
     expect(
@@ -643,6 +722,7 @@ describe("community reports", () => {
         definition,
         reporterPubkey: sectionModeratorPubkey,
         targetPubkey,
+        profileListEvents: moderatorProfileListEvents,
       }),
     ).toBe(false)
     expect(
@@ -651,6 +731,7 @@ describe("community reports", () => {
         reporterPubkey: allSectionModeratorPubkey,
         targetPubkey: sectionModeratorPubkey,
         sectionName: "General",
+        profileListEvents: moderatorProfileListEvents,
       }),
     ).toBe(false)
     expect(
@@ -781,6 +862,7 @@ describe("community reports", () => {
         definition,
         reviewerPubkey: sectionModeratorPubkey,
         report: parseCommunityReport(userReport, communityPubkey)!,
+        profileListEvents: moderatorProfileListEvents,
       }),
     ).toBe(true)
     expect(
@@ -788,6 +870,7 @@ describe("community reports", () => {
         definition,
         reviewerPubkey: otherSectionModeratorPubkey,
         report: parseCommunityReport(userReport, communityPubkey)!,
+        profileListEvents: moderatorProfileListEvents,
       }),
     ).toBe(false)
     expect(pendingReports.map(report => report.event.id)).toEqual(["user-report"])
@@ -837,6 +920,7 @@ describe("community reports", () => {
     })
     const state = getEffectiveCommunityReportState({
       definition,
+      profileListEvents: moderatorProfileListEvents,
       reportEvents: [olderReport, newerReport, otherReporterReport],
     })
 

@@ -29,6 +29,7 @@
     activeCommunityModeratorRequestStates,
     activeCommunityModeratorRequests,
     activeCommunityProfile,
+    activeCommunityProfileListEvents,
     activeCommunityReportState,
     activeCommunityRelays,
     clearCommunityBootstrapCache,
@@ -60,6 +61,10 @@
     makeModeratorRequestReactionDelete,
   } from "@app/core/community-moderator-requests"
   import {
+    getCommunityModeratorInviteStates,
+    type CommunityModeratorInviteStatus,
+  } from "@app/core/community-admin"
+  import {
     getCommunityRootPublishRelays,
     getCommunityScopedPublishRelays,
     getPubkeyOutboxRelays,
@@ -81,12 +86,16 @@
     displayName: string
     pubkey: string
     profileLists: CommunityProfileListRef[]
+    status: CommunityModeratorInviteStatus
   }
 
   type ModeratorGrantPerson = {
     pubkey: string
     grants: ModeratorSectionGrant[]
     grantCount: number
+    acceptedGrantCount: number
+    pendingGrantCount: number
+    declinedGrantCount: number
     banned: boolean
   }
 
@@ -180,6 +189,14 @@
     {status: "accepted" as const, label: "Accepted", count: acceptedModeratorRequests.length},
     {status: "rejected" as const, label: "Rejected", count: rejectedModeratorRequests.length},
   ])
+  const moderatorInviteStates = $derived(
+    communityBootstrapReady
+      ? getCommunityModeratorInviteStates({
+          definition: $activeCommunityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+        })
+      : [],
+  )
   const moderatorSectionGrants = $derived.by((): ModeratorSectionGrant[] => {
     if (!communityBootstrapReady) return []
 
@@ -205,6 +222,16 @@
           ref => normalizePubkey(ref.pubkey) === userPubkey,
         )
         if (profileLists.length === 0) return []
+        const statuses = moderatorInviteStates
+          .filter(
+            invite => invite.sectionName === section.name && invite.moderatorPubkey === userPubkey,
+          )
+          .map(invite => invite.status)
+        const status: CommunityModeratorInviteStatus = statuses.includes("accepted")
+          ? "accepted"
+          : statuses.includes("pending")
+            ? "pending"
+            : "declined"
 
         return [
           {
@@ -212,6 +239,7 @@
             displayName: getCommunitySectionDisplayName(section),
             pubkey: userPubkey,
             profileLists,
+            status,
           },
         ]
       })
@@ -225,16 +253,31 @@
     }
 
     return Array.from(people.entries())
-      .map(([userPubkey, grants]) => ({
-        pubkey: userPubkey,
-        grants: grants.toSorted((a, b) => a.displayName.localeCompare(b.displayName)),
-        grantCount: grants.length,
-        banned: isCommunityPersonBanned($activeCommunityReportState, userPubkey),
-      }))
+      .map(([userPubkey, grants]) => {
+        const acceptedGrantCount = grants.filter(grant => grant.status === "accepted").length
+        const pendingGrantCount = grants.filter(grant => grant.status === "pending").length
+        const declinedGrantCount = grants.filter(grant => grant.status === "declined").length
+
+        return {
+          pubkey: userPubkey,
+          grants: grants.toSorted((a, b) => a.displayName.localeCompare(b.displayName)),
+          grantCount: grants.length,
+          acceptedGrantCount,
+          pendingGrantCount,
+          declinedGrantCount,
+          banned: isCommunityPersonBanned($activeCommunityReportState, userPubkey),
+        }
+      })
       .toSorted((a, b) => b.grantCount - a.grantCount || a.pubkey.localeCompare(b.pubkey))
   })
   const activeModeratorCount = $derived(
-    moderatorGrantPeople.filter(person => !person.banned).length,
+    moderatorGrantPeople.filter(person => !person.banned && person.acceptedGrantCount > 0).length,
+  )
+  const pendingModeratorInviteCount = $derived(
+    moderatorInviteStates.filter(invite => invite.status === "pending").length,
+  )
+  const declinedModeratorInviteCount = $derived(
+    moderatorInviteStates.filter(invite => invite.status === "declined").length,
   )
   const communityPublishRelays = $derived(
     getCommunityScopedPublishRelays($activeCommunityDefinition),
@@ -288,6 +331,13 @@
   const statusClass = (status: RequestStatusFilter) => {
     if (status === "accepted") return "badge-success"
     if (status === "rejected") return "badge-error"
+
+    return "badge-warning"
+  }
+
+  const inviteStatusClass = (status: CommunityModeratorInviteStatus) => {
+    if (status === "accepted") return "badge-success"
+    if (status === "declined") return "badge-error"
 
     return "badge-warning"
   }
@@ -785,8 +835,14 @@
           </div>
           <span class="badge badge-neutral">
             {activeModeratorCount}
-            {activeModeratorCount === 1 ? "moderator" : "moderators"}
+            {activeModeratorCount === 1 ? "active moderator" : "active moderators"}
           </span>
+          {#if pendingModeratorInviteCount > 0}
+            <span class="badge badge-warning">{pendingModeratorInviteCount} pending</span>
+          {/if}
+          {#if declinedModeratorInviteCount > 0}
+            <span class="badge badge-error">{declinedModeratorInviteCount} declined</span>
+          {/if}
         </div>
 
         <div class="flex flex-col gap-3">
@@ -826,9 +882,14 @@
                       Edit grants
                     </Button>
                     <span class="badge badge-success">
-                      {person.grantCount}
-                      {person.grantCount === 1 ? "grant" : "grants"}
+                      {person.acceptedGrantCount} active
                     </span>
+                    {#if person.pendingGrantCount > 0}
+                      <span class="badge badge-warning">{person.pendingGrantCount} pending</span>
+                    {/if}
+                    {#if person.declinedGrantCount > 0}
+                      <span class="badge badge-error">{person.declinedGrantCount} declined</span>
+                    {/if}
                     <span class="badge badge-warning">
                       {personActions.length}
                       {personActions.length === 1 ? "action" : "actions"}
@@ -866,9 +927,15 @@
                           <div>
                             <div class="flex flex-wrap items-center gap-2">
                               <strong>{grant.displayName}</strong>
+                              <span class={`badge ${inviteStatusClass(grant.status)}`}
+                                >{grant.status}</span>
                             </div>
                             <p class="mt-1 text-xs opacity-60">
-                              This pubkey can moderate this section.
+                              {grant.status === "accepted"
+                                ? "This pubkey can moderate this section."
+                                : grant.status === "pending"
+                                  ? "Waiting for this pubkey to publish its moderator list response."
+                                  : "This pubkey declined the moderator invitation for this section."}
                             </p>
                           </div>
                         </div>

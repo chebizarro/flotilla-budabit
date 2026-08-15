@@ -278,11 +278,8 @@ describe("community badges", () => {
       ],
     }
 
-    expect(getCommunityBadgeCreatorPubkeys({definition, reportState})).toEqual([
-      communityPubkey,
-      moderatorPubkey,
-    ])
-    expect(canCreateCommunityBadge({definition, pubkey: moderatorPubkey, reportState})).toBe(true)
+    expect(getCommunityBadgeCreatorPubkeys({definition, reportState})).toEqual([communityPubkey])
+    expect(canCreateCommunityBadge({definition, pubkey: moderatorPubkey, reportState})).toBe(false)
     expect(canCreateCommunityBadge({definition, pubkey: bannedModeratorPubkey, reportState})).toBe(
       false,
     )
@@ -454,6 +451,7 @@ describe("community badges", () => {
       getPendingCommunityBadgeAwards({
         definition,
         badgeDefinitionEvents: [badgeDefinition],
+        profileListEvents: [makeProfileListEvent(moderatorPubkey)],
         badgeAwardEvents: [award],
         profileBadgeEvents: [],
         profilePubkey: recipientPubkey,

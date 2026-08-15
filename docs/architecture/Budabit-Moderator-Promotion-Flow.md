@@ -2,6 +2,10 @@
 
 This document describes the moderator promotion request flow for Communikey communities.
 
+It is distinct from an admin-issued moderator invitation. For an admin-issued invitation, the community definition references a target-owned profile-list coordinate first. A complete relay read with no matching event means the invitation is pending. The target accepts by publishing the referenced list, which may be empty, or declines by publishing it with `status=declined`. One home-page action responds independently to all currently pending section invitations.
+
+While an admin-issued invitation reference remains in the definition, its owner retains the current community-wide member/write role whether the response is pending or declined. Moderator, grant, form-review, moderation-report, and privileged widget authority activate only after a current non-declined response exists.
+
 ## Goals
 
 - Let users request moderator authority per content section.

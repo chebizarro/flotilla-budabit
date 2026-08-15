@@ -161,7 +161,7 @@ When migration is selected, Budabit publishes and verifies replacement permissio
 
 A section may contain repeated `a` tags with distinct `kind:pubkey:d` coordinates. Budabit loads each exact coordinate and treats the union of the current `p` tags as the section grant set. This allows large sections to stay within relay event-size and tag-count limits instead of requiring one unbounded `kind:30000` event.
 
-Each shard remains independently replaceable by its coordinate author. Missing shard evidence contributes no grants, and missing definition or permission evidence must never turn a structural relay result into authorized content.
+Each shard remains independently replaceable by its coordinate author. Missing shard evidence contributes no `p`-tag grants or moderator authority. A non-admin shard owner still receives the app's structural community-wide member/write access while the latest definition references that coordinate.
 
 ## Access Control
 
@@ -172,14 +172,14 @@ Permission workflow:
 1. Read the active community's latest `kind:10222` definition.
 2. Find the content section for the attempted publication.
 3. Fetch every exact `kind:30000` coordinate referenced by the section.
-4. Union their current `p` tags and include applicable community and active moderator authority.
+4. Union their current `p` tags, include structural member access for referenced non-admin list owners, and include moderator authority only for coordinates with a current non-declined list event.
 5. Allow publishing or community rendering only when the relevant author has a current grant and the event passes structural validation.
 
 Badges remain important as community endorsements and engagement primitives, but they are not access-control inputs. For Budabit enforcement, profile list inclusion is authoritative.
 
 The same current grants govern historical and live content. A revocation hides an author's previously visible direct content and targeting wrappers without deleting those events from relays. A regrant invalidates the old admission state and restarts structural acquisition, allowing matching history to be refetched and reappear. Budabit does not preserve a separate “was authorized when published” grant for normal community views.
 
-If the definition or relevant grant evidence is unavailable, Budabit fails closed. It may retain or fetch structural candidates, but it does not render them, return them to extensions, or turn the absence of admitted rows into an authoritative empty state.
+If the definition or relay read is incomplete, Budabit fails closed. A complete read that finds no target-owned moderator list is settled evidence of a pending invitation, not a loading failure.
 
 ## App-Wide User Community Membership
 
@@ -189,6 +189,7 @@ A user is part of a community when at least one of these is true:
 
 - Admin: the latest `kind:10222` definition is authored by the user.
 - Moderator: a section in `kind:10222` references a `kind:30000` profile-list address owned by the user, and Budabit has seen that user-authored `kind:30000` event.
+- Invited list owner/member: the latest definition references a non-admin `kind:30000` coordinate owned by the user. Missing and declined responses retain community-wide member/write access while the reference remains, but confer no moderator, grant, or report-review authority.
 - Member/grantee: a referenced section profile-list event contains a `p` tag for the user.
 
 Non-admin users are excluded when effective community report state contains a person-ban for that user. The community admin is never excluded by a person-ban in their own community.

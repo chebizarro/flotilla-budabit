@@ -866,7 +866,7 @@ describe("notification sources", () => {
     ).toBeGreaterThan(1_000)
   })
 
-  it("fails closed when current community permission evidence is incomplete", async () => {
+  it("admits referenced member writers without requiring moderator responses", async () => {
     const {buildCommunityNotificationRows, buildGlobalCommunityNotificationFilterPlan} =
       await import("./notification-sources")
     const ref = makeCommunityRef()
@@ -892,7 +892,7 @@ describe("notification sources", () => {
       })
 
     expect(makePlan([], emptyReportState).relayFilters).not.toHaveLength(0)
-    expect(makePlan([], emptyReportState).localFilters).toEqual([])
+    expect(makePlan([], emptyReportState).localFilters).not.toHaveLength(0)
     expect(makePlan([makeProfileList()], undefined).localFilters).toEqual([])
     expect(makePlan([makeProfileList()], emptyReportState).localFilters).not.toHaveLength(0)
     expect(

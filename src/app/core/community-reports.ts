@@ -667,6 +667,7 @@ const isProtectedModeratorTarget = ({
 const isAuthorizedEventReport = (
   definition: CommunityDefinition,
   report: ParsedCommunityReport,
+  profileListEvents: TrustedEvent[],
 ) => {
   if (report.target !== "event" || !report.sectionName) return false
   if (!findCommunitySection(definition, report.sectionName)) return false
@@ -676,12 +677,14 @@ const isAuthorizedEventReport = (
     reporterPubkey: report.event.pubkey || "",
     targetPubkey: report.targetPubkey,
     sectionName: report.sectionName,
+    profileListEvents,
   })
 }
 
 const isAuthorizedPersonReport = (
   definition: CommunityDefinition,
   report: ParsedCommunityReport,
+  profileListEvents: TrustedEvent[],
 ) => {
   if (report.target !== "person") return false
 
@@ -689,16 +692,19 @@ const isAuthorizedPersonReport = (
     definition,
     reporterPubkey: report.event.pubkey || "",
     targetPubkey: report.targetPubkey,
+    profileListEvents,
   })
 }
 
 export const getEffectiveCommunityReportState = ({
   definition,
+  profileListEvents = [],
   reportEvents,
   deleteEvents = [],
   targetEvents = [],
 }: {
   definition: CommunityDefinition
+  profileListEvents?: TrustedEvent[]
   reportEvents: TrustedEvent[]
   deleteEvents?: TrustedEvent[]
   targetEvents?: TrustedEvent[]
@@ -713,7 +719,15 @@ export const getEffectiveCommunityReportState = ({
 
     const reporterPubkey = normalizePubkey(event.pubkey || "")
     const adminAuthored = isCommunityAdmin(definition, reporterPubkey)
-    if (isProtectedModeratorTarget({definition, report, reporterIsAdmin: adminAuthored})) continue
+    if (
+      isProtectedModeratorTarget({
+        definition,
+        report,
+        reporterIsAdmin: adminAuthored,
+        profileListEvents,
+      })
+    )
+      continue
 
     const effectiveReport = {...report, reporterPubkey, adminAuthored}
 
@@ -727,7 +741,7 @@ export const getEffectiveCommunityReportState = ({
       report =>
         report.target === "person" &&
         !isPersonBannedByReports(personReports, report.reporterPubkey) &&
-        isAuthorizedPersonReport(definition, report),
+        isAuthorizedPersonReport(definition, report, profileListEvents),
     )
     const currentIds = personReports
       .map(report => report.event.id)
@@ -746,7 +760,7 @@ export const getEffectiveCommunityReportState = ({
     report =>
       report.target === "event" &&
       !isPersonBannedByReports(personReports, report.reporterPubkey) &&
-      isAuthorizedEventReport(definition, report),
+      isAuthorizedEventReport(definition, report, profileListEvents),
   )
 
   return {eventReports, personReports}

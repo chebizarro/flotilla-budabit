@@ -31,11 +31,18 @@ export type CommunityProfileListDraftUpdate = {
   pubkeys: string[]
 }
 
-export type PendingCommunityModeratorInvite = {
+export type CommunityModeratorInviteStatus = "pending" | "accepted" | "declined"
+
+export type CommunityModeratorInviteState = {
+  moderatorPubkey: string
   sectionName: string
   displayName: string
   profileList: CommunityProfileListRef
+  status: CommunityModeratorInviteStatus
+  response?: TrustedEvent
 }
+
+export type PendingCommunityModeratorInvite = CommunityModeratorInviteState & {status: "pending"}
 
 const getDTag = (event: TrustedEvent) => event.tags.find(tag => tag[0] === "d")?.[1] || ""
 
@@ -76,8 +83,7 @@ export const isActiveCommunityProfileListRef = (
   ref: CommunityProfileListRef | undefined,
   profileListEvents: TrustedEvent[] | undefined,
 ) => {
-  if (!ref) return false
-  if (!profileListEvents) return true
+  if (!ref || !profileListEvents) return false
 
   return isActiveCommunityProfileListEvent(findCommunityProfileListEvent(ref, profileListEvents))
 }
@@ -135,6 +141,49 @@ export const getCommunityModeratorInviteProfileListRefs = ({
   return definition.sections.flatMap(section =>
     section.profileLists.filter(profileList => normalizePubkey(profileList.pubkey) === pubkey),
   )
+}
+
+export const getCommunityModeratorInviteStates = ({
+  definition,
+  moderatorPubkey,
+  profileListEvents = [],
+}: {
+  definition: CommunityDefinition | undefined
+  moderatorPubkey?: string
+  profileListEvents?: TrustedEvent[]
+}): CommunityModeratorInviteState[] => {
+  if (!definition) return []
+
+  const ownerPubkey = normalizePubkey(definition.pubkey)
+  const requestedModeratorPubkey = normalizePubkey(moderatorPubkey || "")
+
+  return definition.sections.flatMap(section => {
+    const displayName = getCommunitySectionDisplayName(section)
+
+    return section.profileLists.flatMap(profileList => {
+      const inviteePubkey = normalizePubkey(profileList.pubkey)
+      if (!inviteePubkey || inviteePubkey === ownerPubkey) return []
+      if (requestedModeratorPubkey && inviteePubkey !== requestedModeratorPubkey) return []
+
+      const response = findCommunityProfileListEvent(profileList, profileListEvents)
+      const status: CommunityModeratorInviteStatus = response
+        ? isDeclinedModeratorInviteProfileList(response)
+          ? "declined"
+          : "accepted"
+        : "pending"
+
+      return [
+        {
+          moderatorPubkey: inviteePubkey,
+          sectionName: section.name,
+          displayName,
+          profileList,
+          status,
+          response,
+        },
+      ]
+    })
+  })
 }
 
 export const getOwnerMembershipGrantProfileList = ({
@@ -202,25 +251,11 @@ export const getPendingCommunityModeratorInvites = ({
   moderatorPubkey: string | undefined
   profileListEvents?: TrustedEvent[]
 }): PendingCommunityModeratorInvite[] => {
-  const inviteProfileListAddresses = new Set(
-    getCommunityModeratorInviteProfileListRefs({definition, moderatorPubkey}).map(
-      profileList => profileList.address,
-    ),
-  )
-  if (!definition || inviteProfileListAddresses.size === 0) return []
-
-  return definition.sections.flatMap(section => {
-    const displayName = getCommunitySectionDisplayName(section)
-
-    return section.profileLists.flatMap(profileList => {
-      if (!inviteProfileListAddresses.has(profileList.address)) return []
-
-      const event = findCommunityProfileListEvent(profileList, profileListEvents)
-      if (event || isDeclinedModeratorInviteProfileList(event)) return []
-
-      return [{sectionName: section.name, displayName, profileList}]
-    })
-  })
+  return getCommunityModeratorInviteStates({
+    definition,
+    moderatorPubkey,
+    profileListEvents,
+  }).filter((invite): invite is PendingCommunityModeratorInvite => invite.status === "pending")
 }
 
 const uniquePubkeys = (pubkeys: string[]) =>

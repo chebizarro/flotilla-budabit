@@ -360,8 +360,10 @@
       member.isOwner ? "owner admin" : "",
       member.isModerator ? "moderator" : "",
       member.isPendingModerator ? "pending moderator" : "",
+      member.isDeclinedModerator ? "declined moderator" : "",
       ...member.moderatorSections.map(section => section.displayName),
       ...member.pendingModeratorSections.map(section => section.displayName),
+      ...member.declinedModeratorSections.map(section => section.displayName),
       ...member.sectionGrants.map(section => section.displayName),
     ]
       .join(" ")
@@ -407,6 +409,9 @@
   const moderatorMemberCount = $derived(memberItems.filter(member => member.isModerator).length)
   const pendingModeratorMemberCount = $derived(
     memberItems.filter(member => member.isPendingModerator).length,
+  )
+  const declinedModeratorMemberCount = $derived(
+    memberItems.filter(member => member.isDeclinedModerator).length,
   )
 
   let memberProfileHydrationKey = ""
@@ -992,7 +997,7 @@
 
   const getMemberPopoverKey = (
     member: CommunityMemberListItem,
-    type: "grants" | "moderators" | "pending-moderators",
+    type: "grants" | "moderators" | "pending-moderators" | "declined-moderators",
   ) => `${member.pubkey}:${type}`
 
   const showMemberPopover = (key: string) => {
@@ -1116,8 +1121,7 @@
           <div>
             <h2 class="text-xl font-semibold">Members</h2>
             <p class="mt-1 text-sm opacity-70">
-              Current non-banned members, moderators, pending moderator invites, and the community
-              owner.
+              Current non-banned members, moderator invitations, and the community owner.
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
@@ -1127,6 +1131,11 @@
             {#if pendingModeratorMemberCount > 0}
               <span class="badge badge-warning">
                 {pluralize(pendingModeratorMemberCount, "pending moderator")}
+              </span>
+            {/if}
+            {#if declinedModeratorMemberCount > 0}
+              <span class="badge badge-error">
+                {pluralize(declinedModeratorMemberCount, "declined moderator")}
               </span>
             {/if}
           </div>
@@ -1174,7 +1183,10 @@
                         {#if member.isPendingModerator}
                           <span class="badge badge-warning">pending moderator</span>
                         {/if}
-                        {#if member.grantCount > 0 && !member.isAdmin && !member.isModerator && !member.isPendingModerator}
+                        {#if member.isDeclinedModerator}
+                          <span class="badge badge-error">declined moderator</span>
+                        {/if}
+                        {#if member.grantCount > 0 && !member.isAdmin && !member.isModerator && !member.isPendingModerator && !member.isDeclinedModerator}
                           <span class="badge badge-neutral">member</span>
                         {/if}
                       </div>
@@ -1257,6 +1269,46 @@
                                 </p>
                               </div>
                               {#each member.pendingModeratorSections as section}
+                                <div class="rounded-box bg-base-200 p-3">
+                                  <strong>{section.displayName}</strong>
+                                  <div class="mt-2 flex flex-col gap-1">
+                                    {#each section.profileListAddresses as address}
+                                      <p class="break-all font-mono text-[11px] opacity-70">
+                                        {address}
+                                      </p>
+                                    {/each}
+                                  </div>
+                                </div>
+                              {/each}
+                            </div>
+                          </InlinePopover>
+                        {/if}
+                      </div>
+                    {/if}
+
+                    {#if member.isDeclinedModerator}
+                      {@const declinedModeratorKey = getMemberPopoverKey(
+                        member,
+                        "declined-moderators",
+                      )}
+                      <div class="relative">
+                        <Button
+                          class={`btn btn-xs ${memberLabelButtonClass} border-error/30 bg-error/10 text-error`}
+                          aria-expanded={openMemberPopover === declinedModeratorKey}
+                          onclick={() => showMemberPopover(declinedModeratorKey)}>
+                          Declined {pluralize(
+                            member.declinedModeratorSectionCount,
+                            "moderator section",
+                          )}
+                        </Button>
+                        {#if openMemberPopover === declinedModeratorKey}
+                          <InlinePopover
+                            align="right"
+                            widthClass="w-80 sm:w-96"
+                            onClose={() => (openMemberPopover = null)}>
+                            <div class="flex flex-col gap-3 text-sm">
+                              <h3 class="font-semibold">Declined moderator sections</h3>
+                              {#each member.declinedModeratorSections as section}
                                 <div class="rounded-box bg-base-200 p-3">
                                   <strong>{section.displayName}</strong>
                                   <div class="mt-2 flex flex-col gap-1">

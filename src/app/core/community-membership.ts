@@ -41,11 +41,14 @@ export type CommunityMemberListItem = {
   isAdmin: boolean
   isModerator: boolean
   isPendingModerator: boolean
+  isDeclinedModerator: boolean
   moderatorSections: CommunityMemberSectionRef[]
   pendingModeratorSections: CommunityMemberSectionRef[]
+  declinedModeratorSections: CommunityMemberSectionRef[]
   sectionGrants: CommunityMemberSectionRef[]
   moderatorSectionCount: number
   pendingModeratorSectionCount: number
+  declinedModeratorSectionCount: number
   grantCount: number
 }
 
@@ -189,11 +192,14 @@ export const selectCommunityMemberList = ({
       isAdmin: normalized === ownerPubkey,
       isModerator: false,
       isPendingModerator: false,
+      isDeclinedModerator: false,
       moderatorSections: [],
       pendingModeratorSections: [],
+      declinedModeratorSections: [],
       sectionGrants: [],
       moderatorSectionCount: 0,
       pendingModeratorSectionCount: 0,
+      declinedModeratorSectionCount: 0,
       grantCount: 0,
     } satisfies CommunityMemberListItem
 
@@ -244,6 +250,15 @@ export const selectCommunityMemberList = ({
             ...sectionRef,
             profileListAddresses: [profileList.address],
           })
+        } else if (isProfileListDeclined(event)) {
+          const moderator = getPerson(moderatorPubkey)
+          if (!moderator) continue
+
+          moderator.isDeclinedModerator = true
+          upsertSectionRef(moderator.declinedModeratorSections, {
+            ...sectionRef,
+            profileListAddresses: [profileList.address],
+          })
         }
       }
 
@@ -277,6 +292,9 @@ export const selectCommunityMemberList = ({
       pendingModeratorSections: person.pendingModeratorSections.sort((a, b) =>
         a.displayName.localeCompare(b.displayName),
       ),
+      declinedModeratorSections: person.declinedModeratorSections.sort((a, b) =>
+        a.displayName.localeCompare(b.displayName),
+      ),
       sectionGrants: person.sectionGrants.sort((a, b) =>
         a.displayName.localeCompare(b.displayName),
       ),
@@ -285,11 +303,28 @@ export const selectCommunityMemberList = ({
       ...person,
       moderatorSectionCount: person.moderatorSections.length,
       pendingModeratorSectionCount: person.pendingModeratorSections.length,
+      declinedModeratorSectionCount: person.declinedModeratorSections.length,
       grantCount: person.sectionGrants.length,
     }))
     .sort((a, b) => {
-      const aGroup = a.isOwner ? 0 : a.isModerator ? 1 : a.isPendingModerator ? 2 : 3
-      const bGroup = b.isOwner ? 0 : b.isModerator ? 1 : b.isPendingModerator ? 2 : 3
+      const aGroup = a.isOwner
+        ? 0
+        : a.isModerator
+          ? 1
+          : a.isPendingModerator
+            ? 2
+            : a.isDeclinedModerator
+              ? 3
+              : 4
+      const bGroup = b.isOwner
+        ? 0
+        : b.isModerator
+          ? 1
+          : b.isPendingModerator
+            ? 2
+            : b.isDeclinedModerator
+              ? 3
+              : 4
 
       if (aGroup !== bGroup) return aGroup - bGroup
       if (aGroup === 0) return a.pubkey.localeCompare(b.pubkey)
@@ -299,6 +334,9 @@ export const selectCommunityMemberList = ({
       }
       if (a.pendingModeratorSectionCount !== b.pendingModeratorSectionCount) {
         return b.pendingModeratorSectionCount - a.pendingModeratorSectionCount
+      }
+      if (a.declinedModeratorSectionCount !== b.declinedModeratorSectionCount) {
+        return b.declinedModeratorSectionCount - a.declinedModeratorSectionCount
       }
 
       return a.pubkey.localeCompare(b.pubkey)

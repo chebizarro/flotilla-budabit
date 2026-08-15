@@ -13,7 +13,6 @@ export type CommunityWidgetRecommendationContext = {
   profileListEvents: TrustedEvent[]
   trustedWidgetAuthorPubkeys: string[]
   widgetTargetAuthorPubkeys: string[]
-  fallbackAuthorityPubkeys: string[]
   targetingEventIds: string[]
   targetingRelayHints: string[]
 }
@@ -46,7 +45,6 @@ const normalizeRecommendationContext = (
   relayHints: normalizeRelays(context.relayHints),
   trustedWidgetAuthorPubkeys: uniquePubkeys(context.trustedWidgetAuthorPubkeys),
   widgetTargetAuthorPubkeys: uniquePubkeys(context.widgetTargetAuthorPubkeys),
-  fallbackAuthorityPubkeys: uniquePubkeys(context.fallbackAuthorityPubkeys),
   targetingEventIds: uniqueStrings(context.targetingEventIds),
   targetingRelayHints: normalizeRelays(context.targetingRelayHints),
 })

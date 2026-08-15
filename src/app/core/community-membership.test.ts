@@ -393,6 +393,7 @@ describe("community membership", () => {
     expect(pendingModerator).toMatchObject({
       isModerator: false,
       isPendingModerator: true,
+      isDeclinedModerator: false,
       moderatorSectionCount: 0,
       pendingModeratorSectionCount: 1,
       grantCount: 1,
@@ -423,6 +424,7 @@ describe("community membership", () => {
     expect(moderator).toMatchObject({
       isModerator: true,
       isPendingModerator: false,
+      isDeclinedModerator: false,
       moderatorSectionCount: 1,
       pendingModeratorSectionCount: 0,
       grantCount: 1,
@@ -464,6 +466,8 @@ describe("community membership", () => {
         pubkey: userPubkey,
         isModerator: false,
         isPendingModerator: false,
+        isDeclinedModerator: true,
+        declinedModeratorSectionCount: 1,
         grantCount: 1,
       }),
     ])

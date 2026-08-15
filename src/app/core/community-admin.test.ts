@@ -6,6 +6,7 @@ import {
   applyCommunityBootstrapGrants,
   findCommunityProfileListEvent,
   getCommunityModeratorInviteProfileListRefs,
+  getCommunityModeratorInviteStates,
   getOwnerMembershipGrantProfileList,
   getPendingCommunityModeratorInvites,
   makeCommunityGrantEvent,
@@ -317,6 +318,22 @@ describe("community admin helpers", () => {
         profileListEvents: [declined],
       }),
     ).toEqual([])
+    expect(
+      getCommunityModeratorInviteStates({definition, profileListEvents: []}).map(
+        invite => invite.status,
+      ),
+    ).toEqual(["pending"])
+    expect(
+      getCommunityModeratorInviteStates({definition, profileListEvents: [accepted]}).map(
+        invite => invite.status,
+      ),
+    ).toEqual(["accepted"])
+    expect(
+      getCommunityModeratorInviteStates({
+        definition,
+        profileListEvents: [accepted, declined],
+      }).map(invite => invite.status),
+    ).toEqual(["declined"])
   })
 
   it("selects moderator invite refs for the active user", () => {

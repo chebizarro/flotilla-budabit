@@ -184,7 +184,6 @@ import {
   notificationEventRepository,
   receiveNotificationEvent,
 } from "@app/util/notification-events"
-import {findCommunityProfileListEvent} from "@app/core/community-admin"
 import {
   createBoundedCommunityHistoryLoader,
   makeSameAuthorDeleteFilters,
@@ -438,12 +437,10 @@ const hasCommunityDefinitionEvidence = (ref: ActiveUserCommunityRef) =>
 const hasCommunitySectionEvidence = ({
   ref,
   sectionName,
-  profileListEvents,
   reportStates,
 }: {
   ref: ActiveUserCommunityRef
   sectionName: string
-  profileListEvents: TrustedEvent[]
   reportStates?: UserCommunityReportStates
 }) => {
   if (!hasCommunityDefinitionEvidence(ref)) return false
@@ -454,12 +451,7 @@ const hasCommunitySectionEvidence = ({
     candidate => normalizeCommunitySectionName(candidate.name) === normalizedSectionName,
   )
 
-  return Boolean(
-    section &&
-    section.profileLists.every(profileList =>
-      Boolean(findCommunityProfileListEvent(profileList, profileListEvents)),
-    ),
-  )
+  return Boolean(section)
 }
 
 const getCommunityEventWriteTarget = (
@@ -506,7 +498,6 @@ const hasCommunityGrantEvidence = ({
       hasCommunitySectionEvidence({
         ref,
         sectionName: section.name,
-        profileListEvents,
         reportStates,
       }),
     )
@@ -530,7 +521,6 @@ const hasCommunityCalendarGrantEvidence = ({
       hasCommunitySectionEvidence({
         ref,
         sectionName: section.name,
-        profileListEvents,
         reportStates,
       }),
     )
@@ -2164,7 +2154,6 @@ export const buildCommunityNotificationRows = ({
         !hasCommunitySectionEvidence({
           ref,
           sectionName: section.name,
-          profileListEvents,
           reportStates,
         })
       ) {
@@ -2451,7 +2440,6 @@ export const buildCommunityApplicationNotificationRows = ({
       !hasCommunitySectionEvidence({
         ref,
         sectionName,
-        profileListEvents,
         reportStates: outcomeReportStates,
       })
     ) {
@@ -3807,6 +3795,7 @@ const globalCommunityReportStates: Readable<Map<string, EffectiveCommunityReport
     globalCommunityReportLoad,
     globalCommunityReportDeleteSources,
     globalCommunityReportDeleteLoad,
+    globalCommunityProfileListEvents,
     globalCommunityReportEvents,
     globalCommunityReportDeleteEvents,
   ],
@@ -3820,6 +3809,7 @@ const globalCommunityReportStates: Readable<Map<string, EffectiveCommunityReport
     $reports,
     $reportDeleteSources,
     $reportDeletes,
+    $profileListEvents,
     $reportEvents,
     $deleteEvents,
   ]) => {
@@ -3845,6 +3835,7 @@ const globalCommunityReportStates: Readable<Map<string, EffectiveCommunityReport
         communityPubkey,
         getEffectiveCommunityReportState({
           definition: ref.definition,
+          profileListEvents: $profileListEvents,
           reportEvents: $reportEvents,
           deleteEvents: $deleteEvents,
         }),
@@ -4408,6 +4399,7 @@ const communityApplicationOutcomeReportStates = derived(
     communityApplicationOutcomeReportLoad,
     communityApplicationOutcomeReportDeleteSources,
     communityApplicationOutcomeReportDeleteLoad,
+    communityApplicationOutcomeProfileListEvents,
   ],
   ([
     $definitions,
@@ -4427,6 +4419,7 @@ const communityApplicationOutcomeReportStates = derived(
     $reportLoad,
     $reportDeleteSources,
     $reportDeleteLoad,
+    $profileListEvents,
   ]) => {
     const states = new Map<string, EffectiveCommunityReportState>()
 
@@ -4453,6 +4446,7 @@ const communityApplicationOutcomeReportStates = derived(
         communityPubkey,
         getEffectiveCommunityReportState({
           definition,
+          profileListEvents: $profileListEvents,
           reportEvents: $reportEvents,
           deleteEvents: $deleteEvents,
         }),

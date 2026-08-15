@@ -77,9 +77,9 @@ Admission review reactions are published to the scoped community relays and to n
 
 Grant capability requires profile-list management:
 
-| Capability              | Source                                                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------- |
-| Profile-list management | The moderator pubkey is the author of the section's `kind:30000` profile-list reference. |
+| Capability              | Source                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Profile-list management | The moderator pubkey owns the referenced coordinate and has published its current non-declined `kind:30000` event. |
 
 This keeps the access-control model simple and prevents users from applying through forms whose authors cannot approve them.
 
@@ -98,7 +98,7 @@ Form discovery starts from the active community definition.
 For a requested section:
 
 1. Find the section in latest `kind:10222`.
-2. Derive grant-capable moderator pubkeys from the section profile-list references.
+2. Derive grant-capable moderator pubkeys from references whose current list events exist and are not declined.
 3. Query community relays for `kind:30168` authored by those moderators and tagged to the community definition.
 4. Client-side filter to forms with `content = <section name>`.
 5. Resolve the active form by addressable event semantics and deterministic ordering.

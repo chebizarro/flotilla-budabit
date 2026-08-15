@@ -110,6 +110,7 @@ export type CommunityWidgetContext = {
 export type CommunityWidgetRuntimeContext = {
   definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
+  authorityEvidenceSettled?: boolean
   reportState?: EffectiveCommunityReportState
   relays: string[]
   relayHints: string[]

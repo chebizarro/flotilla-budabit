@@ -265,9 +265,7 @@ Private list entries, unknown tags, and state not included in the source events 
 
 Predecessor moderator-owned lists should not be reused by default because those pubkeys would retain authority over successor permissions.
 
-The successor should issue fresh moderator invitations using successor-community-scoped coordinates. A pending invitation must not confer publication, grant, report, or moderation authority. Authority begins only after the moderator signs an explicit acceptance.
-
-The current implementation treats some referenced list owners as authorized before invitation acceptance and may grant them community-wide write access. That behavior must be resolved before it can safely support migration.
+The successor should issue fresh moderator invitations using successor-community-scoped coordinates. Under the implemented role model, a pending or declined invitation reference confers community-wide member/write access while it remains in the definition. It does not confer profile-list management, grant, form-review, moderation-report, or privileged widget authority. Those moderator powers begin only after the moderator signs a non-declined response.
 
 ### Publication Ordering
 

@@ -435,7 +435,11 @@ describe("community permissions", () => {
       }),
     ).toEqual([communityPubkey, managerPubkey])
     expect(
-      getGrantCapableSectionModeratorPubkeys({definition, sectionName: "Code-curator"}),
+      getGrantCapableSectionModeratorPubkeys({
+        definition,
+        sectionName: "Code-curator",
+        profileListEvents: [generalProfileList, repoProfileList],
+      }),
     ).toEqual([communityPubkey, repoManagerPubkey])
   })
 

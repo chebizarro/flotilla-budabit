@@ -1480,6 +1480,7 @@ export const watchedRepoCommunityContexts: Readable<Map<string, RepoWatchCommuni
         const reportState = definition
           ? getEffectiveCommunityReportState({
               definition,
+              profileListEvents,
               reportEvents: $reportLoad.events,
               deleteEvents: $reportDeleteLoad.events,
             })

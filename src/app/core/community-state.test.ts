@@ -294,7 +294,12 @@ describe("community state helpers", () => {
         ["content", "Goals"],
       ],
     })
-    const forms = selectCommunityAdmissionForms(definition, [form])
+    const profileList = makeProfileListEvent({
+      id: "goals-moderator-list",
+      pubkey: listPubkey,
+      identifier: "Goals",
+    })
+    const forms = selectCommunityAdmissionForms(definition, [form], [profileList])
 
     expect(forms.Goals?.event.id).toBe("goals-form")
     expect(forms[COMMUNITY_SECTION_GOALS]).toBeUndefined()
