@@ -1,5 +1,5 @@
 import {browser} from "$app/environment"
-import {derived, get, writable, type Readable} from "svelte/store"
+import {derived, get, writable, type Readable, type Writable} from "svelte/store"
 import {deriveProfile, forceLoadRelayList, pubkey, repository, sign, tracker} from "@welshman/app"
 import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
 import {normalizeUrl, sortBy, LRUCache} from "@welshman/lib"
@@ -125,6 +125,13 @@ export type CommunityPermissionStatus = {
 
 export type CommunityRelayLoadSettle = "all" | "first" | "first-non-empty"
 
+export type CommunityRelayLoadResult = {
+  events: TrustedEvent[]
+  complete: boolean
+  timedOutRelays: string[]
+  failedRelays: string[]
+}
+
 export type CommunityRelayLoadOptions = {
   timeout?: number
   authTimeout?: number
@@ -134,14 +141,8 @@ export type CommunityRelayLoadOptions = {
   priority?: number
   signal?: AbortSignal
   onStart?: (relay: string) => void
+  onProgress?: (result: CommunityRelayLoadResult, terminal: boolean) => void
   publishEvents?: boolean
-}
-
-export type CommunityRelayLoadResult = {
-  events: TrustedEvent[]
-  complete: boolean
-  timedOutRelays: string[]
-  failedRelays: string[]
 }
 
 export type CommunityHydrationStatus =
@@ -226,6 +227,14 @@ export const activeCommunityBootstrapStatus = writable<CommunityBootstrapStatus>
   loaded: false,
 })
 export const activeCommunityPermissionStatus = writable<CommunityPermissionStatus>({
+  communityPubkey: "",
+  key: "",
+  loading: false,
+  loaded: false,
+  complete: false,
+  hasCachedEvents: false,
+})
+export const activeCommunityAdmissionFormStatus = writable<CommunityPermissionStatus>({
   communityPubkey: "",
   key: "",
   loading: false,
@@ -327,6 +336,14 @@ export const clearActiveCommunity = () => {
   activeCommunitySession.set(undefined)
   startCommunityPermissionLoadContext()
   activeCommunityPermissionStatus.set({
+    communityPubkey: "",
+    key: "",
+    loading: false,
+    loaded: false,
+    complete: false,
+    hasCachedEvents: false,
+  })
+  activeCommunityAdmissionFormStatus.set({
     communityPubkey: "",
     key: "",
     loading: false,
@@ -629,6 +646,7 @@ type CommunityPermissionLoadContext = {
 type CommunityPermissionLoadAttempt = CommunityPermissionLoadContext & {
   key: string
   filters: Filter[]
+  status: Writable<CommunityPermissionStatus>
 }
 
 let communityPermissionLoadGeneration = 0
@@ -653,29 +671,56 @@ const makeCommunityPermissionStatusKey = (
   {viewerPubkey, generation}: CommunityPermissionLoadContext,
 ) => `${viewerPubkey}:${definition.event.id}:${normalizeRelays(relays).join(",")}:${generation}`
 
-const getCommunityPermissionStatusKeyPrefix = (
+export const getCommunityPermissionStatusKeyPrefix = (
   definition: CommunityDefinition,
   relays: string[],
   viewerPubkey: string,
 ) => `${normalizePubkey(viewerPubkey)}:${definition.event.id}:${normalizeRelays(relays).join(",")}:`
+
+export type CommunityPermissionReadiness = "loading" | "ready" | "unavailable"
+
+export const getCommunityPermissionReadiness = ({
+  status,
+  communityPubkey,
+  expectedKeyPrefix,
+}: {
+  status: CommunityPermissionStatus
+  communityPubkey: string
+  expectedKeyPrefix: string
+}): CommunityPermissionReadiness => {
+  const matchesCurrentAuthority = Boolean(
+    communityPubkey &&
+    expectedKeyPrefix &&
+    normalizePubkey(status.communityPubkey) === normalizePubkey(communityPubkey) &&
+    status.key.startsWith(expectedKeyPrefix),
+  )
+
+  if (!matchesCurrentAuthority) return "loading"
+  if (status.hasCachedEvents || (status.loaded && status.complete)) return "ready"
+  if (status.loading || !status.loaded) return "loading"
+
+  return "unavailable"
+}
 
 const startCommunityPermissionLoadStatus = ({
   definition,
   relays,
   filters,
   context,
+  status = activeCommunityPermissionStatus,
 }: {
   definition: CommunityDefinition
   relays: string[]
   filters: Filter[]
   context: CommunityPermissionLoadContext
+  status?: Writable<CommunityPermissionStatus>
 }): CommunityPermissionLoadAttempt => {
   const key = makeCommunityPermissionStatusKey(definition, relays, context)
   const hasCachedEvents = hasCachedCommunityEventsForFilters(filters)
   const hasFilters = filters.length > 0
 
   if (context.generation === latestCommunityPermissionLoadGeneration) {
-    activeCommunityPermissionStatus.set({
+    status.set({
       communityPubkey: definition.pubkey,
       key,
       loading: hasFilters,
@@ -685,27 +730,29 @@ const startCommunityPermissionLoadStatus = ({
     })
   }
 
-  return {...context, key, filters}
+  return {...context, key, filters, status}
 }
 
-const finishCommunityPermissionLoadStatus = (
+const updateCommunityPermissionLoadStatus = (
   attempt: CommunityPermissionLoadAttempt,
-  {complete, error}: {complete: boolean; error?: unknown},
+  {result, terminal, error}: {result: CommunityRelayLoadResult; terminal: boolean; error?: unknown},
 ) => {
-  if (!attempt.key || attempt.generation !== latestCommunityPermissionLoadGeneration) return
+  if (!attempt.key) return
 
-  activeCommunityPermissionStatus.update(current =>
-    current.key === attempt.key
-      ? {
-          ...current,
-          loading: false,
-          loaded: true,
-          complete,
-          hasCachedEvents: hasCachedCommunityEventsForFilters(attempt.filters),
-          ...(error ? {error: error instanceof Error ? error.message : String(error)} : {}),
-        }
-      : current,
-  )
+  attempt.status.update(current => {
+    if (current.key !== attempt.key) return current
+
+    const hasCachedEvents = hasCachedCommunityEventsForFilters(attempt.filters)
+
+    return {
+      ...current,
+      loading: !terminal,
+      loaded: terminal || hasCachedEvents,
+      complete: result.complete,
+      hasCachedEvents,
+      ...(terminal && error ? {error: error instanceof Error ? error.message : String(error)} : {}),
+    }
+  })
 }
 
 export const getDefaultCommunityRelayHints = () =>
@@ -952,8 +999,15 @@ export const loadCommunityEventsWithStatus = async (
   const normalizedRelays = normalizeRelays(relays)
   let authFailedRelays: string[] = []
 
-  if (normalizedRelays.length === 0 || filters.length === 0) {
-    return {events: [], complete: true, timedOutRelays: [], failedRelays: []}
+  if (filters.length === 0) {
+    const result = {events: [], complete: true, timedOutRelays: [], failedRelays: []}
+    options.onProgress?.(result, true)
+    return result
+  }
+  if (normalizedRelays.length === 0) {
+    const result = {events: [], complete: false, timedOutRelays: [], failedRelays: []}
+    options.onProgress?.(result, true)
+    return result
   }
 
   if (options.authenticate) {
@@ -965,12 +1019,14 @@ export const loadCommunityEventsWithStatus = async (
 
   const readableRelays = normalizedRelays.filter(relay => !authFailedRelays.includes(relay))
   if (readableRelays.length === 0) {
-    return {
+    const result = {
       events: [],
       complete: false,
       timedOutRelays: [],
       failedRelays: authFailedRelays,
     }
+    options.onProgress?.(result, true)
+    return result
   }
 
   const loadRelay = async (relay: string) => {
@@ -1068,8 +1124,10 @@ export const loadCommunityEventsWithStatus = async (
 
   if (settle === "all") {
     const results = await Promise.all(relayPromises)
+    const result = summarize(results)
 
-    return summarize(results)
+    options.onProgress?.(result, true)
+    return result
   }
 
   return new Promise(resolve => {
@@ -1087,18 +1145,17 @@ export const loadCommunityEventsWithStatus = async (
       promise.then(result => {
         settled += 1
         collectedResults.push(result)
+        const terminal = settled === relayPromises.length
+
+        options.onProgress?.(summarize(collectedResults), terminal)
 
         if (settle === "first") {
           resolveOnce([result])
-          return
-        }
-
-        if (result.events.length > 0) {
+        } else if (result.events.length > 0) {
           resolveOnce([result])
-          return
         }
 
-        if (settled === relayPromises.length) {
+        if (terminal) {
           resolveOnce(collectedResults)
         }
       })
@@ -2752,46 +2809,95 @@ const loadCommunityPermissionEvents = async ({
   definition,
   relays,
   context,
+  loadAuthority = true,
+  loadAdmissionForms = true,
 }: {
   definition: CommunityDefinition
   relays: string[]
   context: CommunityPermissionLoadContext
+  loadAuthority?: boolean
+  loadAdmissionForms?: boolean
 }) => {
   const authorityFilters = makeCommunityProfileListFilters(definition)
   const admissionFormFilters = makeCommunityAdmissionFormFilters(definition)
-  const attempt = startCommunityPermissionLoadStatus({
-    definition,
-    relays,
-    filters: [...authorityFilters, ...admissionFormFilters],
-    context,
-  })
+  const authorityAttempt = loadAuthority
+    ? startCommunityPermissionLoadStatus({
+        definition,
+        relays,
+        filters: authorityFilters,
+        context,
+      })
+    : undefined
+  const admissionFormAttempt = loadAdmissionForms
+    ? startCommunityPermissionLoadStatus({
+        definition,
+        relays,
+        filters: admissionFormFilters,
+        context,
+        status: activeCommunityAdmissionFormStatus,
+      })
+    : undefined
 
   try {
     const [authorityResult, admissionFormResult] = await Promise.all([
-      authorityFilters.length > 0
+      loadAuthority && authorityFilters.length > 0
         ? loadCommunityEventsWithStatus(relays, authorityFilters, {
             timeout: COMMUNITY_AUTHORITY_LOAD_TIMEOUT,
             settle: "first-non-empty",
             authenticate: true,
+            onProgress: (result, terminal) => {
+              if (!authorityAttempt) return
+              updateCommunityPermissionLoadStatus(authorityAttempt, {
+                result,
+                terminal,
+                error: terminal ? getCommunityLoadFailure([result]) : undefined,
+              })
+            },
           })
         : makeCompleteEmptyCommunityLoadResult(),
-      admissionFormFilters.length > 0
+      loadAdmissionForms && admissionFormFilters.length > 0
         ? loadCommunityEventsWithStatus(relays, admissionFormFilters, {
             authenticate: true,
             settle: "first",
+            onProgress: (result, terminal) => {
+              if (!admissionFormAttempt) return
+              updateCommunityPermissionLoadStatus(admissionFormAttempt, {
+                result,
+                terminal,
+                error: terminal ? getCommunityLoadFailure([result]) : undefined,
+              })
+            },
           })
         : makeCompleteEmptyCommunityLoadResult(),
     ])
-    const results = [authorityResult, admissionFormResult]
 
-    finishCommunityPermissionLoadStatus(attempt, {
-      complete: results.every(result => result.complete),
-      error: getCommunityLoadFailure(results),
-    })
+    if (authorityAttempt && authorityFilters.length === 0) {
+      updateCommunityPermissionLoadStatus(authorityAttempt, {
+        result: authorityResult,
+        terminal: true,
+      })
+    }
+    if (admissionFormAttempt && admissionFormFilters.length === 0) {
+      updateCommunityPermissionLoadStatus(admissionFormAttempt, {
+        result: admissionFormResult,
+        terminal: true,
+      })
+    }
 
     return {authorityFilters, admissionFormFilters, authorityResult, admissionFormResult}
   } catch (error) {
-    finishCommunityPermissionLoadStatus(attempt, {complete: false, error})
+    const result = {
+      events: [],
+      complete: false,
+      timedOutRelays: [],
+      failedRelays: normalizeRelays(relays),
+    }
+    if (authorityAttempt) {
+      updateCommunityPermissionLoadStatus(authorityAttempt, {result, terminal: true, error})
+    }
+    if (admissionFormAttempt) {
+      updateCommunityPermissionLoadStatus(admissionFormAttempt, {result, terminal: true, error})
+    }
     throw error
   }
 }
@@ -3067,15 +3173,26 @@ const ensureCompletedCommunityPermissionHydration = (
     : getCommunityBootstrapRelays(session.communityRelayHints)
   const viewerPubkey = normalizePubkey(pubkey.get() || "")
   const keyPrefix = getCommunityPermissionStatusKeyPrefix(definition, relays, viewerPubkey)
-  const status = get(activeCommunityPermissionStatus)
-  const matchesCurrentViewerAndDefinition =
+  const authorityStatus = get(activeCommunityPermissionStatus)
+  const admissionFormStatus = get(activeCommunityAdmissionFormStatus)
+  const statusMatches = (status: CommunityPermissionStatus) =>
     status.communityPubkey === definition.pubkey && status.key.startsWith(keyPrefix)
-
-  if (matchesCurrentViewerAndDefinition && (status.loading || status.complete)) return
+  const loadAuthority =
+    !statusMatches(authorityStatus) || (!authorityStatus.loading && !authorityStatus.complete)
+  const loadAdmissionForms =
+    !statusMatches(admissionFormStatus) ||
+    (!admissionFormStatus.loading && !admissionFormStatus.complete)
+  if (!loadAuthority && !loadAdmissionForms) return
 
   const context = startCommunityPermissionLoadContext()
 
-  void loadCommunityPermissionEvents({definition, relays, context}).catch(() => undefined)
+  void loadCommunityPermissionEvents({
+    definition,
+    relays,
+    context,
+    loadAuthority,
+    loadAdmissionForms,
+  }).catch(() => undefined)
 }
 
 export const ensureCommunityBootstrap = async (

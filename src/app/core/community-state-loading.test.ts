@@ -85,6 +85,7 @@ vi.mock("@welshman/router", async importOriginal => {
 })
 
 import {
+  activeCommunityAdmissionFormStatus,
   activeCommunityDefinition,
   activeCommunityBootstrapStatus,
   activeCommunityPermissionStatus,
@@ -94,6 +95,7 @@ import {
   clearActiveCommunity,
   clearCommunityBootstrapCache,
   ensureCommunityBootstrap,
+  getCommunityPermissionReadiness,
   hasCommunityHydrationCompleted,
   hydrateCommunityEventsWithStatus,
   hydrateCommunityPreferences,
@@ -110,6 +112,7 @@ import {
 
 const communityPubkey = "a".repeat(64)
 const listPubkey = "b".repeat(64)
+const secondListPubkey = "1".repeat(64)
 const memberPubkey = "c".repeat(64)
 const moderatorCommunityPubkey = "d".repeat(64)
 const moderatorPubkey = "e".repeat(64)
@@ -152,6 +155,29 @@ const profileListEvent = makeEvent({
   tags: [
     ["d", "General"],
     ["p", memberPubkey],
+  ],
+})
+
+const secondProfileListEvent = makeEvent({
+  id: "secondary-list",
+  kind: PROFILE_LIST_KIND,
+  pubkey: secondListPubkey,
+  tags: [
+    ["d", "Secondary"],
+    ["p", memberPubkey],
+  ],
+})
+
+const twoListDefinitionEvent = makeEvent({
+  id: "definition-two-lists",
+  kind: COMMUNITY_DEFINITION_KIND,
+  tags: [
+    ["r", relayA],
+    ["r", relayB],
+    ["content", "General"],
+    ["k", "1111"],
+    ["a", `${PROFILE_LIST_KIND}:${listPubkey}:General`, relayA],
+    ["a", `${PROFILE_LIST_KIND}:${secondListPubkey}:Secondary`, relayB],
   ],
 })
 
@@ -271,9 +297,11 @@ const acceptAuth = (socket: Socket) => {
 const removeTestEvents = () => {
   for (const event of [
     definitionEvent,
+    twoListDefinitionEvent,
     singleRelayDefinitionEvent,
     requiredRelayDefinitionEvent,
     profileListEvent,
+    secondProfileListEvent,
     admissionFormEvent,
     moderatorDefinitionEvent,
     moderatorProfileListEvent,
@@ -380,6 +408,107 @@ describe("community relay loading", () => {
     expect(result.complete).toBe(false)
   })
 
+  it("reports progressive and terminal results after an early multi-relay result", async () => {
+    let resolveRelayB: (events: TrustedEvent[]) => void = () => {}
+    const relayBLoad = new Promise<TrustedEvent[]>(resolve => {
+      resolveRelayB = resolve
+    })
+    const progress: Array<{
+      result: {complete: boolean; events: TrustedEvent[]}
+      terminal: boolean
+    }> = []
+    loadMock.mockImplementation(({relays}: {relays: string[]}) =>
+      relays[0] === relayB ? relayBLoad : Promise.resolve([profileListEvent]),
+    )
+
+    const firstResult = await loadCommunityEventsWithStatus(
+      [relayA, relayB],
+      [{kinds: [PROFILE_LIST_KIND]}],
+      {
+        settle: "first-non-empty",
+        onProgress: (result, terminal) => progress.push({result, terminal}),
+      },
+    )
+
+    expect(firstResult).toMatchObject({complete: false, events: [profileListEvent]})
+    expect(progress).toMatchObject([
+      {result: {complete: false, events: [profileListEvent]}, terminal: false},
+    ])
+
+    resolveRelayB([])
+    await flushPromises()
+
+    expect(progress.at(-1)).toMatchObject({
+      result: {complete: true, events: [profileListEvent]},
+      terminal: true,
+    })
+  })
+
+  it("reports a timed-out relay as one terminal update after an early result", async () => {
+    const progress: Array<{
+      result: {complete: boolean; timedOutRelays: string[]}
+      terminal: boolean
+    }> = []
+    loadMock.mockImplementation(({relays}: {relays: string[]}) =>
+      relays[0] === relayB ? new Promise(() => undefined) : Promise.resolve([profileListEvent]),
+    )
+
+    await loadCommunityEventsWithStatus([relayA, relayB], [{kinds: [PROFILE_LIST_KIND]}], {
+      timeout: 100,
+      settle: "first-non-empty",
+      onProgress: (result, terminal) => progress.push({result, terminal}),
+    })
+    await vi.advanceTimersByTimeAsync(100)
+
+    const terminalUpdates = progress.filter(item => item.terminal)
+    expect(terminalUpdates).toHaveLength(1)
+    expect(terminalUpdates[0]).toMatchObject({
+      result: {complete: false, timedOutRelays: [relayB]},
+      terminal: true,
+    })
+  })
+
+  it("classifies current authority readiness without accepting stale generations", () => {
+    const expectedKeyPrefix = `viewer:definition:relay:`
+    const baseStatus = {
+      communityPubkey,
+      key: `${expectedKeyPrefix}1`,
+      loading: true,
+      loaded: true,
+      complete: false,
+      hasCachedEvents: false,
+    }
+
+    expect(
+      getCommunityPermissionReadiness({
+        status: baseStatus,
+        communityPubkey,
+        expectedKeyPrefix,
+      }),
+    ).toBe("loading")
+    expect(
+      getCommunityPermissionReadiness({
+        status: {...baseStatus, hasCachedEvents: true},
+        communityPubkey,
+        expectedKeyPrefix,
+      }),
+    ).toBe("ready")
+    expect(
+      getCommunityPermissionReadiness({
+        status: {...baseStatus, loading: false},
+        communityPubkey,
+        expectedKeyPrefix,
+      }),
+    ).toBe("unavailable")
+    expect(
+      getCommunityPermissionReadiness({
+        status: {...baseStatus, key: "viewer:older-definition:relay:1"},
+        communityPubkey,
+        expectedKeyPrefix,
+      }),
+    ).toBe("loading")
+  })
+
   it("distinguishes complete empty loads from timeouts", async () => {
     loadMock.mockResolvedValueOnce([])
 
@@ -399,6 +528,18 @@ describe("community relay loading", () => {
       timedOutRelays: [relayA],
       failedRelays: [],
     })
+  })
+
+  it("does not treat non-empty authority filters as complete without relays", async () => {
+    const onProgress = vi.fn()
+
+    await expect(
+      loadCommunityEventsWithStatus([], [{kinds: [PROFILE_LIST_KIND]}], {onProgress}),
+    ).resolves.toEqual({events: [], complete: false, timedOutRelays: [], failedRelays: []})
+    expect(onProgress).toHaveBeenCalledWith(
+      {events: [], complete: false, timedOutRelays: [], failedRelays: []},
+      true,
+    )
   })
 
   it("keeps timed-out route hydration incomplete and retryable", async () => {
@@ -861,13 +1002,13 @@ describe("community relay loading", () => {
     expect(await definitionPromise).toBeUndefined()
   })
 
-  it("resolves bootstrap state from one responsive community relay", async () => {
+  it("uses authority from one responsive relay without requiring an admission form", async () => {
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
       if (relays[0] === relayB) return new Promise(() => undefined)
       if (relays[0] !== relayA) return Promise.resolve([])
       if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) return Promise.resolve([definitionEvent])
       if (hasKind(filters, PROFILE_LIST_KIND)) return Promise.resolve([profileListEvent])
-      if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([admissionFormEvent])
+      if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([])
 
       return Promise.resolve([])
     })
@@ -881,8 +1022,55 @@ describe("community relay loading", () => {
     expect(bootstrap.profileListEvents.map(event => event.id)).toEqual([profileListEvent.id])
     expect(get(activeCommunityDefinition)?.event.id).toBe(definitionEvent.id)
     expect(get(activeCommunityPermissionStatus)).toMatchObject({
+      loading: true,
       loaded: true,
       complete: false,
+      hasCachedEvents: true,
+    })
+    expect(get(activeCommunityAdmissionFormStatus)).toMatchObject({
+      loading: true,
+      loaded: false,
+      complete: false,
+      hasCachedEvents: false,
+    })
+  })
+
+  it("stays loading until slower relays cover every authority filter", async () => {
+    let resolveSecondaryList: (events: TrustedEvent[]) => void = () => {}
+    const secondaryListLoad = new Promise<TrustedEvent[]>(resolve => {
+      resolveSecondaryList = resolve
+    })
+    loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
+        return Promise.resolve([twoListDefinitionEvent])
+      }
+      if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([])
+      if (hasKind(filters, PROFILE_LIST_KIND)) {
+        return relays[0] === relayB ? secondaryListLoad : Promise.resolve([profileListEvent])
+      }
+
+      return Promise.resolve([])
+    })
+
+    await loadCommunityBootstrap({
+      communityPubkey,
+      communityRelayHints: [relayA, relayB],
+    })
+
+    expect(get(activeCommunityPermissionStatus)).toMatchObject({
+      loading: true,
+      loaded: false,
+      complete: false,
+      hasCachedEvents: false,
+    })
+
+    resolveSecondaryList([secondProfileListEvent])
+    await flushPromises()
+
+    expect(get(activeCommunityPermissionStatus)).toMatchObject({
+      loading: false,
+      loaded: true,
+      complete: true,
       hasCachedEvents: true,
     })
   })
@@ -972,7 +1160,12 @@ describe("community relay loading", () => {
 
     await ensureCommunityBootstrap(session)
     await flushPromises()
-    expect(get(activeCommunityPermissionStatus)).toMatchObject({loaded: true, complete: false})
+    expect(get(activeCommunityPermissionStatus)).toMatchObject({
+      loading: false,
+      loaded: true,
+      complete: false,
+      hasCachedEvents: false,
+    })
 
     await ensureCommunityBootstrap(session)
     await flushPromises()
@@ -980,6 +1173,115 @@ describe("community relay loading", () => {
     expect(profileLoadCount).toBe(2)
     expect(get(activeCommunityPermissionStatus)).toMatchObject({
       loaded: true,
+      complete: true,
+      hasCachedEvents: true,
+    })
+  })
+
+  it("refreshes incomplete admission forms after authority completes", async () => {
+    const session = {communityPubkey, communityRelayHints: [relayA]}
+    let admissionFormLoadCount = 0
+
+    clearCommunityBootstrapCache(communityPubkey)
+    repository.publish(singleRelayDefinitionEvent)
+    loadMock.mockImplementation(({filters, onClosed}: any) => {
+      if (hasKind(filters, PROFILE_LIST_KIND)) return Promise.resolve([profileListEvent])
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
+        return Promise.resolve([singleRelayDefinitionEvent])
+      }
+      if (hasKind(filters, FORM_TEMPLATE_KIND)) {
+        admissionFormLoadCount += 1
+        if (admissionFormLoadCount === 1) {
+          onClosed?.("restricted: denied", relayA)
+          return Promise.resolve([])
+        }
+
+        return Promise.resolve([admissionFormEvent])
+      }
+
+      return Promise.resolve([])
+    })
+
+    await ensureCommunityBootstrap(session)
+    await flushPromises()
+    expect(get(activeCommunityPermissionStatus)).toMatchObject({complete: true})
+    const authorityStatusKey = get(activeCommunityPermissionStatus).key
+    expect(get(activeCommunityAdmissionFormStatus)).toMatchObject({
+      loading: false,
+      loaded: true,
+      complete: false,
+      hasCachedEvents: false,
+    })
+
+    await ensureCommunityBootstrap(session)
+    await flushPromises()
+
+    expect(admissionFormLoadCount).toBe(2)
+    expect(get(activeCommunityPermissionStatus).key).toBe(authorityStatusKey)
+    expect(get(activeCommunityAdmissionFormStatus)).toMatchObject({
+      loading: false,
+      loaded: true,
+      complete: true,
+      hasCachedEvents: true,
+    })
+  })
+
+  it("retries one evidence stream without invalidating its active sibling", async () => {
+    const session = {communityPubkey, communityRelayHints: [relayA]}
+    let profileLoadCount = 0
+    let admissionFormLoadCount = 0
+
+    clearCommunityBootstrapCache(communityPubkey)
+    repository.publish(singleRelayDefinitionEvent)
+    loadMock.mockImplementation(({filters}: {filters: Filter[]}) => {
+      if (hasKind(filters, PROFILE_LIST_KIND)) {
+        profileLoadCount += 1
+        return Promise.resolve([profileListEvent])
+      }
+      if (hasKind(filters, FORM_TEMPLATE_KIND)) {
+        admissionFormLoadCount += 1
+        return Promise.resolve([admissionFormEvent])
+      }
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
+        return Promise.resolve([singleRelayDefinitionEvent])
+      }
+
+      return Promise.resolve([])
+    })
+
+    await ensureCommunityBootstrap(session)
+    await flushPromises()
+    const authorityKey = get(activeCommunityPermissionStatus).key
+    profileLoadCount = 0
+    admissionFormLoadCount = 0
+    activeCommunityPermissionStatus.set({
+      communityPubkey,
+      key: authorityKey,
+      loading: true,
+      loaded: false,
+      complete: false,
+      hasCachedEvents: false,
+    })
+    activeCommunityAdmissionFormStatus.set({
+      communityPubkey,
+      key: authorityKey,
+      loading: false,
+      loaded: true,
+      complete: false,
+      hasCachedEvents: false,
+    })
+
+    await ensureCommunityBootstrap(session)
+    await flushPromises()
+
+    expect(profileLoadCount).toBe(0)
+    expect(admissionFormLoadCount).toBe(1)
+    expect(get(activeCommunityPermissionStatus)).toMatchObject({
+      key: authorityKey,
+      loading: true,
+      loaded: false,
+    })
+    expect(get(activeCommunityAdmissionFormStatus)).toMatchObject({
       complete: true,
       hasCachedEvents: true,
     })
