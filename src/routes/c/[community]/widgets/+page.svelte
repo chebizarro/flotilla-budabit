@@ -1,6 +1,6 @@
 <script lang="ts">
   import {page} from "$app/stores"
-  import {profilesByPubkey, pubkey, repository} from "@welshman/app"
+  import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {DELETE, makeEvent, getTagValue, type TrustedEvent} from "@welshman/util"
   import {randomId} from "@welshman/lib"
@@ -19,13 +19,19 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    activeCommunityRelays,
+    activeExactCommunityRelays,
     activeUserCommunityRefs,
   } from "@app/core/community-state"
-  import {normalizePubkey} from "@app/core/community"
+  import {
+    makeCommunityPointer,
+    normalizePubkey,
+    parseCommunityDefinitionV2,
+    parseCommunityNaddr,
+  } from "@app/core/community"
   import {
     SMART_WIDGET_KIND,
     makeCommunityContentFilterPlan,
@@ -42,7 +48,6 @@
   } from "@app/core/community-permissions"
   import {loadBoundedCommunityHistory, makeSameAuthorDeleteFilters} from "@app/core/requests"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
-  import {parseCommunityRouteParam} from "@app/util/routes"
   import {isSecureEmbeddableUrl, SECURE_EMBED_URL_REQUIREMENT} from "@app/extensions/url-policy"
   import type {WidgetCommunitySlotType} from "@app/extensions/types"
   import {
@@ -57,12 +62,19 @@
     type WidgetCommunityOption,
   } from "@app/extensions/widget-targeting"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const parsedCommunity = $derived.by(() => {
+    try {
+      return parseCommunityNaddr(decodeURIComponent($page.params.community || ""))
+    } catch {
+      return undefined
+    }
+  })
+  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
+  const communityId = $derived(parsedCommunity?.communityId || "")
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      $activeExactCommunityDefinition?.controllerPubkey === communityPubkey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -86,16 +98,20 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const targetingFilters = $derived(
-    communityAuthorityReady && communityPubkey
-      ? [makeCommunityTargetingFilter(communityPubkey, [SMART_WIDGET_KIND])]
+    communityAuthorityReady && $activeExactCommunityPointer
+      ? [
+          makeCommunityTargetingFilter($activeExactCommunityPointer.communityId, [
+            SMART_WIDGET_KIND,
+          ]),
+        ]
       : [],
   )
   const targetingFilterPlan = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && $activeExactCommunityDefinition
       ? makeCommunityContentFilterPlan(
           targetingFilters,
           getCommunityTargetWriterPubkeys({
-            definition: $activeCommunityDefinition,
+            definition: $activeExactCommunityDefinition,
             profileListEvents: $activeCommunityProfileListEvents,
             target: COMMUNITY_WRITE_TARGETS.widget,
             reportState: $activeCommunityReportState,
@@ -107,9 +123,10 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && $activeExactCommunityDefinition && $activeExactCommunityPointer
       ? filterAuthorizedCommunityTargetingEvents({
-          definition: $activeCommunityDefinition,
+          community: $activeExactCommunityPointer,
+          definition: $activeExactCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           events: $targetingEvents,
           reportState: $activeCommunityReportState,
@@ -152,9 +169,9 @@
     Boolean(
       $pubkey &&
       communityAuthorityReady &&
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.widget,
@@ -166,11 +183,6 @@
     Boolean($pubkey && communityAuthorityLoading && !canCreateWidget),
   )
 
-  const getCommunityOptionLabel = (pubkey: string) => {
-    const profile = $profilesByPubkey.get(pubkey)
-    return profile?.display_name || profile?.name || `${pubkey.slice(0, 8)}...${pubkey.slice(-6)}`
-  }
-
   const widgetCommunityOptions = $derived.by((): WidgetCommunityOption[] => {
     const options = $activeUserCommunityRefs
       .filter(ref =>
@@ -180,25 +192,49 @@
           target: COMMUNITY_WRITE_TARGETS.widget,
         }),
       )
-      .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
-        relays: ref.definition.relays,
-        relayHints: ref.relayHints,
-      }))
+      .flatMap(ref => {
+        const definition = parseCommunityDefinitionV2(ref.definition.event)
+        if (!definition) return []
+        const community = makeCommunityPointer({
+          controllerPubkey: definition.pointer.controllerPubkey,
+          communityId: definition.pointer.communityId,
+          relayHints: [...definition.relays, ...ref.relayHints],
+        })
+
+        return community
+          ? [
+              {
+                community,
+                label: definition.metadata.name,
+                relays: definition.relays,
+                relayHints: ref.relayHints,
+              },
+            ]
+          : []
+      })
 
     if (
       canCreateWidget &&
-      communityPubkey &&
-      $activeCommunityDefinition &&
-      !options.some(option => option.pubkey === communityPubkey)
+      parsedCommunity &&
+      $activeExactCommunityDefinition &&
+      !options.some(option => option.community.address === parsedCommunity.address)
     ) {
-      options.push({
-        pubkey: communityPubkey,
-        label: getCommunityOptionLabel(communityPubkey),
-        relays: $activeCommunityDefinition.relays,
-        relayHints: [],
-      })
+      const definition = parseCommunityDefinitionV2($activeExactCommunityDefinition.event)
+      const community = definition
+        ? makeCommunityPointer({
+            controllerPubkey: parsedCommunity.controllerPubkey,
+            communityId: parsedCommunity.communityId,
+            relayHints: [...definition.relays, ...parsedCommunity.relayHints],
+          })
+        : undefined
+      if (community) {
+        options.push({
+          community,
+          label: definition!.metadata.name,
+          relays: definition!.relays,
+          relayHints: parsedCommunity.relayHints,
+        })
+      }
     }
 
     return options
@@ -234,10 +270,10 @@
     return ""
   }
 
-  const toggleTargetCommunity = (pubkey: string, checked: boolean) => {
-    selectedTargetCommunityPubkeys = checked
-      ? Array.from(new Set([...selectedTargetCommunityPubkeys, pubkey]))
-      : selectedTargetCommunityPubkeys.filter(value => value !== pubkey)
+  const toggleTargetCommunity = (address: string, checked: boolean) => {
+    selectedTargetCommunityAddresses = checked
+      ? Array.from(new Set([...selectedTargetCommunityAddresses, address]))
+      : selectedTargetCommunityAddresses.filter(value => value !== address)
   }
 
   const getWidgetAppUrls = () =>
@@ -292,7 +328,7 @@
     if (!$pubkey || !name.trim()) return
     const selectedOptions = filterSelectedWidgetCommunityOptions(
       widgetCommunityOptions,
-      selectedTargetCommunityPubkeys,
+      selectedTargetCommunityAddresses,
     )
 
     if (!canCreateWidget) {
@@ -318,7 +354,7 @@
       relays = getWidgetTargetPublishRelays({
         baseRelays,
         communityOptions: selectedOptions,
-        communityPubkeys: selectedOptions.map(option => option.pubkey),
+        communityAddresses: selectedOptions.map(option => option.community.address),
       })
     } catch (error) {
       pushToast({theme: "error", message: error instanceof Error ? error.message : String(error)})
@@ -348,13 +384,13 @@
       event: widgetEvent,
       baseRelays,
       communityOptions: selectedOptions,
-      communityPubkeys: selectedOptions.map(option => option.pubkey),
+      communityAddresses: selectedOptions.map(option => option.community.address),
     })
     publishWidgetTargetingEvent({
       widget: {pubkey: $pubkey, identifier: widgetId},
       baseRelays,
       communityOptions: selectedOptions,
-      communityPubkeys: selectedOptions.map(option => option.pubkey),
+      communityAddresses: selectedOptions.map(option => option.community.address),
       originalRelay: relays[0],
     })
 
@@ -383,7 +419,7 @@
   let widgetUploadStage = $state<BlossomUploadStage>("idle")
   let widgetUploadError = $state("")
   let widgetUploadMirrors = $state<BlossomMirrorUploadResult[]>([])
-  let selectedTargetCommunityPubkeys = $state<string[]>([])
+  let selectedTargetCommunityAddresses = $state<string[]>([])
   let targetSelectionKey = ""
   let loadingTargets = $state(false)
   let targetRequestSettled = $state(false)
@@ -413,7 +449,7 @@
       !widgetUploading &&
       Boolean(name.trim()) &&
       getWidgetAppUrls().length > 0 &&
-      filterSelectedWidgetCommunityOptions(widgetCommunityOptions, selectedTargetCommunityPubkeys)
+      filterSelectedWidgetCommunityOptions(widgetCommunityOptions, selectedTargetCommunityAddresses)
         .length > 0,
   )
   $effect(() => {
@@ -429,7 +465,7 @@
       targetHistoryIncomplete = false
       return
     }
-    if ($activeCommunityRelays.length === 0) {
+    if ($activeExactCommunityRelays.length === 0) {
       loadingTargets = false
       targetRequestSettled = true
       targetHistoryIncomplete = true
@@ -441,7 +477,7 @@
     targetRequestSettled = false
     targetHistoryIncomplete = false
     void loadBoundedCommunityHistory({
-      relays: $activeCommunityRelays,
+      relays: $activeExactCommunityRelays,
       relayFilters: targetingFilterPlan.relayFilters,
       localFilters: targetingFilterPlan.localFilters,
       signal: controller.signal,
@@ -467,7 +503,7 @@
 
   $effect(() => {
     void widgetHistoryRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
     const relayFilters = targetDeleteFilterPlan.relayFilters
     const localFilters = targetDeleteFilterPlan.localFilters
 
@@ -538,10 +574,10 @@
       return
     }
 
-    const communityRelaysMissing = $activeCommunityRelays.length === 0
+    const communityRelaysMissing = $activeExactCommunityRelays.length === 0
     const plans = [
-      ...($activeCommunityRelays.length
-        ? [{relays: $activeCommunityRelays, relayFilters, localFilters}]
+      ...($activeExactCommunityRelays.length
+        ? [{relays: $activeExactCommunityRelays, relayFilters, localFilters}]
         : []),
       ...widgetRelayHintPlans,
     ]
@@ -586,15 +622,15 @@
   })
 
   $effect(() => {
-    const optionsKey = widgetCommunityOptions.map(option => option.pubkey).join(",")
-    const key = `${communityPubkey}:${optionsKey}`
+    const optionsKey = widgetCommunityOptions.map(option => option.community.address).join(",")
+    const key = `${parsedCommunity?.address || ""}:${optionsKey}`
     if (key === targetSelectionKey) return
 
     targetSelectionKey = key
-    selectedTargetCommunityPubkeys = widgetCommunityOptions.some(
-      option => option.pubkey === communityPubkey,
+    selectedTargetCommunityAddresses = widgetCommunityOptions.some(
+      option => option.community.address === parsedCommunity?.address,
     )
-      ? [communityPubkey]
+      ? [parsedCommunity!.address]
       : []
   })
 </script>
@@ -605,7 +641,7 @@
   {/snippet}
   {#snippet title()}<strong>Widgets</strong>{/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={parsedCommunity?.naddr} />
   {/snippet}
 </PageBar>
 
@@ -706,14 +742,15 @@
       </div>
       {#if widgetCommunityOptions.length > 0}
         <div class="flex flex-col gap-2">
-          {#each widgetCommunityOptions as option (option.pubkey)}
+          {#each widgetCommunityOptions as option (option.community.address)}
             <label class="flex items-center gap-3 rounded-md border border-base-300 p-2 text-sm">
               <input
                 type="checkbox"
-                checked={selectedTargetCommunityPubkeys.includes(option.pubkey)}
+                checked={selectedTargetCommunityAddresses.includes(option.community.address)}
                 onchange={event =>
-                  toggleTargetCommunity(option.pubkey, event.currentTarget.checked)} />
-              <span class="min-w-0 flex-1 truncate">{option.label || option.pubkey}</span>
+                  toggleTargetCommunity(option.community.address, event.currentTarget.checked)} />
+              <span class="min-w-0 flex-1 truncate"
+                >{option.label || option.community.address}</span>
             </label>
           {/each}
         </div>

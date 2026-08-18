@@ -1,9 +1,10 @@
 import {describe, expect, it} from "vitest"
 import {DELETE, REACTION, makeEvent, type TrustedEvent} from "@welshman/util"
 import {GIT_REPO_ANNOUNCEMENT, type RepoAnnouncementEvent} from "@nostr-git/core/events"
-import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
+import {getPublicKey} from "nostr-tools/pure"
+import {TARGETED_PUBLICATION_KIND, makeCommunityPointer} from "@app/core/community"
 import {
-  makeTargetedPublicationForCommunity,
+  makeTargetedPublicationForCommunityV2,
   withPublicationTargetingId,
 } from "@app/core/community-targeting"
 import {makeRepoStarReaction} from "@app/util/repo-stars"
@@ -12,9 +13,14 @@ import {
   getRepoCollectionStatus,
 } from "./repo-collection-read-model"
 
-const viewer = "a".repeat(64)
-const community = "b".repeat(64)
-const owner = "c".repeat(64)
+const viewer = getPublicKey(new Uint8Array(32).fill(21))
+const community = getPublicKey(new Uint8Array(32).fill(22))
+const communityPointer = makeCommunityPointer({
+  controllerPubkey: getPublicKey(new Uint8Array(32).fill(23)),
+  communityId: community,
+  relayHints: ["wss://community.example"],
+})!
+const owner = getPublicKey(new Uint8Array(32).fill(24))
 
 const repo = {
   id: "d".repeat(64),
@@ -39,11 +45,10 @@ const makeCollectionEvents = () => {
   } as TrustedEvent
   const target = {
     ...makeEvent(TARGETED_PUBLICATION_KIND, {
-      ...makeTargetedPublicationForCommunity({
+      ...makeTargetedPublicationForCommunityV2({
         targetingId,
         originalKind: REACTION,
-        communityPubkey: community,
-        communityRelay: "wss://community.example",
+        community: communityPointer,
       }),
     }),
     id: "2".repeat(64),
@@ -65,7 +70,14 @@ describe("repository collection read model", () => {
     const {star, target} = makeCollectionEvents()
     const collections = buildRepoCommunityStarCollections({
       viewerPubkey: viewer,
-      communityOptions: [{pubkey: community, label: "Community"}],
+      communityOptions: [
+        {
+          controllerPubkey: community,
+          address: communityPointer.address,
+          communityId: community,
+          label: "Community",
+        },
+      ],
       targetEvents: [target, target],
       targetDeleteEvents: [],
       reactionEvents: [star, star],
@@ -75,7 +87,11 @@ describe("repository collection read model", () => {
     expect(collections[0]).toMatchObject({
       targetEvent: {id: target.id},
       star: {address: `${GIT_REPO_ANNOUNCEMENT}:${owner}:demo`},
-      community: {pubkey: community},
+      community: {
+        controllerPubkey: community,
+        address: communityPointer.address,
+        communityId: community,
+      },
     })
   })
 
@@ -91,7 +107,9 @@ describe("repository collection read model", () => {
     expect(
       buildRepoCommunityStarCollections({
         viewerPubkey: viewer,
-        communityOptions: [{pubkey: community}],
+        communityOptions: [
+          {controllerPubkey: community, address: communityPointer.address, communityId: community},
+        ],
         targetEvents: [target],
         targetDeleteEvents: [deletion],
         reactionEvents: [star],
@@ -99,30 +117,22 @@ describe("repository collection read model", () => {
     ).toEqual([])
   })
 
-  it("allows viewer wrappers to curate external stars through explicit event and address refs", () => {
-    const externalAuthor = "9".repeat(64)
+  it("allows viewer wrappers to curate external stars through explicit event refs", () => {
+    const externalAuthor = getPublicKey(new Uint8Array(32).fill(25))
     const eventStar = {
       ...makeRepoStarReaction({event: repo}),
       id: "6".repeat(64),
       pubkey: externalAuthor,
       sig: "7".repeat(128),
     } as TrustedEvent
-    const addressStar = {
-      ...makeRepoStarReaction({event: repo}),
-      id: "8".repeat(64),
-      pubkey: externalAuthor,
-      tags: [...makeRepoStarReaction({event: repo}).tags, ["d", "external-star"]],
-      sig: "9".repeat(128),
-    } as TrustedEvent
-    const makeExplicitTarget = (id: string, originalRef: {type: "e" | "a"; value: string}) =>
+    const makeExplicitTarget = (id: string, originalRef: {type: "e"; value: string}) =>
       ({
         ...makeEvent(TARGETED_PUBLICATION_KIND, {
-          ...makeTargetedPublicationForCommunity({
+          ...makeTargetedPublicationForCommunityV2({
             targetingId: `target-${id}`,
             originalKind: REACTION,
             originalRef,
-            communityPubkey: community,
-            communityRelay: "wss://community.example",
+            community: communityPointer,
           }),
         }),
         id,
@@ -132,23 +142,16 @@ describe("repository collection read model", () => {
 
     const collections = buildRepoCommunityStarCollections({
       viewerPubkey: viewer,
-      communityOptions: [{pubkey: community}],
-      targetEvents: [
-        makeExplicitTarget("event-target", {type: "e", value: eventStar.id}),
-        makeExplicitTarget("address-target", {
-          type: "a",
-          value: `${REACTION}:${externalAuthor}:external-star`,
-        }),
+      communityOptions: [
+        {controllerPubkey: community, address: communityPointer.address, communityId: community},
       ],
+      targetEvents: [makeExplicitTarget("event-target", {type: "e", value: eventStar.id})],
       targetDeleteEvents: [],
-      reactionEvents: [eventStar, addressStar],
+      reactionEvents: [eventStar],
     })
 
-    expect(collections).toHaveLength(2)
-    expect(collections.map(collection => collection.star.reaction.pubkey)).toEqual([
-      externalAuthor,
-      externalAuthor,
-    ])
+    expect(collections).toHaveLength(1)
+    expect(collections[0].star.reaction.pubkey).toBe(externalAuthor)
   })
 
   it("does not associate an implicit original signed by someone other than its wrapper", () => {
@@ -158,7 +161,9 @@ describe("repository collection read model", () => {
     expect(
       buildRepoCommunityStarCollections({
         viewerPubkey: viewer,
-        communityOptions: [{pubkey: community}],
+        communityOptions: [
+          {controllerPubkey: community, address: communityPointer.address, communityId: community},
+        ],
         targetEvents: [target],
         targetDeleteEvents: [],
         reactionEvents: [externalStar],
@@ -172,7 +177,9 @@ describe("repository collection read model", () => {
     expect(
       buildRepoCommunityStarCollections({
         viewerPubkey: "9".repeat(64),
-        communityOptions: [{pubkey: community}],
+        communityOptions: [
+          {controllerPubkey: community, address: communityPointer.address, communityId: community},
+        ],
         targetEvents: [target],
         targetDeleteEvents: [],
         reactionEvents: [star],

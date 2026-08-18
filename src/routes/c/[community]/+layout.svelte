@@ -9,6 +9,7 @@
 <script lang="ts">
   import {onDestroy, onMount, tick, type Snippet} from "svelte"
   import {page} from "$app/stores"
+  import {goto} from "$app/navigation"
   import {ago, MONTH} from "@welshman/lib"
   import {pubkey, repository, tracker} from "@welshman/app"
   import {request} from "@welshman/net"
@@ -23,24 +24,27 @@
   import {pushDrawer} from "@app/util/modal"
   import {checked, ensureCommunityNotificationBaseline, setCheckedAt} from "@app/util/notifications"
   import {deriveRelayAuthError} from "@app/core/state"
-  import {parseCommunityRouteParam} from "@app/util/routes"
+  import {makeCanonicalExactCommunityUrl, parseExactCommunityRouteParam} from "@app/util/routes"
   import {
     activeCommunityAdmissionForms,
     activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
     activeCommunityModeratorRequestReactionEvents,
     activeCommunityModeratorRequests,
     activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
-    activeCommunityRelays,
     activeCommunityReportState,
-    activeCommunitySession,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
+    activeExactCommunityRelays,
+    activeExactCommunitySession,
     ensureCommunityBootstrap,
     getCommunityBootstrapKey,
     hydrateCommunityEventsWithStatus,
-    makeCommunitySession,
-    setActiveCommunityInput,
+    loadCommunityEvents,
+    makeExactCommunitySession,
+    setActiveExactCommunityPointer,
+    clearActiveExactCommunity,
   } from "@app/core/community-state"
   import {FORM_RESPONSE_KIND, normalizePubkey} from "@app/core/community"
   import {filterAuthorizedCommunityTargetingEvents} from "@app/core/community-permissions"
@@ -73,7 +77,12 @@
   const {children}: Props = $props()
 
   const routeCommunity = $derived($page.params.community || "")
-  const parsedCommunity = $derived(parseCommunityRouteParam(routeCommunity))
+  const exactCommunity = $derived(parseExactCommunityRouteParam(routeCommunity))
+  const exactCommunityBootstrapKey = $derived(
+    exactCommunity
+      ? getCommunityBootstrapKey(makeExactCommunitySession(exactCommunity), $pubkey || "")
+      : "",
+  )
   const hasInlineCommunityMenu = $derived(
     [
       "/c/[community]",
@@ -98,7 +107,7 @@
     ].includes($page.route.id || ""),
   )
   const pageClass = $derived(
-    parsedCommunity
+    exactCommunity
       ? hasInlineCommunityMenu
         ? "community-with-menu"
         : "community-with-menu community-with-floating-menu"
@@ -106,9 +115,9 @@
   )
   const activeRoomLoadPending = $derived(
     Boolean(
-      parsedCommunity &&
+      exactCommunity &&
       $activeCommunityRoomLoad.pending &&
-      $activeCommunityRoomLoad.communityPubkey === parsedCommunity.pubkey,
+      $activeCommunityRoomLoad.communityAddress === exactCommunity.address,
     ),
   )
 
@@ -132,7 +141,8 @@
   let communityHistoryRetryTimer: ReturnType<typeof setTimeout> | null = null
   let communityDeleteLoadKey = ""
   let communityDeleteLoadController: AbortController | null = null
-  let latestCommunityDeleteSeen = 0
+  let latestCommunityDeleteSeenByKey: Record<string, number> = {}
+  let communityDeleteCheckpointKey = ""
   let communityFollowUpLoadKey = ""
   let communityFollowUpLoadController: AbortController | null = null
   let communityFollowUpRetryVersion = $state(0)
@@ -146,19 +156,24 @@
   )
 
   const communityTargetingFilters = $derived(
-    $activeCommunityDefinition
-      ? [makeCommunityTargetingFilter($activeCommunityDefinition.pubkey)]
+    $activeExactCommunityPointer
+      ? [makeCommunityTargetingFilter($activeExactCommunityPointer.communityId)]
       : [],
   )
   const communityTargetingEventsStore = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: communityTargetingFilters})),
   )
   const authorizedCommunityTargetingEvents = $derived(
-    $activeCommunityDefinition &&
-      $activeCommunityAuthorityReadiness.communityPubkey === $activeCommunityDefinition.pubkey &&
+    $activeExactCommunityDefinition &&
+      $activeExactCommunityPointer &&
+      $activeExactCommunityDefinition.pointer.address === exactCommunity?.address &&
+      $activeExactCommunityPointer.address === exactCommunity?.address &&
+      $activeCommunityAuthorityReadiness.communityPubkey ===
+        $activeExactCommunityDefinition.controllerPubkey &&
       $activeCommunityAuthorityReadiness.state === "ready"
       ? filterAuthorizedCommunityTargetingEvents({
-          definition: $activeCommunityDefinition,
+          community: $activeExactCommunityPointer!,
+          definition: $activeExactCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           events: $communityTargetingEventsStore,
           reportState: $activeCommunityReportState,
@@ -186,9 +201,7 @@
   const admissionResponseIds = $derived(
     normalizeCommunityLiveValues($admissionResponseEventsStore.map(event => event.id)),
   )
-  const communityDeleteSeenKey = $derived(
-    getCommunityDeleteSeenKey($activeCommunityDefinition?.pubkey || ""),
-  )
+  const communityDeleteSeenKey = $derived(getCommunityDeleteSeenKey(exactCommunity?.address || ""))
   const lastCommunityDeleteSeen = $derived(
     communityDeleteSeenKey ? normalizeDeleteCheckpoint($checked[communityDeleteSeenKey] || 0) : 0,
   )
@@ -227,8 +240,7 @@
   }
 
   const openCommunityMenu = () => {
-    if (parsedCommunity)
-      pushDrawer(CommunityMenu, {community: parsedCommunity.pubkey}, {replaceState: true})
+    if (exactCommunity) pushDrawer(CommunityMenu, {community: exactCommunity}, {replaceState: true})
   }
 
   const waitForPostPaintHydration = async () => {
@@ -252,6 +264,20 @@
   })
 
   $effect(() => {
+    const pointer = exactCommunity
+    if (!pointer) {
+      clearActiveExactCommunity()
+      return
+    }
+    setActiveExactCommunityPointer(pointer)
+
+    const canonical = makeCanonicalExactCommunityUrl($page.url, pointer)
+    const current = `${$page.url.pathname}${$page.url.search}${$page.url.hash}`
+    if (canonical !== current) void goto(canonical, {replaceState: true})
+
+  })
+
+  $effect(() => {
     const currentPubkey = $pubkey || ""
     const inputKey = JSON.stringify([routeCommunity, currentPubkey])
 
@@ -259,14 +285,12 @@
     communityBootstrapInputKey = inputKey
 
     const load = async () => {
-      if (!parsedCommunity) {
+      if (!exactCommunity) {
         activeCommunityBootstrapStatus.set({key: "", loading: false, loaded: false})
         return
       }
 
-      const session =
-        setActiveCommunityInput(decodeURIComponent(routeCommunity)) ||
-        makeCommunitySession(parsedCommunity)
+      const session = makeExactCommunitySession(exactCommunity)
       const communityKey = getCommunityBootstrapKey(session, currentPubkey)
 
       // Immediately clear any stale error left over from a previous community
@@ -288,8 +312,8 @@
   // A definition can also arrive through the live subscription after bootstrap.
   // Refresh its permission filters before route catalogs use the new definition.
   $effect(() => {
-    const definition = $activeCommunityDefinition
-    const session = $activeCommunitySession
+    const definition = $activeExactCommunityDefinition
+    const session = $activeExactCommunitySession
     const viewer = normalizePubkey($pubkey || "")
     const bootstrapKey = session ? getCommunityBootstrapKey(session, viewer) : ""
     const permissionPrefix = definition ? `${viewer}:${definition.event.id}:` : ""
@@ -298,7 +322,10 @@
     if (
       !definition ||
       !session ||
-      definition.pubkey !== session.communityPubkey ||
+      definition.pointer.address !== exactCommunity?.address ||
+      definition.pointer.address !== $activeExactCommunityPointer?.address ||
+      definition.controllerPubkey !== session.definition.controllerPubkey ||
+      definition.communityId !== session.definition.communityId ||
       $activeCommunityBootstrapStatus.key !== bootstrapKey ||
       !$activeCommunityBootstrapStatus.loaded ||
       $activeCommunityBootstrapStatus.loading
@@ -327,12 +354,12 @@
   $effect.pre(() => {
     ensureCommunityNotificationBaseline({
       viewerPubkey: $pubkey || undefined,
-      communityPubkey: parsedCommunity?.pubkey,
+      community: $activeExactCommunityPointer,
     })
   })
 
   $effect(() => {
-    const url = $activeCommunityDefinition?.relays[0] || parsedCommunity?.relays[0] || ""
+    const url = $activeExactCommunityDefinition?.relays[0] || $activeExactCommunityRelays[0] || ""
 
     authRelayUrl = url
     relayAuthError = ""
@@ -365,22 +392,24 @@
       return
     }
 
-    const definition = $activeCommunityDefinition
-    const relays = normalizeCommunityLiveValues($activeCommunityRelays)
+    const exactDefinition = $activeExactCommunityDefinition
+    const relays = normalizeCommunityLiveValues($activeExactCommunityRelays)
     const authorityReady = Boolean(
-      definition &&
+      exactDefinition &&
+      exactDefinition.pointer.address === exactCommunity?.address &&
+      $activeCommunityBootstrapStatus.key === exactCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
-      $activeCommunityAuthorityReadiness.communityPubkey === definition.pubkey &&
+      $activeCommunityAuthorityReadiness.communityPubkey === exactDefinition.controllerPubkey &&
       $activeCommunityAuthorityReadiness.state === "ready",
     )
 
-    if (!definition || !authorityReady || relays.length === 0) {
+    if (!exactDefinition || !authorityReady || relays.length === 0) {
       stopCommunityHistoryLoad()
       return
     }
 
-    const key = `${definition.pubkey}::${relays.join("|")}`
+    const key = `${exactDefinition.pointer.address}::${relays.join("|")}`
     if (communityHistoryLoadKey === key) return
 
     communityHistoryLoadController?.abort()
@@ -392,8 +421,8 @@
       key: `community-discovery:${key}`,
       relays,
       filters: [
-        {kinds: [MESSAGE], "#h": [definition.pubkey], since: ago(MONTH)},
-        ...buildCommunityHistoricalDiscoveryFilters(definition.pubkey),
+        {kinds: [MESSAGE], "#h": [exactDefinition.communityId], since: ago(MONTH)},
+        ...buildCommunityHistoricalDiscoveryFilters(exactDefinition.pointer),
       ],
       authenticate: true,
       timeout: COMMUNITY_HISTORY_LOAD_TIMEOUT_MS,
@@ -423,16 +452,20 @@
       return
     }
 
-    const definition = $activeCommunityDefinition
-    const relays = normalizeCommunityLiveValues($activeCommunityRelays)
+    const authorityDefinition = $activeExactCommunityDefinition
+    const relays = normalizeCommunityLiveValues($activeExactCommunityRelays)
 
-    if (!definition || relays.length === 0) {
+    if (
+      !authorityDefinition ||
+      authorityDefinition.pointer.address !== exactCommunity?.address ||
+      relays.length === 0
+    ) {
       stopCommunityFollowUpLoad()
       return
     }
 
     const plans = buildCommunityFiniteFollowUpRelayPlans({
-      definition,
+      authorityDefinition,
       relays,
       targetingEvents: authorizedCommunityTargetingEvents,
       admissionResponseIds,
@@ -449,7 +482,7 @@
     const key = JSON.stringify(
       plans.map(plan =>
         getCommunityLiveSubscriptionKey({
-          communityPubkey: definition.pubkey,
+          communityPubkey: authorityDefinition.pointer.address,
           relays: [plan.relay],
           filters: plan.filters,
         }),
@@ -465,7 +498,7 @@
     void Promise.all(
       plans.map(plan =>
         hydrateCommunityEventsWithStatus({
-          key: `community-follow-up:${definition.pubkey}:${plan.relay}:${key}`,
+          key: `community-follow-up:${authorityDefinition.pointer.address}:${plan.relay}:${key}`,
           relays: [plan.relay],
           filters: plan.filters,
           authenticate: true,
@@ -494,16 +527,35 @@
       return
     }
 
-    const definition = $activeCommunityDefinition
-    const relays = normalizeCommunityLiveValues($activeCommunityRelays)
+    const definition = $activeExactCommunityDefinition
+    const relays = normalizeCommunityLiveValues($activeExactCommunityRelays)
 
-    if (!definition || relays.length === 0) {
+    if (
+      !definition ||
+      definition.pointer.address !== exactCommunity?.address ||
+      relays.length === 0
+    ) {
       stopCommunityDeleteLoad()
       return
     }
 
     const since = getCommunityDeleteSince(lastCommunityDeleteSeen)
-    const key = `${definition.pubkey}::${relays.join("|")}::${since}`
+    if (!exactCommunity) {
+      stopCommunityDeleteLoad()
+      return
+    }
+    const deleteSeenKey = communityDeleteSeenKey
+    if (communityDeleteCheckpointKey && communityDeleteCheckpointKey !== deleteSeenKey) {
+      setCheckedAt(
+        communityDeleteCheckpointKey,
+        Math.max(
+          normalizeDeleteCheckpoint($checked[communityDeleteCheckpointKey] || 0),
+          latestCommunityDeleteSeenByKey[communityDeleteCheckpointKey] || 0,
+        ),
+      )
+    }
+    communityDeleteCheckpointKey = deleteSeenKey
+    const key = `${exactCommunity.address}::${relays.join("|")}::${since}`
     if (communityDeleteLoadKey === key) return
 
     communityDeleteLoadController?.abort()
@@ -513,11 +565,14 @@
 
     void hydrateCommunityDeleteEvents({
       relays,
+      community: exactCommunity,
       kinds: communityDeleteKinds,
       since,
       signal: controller.signal,
     }).then(latest => {
-      if (latest > latestCommunityDeleteSeen) latestCommunityDeleteSeen = latest
+      if (latest > (latestCommunityDeleteSeenByKey[deleteSeenKey] || 0)) {
+        latestCommunityDeleteSeenByKey[deleteSeenKey] = latest
+      }
     })
 
     return () => controller.abort()
@@ -531,16 +586,20 @@
       return
     }
 
-    const definition = $activeCommunityDefinition
-    const relays = normalizeCommunityLiveValues($activeCommunityRelays)
+    const exactDefinition = $activeExactCommunityDefinition
+    const relays = normalizeCommunityLiveValues($activeExactCommunityRelays)
 
-    if (!definition || relays.length === 0) {
+    if (
+      !exactDefinition ||
+      exactDefinition.pointer.address !== exactCommunity?.address ||
+      relays.length === 0
+    ) {
       stopCommunityLiveSubscription()
       return
     }
 
     const filters = buildCommunityLiveFilters({
-      definition,
+      authorityDefinition: exactDefinition,
       admissionFormAddresses,
     })
 
@@ -552,7 +611,7 @@
     // Key on the filter/community shape without relays. If it changes we
     // tear down and rebuild; if only the relay set changes we diff below.
     const filtersKey = getCommunityLiveSubscriptionKey({
-      communityPubkey: definition.pubkey,
+      communityPubkey: exactDefinition.pointer.address,
       relays: [],
       filters,
     })
@@ -574,7 +633,7 @@
     for (const url of targetRelays) {
       if (communityLiveSubscriptionsByRelay.has(url)) continue
       const controller = new AbortController()
-      const releaseOwnership = registerCommunityLiveOwnership(definition.pubkey, url)
+      const releaseOwnership = registerCommunityLiveOwnership(exactDefinition.pointer.address, url)
       let failed = false
       const subscription = {controller, releaseOwnership}
       communityLiveSubscriptionsByRelay.set(url, subscription)
@@ -624,15 +683,18 @@
     if (communityDeleteSeenKey) {
       setCheckedAt(
         communityDeleteSeenKey,
-        Math.max(lastCommunityDeleteSeen, latestCommunityDeleteSeen),
+        Math.max(
+          lastCommunityDeleteSeen,
+          latestCommunityDeleteSeenByKey[communityDeleteSeenKey] || 0,
+        ),
       )
     }
   })
 </script>
 
-{#if parsedCommunity}
+{#if exactCommunity}
   <SecondaryNav>
-    <CommunityMenu community={parsedCommunity.pubkey} />
+    <CommunityMenu community={exactCommunity} />
   </SecondaryNav>
   {#if !hasInlineCommunityMenu}
     <button
@@ -646,10 +708,10 @@
 {/if}
 
 <Page class={pageClass}>
-  {#if !parsedCommunity}
+  {#if !exactCommunity}
     <div class="content p-4">
       <h1 class="text-2xl font-bold">Invalid community</h1>
-      <p>Use a valid community npub, hex pubkey, or encoded ncommunity value.</p>
+      <p>Use a valid community link.</p>
     </div>
   {:else}
     {#if relayAuthError && authRelayUrl}

@@ -17,8 +17,9 @@
   import {pushToast} from "@app/util/toast"
   import {makeEditor} from "@app/editor"
   import type {BlossomUploadStage} from "@app/core/blossom"
+  import {activeExactCommunityDefinition} from "@app/core/community-state"
   import {normalizePublicationRelays, startPublication} from "@app/core/publication-operations"
-  import {makeCommunityGoalPath} from "@app/util/routes"
+  import {makeExactCommunityGoalPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   type Props = {
     url: string
@@ -26,6 +27,7 @@
   }
 
   const {url, h}: Props = $props()
+  const community = $derived(parseExactCommunityRouteParam(url))
 
   const uploading = writable(false)
   const uploadStage = writable<BlossomUploadStage>("idle")
@@ -76,7 +78,7 @@
         relays: [publishRelay],
         event,
         label: "Funding goal",
-        href: h ? makeCommunityGoalPath(h, event.id) : undefined,
+        href: community ? makeExactCommunityGoalPath(community, event.id) : undefined,
         preview: "retain-on-failure",
       })
 
@@ -93,7 +95,13 @@
 
   const editor = makeEditor({
     url,
-    blossomContext: h ? {type: "community", communityPubkey: h} : undefined,
+    blossomContext:
+      h && $activeExactCommunityDefinition?.communityId === h
+        ? {
+            type: "community",
+            communityAddress: $activeExactCommunityDefinition.pointer.address,
+          }
+        : undefined,
     submit,
     uploadStage,
     uploading,

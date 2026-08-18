@@ -18,9 +18,9 @@
     onuninstall?: () => void
     isDefault?: boolean
     communityOptions?: WidgetCommunityOption[]
-    targetedCommunityPubkeys?: string[]
+    targetedCommunityAddresses?: string[]
     previewCommunityOptions?: CommunityWidgetPreviewContextOption[]
-    onTargetedCommunitiesChange?: (pubkeys: string[]) => Promise<void> | void
+    onTargetedCommunitiesChange?: (addresses: string[]) => Promise<void> | void
     widgetUpdate?: WidgetUpdate
     widgetUpdateChecking?: boolean
     widgetUpdateRefreshing?: boolean
@@ -34,7 +34,7 @@
     onuninstall,
     isDefault = false,
     communityOptions = [],
-    targetedCommunityPubkeys = [],
+    targetedCommunityAddresses = [],
     previewCommunityOptions = [],
     onTargetedCommunitiesChange,
     widgetUpdate,
@@ -53,7 +53,7 @@
 
   let showWidgetModal = $state(false)
   let showCommunityTargets = $state(false)
-  let selectedCommunityPubkeys = $state<string[]>([])
+  let selectedCommunityAddresses = $state<string[]>([])
   let selectedPreviewCommunityId = $state("")
   let savingCommunityTargets = $state(false)
 
@@ -65,12 +65,13 @@
     showWidgetModal = false
   }
 
-  const getCommunityLabel = (pubkey: string) =>
-    communityOptions.find(option => option.pubkey === pubkey)?.label || pubkey
+  const getCommunityLabel = (address: string) =>
+    communityOptions.find(option => option.community.address === address)?.label || address
 
-  const selectedPreviewCommunityOption = $derived.by(() =>
-    previewCommunityOptions.find(option => option.id === selectedPreviewCommunityId) ||
-    previewCommunityOptions[0]
+  const selectedPreviewCommunityOption = $derived.by(
+    () =>
+      previewCommunityOptions.find(option => option.id === selectedPreviewCommunityId) ||
+      previewCommunityOptions[0],
   )
 
   const previewWidgetContext = $derived.by<Record<string, unknown>>(() => {
@@ -83,14 +84,14 @@
     }
   })
 
-  const toggleCommunityTarget = (pubkey: string, checked: boolean) => {
-    selectedCommunityPubkeys = checked
-      ? Array.from(new Set([...selectedCommunityPubkeys, pubkey]))
-      : selectedCommunityPubkeys.filter(value => value !== pubkey)
+  const toggleCommunityTarget = (address: string, checked: boolean) => {
+    selectedCommunityAddresses = checked
+      ? Array.from(new Set([...selectedCommunityAddresses, address]))
+      : selectedCommunityAddresses.filter(value => value !== address)
   }
 
   const cancelCommunityTargetEdit = () => {
-    selectedCommunityPubkeys = [...targetedCommunityPubkeys]
+    selectedCommunityAddresses = [...targetedCommunityAddresses]
     showCommunityTargets = false
   }
 
@@ -99,7 +100,7 @@
 
     savingCommunityTargets = true
     try {
-      await onTargetedCommunitiesChange(selectedCommunityPubkeys)
+      await onTargetedCommunitiesChange(selectedCommunityAddresses)
       showCommunityTargets = false
     } finally {
       savingCommunityTargets = false
@@ -107,7 +108,7 @@
   }
 
   $effect(() => {
-    if (!showCommunityTargets) selectedCommunityPubkeys = [...targetedCommunityPubkeys]
+    if (!showCommunityTargets) selectedCommunityAddresses = [...targetedCommunityAddresses]
   })
 
   $effect(() => {
@@ -124,7 +125,9 @@
   const displayName = $derived(widget?.content || widget?.identifier || "Smart Widget")
   const version = $derived(widget?.version)
   const iconUrl = $derived(widget?.iconUrl || widget?.imageUrl)
-  const description = $derived(widget?.widgetType ? `Smart Widget • ${widget.widgetType}` : undefined)
+  const description = $derived(
+    widget?.widgetType ? `Smart Widget • ${widget.widgetType}` : undefined,
+  )
   const permissions = $derived(widget?.permissions)
 
   const slotLabel = $derived.by(() => {
@@ -158,7 +161,6 @@
 
     return summary
   })
-
 </script>
 
 <div
@@ -182,15 +184,13 @@
                 {" "}v{widgetUpdateVersion}{/if}
             </span>
           {/if}
-          <span class="badge badge-sm min-w-0 max-w-full">
-            Smart Widget
-          </span>
+          <span class="badge badge-sm min-w-0 max-w-full"> Smart Widget </span>
           {#if slotLabel}
             <span class="badge badge-secondary badge-sm min-w-0 max-w-full">{slotLabel}</span>
           {/if}
-          {#if targetedCommunityPubkeys.length > 0}
+          {#if targetedCommunityAddresses.length > 0}
             <span class="badge badge-secondary badge-sm min-w-0 max-w-full">
-              {targetedCommunityPubkeys.length} communit{targetedCommunityPubkeys.length === 1
+              {targetedCommunityAddresses.length} communit{targetedCommunityAddresses.length === 1
                 ? "y"
                 : "ies"}
             </span>
@@ -258,15 +258,18 @@
         {#if widgetAppUrls.length > 0 && previewCommunityOptions.length > 1}
           <label class="form-control min-w-0 flex-1 sm:max-w-72">
             <span class="label-text text-xs">Preview community</span>
-            <select class="select select-bordered select-sm" bind:value={selectedPreviewCommunityId}>
+            <select
+              class="select select-bordered select-sm"
+              bind:value={selectedPreviewCommunityId}>
               {#each previewCommunityOptions as option (option.id)}
-                <option value={option.id}>{option.label || option.communityPubkey}</option>
+                <option value={option.id}>{option.label || option.community.address}</option>
               {/each}
             </select>
           </label>
         {/if}
         {#if widgetAppUrls.length > 0}
-          <button class="btn btn-primary btn-sm hidden sm:w-auto" onclick={openWidget}>Preview app</button>
+          <button class="btn btn-primary btn-sm hidden sm:w-auto" onclick={openWidget}
+            >Preview app</button>
         {:else if widget.appUrl}
           <span class="text-xs opacity-70">Insecure app URL blocked</span>
         {/if}
@@ -320,10 +323,10 @@
                 {showCommunityTargets ? "Close" : "Edit targets"}
               </button>
             </div>
-            {#if targetedCommunityPubkeys.length > 0}
+            {#if targetedCommunityAddresses.length > 0}
               <div class="mt-2 flex flex-wrap gap-1">
-                {#each targetedCommunityPubkeys as communityPubkey (communityPubkey)}
-                  <span class="badge badge-sm">{getCommunityLabel(communityPubkey)}</span>
+                {#each targetedCommunityAddresses as communityAddress (communityAddress)}
+                  <span class="badge badge-sm">{getCommunityLabel(communityAddress)}</span>
                 {/each}
               </div>
             {:else}
@@ -331,14 +334,18 @@
             {/if}
             {#if showCommunityTargets}
               <div class="mt-3 flex flex-col gap-2">
-                {#each communityOptions as option (option.pubkey)}
+                {#each communityOptions as option (option.community.address)}
                   <label class="flex items-center gap-3 rounded-md border border-base-300 p-2">
                     <input
                       type="checkbox"
-                      checked={selectedCommunityPubkeys.includes(option.pubkey)}
+                      checked={selectedCommunityAddresses.includes(option.community.address)}
                       onchange={event =>
-                        toggleCommunityTarget(option.pubkey, event.currentTarget.checked)} />
-                    <span class="min-w-0 flex-1 truncate">{option.label || option.pubkey}</span>
+                        toggleCommunityTarget(
+                          option.community.address,
+                          event.currentTarget.checked,
+                        )} />
+                    <span class="min-w-0 flex-1 truncate"
+                      >{option.label || option.community.address}</span>
                   </label>
                 {/each}
                 <div class="flex justify-end gap-2">
@@ -397,7 +404,8 @@
             <p class="text-xs opacity-70">Smart Widget • {widget.widgetType}</p>
             {#if selectedPreviewCommunityOption}
               <p class="text-xs opacity-70">
-                Previewing in {selectedPreviewCommunityOption.label || selectedPreviewCommunityOption.communityPubkey}
+                Previewing in {selectedPreviewCommunityOption.label ||
+                  selectedPreviewCommunityOption.community.address}
               </p>
             {/if}
           </div>
@@ -405,7 +413,7 @@
         <button class="btn btn-ghost btn-sm" onclick={closeWidget}>✕</button>
       </div>
       <div class="relative min-h-0 flex-1 overflow-auto bg-base-300 p-4">
-        <WidgetFrame widget={widget} context={previewWidgetContext} class="h-full" minHeight={0} />
+        <WidgetFrame {widget} context={previewWidgetContext} class="h-full" minHeight={0} />
       </div>
     </div>
   </div>

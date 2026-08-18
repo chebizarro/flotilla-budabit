@@ -2,10 +2,10 @@ import {Address, getTagValue, type TrustedEvent} from "@welshman/util"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {
   normalizePubkey,
-  normalizeRelay,
-  parseTargetedPublication,
-  type CommunityDefinition,
-  type CommunityTarget,
+  parseCommunityDefinitionAddress,
+  parseTargetedPublicationV2,
+  type CommunityDefinitionV2,
+  type CommunityPointer,
 } from "@app/core/community"
 import {
   COMMUNITY_WRITE_TARGETS,
@@ -26,7 +26,7 @@ import type {UserCommunityReportStates} from "@app/core/community-membership"
 
 type RepoAssociationSource = {
   event?: TrustedEvent
-  community: CommunityTarget
+  community: CommunityPointer
   associationAuthorPubkey: string
   associationEventId?: string
   createdAt: number
@@ -37,10 +37,11 @@ export type BuildRepoCommunityContextsInput = {
   repoAddress?: string
   repoOwnerPubkey?: string
   associationEvents?: TrustedEvent[]
-  definitions?: CommunityDefinition[]
+  definitions?: CommunityDefinitionV2[]
   profileListEvents?: TrustedEvent[]
   reportStates?: UserCommunityReportStates
   activeCommunityPubkey?: string
+  activeCommunityAddress?: string
 }
 
 const validationRank: Record<RepoAssociationValidation, number> = {
@@ -51,8 +52,8 @@ const validationRank: Record<RepoAssociationValidation, number> = {
   invalid: 0,
 }
 
-const getReportState = (states: UserCommunityReportStates | undefined, communityPubkey: string) =>
-  states instanceof Map ? states.get(communityPubkey) : states?.[communityPubkey]
+const getReportState = (states: UserCommunityReportStates | undefined, communityAddress: string) =>
+  states instanceof Map ? states.get(communityAddress) : states?.[communityAddress]
 
 export const getRepoAddress = (event: TrustedEvent | undefined) => {
   if (!event) return ""
@@ -74,16 +75,6 @@ const getRepoOwnerPubkey = ({
 }: Pick<BuildRepoCommunityContextsInput, "repoEvent" | "repoAddress" | "repoOwnerPubkey">) =>
   normalizePubkey(repoOwnerPubkey || repoEvent?.pubkey || repoAddress?.split(":")[1] || "")
 
-const getLegacyRepoCommunity = (
-  repoEvent: TrustedEvent | undefined,
-): CommunityTarget | undefined => {
-  const hTag = repoEvent?.tags?.find(tag => tag[0] === "h")
-  const pubkey = normalizePubkey(hTag?.[1] || "")
-  if (!pubkey) return undefined
-
-  return {pubkey, relay: normalizeRelay(hTag?.[2]) || undefined}
-}
-
 const associationTargetsRepo = ({
   event,
   repoEvent,
@@ -93,16 +84,16 @@ const associationTargetsRepo = ({
   repoEvent?: TrustedEvent
   repoAddress: string
 }) => {
-  const targeting = parseTargetedPublication(event)
+  const targeting = parseTargetedPublicationV2(event)
   if (!targeting || targeting.kind !== GIT_REPO_ANNOUNCEMENT) return undefined
 
-  if (targeting.ref?.type === "a" && targeting.ref.value === repoAddress) return targeting
-  if (targeting.ref?.type === "e" && repoEvent?.id && targeting.ref.value === repoEvent.id) {
+  if (targeting.source?.type === "a" && targeting.source.value === repoAddress) return targeting
+  if (targeting.source?.type === "e" && repoEvent?.id && targeting.source.value === repoEvent.id) {
     return targeting
   }
 
   if (
-    !targeting.ref &&
+    !targeting.source &&
     repoEvent &&
     normalizePubkey(repoEvent.pubkey) === normalizePubkey(event.pubkey) &&
     getTagValue("h", repoEvent.tags || []) === targeting.id
@@ -121,16 +112,6 @@ const collectAssociationSources = ({
   repoAddress: string
 }) => {
   const sources: RepoAssociationSource[] = []
-  const legacyCommunity = getLegacyRepoCommunity(repoEvent)
-  if (repoEvent && legacyCommunity) {
-    sources.push({
-      event: repoEvent,
-      community: legacyCommunity,
-      associationAuthorPubkey: normalizePubkey(repoEvent.pubkey || ""),
-      createdAt: repoEvent.created_at || 0,
-    })
-  }
-
   for (const event of associationEvents) {
     const targeting = associationTargetsRepo({event, repoEvent, repoAddress})
     if (!targeting) continue
@@ -149,8 +130,8 @@ const collectAssociationSources = ({
   return sources
 }
 
-const getDefinitionByPubkey = (definitions: CommunityDefinition[], communityPubkey: string) =>
-  definitions.find(definition => definition.pubkey === communityPubkey)
+const getDefinitionByAddress = (definitions: CommunityDefinitionV2[], communityAddress: string) =>
+  definitions.find(definition => definition.pointer.address === communityAddress)
 
 const makeBaseEvidence = ({
   repoAddress,
@@ -195,7 +176,7 @@ const validateAssociation = ({
   associationAuthorPubkey,
   repoOwnerPubkey,
 }: {
-  definition?: CommunityDefinition
+  definition?: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   associationAuthorPubkey: string
@@ -245,16 +226,17 @@ const buildContextFromSource = ({
   source: RepoAssociationSource
   repoAddress: string
   repoOwnerPubkey: string
-  definitions: CommunityDefinition[]
+  definitions: CommunityDefinitionV2[]
   profileListEvents: TrustedEvent[]
   reportStates?: UserCommunityReportStates
 }): RepoCommunityContext | undefined => {
-  const communityPubkey = normalizePubkey(source.community.pubkey)
+  const communityPubkey = normalizePubkey(source.community.controllerPubkey)
   const associationAuthorPubkey = normalizePubkey(source.associationAuthorPubkey)
   if (!communityPubkey || !associationAuthorPubkey) return undefined
 
-  const definition = getDefinitionByPubkey(definitions, communityPubkey)
-  const reportState = getReportState(reportStates, communityPubkey)
+  const definition = getDefinitionByAddress(definitions, source.community.address)
+  if (!definition || !parseCommunityDefinitionAddress(source.community.address)) return undefined
+  const reportState = getReportState(reportStates, source.community.address)
   const validation = validateAssociation({
     definition,
     profileListEvents,
@@ -279,9 +261,11 @@ const buildContextFromSource = ({
     ...makeRepoCommunityContext({
       repoAddress,
       communityPubkey,
+      communityAddress: source.community.address,
+      communityId: source.community.communityId,
       associationEventId: source.associationEventId,
       associationAuthorPubkey,
-      relayHints: [source.community.relay || "", ...(definition?.relays || [])],
+      relayHints: [...source.community.relayHints, ...definition.relays],
       validation,
       evidence,
       suppressed,
@@ -292,13 +276,25 @@ const buildContextFromSource = ({
 }
 
 const sortContexts =
-  (activeCommunityPubkey: string) =>
+  (activeCommunityAddress: string, activeCommunityPubkey = "") =>
   (
     a: RepoCommunityContext & {createdAt?: number},
     b: RepoCommunityContext & {createdAt?: number},
   ) => {
-    const aActive = a.communityPubkey === activeCommunityPubkey ? 1 : 0
-    const bActive = b.communityPubkey === activeCommunityPubkey ? 1 : 0
+    const aActive = activeCommunityAddress
+      ? a.communityAddress === activeCommunityAddress
+        ? 1
+        : 0
+      : a.communityPubkey === activeCommunityPubkey
+        ? 1
+        : 0
+    const bActive = activeCommunityAddress
+      ? b.communityAddress === activeCommunityAddress
+        ? 1
+        : 0
+      : b.communityPubkey === activeCommunityPubkey
+        ? 1
+        : 0
     if (aActive !== bActive) return bActive - aActive
     if (validationRank[a.validation] !== validationRank[b.validation]) {
       return validationRank[b.validation] - validationRank[a.validation]
@@ -317,6 +313,7 @@ export const buildRepoCommunityContexts = ({
   profileListEvents = [],
   reportStates,
   activeCommunityPubkey = "",
+  activeCommunityAddress = "",
 }: BuildRepoCommunityContextsInput): RepoCommunityContext[] => {
   const repoAddress = explicitRepoAddress || getRepoAddress(repoEvent)
   const repoOwnerPubkey = getRepoOwnerPubkey({
@@ -338,16 +335,16 @@ export const buildRepoCommunityContexts = ({
       profileListEvents,
       reportStates,
     })
-    if (!context?.communityPubkey) continue
+    if (!context?.communityAddress) continue
 
-    const current = bestByCommunity.get(context.communityPubkey)
-    if (!current || sortContexts("")(context, current) < 0) {
-      bestByCommunity.set(context.communityPubkey, context)
+    const current = bestByCommunity.get(context.communityAddress)
+    if (!current || sortContexts("", "")(context, current) < 0) {
+      bestByCommunity.set(context.communityAddress, context)
     }
   }
 
   return Array.from(bestByCommunity.values()).sort(
-    sortContexts(normalizePubkey(activeCommunityPubkey)),
+    sortContexts(activeCommunityAddress, normalizePubkey(activeCommunityPubkey)),
   )
 }
 

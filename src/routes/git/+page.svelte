@@ -97,24 +97,27 @@
     terminateGitWorker,
   } from "@app/core/worker-singleton"
   import {
-    activeCommunityDefinition,
-    activeCommunitySession,
+    activeExactCommunityPointer,
+    activeExactCommunityDefinition,
     activePreferredCommunities,
     activeUserCommunityRefs,
     activeUserCommunityProfileListEvents,
     communityMemberReportStates,
     communityPreferencesLoading,
     hydratePreferredCommunityList,
-    makeCommunityDefinitionFilter,
     makeCommunityProfileListFilters,
     makeCommunityReportDeleteFilters,
     makeCommunityReportFilters,
     refreshPubkeyOutboxRelays,
-    selectLatestCommunityDefinition,
-    setActiveCommunityInput,
+    setActiveExactCommunityPointer,
+    clearActiveExactCommunity,
   } from "@app/core/community-state"
-  import {userRenouncedCommunityPubkeys} from "@app/core/community-renunciations"
-  import {parseCommunityInput, TARGETED_PUBLICATION_KIND} from "@app/core/community"
+  import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
+  import {
+    parseCommunityNaddr,
+    makeCommunityPointer,
+    TARGETED_PUBLICATION_KIND_V2,
+  } from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     communityWritableSectionsSupportTarget,
@@ -138,7 +141,7 @@
   import FolderWithFiles from "@assets/icons/folder-with-files.svg?dataurl"
   import Download from "@assets/icons/download.svg?dataurl"
   import Code from "@assets/icons/code.svg?dataurl"
-  import {GIT_COMMUNITY_PARAM, makeGitPath} from "@app/util/routes"
+  import {GIT_COMMUNITY_PARAM, makeGitCommunityPath, makeGitPath} from "@app/util/routes"
   import {makeRepoNaddrFromEvent} from "@app/util/repo-links"
   import {getEventShareRelayHints} from "@app/util/event-share"
   import {
@@ -158,7 +161,6 @@
     matchBookmarkedRepoEvents,
   } from "@app/util/bookmarks"
   import {activeRepoStars, hydrateRepoStars, repoStarsLoading} from "@app/core/repo-stars-state"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
   import {
     parseRepoStarReaction,
     repoStarToBookmarkAddress,
@@ -432,19 +434,17 @@
   )
   const getInitialGitCommunityInput = () =>
     getStore(page).url.searchParams.get(GIT_COMMUNITY_PARAM)?.trim() || ""
-  const getInitialGitCommunityPubkey = () =>
-    parseCommunityInput(getInitialGitCommunityInput())?.pubkey || ""
+  const getInitialGitCommunityPointer = () =>
+    parseCommunityNaddr(getInitialGitCommunityInput()) || getStore(activeExactCommunityPointer)
+  const getInitialGitCommunityPubkey = () => getInitialGitCommunityPointer()?.controllerPubkey || ""
 
   const getInitialGitModeForContext = (): GitMode =>
-    getInitialGitCommunityPubkey()
-      ? "community"
-      : getStore(activeCommunitySession)?.communityPubkey
-        ? getInitialGitMode()
-        : "personal"
+    getInitialGitCommunityPointer() ? "community" : "personal"
 
   let loading = $state(true)
   let activeMode = $state<GitMode>(getInitialGitModeForContext())
   let activeTab = $state<GitTab>(getInitialGitTab())
+  let selectedCommunityAddress = $state(getInitialGitCommunityPointer()?.address || "")
   let selectedCommunityPubkey = $state(getInitialGitCommunityPubkey())
   let gitTabHydrated = $state(false)
   let searchQuery = $state("")
@@ -467,7 +467,7 @@
   let repoDiscoveryDebounceTimer: ReturnType<typeof setTimeout> | null = null
   let snippetsLoadedFor = $state<string | null>(null)
 
-  const hasActiveCommunityContext = $derived(Boolean($activeCommunitySession?.communityPubkey))
+  const hasActiveCommunityContext = $derived(Boolean($activeExactCommunityPointer))
   const gitPageWidthClass = $derived(hasActiveCommunityContext ? "" : "cw-full")
 
   // Initialize worker for Git operations
@@ -649,8 +649,11 @@
         }),
       )
       .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
+        controllerPubkey: ref.definition.controllerPubkey,
+        address: ref.community.address,
+        communityId: ref.community.communityId,
+        name: ref.definition.metadata.name,
+        about: ref.definition.metadata.description,
         relays: ref.definition.relays,
         graspServers: ref.definition.graspServers,
       })),
@@ -658,27 +661,48 @@
 
   const repoViewCommunityOptions = $derived.by((): RepoCommunityOption[] => {
     const options = new Map<string, RepoCommunityOption>()
-    const session = $activeCommunitySession
 
-    if (session?.communityPubkey) {
-      options.set(session.communityPubkey, {
-        pubkey: session.communityPubkey,
-        label: getCommunityOptionLabel(session.communityPubkey),
-        relays: [
-          ...session.communityRelayHints,
-          ...($activeCommunityDefinition?.pubkey === session.communityPubkey
-            ? $activeCommunityDefinition.relays
-            : []),
-        ],
+    for (const ref of $activeUserCommunityRefs) {
+      options.set(ref.community.address, {
+        controllerPubkey: ref.definition.controllerPubkey,
+        address: ref.community.address,
+        communityId: ref.community.communityId,
+        name: ref.definition.metadata.name,
+        about: ref.definition.metadata.description,
+        relays: Array.from(new Set([...ref.definition.relays, ...ref.relayHints])),
+        graspServers: ref.definition.graspServers,
       })
     }
 
     for (const community of $activePreferredCommunities) {
-      const current = options.get(community.communityPubkey)
-      options.set(community.communityPubkey, {
-        pubkey: community.communityPubkey,
-        label: getCommunityOptionLabel(community.communityPubkey),
-        relays: Array.from(new Set([...(current?.relays || []), ...community.relayHints])),
+      const pointer = community.star?.community
+      if (!pointer) continue
+      const current = options.get(pointer.address)
+      options.set(pointer.address, {
+        controllerPubkey: pointer.controllerPubkey,
+        address: pointer.address,
+        communityId: pointer.communityId,
+        name: current?.name,
+        about: current?.about,
+        relays: Array.from(
+          new Set([...(current?.relays || []), ...pointer.relayHints, ...community.relayHints]),
+        ),
+      })
+    }
+
+    const exactPointer = $activeExactCommunityPointer
+    const exactDefinition = $activeExactCommunityDefinition
+    if (exactPointer && !options.has(exactPointer.address)) {
+      options.set(exactPointer.address, {
+        controllerPubkey: exactPointer.controllerPubkey,
+        address: exactPointer.address,
+        communityId: exactPointer.communityId,
+        name: exactDefinition?.metadata.name,
+        about: exactDefinition?.metadata.description,
+        relays: Array.from(
+          new Set([...exactPointer.relayHints, ...(exactDefinition?.relays || [])]),
+        ),
+        graspServers: exactDefinition?.graspServers,
       })
     }
 
@@ -692,36 +716,51 @@
     if (!communityInput || communityInput === appliedGitCommunityInput) return
 
     appliedGitCommunityInput = communityInput
-    const parsed = parseCommunityInput(communityInput)
+    const parsed = parseCommunityNaddr(communityInput)
     if (!parsed) return
 
-    const session = setActiveCommunityInput(communityInput)
+    clearActiveExactCommunity()
+    setActiveExactCommunityPointer(parsed)
     activeMode = "community"
-    selectedCommunityPubkey = session?.communityPubkey || parsed.pubkey
+    selectedCommunityAddress = parsed.address
+    selectedCommunityPubkey = parsed.controllerPubkey
   })
 
   $effect(() => {
     if (activeMode !== "community") return
-    const activeCommunityPubkey = $activeCommunitySession?.communityPubkey || ""
+    if (parseCommunityNaddr(requestedGitCommunityInput)) return
+    const pointer = $activeExactCommunityPointer
 
-    if (activeCommunityPubkey && selectedCommunityPubkey !== activeCommunityPubkey) {
-      selectedCommunityPubkey = activeCommunityPubkey
+    if (pointer && selectedCommunityAddress !== pointer.address) {
+      selectedCommunityAddress = pointer.address
+      selectedCommunityPubkey = pointer.controllerPubkey
       return
     }
 
     if (
-      selectedCommunityPubkey &&
-      !repoViewCommunityOptions.some(c => c.pubkey === selectedCommunityPubkey)
+      selectedCommunityAddress &&
+      !repoViewCommunityOptions.some(c => c.address === selectedCommunityAddress)
     ) {
+      selectedCommunityAddress = ""
       selectedCommunityPubkey = ""
     }
   })
 
   const selectedCommunityOption = $derived.by(() =>
-    repoViewCommunityOptions.find(option => option.pubkey === selectedCommunityPubkey),
+    repoViewCommunityOptions.find(option => option.address === selectedCommunityAddress),
+  )
+  const selectedCommunityPointer = $derived.by(() =>
+    selectedCommunityOption
+      ? makeCommunityPointer({
+          controllerPubkey: selectedCommunityOption.controllerPubkey,
+          communityId: selectedCommunityOption.communityId,
+          relayHints: selectedCommunityOption.relays,
+        })
+      : undefined,
   )
   const selectedCommunityLabel = $derived(
-    selectedCommunityOption?.label ||
+    selectedCommunityOption?.name ||
+      selectedCommunityOption?.label ||
       (selectedCommunityPubkey ? getCommunityOptionLabel(selectedCommunityPubkey) : ""),
   )
   const communityOptionsLoading = $derived(
@@ -740,17 +779,20 @@
       .filter(Boolean),
   )
 
-  const selectGitCommunity = (communityPubkey: string) => {
-    selectedCommunityPubkey = communityPubkey
-    if (!communityPubkey) return
+  const selectGitCommunity = (communityAddress: string) => {
+    selectedCommunityAddress = communityAddress
+    const option = repoViewCommunityOptions.find(item => item.address === communityAddress)
+    selectedCommunityPubkey = option?.controllerPubkey || ""
+    if (!option) return
 
-    const option = repoViewCommunityOptions.find(item => item.pubkey === communityPubkey)
-    const communityInput = makeCommunityInputValue({
-      pubkey: communityPubkey,
-      relayHints: getCommunityOptionRelayHints(option),
+    const pointer = makeCommunityPointer({
+      controllerPubkey: option.controllerPubkey,
+      communityId: option.communityId,
+      relayHints: option.relays,
     })
-
-    setActiveCommunityInput(communityInput || communityPubkey)
+    if (!pointer) return
+    setActiveExactCommunityPointer(pointer)
+    goto(makeGitCommunityPath(pointer.naddr))
   }
 
   const openExploreCommunities = () => goto("/explore")
@@ -830,52 +872,13 @@
   const EMPTY_VERIFIED_REPO_MAINTAINERS = new Set<string>()
 
   const selectedCommunityRef = $derived.by(() =>
-    $activeUserCommunityRefs.find(ref => ref.communityPubkey === selectedCommunityPubkey),
+    $activeUserCommunityRefs.find(ref => ref.community.address === selectedCommunityAddress),
   )
-  const selectedCommunityDefinitionFilters = $derived.by(() =>
-    selectedCommunityPubkey ? [makeCommunityDefinitionFilter(selectedCommunityPubkey)] : [],
-  )
-  const selectedCommunityDefinitionEvents = $derived.by(() =>
-    selectedCommunityDefinitionFilters.length
-      ? deriveEventsDesc(
-          deriveEventsById({repository, filters: selectedCommunityDefinitionFilters as any}),
-        )
-      : undefined,
-  )
-  const selectedCommunityDefinition = $derived.by(
-    () =>
-      selectedCommunityRef?.definition ||
-      ($activeCommunityDefinition?.pubkey === selectedCommunityPubkey
-        ? $activeCommunityDefinition
-        : undefined) ||
-      ($selectedCommunityDefinitionEvents
-        ? selectLatestCommunityDefinition(
-            $selectedCommunityDefinitionEvents as TrustedEvent[],
-            selectedCommunityPubkey,
-          )
-        : undefined),
-  )
-
-  let selectedCommunityDefinitionLoadKey = ""
-  $effect(() => {
-    if (
-      activeMode !== "community" ||
-      selectedCommunityRelays.length === 0 ||
-      selectedCommunityDefinitionFilters.length === 0
-    ) {
-      selectedCommunityDefinitionLoadKey = ""
-      return
-    }
-
-    const key = `${selectedCommunityPubkey}:${selectedCommunityRelays.join(",")}:definition`
-    if (key === selectedCommunityDefinitionLoadKey) return
-    selectedCommunityDefinitionLoadKey = key
-    load({
-      relays: selectedCommunityRelays,
-      filters: selectedCommunityDefinitionFilters as any,
-    }).catch(error => {
-      console.warn("[git/+page] Failed to load selected community definition", error)
-    })
+  const selectedCommunityDefinition = $derived.by(() => {
+    if (selectedCommunityRef) return selectedCommunityRef.definition
+    return $activeExactCommunityDefinition?.pointer.address === selectedCommunityAddress
+      ? $activeExactCommunityDefinition
+      : undefined
   })
 
   const selectedCommunityProfileListFilters = $derived.by(() =>
@@ -889,7 +892,9 @@
       : undefined,
   )
   const selectedCommunityReportFilters = $derived.by(() =>
-    selectedCommunityDefinition ? makeCommunityReportFilters(selectedCommunityDefinition) : [],
+    selectedCommunityDefinition
+      ? makeCommunityReportFilters(selectedCommunityDefinition.pointer)
+      : [],
   )
   const selectedCommunityReportEvents = $derived.by(() =>
     selectedCommunityReportFilters.length
@@ -1126,7 +1131,7 @@
     selectedCommunityDefinition
       ? makeCommunityContentFilterPlan(
           [
-            makeCommunityRepositoryFilter(selectedCommunityPubkey, {
+            makeCommunityRepositoryFilter(selectedCommunityDefinition.communityId, {
               limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
             }),
           ],
@@ -1143,11 +1148,15 @@
       : undefined,
   )
   const communityRepoTargetFilters = $derived.by(() =>
-    selectedCommunityPubkey
+    selectedCommunityPointer
       ? [
-          makeCommunityTargetingFilter(selectedCommunityPubkey, [GIT_REPO_ANNOUNCEMENT], {
-            limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
-          }),
+          makeCommunityTargetingFilter(
+            selectedCommunityPointer.communityId,
+            [GIT_REPO_ANNOUNCEMENT],
+            {
+              limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+            },
+          ),
         ]
       : [],
   )
@@ -1170,8 +1179,9 @@
       : undefined,
   )
   const authorizedCommunityRepoTargetEvents = $derived.by(() =>
-    selectedCommunityDefinition && $communityRepoTargetEventsStore
+    selectedCommunityDefinition && selectedCommunityPointer && $communityRepoTargetEventsStore
       ? filterAuthorizedCommunityTargetingEvents({
+          community: selectedCommunityPointer,
           definition: selectedCommunityDefinition,
           profileListEvents: $selectedCommunityProfileListEvents
             ? ($selectedCommunityProfileListEvents as TrustedEvent[])
@@ -1217,7 +1227,7 @@
       !$repoListHydrationReadyStore ||
       activeMode !== "community" ||
       activeTab !== "my-repos" ||
-      !selectedCommunityPubkey ||
+      !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0 ||
       communityRepoFilterPlan.relayFilters.length === 0
     ) {
@@ -1225,14 +1235,14 @@
       communityRepoLoadKey = ""
       communityRepoAnnouncementsSettled = true
       directCommunityRepoHistoryIncomplete =
-        Boolean(selectedCommunityPubkey) && communityRepoFilterPlan.relayFilters.length > 0
+        Boolean(selectedCommunityAddress) && communityRepoFilterPlan.relayFilters.length > 0
       return
     }
 
     const relayFilters = communityRepoFilterPlan.relayFilters
     const localFilters = communityRepoFilterPlan.localFilters
     const key = JSON.stringify({
-      community: selectedCommunityPubkey,
+      community: selectedCommunityAddress,
       relays: selectedCommunityListRelays,
       relayFilters,
       localFilters,
@@ -1250,7 +1260,7 @@
       relayFilters,
       localFilters,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `global-git-community:${selectedCommunityPubkey}`,
+      owner: `global-git-community:${selectedCommunityAddress}`,
       signal,
     })
       .then(result => {
@@ -1283,7 +1293,7 @@
       !$repoListHydrationReadyStore ||
       activeMode !== "community" ||
       activeTab !== "my-repos" ||
-      !selectedCommunityPubkey ||
+      !selectedCommunityAddress ||
       relayFilters.length === 0 ||
       localFilters.length === 0
     ) {
@@ -1302,7 +1312,7 @@
     }
 
     const key = JSON.stringify({
-      community: selectedCommunityPubkey,
+      community: selectedCommunityAddress,
       relays,
       relayFilters,
       localFilters,
@@ -1320,7 +1330,7 @@
       relayFilters,
       localFilters,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `global-git-community-targets:${selectedCommunityPubkey}`,
+      owner: `global-git-community-targets:${selectedCommunityAddress}`,
       signal,
     })
       .then(result => {
@@ -1358,7 +1368,7 @@
       !$repoListHydrationReadyStore ||
       activeMode !== "community" ||
       activeTab !== "my-repos" ||
-      !selectedCommunityPubkey ||
+      !selectedCommunityAddress ||
       targetedCommunityRepoFilterPlan.relayFilters.length === 0
     ) {
       communityRepoOriginalLoadRequestId += 1
@@ -1376,7 +1386,7 @@
     }
 
     const key = JSON.stringify({
-      community: selectedCommunityPubkey,
+      community: selectedCommunityAddress,
       plans,
       retry: communityRepoRetryVersion,
     })
@@ -1392,7 +1402,7 @@
         loadBoundedCommunityHistory({
           ...plan,
           priority: RELAY_REQUEST_PRIORITY.interactive,
-          owner: `global-git-community-originals:${selectedCommunityPubkey}`,
+          owner: `global-git-community-originals:${selectedCommunityAddress}`,
           signal,
         }),
       ),
@@ -1419,7 +1429,7 @@
   })
 
   const latestCommunityRepos = $derived.by(() => {
-    if (!selectedCommunityDefinition || !selectedCommunityPubkey) return []
+    if (!selectedCommunityDefinition || !selectedCommunityAddress) return []
 
     const latest = new Map<string, RepoAnnouncementEvent>()
     const associationEvents = authorizedCommunityRepoTargetEvents
@@ -1430,7 +1440,7 @@
         : []),
     ]
     const reportStates = selectedCommunityReportState
-      ? new Map([[selectedCommunityPubkey, selectedCommunityReportState]])
+      ? new Map([[selectedCommunityAddress, selectedCommunityReportState]])
       : undefined
 
     for (const event of candidates) {
@@ -1444,7 +1454,8 @@
           : [],
         reportStates,
         activeCommunityPubkey: selectedCommunityPubkey,
-      }).find(context => context.communityPubkey === selectedCommunityPubkey)
+        activeCommunityAddress: selectedCommunityAddress,
+      }).find(context => context.communityAddress === selectedCommunityAddress)
       if (!isEndorsedRepoCommunityContext(context)) continue
 
       const address = getRepoAddress(event)
@@ -1493,9 +1504,9 @@
   }
 
   const communityStarTargetFilters = $derived.by(() =>
-    selectedCommunityPubkey
+    selectedCommunityPointer
       ? [
-          makeCommunityTargetingFilter(selectedCommunityPubkey, [REACTION], {
+          makeCommunityTargetingFilter(selectedCommunityPointer.communityId, [REACTION], {
             limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
           }),
         ]
@@ -1520,8 +1531,9 @@
       : undefined,
   )
   const authorizedCommunityStarTargetEvents = $derived.by(() =>
-    selectedCommunityDefinition && $communityStarTargetEvents
+    selectedCommunityDefinition && selectedCommunityPointer && $communityStarTargetEvents
       ? filterAuthorizedCommunityTargetingEvents({
+          community: selectedCommunityPointer,
           definition: selectedCommunityDefinition,
           profileListEvents: $selectedCommunityProfileListEvents
             ? ($selectedCommunityProfileListEvents as TrustedEvent[])
@@ -1621,9 +1633,9 @@
   })
 
   const communitySnippetTargetFilters = $derived.by(() =>
-    selectedCommunityPubkey
+    selectedCommunityPointer
       ? [
-          makeCommunityTargetingFilter(selectedCommunityPubkey, [GIT_PERMALINK], {
+          makeCommunityTargetingFilter(selectedCommunityPointer.communityId, [GIT_PERMALINK], {
             limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
           }),
         ]
@@ -1648,8 +1660,9 @@
       : undefined,
   )
   const authorizedCommunitySnippetTargetEvents = $derived.by(() =>
-    selectedCommunityDefinition && $communitySnippetTargetEvents
+    selectedCommunityDefinition && selectedCommunityPointer && $communitySnippetTargetEvents
       ? filterAuthorizedCommunityTargetingEvents({
+          community: selectedCommunityPointer,
           definition: selectedCommunityDefinition,
           profileListEvents: $selectedCommunityProfileListEvents
             ? ($selectedCommunityProfileListEvents as TrustedEvent[])
@@ -1740,7 +1753,7 @@
     if (
       activeMode !== "community" ||
       (activeTab !== "bookmarks" && activeTab !== "snippets") ||
-      !selectedCommunityPubkey ||
+      !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0
     ) {
       communityTargetLoadRequestId += 1
@@ -1762,7 +1775,7 @@
 
     const key = JSON.stringify({
       tab: activeTab,
-      community: selectedCommunityPubkey,
+      community: selectedCommunityAddress,
       relays: selectedCommunityListRelays,
       relayFilters,
       localFilters,
@@ -1780,7 +1793,7 @@
       relayFilters,
       localFilters,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `global-git-community-curation-targets:${selectedCommunityPubkey}`,
+      owner: `global-git-community-curation-targets:${selectedCommunityAddress}`,
       signal,
     })
       .then(result => {
@@ -1809,7 +1822,7 @@
     if (
       activeMode !== "community" ||
       (activeTab !== "bookmarks" && activeTab !== "snippets") ||
-      !selectedCommunityPubkey ||
+      !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0
     ) {
       communityTargetDeleteLoadRequestId += 1
@@ -1850,7 +1863,7 @@
     if (
       activeMode !== "community" ||
       (activeTab !== "bookmarks" && activeTab !== "snippets") ||
-      !selectedCommunityPubkey ||
+      !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0
     ) {
       communityOriginalLoadRequestId += 1
@@ -1897,7 +1910,7 @@
         loadBoundedCommunityHistory({
           ...plan,
           priority: RELAY_REQUEST_PRIORITY.interactive,
-          owner: `global-git-community-curation-originals:${selectedCommunityPubkey}`,
+          owner: `global-git-community-curation-originals:${selectedCommunityAddress}`,
           signal,
         }),
       ),
@@ -1985,8 +1998,10 @@
         }),
       )
       .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
+        controllerPubkey: ref.definition.controllerPubkey,
+        address: ref.community.address,
+        communityId: ref.community.communityId,
+        label: getCommunityOptionLabel(ref.definition.controllerPubkey),
         relays: ref.definition.relays,
       })),
   )
@@ -2010,8 +2025,10 @@
 
     return [
       {
-        kinds: [TARGETED_PUBLICATION_KIND],
-        "#p": repoCollectionCommunityOptions.map(option => option.pubkey),
+        kinds: [TARGETED_PUBLICATION_KIND_V2],
+        "#h": repoCollectionCommunityOptions
+          .map(option => option.communityId)
+          .filter((communityId): communityId is string => Boolean(communityId)),
         "#k": [String(REACTION)],
         limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
       },
@@ -2040,16 +2057,17 @@
   const authorizedRepoCollectionTargetEvents = $derived.by(() => {
     if (!$pubkey || repoCollectionTargetEvents.length === 0) return []
     const authorizedIds = new Set<string>()
-    const optionPubkeys = new Set(repoCollectionCommunityOptions.map(option => option.pubkey))
+    const optionAddresses = new Set(repoCollectionCommunityOptions.map(option => option.address))
 
     for (const ref of $activeUserCommunityRefs) {
-      if (!optionPubkeys.has(ref.communityPubkey)) continue
+      if (!optionAddresses.has(ref.community.address)) continue
 
       for (const event of filterAuthorizedCommunityTargetingEvents({
+        community: ref.community,
         definition: ref.definition,
         profileListEvents: $activeUserCommunityProfileListEvents,
         events: repoCollectionTargetEvents,
-        reportState: $communityMemberReportStates.get(ref.communityPubkey),
+        reportState: $communityMemberReportStates.get(ref.community.address),
         kinds: [REACTION],
       })) {
         if (event.pubkey === $pubkey) authorizedIds.add(event.id)
@@ -2560,7 +2578,7 @@
         selectedCommunityPubkey && selectedCommunityReportState
           ? new Map([[selectedCommunityPubkey, selectedCommunityReportState]])
           : undefined,
-      renouncedCommunityPubkeys: $userRenouncedCommunityPubkeys,
+      renouncedCommunityAddresses: $userRenouncedCommunityAddresses,
     })
 
     return new Map(
@@ -2661,7 +2679,7 @@
     JSON.stringify([
       activeMode,
       activeTab,
-      activeMode === "community" ? selectedCommunityPubkey : "",
+      activeMode === "community" ? selectedCommunityAddress : "",
       $pubkey || "",
       accountSearchContext,
     ]),
@@ -3330,7 +3348,7 @@
     }
 
     if (activeMode === "community") {
-      if (!selectedCommunityPubkey) return false
+      if (!selectedCommunityAddress) return false
       if (activeTab === "my-repos") {
         return (
           !communityRepoAnnouncementsSettled ||
@@ -3490,9 +3508,12 @@
       const event = card?.first as RepoAnnouncementEvent | undefined
       const owner = String(card?.owner || event?.pubkey || "")
       const relays = event ? getRepoCardProfileRelays(event) : []
-      const communityPubkey = event ? parseRepoCommunityBinding(event)?.pubkey || "" : ""
+      const communityAddress = event ? parseRepoCommunityBinding(event)?.address || "" : ""
+      const communityPubkey = repoViewCommunityOptions.find(
+        option => option.address === communityAddress,
+      )?.controllerPubkey
       const pubkeys = [owner, communityPubkey, ...getRepoCardMaintainers(event).slice(0, 3)].filter(
-        Boolean,
+        (pubkey): pubkey is string => Boolean(pubkey),
       )
 
       for (const pubkey of pubkeys) {
@@ -4046,16 +4067,27 @@
 
   const searchProfilesForWizard = async (
     query: string,
-    {communityPubkey}: ProfileSearchContext = {},
+    {communityAddress}: ProfileSearchContext = {},
   ) => {
     try {
       if (!$pubkey) return []
+      const communityOption = repoPublishCommunityOptions.find(
+        option => option.address === communityAddress,
+      )
 
       const pubkeys = getStore(peopleDiscoverySearch).searchValues(query, {
         context: {
           scope: "repo",
           authority: {source: "draft", ownerPubkey: $pubkey},
-          ...(communityPubkey ? {community: {scope: "community" as const, communityPubkey}} : {}),
+          ...(communityOption
+            ? {
+                community: {
+                  scope: "community" as const,
+                  communityAddress: communityOption.address,
+                  communityPubkey: communityOption.controllerPubkey,
+                },
+              }
+            : {}),
         },
         allowEmptyQuery: true,
         scanLimit: query.trim() ? undefined : 320,
@@ -4161,8 +4193,10 @@
           communityOptions: repoPublishCommunityOptions,
           defaultCommunityPubkey:
             activeMode === "community" &&
-            repoPublishCommunityOptions.some(option => option.pubkey === selectedCommunityPubkey)
-              ? selectedCommunityPubkey
+            repoPublishCommunityOptions.some(
+              option => option.address === $activeExactCommunityPointer?.address,
+            )
+              ? $activeExactCommunityPointer?.address
               : "",
           onPublishEvent: async (repoEvent: NostrEvent, context?: {relays: string[]}) => {
             const explicitRelays = context?.relays || []
@@ -4362,8 +4396,10 @@
           communityOptions: repoPublishCommunityOptions,
           defaultCommunityPubkey:
             activeMode === "community" &&
-            repoPublishCommunityOptions.some(option => option.pubkey === selectedCommunityPubkey)
-              ? selectedCommunityPubkey
+            repoPublishCommunityOptions.some(
+              option => option.address === $activeExactCommunityPointer?.address,
+            )
+              ? $activeExactCommunityPointer?.address
               : "",
         },
         {fullscreen: true, noEscape: true},
@@ -4452,15 +4488,18 @@
           <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
             >Community</span>
           <select
-            value={selectedCommunityPubkey}
+            value={selectedCommunityAddress}
             onchange={event => selectGitCommunity((event.currentTarget as HTMLSelectElement).value)}
             class="select select-bordered select-sm w-full">
             {#if repoViewCommunityOptions.length === 0}
               <option value="">No communities</option>
             {:else}
               <option value="" disabled>Select a community</option>
-              {#each repoViewCommunityOptions as option (option.pubkey)}
-                <option value={option.pubkey}>{option.label || option.pubkey}</option>
+              {#each repoViewCommunityOptions as option (option.address)}
+                <option value={option.address}
+                  >{option.name
+                    ? `${option.name}${option.about ? ` - ${option.about}` : ""}`
+                    : option.label || option.communityId}</option>
               {/each}
             {/if}
           </select>

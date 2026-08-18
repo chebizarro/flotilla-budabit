@@ -8,7 +8,7 @@ import {makeOutboxLoader, makeUserData, pubkey, repository, signer} from "@welsh
 import {GIT_RELAYS, repoAnnouncements} from "@app/core/git-state"
 import {getUserDataPublishRelays} from "@app/core/community-relays"
 import {publishRequiredCommunityEvent} from "@app/core/community-publish"
-import {activeCommunityDefinition, activeUserCommunityRefs} from "@app/core/community-state"
+import {activeExactCommunityDefinition, activeUserCommunityRefs} from "@app/core/community-state"
 import {APP_BASE_URL} from "@app/core/state"
 import {
   getPersistedEmailDigestAuthRelay,
@@ -31,6 +31,7 @@ import {
   getEmailDigestStatusDtag,
   getEmailDigestSubscriptionTags,
   getNextEmailDigestCreatedAt,
+  isEmailDigestProviderAdvertised,
   normalizeEmailDigestSettings,
   parseEmailDigestStatus,
   runBestEffortEmailDigestSync,
@@ -72,7 +73,7 @@ export type EmailDigestSettingsHydration = {
 }
 
 export const emailDigestProviders: Readable<EmailDigestProvider[]> = derived(
-  [activeCommunityDefinition, activeUserCommunityRefs],
+  [activeExactCommunityDefinition, activeUserCommunityRefs],
   ([$activeCommunityDefinition, $activeUserCommunityRefs]) =>
     discoverEmailDigestProviders({
       activeCommunityDefinition: $activeCommunityDefinition,
@@ -473,6 +474,15 @@ export const saveAndEnableEmailDigest = async ({
   const next = normalizeEmailDigestSettings({...settings, enabled: true})
   if (!next.enabled || !next.provider) {
     throw new Error("Complete the provider, email, and cadence fields before enabling the digest.")
+  }
+  if (
+    !isEmailDigestProviderAdvertised(
+      next.provider,
+      get(emailDigestProviders),
+      next.selectedCommunityAddress,
+    )
+  ) {
+    throw new Error("Choose a provider advertised by the selected community definition.")
   }
 
   const current = get(userEmailDigestSettingsValues)

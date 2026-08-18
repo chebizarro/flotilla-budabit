@@ -22,12 +22,12 @@
     type ProfileCodeTrustInteractionDetail,
     type ProfileCodeTrustAnalysis,
   } from "@app/core/profile-collab-analysis"
-  import type {CommunityDefinition} from "@app/core/community"
+  import type {CommunityDefinitionV2} from "@app/core/community"
   import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 
   type Props = {
     pubkey: string
-    communityDefinition?: CommunityDefinition
+    communityDefinition?: CommunityDefinitionV2
     communityProfileListEvents?: TrustedEvent[]
     communityReportState?: EffectiveCommunityReportState
   }
@@ -71,7 +71,11 @@
 
   const cacheKey = $derived.by(() =>
     $sessionPubkey
-      ? getProfileCodeTrustAnalysisKey($sessionPubkey, pubkey, communityDefinition?.pubkey || "")
+      ? getProfileCodeTrustAnalysisKey(
+          $sessionPubkey,
+          pubkey,
+          communityDefinition?.pointer.address || "",
+        )
       : "",
   )
 
@@ -237,7 +241,7 @@
     try {
       const communityContext: ProfileCodeTrustCommunityContext | undefined = communityDefinition
         ? {
-            communityPubkey: communityDefinition.pubkey,
+            community: communityDefinition.pointer,
             definitions: [communityDefinition],
             profileListEvents: communityProfileListEvents,
             reportState: communityReportState,

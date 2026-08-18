@@ -1,6 +1,9 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
+import * as nip19 from "nostr-tools/nip19"
+import {getPublicKey} from "nostr-tools/pure"
 import {pubkey} from "@welshman/app"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+import {makeCommunityPointer} from "@app/core/community"
 import type {CommunityCuratedExtensionsResult} from "./community-curation"
 import {
   COMMUNITY_SHARED_CONFIG_KIND,
@@ -23,6 +26,12 @@ import {getWidgetLineId} from "./widget-identity"
 const mocks = vi.hoisted(() => ({
   loadCommunityCuratedWidgets: vi.fn(),
 }))
+
+const communityController = getPublicKey(new Uint8Array(32).fill(1))
+const communityId = getPublicKey(new Uint8Array(32).fill(2))
+const communityAddress = `32222:${communityController}:${communityId}`
+const community = makeCommunityPointer({controllerPubkey: communityController, communityId})!
+const unrelatedCommunityAddress = `32222:${communityController}:${getPublicKey(new Uint8Array(32).fill(3))}`
 
 vi.mock("./community-curation", () => ({
   loadCommunityCuratedWidgets: mocks.loadCommunityCuratedWidgets,
@@ -54,6 +63,7 @@ const makeCuratedResult = (
   complete = true,
 ): CommunityCuratedExtensionsResult => ({
   status: "community",
+  community,
   complete,
   relayHints: [],
   trustedWidgetAuthorPubkeys: [],
@@ -236,7 +246,7 @@ describe("community widget slots", () => {
   })
 
   it("selects enabled installed slot widgets with cached shared config", () => {
-    const communityPubkey = "c".repeat(64)
+    const communityPubkey = communityController
     const widget = makeWidget(
       "featured-calendar-event",
       "community-home-after-quicklinks",
@@ -259,18 +269,20 @@ describe("community widget slots", () => {
       tags: [
         [
           "d",
-          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+          `budabit-community-config:${communityAddress}:budabit-calendar-widget:featured-calendar-event`,
         ],
-        ["p", communityPubkey],
+        ["a", communityAddress],
         ["namespace", "budabit-calendar-widget"],
         ["key", "featured-calendar-event"],
+        ["descriptor", "1"],
       ],
     }
 
     const selected = getEnabledCommunitySlotWidgetsWithSharedConfig({
-      communityPubkey,
+      communityAddress,
       sharedConfigEvents: [sharedConfigEvent],
       authorizedPubkeys: new Set([communityPubkey]),
+      descriptorAuthorities: [{descriptor: {kind: 1}, moderatorPubkeys: [communityPubkey]}],
       installedWidgets: {
         [getWidgetLineId(widget)]: widget,
         [getWidgetLineId(unrelatedWidget)]: unrelatedWidget,
@@ -282,7 +294,7 @@ describe("community widget slots", () => {
     expect(selected.map(item => item.identifier)).toEqual(["featured-calendar-event"])
 
     const unauthorized = getEnabledCommunitySlotWidgetsWithSharedConfig({
-      communityPubkey,
+      communityAddress,
       sharedConfigEvents: [{...sharedConfigEvent, pubkey: "e".repeat(64)}],
       authorizedPubkeys: new Set([communityPubkey]),
       installedWidgets: {[getWidgetLineId(widget)]: widget},
@@ -293,7 +305,7 @@ describe("community widget slots", () => {
     expect(unauthorized).toEqual([])
 
     const unrelatedCommunity = getEnabledCommunitySlotWidgetsWithSharedConfig({
-      communityPubkey: "d".repeat(64),
+      communityAddress: unrelatedCommunityAddress,
       sharedConfigEvents: [sharedConfigEvent],
       authorizedPubkeys: new Set([communityPubkey]),
       installedWidgets: {
@@ -308,7 +320,7 @@ describe("community widget slots", () => {
   })
 
   it("treats explicit shared-config declarations as authoritative", () => {
-    const communityPubkey = "c".repeat(64)
+    const communityPubkey = communityController
     const widget = makeWidget(
       "featured-calendar-event",
       "community-home-after-quicklinks",
@@ -329,19 +341,21 @@ describe("community widget slots", () => {
       tags: [
         [
           "d",
-          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+          `budabit-community-config:${communityAddress}:budabit-calendar-widget:featured-calendar-event`,
         ],
-        ["p", communityPubkey],
+        ["a", communityAddress],
         ["namespace", "budabit-calendar-widget"],
         ["key", "featured-calendar-event"],
+        ["descriptor", "1"],
       ],
     }
 
     expect(
       getEnabledCommunitySlotWidgetsWithSharedConfig({
-        communityPubkey,
+        communityAddress,
         sharedConfigEvents: [sharedConfigEvent],
         authorizedPubkeys: new Set([communityPubkey]),
+        descriptorAuthorities: [{descriptor: {kind: 1}, moderatorPubkeys: [communityPubkey]}],
         installedWidgets: {[getWidgetLineId(widget)]: widget},
         enabledIds: new Set([getWidgetLineId(widget)]),
         slotType: "community-home-after-quicklinks",
@@ -350,14 +364,16 @@ describe("community widget slots", () => {
   })
 
   it("matches explicit shared-config declarations with trimmed case-sensitive scope", () => {
-    const communityPubkey = "c".repeat(64)
+    const communityPubkey = communityController
     const sharedConfigEvent = {
       kind: COMMUNITY_SHARED_CONFIG_KIND,
       pubkey: communityPubkey,
       tags: [
-        ["d", `budabit-community-config:${communityPubkey}:Calendar:Featured`],
+        ["d", `budabit-community-config:${communityAddress}:Calendar:Featured`],
+        ["a", communityAddress],
         ["namespace", "Calendar"],
         ["key", "Featured"],
+        ["descriptor", "1"],
       ],
     }
     const exact = makeWidget("exact", "community-home-after-quicklinks", undefined, undefined, 1, {
@@ -383,9 +399,10 @@ describe("community widget slots", () => {
     )
 
     const selected = getEnabledCommunitySlotWidgetsWithSharedConfig({
-      communityPubkey,
+      communityAddress,
       sharedConfigEvents: [sharedConfigEvent],
       authorizedPubkeys: new Set([communityPubkey]),
+      descriptorAuthorities: [{descriptor: {kind: 1}, moderatorPubkeys: [communityPubkey]}],
       installedWidgets: {
         [getWidgetLineId(exact)]: exact,
         [getWidgetLineId(wrongCase)]: wrongCase,
@@ -398,7 +415,7 @@ describe("community widget slots", () => {
   })
 
   it("rejects configs authored by a moderator of an unrelated descriptor", () => {
-    const communityPubkey = "c".repeat(64)
+    const communityPubkey = communityController
     const unrelatedModerator = "d".repeat(64)
     const widget = makeWidget(
       "featured-calendar-event",
@@ -414,22 +431,22 @@ describe("community widget slots", () => {
       tags: [
         [
           "d",
-          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+          `budabit-community-config:${communityAddress}:budabit-calendar-widget:featured-calendar-event`,
         ],
+        ["a", communityAddress],
         ["descriptor", "1"],
       ],
     }
 
     expect(
       getEnabledCommunitySlotWidgetsWithSharedConfig({
-        communityPubkey,
+        communityAddress,
         sharedConfigEvents: [event],
         authorizedPubkeys: new Set([communityPubkey, unrelatedModerator]),
         descriptorAuthorities: [
           {descriptor: {kind: 1}, moderatorPubkeys: [communityPubkey]},
           {descriptor: {kind: 2}, moderatorPubkeys: [unrelatedModerator]},
         ],
-        legacyAuthorizedPubkeys: new Set([communityPubkey]),
         installedWidgets: {[getWidgetLineId(widget)]: widget},
         enabledIds: new Set([getWidgetLineId(widget)]),
         slotType: "community-home-after-quicklinks",
@@ -474,10 +491,21 @@ describe("community widget slots", () => {
     expect(mocks.loadCommunityCuratedWidgets).toHaveBeenCalledTimes(1)
   })
 
-  it("reloads when relay hints change while preserving the validated snapshot", async () => {
-    const pubkey = "d".repeat(64)
-    const firstInput = `ncommunity://${pubkey}?relay=${encodeURIComponent("wss://one.example/")}`
-    const secondInput = `ncommunity://${pubkey}?relay=${encodeURIComponent("wss://two.example/")}`
+  it("uses exact branch identity rather than relay hints for curated widget caches", async () => {
+    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+    const firstInput = nip19.naddrEncode({
+      kind: 32222,
+      pubkey: controller,
+      identifier: communityId,
+      relays: ["wss://one.example"],
+    })
+    const secondInput = nip19.naddrEncode({
+      kind: 32222,
+      pubkey: controller,
+      identifier: communityId,
+      relays: ["wss://two.example"],
+    })
     const widget = makeWidget("community-stream", "community-home-before-quicklinks")
     mocks.loadCommunityCuratedWidgets
       .mockResolvedValueOnce(makeCuratedResult([widget]))
@@ -486,7 +514,7 @@ describe("community widget slots", () => {
     await loadCachedCommunityCuratedWidgets(firstInput)
     await loadCachedCommunityCuratedWidgets(secondInput)
 
-    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenCalledTimes(2)
+    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenCalledTimes(1)
     expect(getLastValidatedCommunityCuratedWidgets(secondInput)).toEqual([widget])
   })
 

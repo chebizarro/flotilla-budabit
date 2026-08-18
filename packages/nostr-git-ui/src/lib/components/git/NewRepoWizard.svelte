@@ -38,6 +38,7 @@
   import {
     findRepoCommunityOption,
     getRepoCommunityOptionBinding,
+    getRepoCommunityOptionKey,
   } from "./repo-community-options.js";
   const { Button } = useRegistry();
 
@@ -275,7 +276,7 @@
   );
   const otherCommunityGraspServerUrls = $derived.by(() =>
     communityOptions
-      .filter((option) => option.pubkey !== selectedCommunityPubkey)
+      .filter((option) => getRepoCommunityOptionKey(option) !== selectedCommunityPubkey)
       .flatMap((option) => option.graspServers || [])
   );
   const recommendedGraspServerOptions = $derived.by(() =>
@@ -287,9 +288,9 @@
   );
   const declaredGraspServices = $derived.by(() =>
     mergeGraspServiceDescriptors([
-      ...buildGraspServiceDescriptors(selectedCommunityGraspServerUrls, "community-10222"),
+      ...buildGraspServiceDescriptors(selectedCommunityGraspServerUrls, "community-definition"),
       ...buildGraspServiceDescriptors(graspServerOptions, "user-10317"),
-      ...buildGraspServiceDescriptors(otherCommunityGraspServerUrls, "community-10222"),
+      ...buildGraspServiceDescriptors(otherCommunityGraspServerUrls, "community-definition"),
     ])
   );
   const unbackedGraspRelays = $derived.by(() =>

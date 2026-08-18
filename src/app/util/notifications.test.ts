@@ -2,10 +2,11 @@
 
 import {get, readable} from "svelte/store"
 import {readFileSync} from "node:fs"
-import {nip19} from "nostr-tools"
+import {getPublicKey, nip19} from "nostr-tools"
 import {describe, expect, it, vi} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
-import type {CommunityDefinition} from "@app/core/community"
+import type {CommunityDefinitionV2} from "@app/core/community"
+import {buildTargetedPublicationV2, makeCommunityPointer} from "@app/core/community"
 import type {CommunityPermissionStatus} from "@app/core/community-state"
 
 vi.mock("@app/core/storage", () => ({
@@ -19,7 +20,7 @@ vi.mock("@app/core/state", () => ({
 }))
 
 vi.mock("@app/core/community-state", () => ({
-  activeCommunityDefinition: readable(undefined),
+  activeExactCommunityDefinition: readable(undefined),
   activeCommunityModeratorRequestStates: readable([]),
   activeCommunityPermissionStatus: readable({
     communityPubkey: "",
@@ -30,22 +31,29 @@ vi.mock("@app/core/community-state", () => ({
     hasCachedEvents: false,
   }),
   activeCommunityProfileListEvents: readable([]),
-  activeCommunityRelays: readable([]),
+  activeExactCommunityRelays: readable([]),
   activeCommunityReportState: readable(undefined),
   activeCommunityUserModeratorRequestStates: readable([]),
 }))
 
+const makeTestCommunity = (controllerByte: number, idByte: number) =>
+  makeCommunityPointer({
+    controllerPubkey: getPublicKey(new Uint8Array(32).fill(controllerByte)),
+    communityId: getPublicKey(new Uint8Array(32).fill(idByte)),
+  })!
+
 vi.mock("@app/util/routes", () => ({
   makeChatPath: (id: string) => `/chat/${id}`,
-  makeCommunityPath: (community: string, ...extra: string[]) =>
-    `/c/${community}${extra.length ? `/${extra.join("/")}` : ""}`,
-  makeCommunityCalendarPath: (community: string, event?: string) =>
-    `/c/${community}/calendar${event ? `/${event}` : ""}`,
-  makeCommunityGoalPath: (community: string, goal?: string) =>
-    `/c/${community}/goals${goal ? `/${goal}` : ""}`,
-  makeCommunityRoomPath: (community: string, room: string) => `/c/${community}/rooms/${room}`,
-  makeCommunityThreadPath: (community: string, thread?: string) =>
-    `/c/${community}/threads${thread ? `/${thread}` : ""}`,
+  makeExactCommunityPath: (community: {naddr: string}, ...extra: string[]) =>
+    `/c/${community.naddr}${extra.length ? `/${extra.join("/")}` : ""}`,
+  makeExactCommunityCalendarPath: (community: {naddr: string}, event?: string) =>
+    `/c/${community.naddr}/calendar${event ? `/${event}` : ""}`,
+  makeExactCommunityGoalPath: (community: {naddr: string}, goal?: string) =>
+    `/c/${community.naddr}/goals${goal ? `/${goal}` : ""}`,
+  makeExactCommunityRoomPath: (community: {naddr: string}, room: string) =>
+    `/c/${community.naddr}/rooms/${room}`,
+  makeExactCommunityThreadPath: (community: {naddr: string}, thread?: string) =>
+    `/c/${community.naddr}/threads${thread ? `/${thread}` : ""}`,
 }))
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
@@ -67,7 +75,8 @@ describe("notifications", () => {
     expect(source).toContain("makeCommunityContentFilterPlan(")
     expect(source).toContain("relayFilters: targetingFilterPlan.relayFilters")
     expect(source).toContain("localFilters: targetingFilterPlan.localFilters")
-    expect(source).toContain("filterAuthorizedCommunityTargetingEvents({")
+    expect(source).toContain("parseTargetedPublicationV2(event)")
+    expect(source).not.toContain("parseTargetedPublication(")
     expect(source).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
     expect(source.match(/loadBoundedCommunityHistory\(\{/g)).toHaveLength(2)
     expect(source).not.toContain("request({")
@@ -76,11 +85,13 @@ describe("notifications", () => {
   it("fails active-community candidates closed until current permissions are authoritative", async () => {
     const {getActiveCommunityNotificationPermissionKey} = await import("./notifications")
     const viewer = "a".repeat(64)
-    const communityPubkey = "b".repeat(64)
+    const community = makeTestCommunity(11, 12)
+    const communityPubkey = community.controllerPubkey
     const definition = {
       event: makeEvent({id: "definition", pubkey: communityPubkey}),
-      pubkey: communityPubkey,
-    } as CommunityDefinition
+      pointer: community,
+      controllerPubkey: community.controllerPubkey,
+    } as CommunityDefinitionV2
     const ready: CommunityPermissionStatus = {
       communityPubkey,
       key: `${viewer}:definition:wss://relay.example/:1`,
@@ -206,7 +217,8 @@ describe("notifications", () => {
 
   it("creates room notification candidates from latest incoming room messages", async () => {
     const {getRoomMessageNotificationCandidates} = await import("./notifications")
-    const communityPubkey = "a".repeat(64)
+    const community = makeTestCommunity(9, 10)
+    const communityPubkey = community.communityId
     const currentPubkey = "b".repeat(64)
     const incomingPubkey = "c".repeat(64)
     const bannedPubkey = "d".repeat(64)
@@ -292,14 +304,13 @@ describe("notifications", () => {
           banned,
           otherCommunity,
         ],
-        communityPubkey,
+        community,
         currentPubkey,
         allowPubkey: candidatePubkey => candidatePubkey !== bannedPubkey,
       }),
     ).toEqual([
-      {path: `/c/${communityPubkey}/rooms/room-legacy`, latestEvent: legacyLowercaseRoomTag},
-      {path: `/c/${communityPubkey}/rooms/room-one`, latestEvent: roomOneNewer},
-      {path: `/c/${communityPubkey}/rooms/room-two`, latestEvent: roomTwo},
+      {path: `/c/${community.naddr}/rooms/room-one`, latestEvent: roomOneNewer},
+      {path: `/c/${community.naddr}/rooms/room-two`, latestEvent: roomTwo},
     ])
   })
 
@@ -343,177 +354,93 @@ describe("notifications", () => {
     ).toEqual([{path, latestEvent: newerThread}])
   })
 
-  it("creates targeted publication notification candidates from latest incoming roots", async () => {
+  it("matches strict V2 targets by exact branch address", async () => {
     const {getTargetedPublicationRootNotificationCandidates} = await import("./notifications")
-    const communityPubkey = "a".repeat(64)
-    const currentPubkey = "b".repeat(64)
-    const incomingPubkey = "c".repeat(64)
-    const bannedPubkey = "d".repeat(64)
-    const path = `/c/${communityPubkey}/calendar`
-    const olderTargeting = makeEvent({
-      id: "older-targeting",
-      pubkey: incomingPubkey,
-      created_at: 10,
-      kind: 30222,
-      tags: [
-        ["d", "target-old"],
-        ["k", "31923"],
-        ["p", communityPubkey],
-      ],
-    })
-    const olderRoot = makeEvent({
-      id: "older-root",
-      pubkey: incomingPubkey,
-      created_at: 9,
-      kind: 31923,
-      tags: [["h", "target-old"]],
-    })
-    const newerTargeting = makeEvent({
-      id: "newer-targeting",
-      pubkey: incomingPubkey,
-      created_at: 20,
-      kind: 30222,
-      tags: [
-        ["d", "target-new"],
-        ["k", "31923"],
-        ["a", `31923:${incomingPubkey}:calendar-new`],
-        ["p", communityPubkey],
-      ],
-    })
-    const newerRoot = makeEvent({
-      id: "newer-root",
-      pubkey: incomingPubkey,
+    const controller = getPublicKey(new Uint8Array(32).fill(1))
+    const siblingController = getPublicKey(new Uint8Array(32).fill(2))
+    const author = getPublicKey(new Uint8Array(32).fill(3))
+    const sharedId = "7".repeat(64)
+    const community = makeCommunityPointer({controllerPubkey: controller, communityId: sharedId})!
+    const sibling = makeCommunityPointer({
+      controllerPubkey: siblingController,
+      communityId: sharedId,
+    })!
+    const path = `/c/${community.naddr}/calendar`
+    const root = makeEvent({
+      id: "root",
+      pubkey: author,
       created_at: 19,
       kind: 31923,
-      tags: [["d", "calendar-new"]],
+      tags: [["d", "calendar"]],
     })
-    const ownTargeting = makeEvent({
-      id: "own-targeting",
-      pubkey: currentPubkey,
+    const targeted = makeEvent({
+      id: "targeted",
+      pubkey: author,
+      created_at: 20,
+      ...buildTargetedPublicationV2({
+        id: "target",
+        kind: 31923,
+        source: {type: "a", value: `31923:${author}:calendar`},
+        communities: [community],
+      }),
+    })
+    const siblingTargeted = makeEvent({
+      id: "sibling-targeted",
+      pubkey: author,
       created_at: 30,
-      kind: 30222,
-      tags: [
-        ["d", "target-own"],
-        ["k", "31923"],
-        ["p", communityPubkey],
-      ],
+      ...buildTargetedPublicationV2({
+        id: "sibling-target",
+        kind: 31923,
+        source: {type: "a", value: `31923:${author}:calendar`},
+        communities: [sibling],
+      }),
     })
-    const ownTargetedRoot = makeEvent({
-      id: "own-targeted-root",
-      pubkey: incomingPubkey,
-      created_at: 29,
-      kind: 31923,
-      tags: [["h", "target-own"]],
-    })
-    const bannedTargeting = makeEvent({
-      id: "banned-targeting",
-      pubkey: incomingPubkey,
+    const v1Shaped = makeEvent({
+      id: "v1-shaped",
+      pubkey: author,
       created_at: 40,
       kind: 30222,
       tags: [
-        ["d", "target-banned"],
+        ["d", "legacy"],
         ["k", "31923"],
-        ["p", communityPubkey],
+        ["p", controller],
       ],
-    })
-    const bannedRoot = makeEvent({
-      id: "banned-root",
-      pubkey: bannedPubkey,
-      created_at: 39,
-      kind: 31923,
-      tags: [["h", "target-banned"]],
     })
 
     expect(
       getTargetedPublicationRootNotificationCandidates({
-        targetingEvents: [olderTargeting, newerTargeting, ownTargeting, bannedTargeting],
-        rootEvents: [olderRoot, newerRoot, ownTargetedRoot, bannedRoot],
-        communityPubkey,
+        targetingEvents: [targeted, siblingTargeted, v1Shaped],
+        rootEvents: [root],
+        communityAddress: community.address,
         path,
         kind: 31923,
-        currentPubkey,
-        allowPubkey: candidatePubkey => candidatePubkey !== bannedPubkey,
       }),
-    ).toEqual([{path, latestEvent: newerTargeting}])
-  })
-
-  it("creates targeted publication notification candidates across calendar kinds", async () => {
-    const {getTargetedPublicationRootNotificationCandidates} = await import("./notifications")
-    const communityPubkey = "a".repeat(64)
-    const currentPubkey = "b".repeat(64)
-    const incomingPubkey = "c".repeat(64)
-    const path = `/c/${communityPubkey}/calendar`
-    const timeTargeting = makeEvent({
-      id: "time-targeting",
-      pubkey: incomingPubkey,
-      created_at: 20,
-      kind: 30222,
-      tags: [
-        ["d", "target-time"],
-        ["k", "31923"],
-        ["a", `31923:${incomingPubkey}:calendar-time`],
-        ["p", communityPubkey],
-      ],
-    })
-    const timeRoot = makeEvent({
-      id: "time-root",
-      pubkey: incomingPubkey,
-      created_at: 19,
-      kind: 31923,
-      tags: [["d", "calendar-time"]],
-    })
-    const dateTargeting = makeEvent({
-      id: "date-targeting",
-      pubkey: incomingPubkey,
-      created_at: 30,
-      kind: 30222,
-      tags: [
-        ["d", "target-date"],
-        ["k", "31922"],
-        ["a", `31922:${incomingPubkey}:calendar-date`],
-        ["p", communityPubkey],
-      ],
-    })
-    const dateRoot = makeEvent({
-      id: "date-root",
-      pubkey: incomingPubkey,
-      created_at: 29,
-      kind: 31922,
-      tags: [["d", "calendar-date"]],
-    })
-
-    expect(
-      getTargetedPublicationRootNotificationCandidates({
-        targetingEvents: [timeTargeting, dateTargeting],
-        rootEvents: [timeRoot, dateRoot],
-        communityPubkey,
-        path,
-        kinds: [31922, 31923],
-        currentPubkey,
-      }),
-    ).toEqual([{path, latestEvent: dateTargeting}])
+    ).toEqual([{path, latestEvent: targeted}])
   })
 
   it("allows explicit external roots but binds implicit roots to the wrapper signer", async () => {
     const {getTargetedPublicationRootNotificationCandidates} = await import("./notifications")
-    const communityPubkey = "a".repeat(64)
-    const wrapperPubkey = "c".repeat(64)
-    const externalPubkey = "e".repeat(64)
-    const path = `/c/${communityPubkey}/goals`
+    const controller = getPublicKey(new Uint8Array(32).fill(4))
+    const wrapperPubkey = getPublicKey(new Uint8Array(32).fill(5))
+    const externalPubkey = getPublicKey(new Uint8Array(32).fill(6))
+    const community = makeCommunityPointer({
+      controllerPubkey: controller,
+      communityId: "8".repeat(64),
+    })!
+    const path = `/c/${community.naddr}/goals`
     const explicitTargeting = makeEvent({
       id: "explicit-targeting",
       pubkey: wrapperPubkey,
       created_at: 20,
-      kind: 30222,
-      tags: [
-        ["d", "explicit-target"],
-        ["k", "9041"],
-        ["a", `9041:${externalPubkey}:external-goal`],
-        ["p", communityPubkey],
-      ],
+      ...buildTargetedPublicationV2({
+        id: "explicit-target",
+        kind: 9041,
+        source: {type: "e", value: "a".repeat(64), pubkey: externalPubkey},
+        communities: [community],
+      }),
     })
     const externalRoot = makeEvent({
-      id: "external-root",
+      id: "a".repeat(64),
       pubkey: externalPubkey,
       created_at: 19,
       kind: 9041,
@@ -523,12 +450,11 @@ describe("notifications", () => {
       id: "implicit-targeting",
       pubkey: wrapperPubkey,
       created_at: 30,
-      kind: 30222,
-      tags: [
-        ["d", "implicit-target"],
-        ["k", "9041"],
-        ["p", communityPubkey],
-      ],
+      ...buildTargetedPublicationV2({
+        id: "implicit-target",
+        kind: 9041,
+        communities: [community],
+      }),
     })
     const externalImplicitRoot = makeEvent({
       id: "external-implicit-root",
@@ -542,7 +468,7 @@ describe("notifications", () => {
       getTargetedPublicationRootNotificationCandidates({
         targetingEvents: [explicitTargeting, implicitTargeting],
         rootEvents: [externalRoot, externalImplicitRoot],
-        communityPubkey,
+        communityAddress: community.address,
         path,
         kind: 9041,
       }),
@@ -554,11 +480,11 @@ describe("notifications", () => {
       await import("./notifications")
     const viewerPubkey = "a".repeat(64)
     const otherViewerPubkey = "b".repeat(64)
-    const communityPubkey = "c".repeat(64)
-    const otherCommunityPubkey = "d".repeat(64)
+    const community = makeTestCommunity(21, 22)
+    const sibling = makeTestCommunity(21, 23)
     const authorPubkey = "e".repeat(64)
-    const path = `/c/${communityPubkey}/threads`
-    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, communityPubkey)
+    const path = `/c/${community.naddr}/threads`
+    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, community)
     const communityBaselines = {[baselineKey]: 100}
 
     expect(
@@ -599,7 +525,7 @@ describe("notifications", () => {
     expect(
       hasNotificationForPath({
         checked: {},
-        path: `/c/${otherCommunityPubkey}/threads`,
+        path: `/c/${sibling.naddr}/threads`,
         latestEvent: makeEvent({pubkey: authorPubkey, created_at: 99}),
         currentPubkey: viewerPubkey,
         communityBaselines,
@@ -614,12 +540,12 @@ describe("notifications", () => {
       getCommunityNotificationBaselineKey,
     } = await import("./notifications")
     const viewerPubkey = "f".repeat(64)
-    const communityPubkey = "1".repeat(64)
-    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, communityPubkey)
+    const community = makeTestCommunity(24, 25)
+    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, community)
 
     ensureCommunityNotificationBaseline({
       viewerPubkey,
-      communityPubkey,
+      community,
       timestamp: 123,
     })
 
@@ -635,18 +561,18 @@ describe("notifications", () => {
       hasNotificationForPath,
     } = await import("./notifications")
     const viewerPubkey = "2".repeat(64)
-    const communityPubkey = "3".repeat(64)
+    const community = makeTestCommunity(26, 27)
     const authorPubkey = "4".repeat(64)
-    const path = `/c/${communityPubkey}/rooms/room-one`
-    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, communityPubkey)
+    const path = `/c/${community.naddr}/rooms/room-one`
+    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, community)
 
     await communityNotificationBaselines.ready
-    communityNotificationBaselines.set({[baselineKey]: 100})
+    communityNotificationBaselines.set({version: 2, byCommunityAddress: {[baselineKey]: 100}})
 
     expect(
       ensureCommunityNotificationBaseline({
         viewerPubkey,
-        communityPubkey,
+        community,
         timestamp: 200,
       }),
     ).toBe(false)
@@ -666,10 +592,10 @@ describe("notifications", () => {
     const {getCommunityNotificationBaselineKey, getNotificationCheckedAt, hasNotificationForPath} =
       await import("./notifications")
     const viewerPubkey = "5".repeat(64)
-    const communityPubkey = "6".repeat(64)
+    const community = makeTestCommunity(28, 29)
     const authorPubkey = "7".repeat(64)
-    const path = `/c/${communityPubkey}/rooms/room-one`
-    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, communityPubkey)
+    const path = `/c/${community.naddr}/rooms/room-one`
+    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, community)
     const communityBaselines = {[baselineKey]: 200}
 
     expect(
@@ -695,8 +621,8 @@ describe("notifications", () => {
     const {getCommunityNotificationBaselineKey, getNotificationCheckedAt} =
       await import("./notifications")
     const viewerPubkey = "a".repeat(64)
-    const communityPubkey = "c".repeat(64)
-    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, communityPubkey)
+    const community = makeTestCommunity(30, 31)
+    const baselineKey = getCommunityNotificationBaselineKey(viewerPubkey, community)
 
     expect(
       getNotificationCheckedAt({

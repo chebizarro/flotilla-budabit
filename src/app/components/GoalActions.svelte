@@ -8,10 +8,12 @@
   import EventActions from "@app/components/EventActions.svelte"
   import RoomName from "@app/components/RoomName.svelte"
   import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
-  import {makeGoalPath, makeSpacePath} from "@app/util/routes"
+  import {makeExactCommunityGoalPath} from "@app/util/routes"
+  import type {CommunityPointer} from "@app/core/community"
 
   interface Props {
     url: string
+    community?: CommunityPointer
     event: TrustedEvent
     showRoom?: boolean
     showActivity?: boolean
@@ -28,6 +30,7 @@
 
   const {
     url,
+    community = undefined,
     event,
     showRoom,
     showActivity,
@@ -42,7 +45,7 @@
     activityLiveCovered = false,
   }: Props = $props()
 
-  const path = makeGoalPath(url, event.id)
+  const path = community ? makeExactCommunityGoalPath(community, event.id) : ""
   const h = getTagValue("h", event.tags)
   const actionRelays = $derived(publishRelays ?? (relays.length > 0 ? relays : url ? [url] : []))
 
@@ -60,9 +63,7 @@
 
 <div class="flex flex-grow flex-wrap justify-end gap-2">
   {#if h && showRoom}
-    <Link href={makeSpacePath(url, h)} class="btn btn-neutral btn-xs rounded-full">
-      Posted in #<RoomName {h} {url} />
-    </Link>
+    <span class="btn btn-neutral btn-xs rounded-full">Posted in #<RoomName {h} {url} /></span>
   {/if}
   <ReactionSummary
     {url}

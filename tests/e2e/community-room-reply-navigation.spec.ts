@@ -1,29 +1,36 @@
 import {expect, test} from "@playwright/test"
-import {finalizeEvent, nip19} from "nostr-tools"
+import {finalizeEvent, getPublicKey, nip19} from "nostr-tools"
 import {DEV_PUBKEY, DEV_SECRET, seedDevSession} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
 
-const relayUrl = "wss://community-room-reply-navigation.example/"
+const relayUrl = "wss://community-room-reply-navigation.example"
 const communitySecret = Uint8Array.from(
   DEV_SECRET.match(/.{2}/g)?.map(byte => Number.parseInt(byte, 16)) || [],
 )
+const communityId = getPublicKey(new Uint8Array(32).fill(2))
+const profileListAddress = `30000:${DEV_PUBKEY}:general`
+const messageFixtureStart = Math.floor(Date.now() / 1000) - 1_000
 
 const definition = finalizeEvent(
   {
-    kind: 10222,
+    kind: 32222,
     created_at: 1,
     content: "",
     tags: [
-      ["alt", "BudaBit community definition"],
+      ["d", communityId],
+      ["name", "Reply Navigation Community"],
+      ["description", "Community room reply navigation test fixture"],
       ["r", relayUrl],
-      ["content", "rooms"],
+      ["content", "Room-creator"],
       ["k", "11", "room"],
-      ["content", "general"],
       ["k", "9", "room-message"],
+      ["a", profileListAddress, relayUrl],
+      ["content", "General"],
       ["k", "1111"],
       ["k", "7"],
       ["k", "1984"],
       ["k", "1985"],
+      ["a", profileListAddress, relayUrl],
     ],
   },
   communitySecret,
@@ -34,7 +41,7 @@ const room = finalizeEvent(
     kind: 11,
     created_at: 2,
     content: "Quoted reply navigation room",
-    tags: [["h", DEV_PUBKEY], ["room"], ["title", "Reply Navigation"]],
+    tags: [["h", communityId], ["room"], ["title", "Reply Navigation"]],
   },
   communitySecret,
 )
@@ -46,7 +53,7 @@ const makeMessage = (content: string, createdAt: number) =>
       created_at: createdAt,
       content,
       tags: [
-        ["h", DEV_PUBKEY],
+        ["h", communityId],
         ["E", room.id, relayUrl, DEV_PUBKEY],
         ["K", "11"],
       ],
@@ -54,18 +61,18 @@ const makeMessage = (content: string, createdAt: number) =>
     communitySecret,
   )
 
-const parent = makeMessage("Original parent message for navigation", 3)
+const parent = makeMessage("Original parent message for navigation", messageFixtureStart)
 const fillerMessages = Array.from({length: 240}, (_, index) =>
-  makeMessage(`Filler message ${index + 1}`, index + 4),
+  makeMessage(`Filler message ${index + 1}`, messageFixtureStart + index + 1),
 )
 const parentNevent = nip19.neventEncode({id: parent.id, relays: [relayUrl]})
 const reply = finalizeEvent(
   {
     kind: 9,
-    created_at: 1000,
+    created_at: messageFixtureStart + 241,
     content: `nostr:${parentNevent}\n\nReply after enough messages to move the parent off screen`,
     tags: [
-      ["h", DEV_PUBKEY],
+      ["h", communityId],
       ["E", room.id, relayUrl, DEV_PUBKEY],
       ["K", "11"],
       ["e", parent.id, relayUrl, parent.pubkey],
@@ -76,16 +83,19 @@ const reply = finalizeEvent(
   },
   communitySecret,
 )
-const nearbyParent = makeMessage("Nearby parent message for navigation", 1001)
-const nearbyFiller = makeMessage("Message between nearby parent and reply", 1002)
+const nearbyParent = makeMessage("Nearby parent message for navigation", messageFixtureStart + 242)
+const nearbyFiller = makeMessage(
+  "Message between nearby parent and reply",
+  messageFixtureStart + 243,
+)
 const nearbyParentNevent = nip19.neventEncode({id: nearbyParent.id, relays: [relayUrl]})
 const nearbyReply = finalizeEvent(
   {
     kind: 9,
-    created_at: 1003,
+    created_at: messageFixtureStart + 244,
     content: `nostr:${nearbyParentNevent}\n\nReply close to its quoted parent`,
     tags: [
-      ["h", DEV_PUBKEY],
+      ["h", communityId],
       ["E", room.id, relayUrl, DEV_PUBKEY],
       ["K", "11"],
       ["e", nearbyParent.id, relayUrl, nearbyParent.pubkey],
@@ -97,8 +107,13 @@ const nearbyReply = finalizeEvent(
   communitySecret,
 )
 
-const communityInput = `ncommunity://${DEV_PUBKEY}?relay=${encodeURIComponent(relayUrl)}`
-const roomPath = `/c/${encodeURIComponent(communityInput)}/rooms/${room.id}`
+const communityNaddr = nip19.naddrEncode({
+  kind: 32222,
+  pubkey: DEV_PUBKEY,
+  identifier: communityId,
+  relays: [relayUrl],
+})
+const roomPath = `/c/${communityNaddr}/rooms/${room.id}`
 
 test("loads a room opened from a direct event permalink", async ({page}) => {
   const effectErrors: string[] = []

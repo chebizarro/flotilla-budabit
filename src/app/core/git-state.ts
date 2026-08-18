@@ -7,6 +7,7 @@ import {
   mergeEffectiveLabels,
   GIT_REPO_ANNOUNCEMENT,
   GIT_ISSUE,
+  parseRepoCommunityBinding,
   type RepoAnnouncementEvent,
   type IssueEvent,
   type LabelEvent,
@@ -35,7 +36,11 @@ import {
   type PublishRepoEvent,
   type Repo,
 } from "@nostr-git/ui"
-import {getScopedCommunityPublishRelays, type CommunityRelayRef} from "@app/core/community-relays"
+import {
+  getScopedCommunityPublishRelays,
+  type CommunityRelayRef,
+  type CommunityRelayScope,
+} from "@app/core/community-relays"
 import {logPublishRelaySummary} from "@app/core/diagnostics"
 import {
   getPreferredGraspServerUrls,
@@ -230,7 +235,7 @@ const getExplicitGraspServerRelays = (viewerPubkey = get(pubkey)) => {
 export type RepoAnnouncementPublishRelaysParams = {
   repoRelays?: string[]
   repoEvent?: Pick<NostrEvent, "tags"> | null
-  communityPubkeys?: string[]
+  communityIds?: string[]
   communityRefs?: CommunityRelayRef[]
   viewerPubkey?: string
   gitIndexerRelays?: string[]
@@ -238,7 +243,7 @@ export type RepoAnnouncementPublishRelaysParams = {
   userGraspRelays?: string[]
 }
 
-export const getRepoAnnouncementCommunityPubkeys = (event?: Pick<NostrEvent, "tags"> | null) =>
+export const getRepoAnnouncementCommunityIds = (event?: Pick<NostrEvent, "tags"> | null) =>
   Array.from(
     new Set(
       (event?.tags || [])
@@ -248,18 +253,38 @@ export const getRepoAnnouncementCommunityPubkeys = (event?: Pick<NostrEvent, "ta
     ),
   )
 
+export const getRepoAnnouncementCommunityScopes = (
+  event?: Pick<NostrEvent, "tags"> | null,
+): CommunityRelayScope[] => {
+  if (!event) return []
+  const binding = parseRepoCommunityBinding(event)
+
+  return binding
+    ? [{communityId: binding.communityId, communityAddress: binding.address}]
+    : getRepoAnnouncementCommunityIds(event).map(communityId => ({communityId}))
+}
+
 export const getRepoAnnouncementPublishRelays = ({
   repoRelays = [],
   repoEvent,
-  communityPubkeys = [],
+  communityIds = [],
   communityRefs,
   viewerPubkey = get(pubkey),
   gitIndexerRelays = GIT_RELAYS,
   userOutboxRelays,
   userGraspRelays,
 }: RepoAnnouncementPublishRelaysParams = {}) => {
+  const eventScopes = getRepoAnnouncementCommunityScopes(repoEvent)
+  const exactEventIds = new Set(
+    eventScopes.filter(scope => scope.communityAddress).map(scope => scope.communityId),
+  )
   const scopedCommunityRelays = getScopedCommunityPublishRelays(
-    [...communityPubkeys, ...getRepoAnnouncementCommunityPubkeys(repoEvent)],
+    [
+      ...eventScopes,
+      ...communityIds
+        .filter(communityId => !exactEventIds.has(normalizePubkey(communityId)))
+        .map(communityId => ({communityId})),
+    ],
     communityRefs,
   )
   const outboxRelays = userOutboxRelays ?? getUserOutboxRelays()

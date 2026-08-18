@@ -8,11 +8,9 @@ import {
   normalizeRelayUrl,
 } from "@welshman/util"
 import {randomId} from "@welshman/lib"
-import {normalizeUserGraspServerUrls} from "@nostr-git/core/events"
 
 export * from "./community-v2"
 
-export const COMMUNITY_DEFINITION_KIND = 10222
 export const TARGETED_PUBLICATION_KIND = 30222
 export const PROFILE_LIST_KIND = 30000
 export const FORM_TEMPLATE_KIND = 30168
@@ -60,14 +58,6 @@ export const TARGETED_PUBLICATION_KINDS = [
   1623,
   30033,
 ] as const
-
-export type CommunityInputSource = "hex" | "npub" | "ncommunity"
-
-export type ParsedCommunityInput = {
-  pubkey: string
-  relays: string[]
-  source: CommunityInputSource
-}
 
 export type AddressRef = {
   kind: number
@@ -140,23 +130,6 @@ export type CommunityAlertService = CommunityServiceDescriptor
 
 export type CommunityOtherServiceTag = ["service", ...string[]]
 
-export type CommunityDefinition = {
-  event: TrustedEvent
-  pubkey: string
-  relays: string[]
-  blossomServers: string[]
-  graspServers: string[]
-  mints: CommunityMint[]
-  emailDigestServices: CommunityEmailDigestService[]
-  communityAlertServices: CommunityAlertService[]
-  otherServiceTags?: CommunityOtherServiceTag[]
-  sections: CommunitySection[]
-  tos?: CommunityTos
-  location?: string
-  geohash?: string
-  description?: string
-}
-
 export type CommunityTarget = {
   pubkey: string
   relay?: string
@@ -205,21 +178,6 @@ export type CommunitySectionKindAssignment = {
   sectionName: string
   sectionIndex: number
   kindIndex: number
-}
-
-export type BuildCommunityDefinitionParams = {
-  relays: string[]
-  sections: CommunityDefinitionSectionInput[]
-  description?: string
-  blossomServers?: string[]
-  graspServers?: string[]
-  mints?: CommunityMint[]
-  emailDigestServices?: CommunityEmailDigestService[]
-  communityAlertServices?: CommunityAlertService[]
-  otherServiceTags?: CommunityOtherServiceTag[]
-  tos?: CommunityTos
-  location?: string
-  geohash?: string
 }
 
 const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/i
@@ -368,26 +326,6 @@ export const getCommunityServiceDescriptorKey = (service: CommunityServiceDescri
 
 export const getCommunityEmailDigestServiceDescriptorKey = getCommunityServiceDescriptorKey
 export const getCommunityAlertServiceDescriptorKey = getCommunityServiceDescriptorKey
-
-export const makeCommunityNcommunity = ({
-  pubkey,
-  relayHints = [],
-}: {
-  pubkey: string
-  relayHints?: string[]
-}) => {
-  const normalizedPubkey = normalizePubkey(pubkey)
-  if (!normalizedPubkey) return ""
-
-  const relays = normalizeRelays(relayHints)
-  const params = new URLSearchParams()
-
-  for (const relay of relays) params.append("relay", relay)
-
-  const query = params.toString()
-
-  return `ncommunity://${normalizedPubkey}${query ? `?${query}` : ""}`
-}
 
 export const normalizeGeohash = (value?: string) => {
   const normalized = value?.trim().replace(/^geo:/i, "").toLowerCase() || ""
@@ -549,94 +487,6 @@ export const makeCommunitySetupRefs = ({
   }
 }
 
-export const buildCommunityDefinition = ({
-  relays,
-  sections,
-  description,
-  blossomServers = [],
-  graspServers = [],
-  mints = [],
-  emailDigestServices = [],
-  communityAlertServices = [],
-  otherServiceTags = [],
-  tos,
-  location,
-  geohash,
-}: BuildCommunityDefinitionParams): EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND} => {
-  const duplicateKinds = getDuplicateCommunitySectionKindAssignments(sections)
-  if (duplicateKinds.length > 0) {
-    const labels = Array.from(new Set(duplicateKinds.map(assignment => assignment.label))).join(
-      ", ",
-    )
-
-    throw new Error(`Community section kind/subtype pairs must be unique: ${labels}`)
-  }
-
-  const tags: string[][] = [["alt", "BudaBit community definition"]]
-
-  if (description?.trim()) tags.push(["description", description.trim()])
-  for (const relay of normalizeRelays(relays)) tags.push(["r", relay])
-  for (const server of blossomServers.map(server => server.trim()).filter(Boolean)) {
-    tags.push(["blossom", server])
-  }
-  for (const server of normalizeUserGraspServerUrls(graspServers)) {
-    tags.push(["grasp", server])
-  }
-  for (const mint of mints.filter(mint => mint.url.trim())) {
-    tags.push(appendDefined(["mint", mint.url.trim()], mint.type?.trim()))
-  }
-  if (tos?.ref.trim())
-    tags.push(appendDefined(["tos", tos.ref.trim()], normalizeRelay(tos.relay) || undefined))
-  if (location?.trim()) tags.push(["location", location.trim()])
-  const normalizedGeohash = normalizeGeohash(geohash)
-  if (normalizedGeohash) tags.push(["g", normalizedGeohash])
-
-  const appendServices = (name: string, services: CommunityServiceDescriptor[]) => {
-    const serviceKeys = new Set<string>()
-
-    for (const service of services) {
-      const normalized = normalizeCommunityServiceDescriptor(service)
-      if (!normalized) continue
-
-      const key = getCommunityServiceDescriptorKey(normalized)
-      if (serviceKeys.has(key)) continue
-
-      serviceKeys.add(key)
-      tags.push([
-        "service",
-        name,
-        normalized.servicePubkey,
-        normalized.requestRelay,
-        normalized.handlerAddress,
-        normalized.handlerRelay,
-      ])
-    }
-  }
-  appendServices("email-digest", emailDigestServices)
-  appendServices("community-alerts", communityAlertServices)
-  for (const tag of otherServiceTags) {
-    if (tag[0] === "service") tags.push([...tag])
-  }
-
-  for (const section of sections) {
-    tags.push(["content", normalizeCommunitySectionName(section.name)])
-    for (const sectionKind of section.kinds) {
-      const normalizedKind = normalizeCommunitySectionKind(sectionKind)
-
-      tags.push(appendDefined(["k", String(normalizedKind.kind)], normalizedKind.subtype))
-    }
-    for (const profileList of section.profileLists ||
-      (section.profileList ? [section.profileList] : [])) {
-      tags.push(appendDefined(["a", profileList.address], profileList.relay))
-    }
-    for (const retention of section.retention || []) {
-      tags.push(["retention", String(retention.kind), String(retention.value), retention.type])
-    }
-  }
-
-  return {kind: COMMUNITY_DEFINITION_KIND, content: "", tags}
-}
-
 export const makeCommunityBadgeDefinition = ({
   badge,
   name,
@@ -658,38 +508,6 @@ export const makeCommunityBadgeDefinition = ({
   ],
 })
 
-const parseNcommunity = (value: string): ParsedCommunityInput | undefined => {
-  if (!value.startsWith("ncommunity://")) return undefined
-
-  try {
-    const url = new URL(value)
-    const rawPubkey = decodeURIComponent(url.hostname || url.pathname.replace(/^\//, ""))
-    const pubkey = normalizePubkey(rawPubkey)
-    if (!pubkey) return undefined
-
-    return {
-      pubkey,
-      relays: normalizeRelays(url.searchParams.getAll("relay")),
-      source: "ncommunity",
-    }
-  } catch {
-    return undefined
-  }
-}
-
-export const parseCommunityInput = (value: string): ParsedCommunityInput | undefined => {
-  const trimmed = value.trim()
-  if (!trimmed) return undefined
-
-  const ncommunity = parseNcommunity(trimmed)
-  if (ncommunity) return ncommunity
-
-  const pubkey = normalizePubkey(trimmed)
-  if (!pubkey) return undefined
-
-  return {pubkey, relays: [], source: trimmed.startsWith("npub") ? "npub" : "hex"}
-}
-
 export const parseAddressRef = (address: string): AddressRef | undefined => {
   const [kindValue, pubkeyValue, ...identifierParts] = address.split(":")
   const kind = Number.parseInt(kindValue, 10)
@@ -700,195 +518,6 @@ export const parseAddressRef = (address: string): AddressRef | undefined => {
 
   return {kind, pubkey, identifier, address: `${kind}:${pubkey}:${identifier}`}
 }
-
-const parseSectionKind = (tag: string[]): CommunitySectionKind | undefined => {
-  const kind = Number.parseInt(tag[1] || "", 10)
-  if (!Number.isInteger(kind)) return undefined
-
-  return {kind, subtype: normalizeCommunitySectionSubtype(tag[2])}
-}
-
-const parseProfileListRef = (tag: string[]): CommunityProfileListRef | undefined => {
-  const ref = parseAddressRef(tag[1] || "")
-  if (!ref || ref.kind !== PROFILE_LIST_KIND) return undefined
-
-  return {...ref, relay: normalizeRelay(tag[2]) || undefined}
-}
-
-const parseRetentionPolicy = (tag: string[]): CommunityRetentionPolicy | undefined => {
-  const kind = Number.parseInt(tag[1] || "", 10)
-  const value = Number.parseInt(tag[2] || "", 10)
-  const type = tag[3]
-
-  if (!Number.isInteger(kind) || !Number.isInteger(value)) return undefined
-  if (type !== "time" && type !== "count") return undefined
-
-  return {kind, value, type}
-}
-
-const parseCommunityService = (tag: string[], name: string) => {
-  if (tag.length !== 6 || tag[0] !== "service" || tag[1] !== name) return undefined
-
-  return normalizeCommunityServiceDescriptor({
-    servicePubkey: tag[2] || "",
-    requestRelay: tag[3] || "",
-    handlerAddress: tag[4] || "",
-    handlerRelay: tag[5] || "",
-  })
-}
-
-const makeSection = (name: string): CommunitySection => ({
-  name,
-  kinds: [],
-  profileLists: [],
-  badges: [],
-  retention: [],
-})
-
-export const parseCommunityDefinition = (event: TrustedEvent): CommunityDefinition | undefined => {
-  if (event.kind !== COMMUNITY_DEFINITION_KIND) return undefined
-
-  const pubkey = normalizePubkey(event.pubkey || "")
-  if (!pubkey) return undefined
-
-  const relays: string[] = []
-  const blossomServers: string[] = []
-  const graspServers: string[] = []
-  const mints: CommunityMint[] = []
-  const emailDigestServices: CommunityEmailDigestService[] = []
-  const communityAlertServices: CommunityAlertService[] = []
-  const otherServiceTags: CommunityOtherServiceTag[] = []
-  const emailDigestServiceKeys = new Set<string>()
-  const communityAlertServiceKeys = new Set<string>()
-  const sections: CommunitySection[] = []
-  let currentSection: CommunitySection | undefined
-  let tos: CommunityTos | undefined
-  let location: string | undefined
-  let geohash: string | undefined
-  let description: string | undefined
-
-  for (const tag of event.tags || []) {
-    if (tag[0] === "service") {
-      if (tag[1] === "email-digest" && tag.length === 6) {
-        const service = parseCommunityService(tag, "email-digest")
-        const key = service ? getCommunityEmailDigestServiceDescriptorKey(service) : ""
-        if (service && !emailDigestServiceKeys.has(key)) {
-          emailDigestServiceKeys.add(key)
-          emailDigestServices.push(service)
-        } else if (!service) {
-          otherServiceTags.push([...tag] as CommunityOtherServiceTag)
-        }
-      } else if (tag[1] === "community-alerts" && tag.length === 6) {
-        const service = parseCommunityService(tag, "community-alerts")
-        const key = service ? getCommunityAlertServiceDescriptorKey(service) : ""
-        if (service && !communityAlertServiceKeys.has(key)) {
-          communityAlertServiceKeys.add(key)
-          communityAlertServices.push(service)
-        } else if (!service) {
-          otherServiceTags.push([...tag] as CommunityOtherServiceTag)
-        }
-      } else {
-        otherServiceTags.push([...tag] as CommunityOtherServiceTag)
-      }
-      continue
-    }
-
-    if (tag[0] === "content" && tag[1]) {
-      currentSection = makeSection(normalizeCommunitySectionName(tag[1]))
-      sections.push(currentSection)
-      continue
-    }
-
-    if (tag[0] === "k" && currentSection) {
-      const sectionKind = parseSectionKind(tag)
-      if (sectionKind) currentSection.kinds.push(sectionKind)
-      continue
-    }
-
-    if (tag[0] === "a" && currentSection) {
-      const profileList = parseProfileListRef(tag)
-      if (profileList) currentSection.profileLists.push(profileList)
-      continue
-    }
-
-    if (tag[0] === "retention" && currentSection) {
-      const retention = parseRetentionPolicy(tag)
-      if (retention) currentSection.retention.push(retention)
-      continue
-    }
-
-    if (tag[0] === "r") {
-      const relay = normalizeRelay(tag[1])
-      if (relay) relays.push(relay)
-      continue
-    }
-
-    if (tag[0] === "blossom" && tag[1]) {
-      blossomServers.push(tag[1])
-      continue
-    }
-
-    if (tag[0] === "grasp" && tag[1]) {
-      graspServers.push(tag[1])
-      continue
-    }
-
-    if (tag[0] === "mint" && tag[1]) {
-      mints.push({url: tag[1], type: tag[2] || undefined})
-      continue
-    }
-
-    if (tag[0] === "tos" && tag[1]) {
-      tos = {ref: tag[1], relay: normalizeRelay(tag[2]) || undefined}
-      continue
-    }
-
-    if (tag[0] === "location") {
-      location = tag[1] || undefined
-      continue
-    }
-
-    if (tag[0] === "g") {
-      geohash = normalizeGeohash(tag[1]) || undefined
-      continue
-    }
-
-    if (tag[0] === "description") {
-      description = tag[1] || undefined
-    }
-  }
-
-  return {
-    event,
-    pubkey,
-    relays: normalizeRelays(relays),
-    blossomServers: Array.from(new Set(blossomServers.filter(Boolean))),
-    graspServers: normalizeUserGraspServerUrls(graspServers),
-    mints,
-    emailDigestServices,
-    communityAlertServices,
-    otherServiceTags,
-    sections,
-    tos,
-    location,
-    geohash,
-    description,
-  }
-}
-
-export const getCommunityMainRelay = (definition: CommunityDefinition) => definition.relays[0] || ""
-
-export const findCommunitySection = (definition: CommunityDefinition, name: string) => {
-  const normalizedName = normalizeCommunitySectionName(name)
-
-  return definition.sections.find(section => section.name === normalizedName)
-}
-
-export const findCommunitySectionByKind = (
-  definition: CommunityDefinition,
-  kind: number,
-  subtype?: string,
-) => definition.sections.find(section => sectionSupportsKind(section, kind, subtype))
 
 export const sectionSupportsKind = (
   section: CommunitySection | undefined,

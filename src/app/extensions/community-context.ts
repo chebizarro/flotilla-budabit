@@ -3,13 +3,13 @@ import {
   COMMUNITY_SUBTYPE_ROOM,
   COMMUNITY_SUBTYPE_ROOM_MESSAGE,
   COMMUNITY_SUBTYPE_THREADS,
-  makeCommunityNcommunity,
   normalizePubkey,
   normalizeRelays,
-  parseTargetedPublication,
-  sectionSupportsKind,
-  type CommunityDefinition,
-  type CommunitySection,
+  parseTargetedPublicationV2,
+  communitySectionKindsMatch,
+  type CommunityDefinitionV2,
+  type CommunityPointer,
+  type CommunitySectionV2,
 } from "@app/core/community"
 import {
   COMMUNITY_TARGETABLE_KINDS,
@@ -31,7 +31,6 @@ import {
   isCommunityPersonBanned,
   type EffectiveCommunityReportState,
 } from "@app/core/community-reports"
-import type {CommunityProfile} from "@app/core/community-state"
 import type {
   CommunityEventDescriptor,
   CommunityWidgetContext,
@@ -45,10 +44,10 @@ export type CommunityContextRuntimeSnapshot = {
 
 export type ResolvedCommunityEventDescriptor = {
   descriptor: CommunityEventDescriptor
-  sections: CommunitySection[]
+  sections: CommunitySectionV2[]
   writerPubkeys: string[]
   moderatorPubkeys: string[]
-  writableSections: CommunitySection[]
+  writableSections: CommunitySectionV2[]
   capability: CommunityWriteCapability
 }
 
@@ -69,7 +68,7 @@ const COMMUNITY_TARGETABLE_KIND_SET = new Set<number>(
 const COMMUNITY_CALENDAR_KIND_SET = new Set<number>([EVENT_DATE, EVENT_TIME])
 const COMMUNITY_DIRECT_QUERY_TARGETABLE_KIND_SET = COMMUNITY_CALENDAR_KIND_SET
 
-let runtimeCommunityPubkey = ""
+let runtimeCommunityAddress = ""
 let runtimeFingerprint = ""
 let runtimeSessionCounter = 0
 let runtimeSessionId = ""
@@ -98,14 +97,12 @@ export const normalizeCommunityEventDescriptors = (
   return Array.from(byKey.values())
 }
 
-const sectionFingerprint = (definition: CommunityDefinition) =>
+const sectionFingerprint = (definition: CommunityDefinitionV2) =>
   definition.sections.map(section => ({
     name: section.name,
     kinds: section.kinds.map(kind => normalizeDescriptor(kind)),
-    profileLists: section.profileLists.map(
-      ref => ref.address || `${ref.kind}:${ref.pubkey}:${ref.identifier}`,
-    ),
-    badges: section.badges.map(ref => ref.address || `${ref.kind}:${ref.pubkey}:${ref.identifier}`),
+    profileLists: section.profileLists.map(ref => ref.address),
+    badges: section.badges.map(ref => ref.address),
   }))
 
 const eventFingerprint = (events: TrustedEvent[]) =>
@@ -125,7 +122,7 @@ export const getCommunityContextRuntimeSnapshot = ({
   relayHints = [],
   readinessKey = "",
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   userPubkey?: string
@@ -133,9 +130,9 @@ export const getCommunityContextRuntimeSnapshot = ({
   relayHints?: string[]
   readinessKey?: string
 }): CommunityContextRuntimeSnapshot => {
-  const communityPubkey = normalizePubkey(definition.pubkey)
+  const communityAddress = definition.pointer.address
   const fingerprint = JSON.stringify({
-    communityPubkey,
+    communityAddress,
     definitionEvent: definition.event.id,
     sections: sectionFingerprint(definition),
     profileListEvents: eventFingerprint(profileListEvents),
@@ -146,8 +143,8 @@ export const getCommunityContextRuntimeSnapshot = ({
     readinessKey,
   })
 
-  if (!runtimeSessionId || runtimeCommunityPubkey !== communityPubkey) {
-    runtimeCommunityPubkey = communityPubkey
+  if (!runtimeSessionId || runtimeCommunityAddress !== communityAddress) {
+    runtimeCommunityAddress = communityAddress
     runtimeFingerprint = fingerprint
     runtimeVersion = 0
     runtimeSessionId = `community-context-${Date.now()}-${++runtimeSessionCounter}`
@@ -168,11 +165,13 @@ const withLimit = (filters: Filter[], limit?: number, since?: number, until?: nu
   }))
 
 const findDescriptorSections = (
-  definition: CommunityDefinition,
+  definition: CommunityDefinitionV2,
   descriptor: CommunityEventDescriptor,
 ) => {
   const sections = definition.sections.filter(section =>
-    sectionSupportsKind(section, descriptor.kind, descriptor.subtype),
+    section.kinds.some(kind =>
+      communitySectionKindsMatch(kind, descriptor.kind, descriptor.subtype),
+    ),
   )
 
   if (
@@ -189,10 +188,16 @@ const findDescriptorSections = (
 }
 
 const getSectionPermissionDescriptor = (
-  section: CommunitySection,
+  section: CommunitySectionV2,
   descriptor: CommunityEventDescriptor,
 ): CommunityEventDescriptor => {
-  if (sectionSupportsKind(section, descriptor.kind, descriptor.subtype)) return descriptor
+  if (
+    section.kinds.some(kind =>
+      communitySectionKindsMatch(kind, descriptor.kind, descriptor.subtype),
+    )
+  ) {
+    return descriptor
+  }
   if (descriptor.subtype || !COMMUNITY_CALENDAR_KIND_SET.has(descriptor.kind)) return descriptor
 
   const calendarKind = section.kinds.find(
@@ -261,7 +266,7 @@ export const resolveCommunityEventDescriptors = ({
   userPubkey = "",
   descriptors,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   userPubkey?: string
@@ -347,7 +352,6 @@ export const resolveCommunityEventDescriptors = ({
 
 export const makeCommunityWidgetContext = ({
   definition,
-  profile,
   profileListEvents,
   reportState,
   userPubkey = "",
@@ -355,8 +359,7 @@ export const makeCommunityWidgetContext = ({
   relayHints = [],
   readinessKey = "",
 }: {
-  definition: CommunityDefinition
-  profile?: CommunityProfile
+  definition: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   userPubkey?: string
@@ -365,7 +368,7 @@ export const makeCommunityWidgetContext = ({
   readinessKey?: string
 }): CommunityWidgetContext => {
   const normalizedUser = normalizePubkey(userPubkey)
-  const normalizedCommunity = normalizePubkey(definition.pubkey)
+  const normalizedCommunity = normalizePubkey(definition.controllerPubkey)
   const runtime = getCommunityContextRuntimeSnapshot({
     definition,
     profileListEvents,
@@ -377,21 +380,21 @@ export const makeCommunityWidgetContext = ({
   })
 
   return {
-    version: 1,
+    version: 2,
     ...runtime,
-    pubkey: normalizedCommunity,
-    ncommunity: makeCommunityNcommunity({pubkey: normalizedCommunity, relayHints}),
+    communityId: definition.pointer.communityId,
+    controllerPubkey: definition.pointer.controllerPubkey,
+    definitionAddress: definition.pointer.address,
+    naddr: definition.pointer.naddr,
     relays,
     relayHints,
     blossomServers: definition.blossomServers,
-    profile: profile
-      ? {
-          name: profile.name,
-          displayName: profile.display_name,
-          picture: profile.picture,
-          about: profile.about,
-        }
-      : undefined,
+    profile: {
+      name: definition.metadata.name,
+      displayName: definition.metadata.name,
+      picture: definition.metadata.picture,
+      about: definition.metadata.description,
+    },
     sections: definition.sections.map(section => ({
       name: section.name,
       kinds: section.kinds.map(kind => ({
@@ -408,6 +411,7 @@ export const makeCommunityWidgetContext = ({
 }
 
 export const makeCommunityDescriptorQueryPlan = ({
+  community,
   definition,
   profileListEvents,
   reportState,
@@ -417,7 +421,8 @@ export const makeCommunityDescriptorQueryPlan = ({
   since,
   until,
 }: {
-  definition: CommunityDefinition
+  community: CommunityPointer
+  definition: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   descriptors: CommunityEventDescriptor[]
@@ -454,7 +459,7 @@ export const makeCommunityDescriptorQueryPlan = ({
       ),
     )
     const targetingPlan = makeCommunityContentFilterPlan(
-      [makeCommunityTargetingFilter(definition.pubkey, [kind])],
+      [makeCommunityTargetingFilter(community.communityId, [kind])],
       writerPubkeys,
     )
     localTargetingFilters.push(...targetingPlan.localFilters)
@@ -463,6 +468,7 @@ export const makeCommunityDescriptorQueryPlan = ({
 
   if (targetingEvents.length > 0 && targetableInfos.length > 0) {
     const authorizedTargetingEvents = filterAuthorizedCommunityTargetingEvents({
+      community,
       definition,
       profileListEvents,
       events: targetingEvents,
@@ -473,7 +479,7 @@ export const makeCommunityDescriptorQueryPlan = ({
 
     originalRelayHints.push(
       ...authorizedTargetingEvents.flatMap(event => {
-        const relay = parseTargetedPublication(event)?.ref?.relay
+        const relay = parseTargetedPublicationV2(event)?.source?.relay
         return relay ? [relay] : []
       }),
     )
@@ -494,7 +500,7 @@ export const makeCommunityDescriptorQueryPlan = ({
     if (info.writerPubkeys.length === 0) continue
 
     const directPlan = makeCommunityContentFilterPlan(
-      [makeCommunityExclusiveFilter(definition.pubkey, [info.descriptor.kind])],
+      [makeCommunityExclusiveFilter(definition.controllerPubkey, [info.descriptor.kind])],
       info.writerPubkeys,
     )
     localOriginalFilters.push(...directPlan.localFilters)

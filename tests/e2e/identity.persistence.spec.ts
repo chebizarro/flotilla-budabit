@@ -1,9 +1,6 @@
 import {expect, test} from "@playwright/test"
 
-import {
-  classifyConsoleMessages,
-  type ConsoleMessageRecord,
-} from "./console-classification"
+import {classifyConsoleMessages, type ConsoleMessageRecord} from "./console-classification"
 import {
   loginAndAssertIdentity,
   PHASE_A_LOGIN_SCREEN,
@@ -69,9 +66,11 @@ test.describe("identity persistence (contract)", () => {
 
     changePhase(PHASE_B_RELOAD)
     const hashBeforeReload = await page.evaluate(() => window.location.hash)
-    await page.reload()
+    await page.reload({waitUntil: "domcontentloaded"})
     await page.waitForFunction(previous => window.location.hash === previous, hashBeforeReload)
-    await page.waitForLoadState("networkidle")
+    await expect(page.getByRole("button", {name: "Settings", exact: true})).toBeVisible({
+      timeout: 10_000,
+    })
     recordPhaseSnapshot(PHASE_B_RELOAD)
 
     changePhase(PHASE_C_POST_RELOAD)

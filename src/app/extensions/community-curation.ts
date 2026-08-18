@@ -3,16 +3,16 @@ import {repository} from "@welshman/app"
 import {
   normalizeRelays,
   normalizePubkey,
-  parseCommunityInput,
-  parseTargetedPublication,
-  type CommunityDefinition,
+  parseCommunityNaddr,
+  parseTargetedPublicationV2,
+  type CommunityDefinitionV2,
 } from "@app/core/community"
 import {
   getCommunityBootstrapRelays,
   loadCommunityEventsWithStatus,
-  makeCommunityDefinitionFilter,
+  makeExactCommunityDefinitionFilter,
   makeCommunityProfileListFilters,
-  selectLatestCommunityDefinition,
+  selectExactCommunityDefinition,
   type CommunityRelayLoadOptions,
   type CommunityRelayLoadResult,
 } from "@app/core/community-state"
@@ -41,14 +41,21 @@ import {getWidgetLineId} from "./widget-identity"
 
 export type CommunityCuratedExtensionsStatus = "invalid-input" | "not-community" | "community"
 
-export type CommunityCuratedExtensionsResult = {
-  status: CommunityCuratedExtensionsStatus
+type CommunityCuratedExtensionsResultBase = {
   complete: boolean
-  communityPubkey?: string
   relayHints: string[]
   trustedWidgetAuthorPubkeys: string[]
   widgets: SmartWidgetEvent[]
 }
+
+export type CommunityCuratedExtensionsResult = CommunityCuratedExtensionsResultBase &
+  (
+    | {status: "invalid-input"}
+    | {
+        status: Exclude<CommunityCuratedExtensionsStatus, "invalid-input">
+        community: import("@app/core/community").CommunityPointer
+      }
+  )
 
 export type CommunityCuratedExtensionsLoadOptions = {
   priority?: number
@@ -123,7 +130,7 @@ const loadTargetingEvents = async ({
 
 const getTargetingRelayHints = (events: TrustedEvent[]) =>
   events.flatMap(event => {
-    const ref = parseTargetedPublication(event)?.ref
+    const ref = parseTargetedPublicationV2(event)?.source
 
     return ref?.relay ? [ref.relay] : []
   })
@@ -135,23 +142,23 @@ const getWidgetTargetingEvents = (widget: SmartWidgetEvent, targetingEvents: Tru
     : ""
 
   return targetingEvents.filter(event => {
-    const target = parseTargetedPublication(event)
-    if (!target || target.kind !== SMART_WIDGET_KIND || !target.ref) return false
+    const target = parseTargetedPublicationV2(event)
+    if (!target || target.kind !== SMART_WIDGET_KIND || !target.source) return false
 
-    if (target.ref.type === "e") {
-      const refPubkey = normalizePubkey(target.ref.pubkey || "")
+    if (target.source.type === "e") {
+      const refPubkey = normalizePubkey(target.source.pubkey || "")
 
-      return target.ref.value === widget.id && (!refPubkey || refPubkey === widgetPubkey)
+      return target.source.value === widget.id && (!refPubkey || refPubkey === widgetPubkey)
     }
 
-    if (target.ref.type === "a") {
-      const [kind, pubkey, identifier] = target.ref.value.split(":")
+    if (target.source.type === "a") {
+      const [kind, pubkey, identifier] = target.source.value.split(":")
 
       return (
         Number(kind) === SMART_WIDGET_KIND &&
         normalizePubkey(pubkey || "") === widgetPubkey &&
         identifier === widget.identifier &&
-        target.ref.value.toLowerCase() === widgetAddress.toLowerCase()
+        target.source.value.toLowerCase() === widgetAddress.toLowerCase()
       )
     }
 
@@ -200,7 +207,7 @@ const getDeletedTargetEventIds = (targetEvents: TrustedEvent[], deleteEvents: Tr
   return deleted
 }
 
-const makeWidgetProfileListFilters = (definition: CommunityDefinition) => {
+const makeWidgetProfileListFilters = (definition: CommunityDefinitionV2) => {
   const sections = getCommunityWriteTargetSections(definition, COMMUNITY_WRITE_TARGETS.widget)
 
   return makeCommunityProfileListFilters({...definition, sections})
@@ -214,9 +221,9 @@ export const loadCommunityCuratedWidgets = async (
     reportState,
   }: CommunityCuratedExtensionsLoadOptions = {},
 ): Promise<CommunityCuratedExtensionsResult> => {
-  const parsed = parseCommunityInput(input)
+  const community = parseCommunityNaddr(input)
 
-  if (!parsed) {
+  if (!community) {
     logCommunityWidgetDebug("invalid community input", {input})
     return {
       status: "invalid-input",
@@ -228,43 +235,43 @@ export const loadCommunityCuratedWidgets = async (
   }
 
   const definitionResult = await loadCurationEvents(
-    getCommunityBootstrapRelays(parsed.relays),
-    [makeCommunityDefinitionFilter(parsed.pubkey)],
+    getCommunityBootstrapRelays(community.relayHints),
+    [makeExactCommunityDefinitionFilter(community)],
     {authenticate: true, priority},
   )
   const definitionEvents = definitionResult.events
-  const definition = selectLatestCommunityDefinition(definitionEvents, parsed.pubkey)
+  const definition = selectExactCommunityDefinition(definitionEvents, community)
 
   if (!definition) {
     logCommunityWidgetDebug("community definition not found", {
-      communityPubkey: parsed.pubkey,
-      relayHints: parsed.relays,
+      community,
+      relayHints: community.relayHints,
       definitionEvents: definitionEvents.length,
     })
 
     return {
       status: "not-community",
       complete: definitionResult.complete,
-      communityPubkey: parsed.pubkey,
-      relayHints: parsed.relays,
+      community,
+      relayHints: community.relayHints,
       trustedWidgetAuthorPubkeys: [],
       widgets: [],
     }
   }
 
   const communityRelays = normalizeRelays(
-    definition.relays.length ? definition.relays : parsed.relays,
+    definition.relays.length ? definition.relays : community.relayHints,
   )
   if (communityRelays.length === 0) {
     logCommunityWidgetDebug("community has no relays for widget curation", {
-      communityPubkey: definition.pubkey,
-      parsedRelays: parsed.relays,
+      community,
+      parsedRelays: community.relayHints,
     })
 
     return {
       status: "community",
       complete: definitionResult.complete,
-      communityPubkey: definition.pubkey,
+      community,
       relayHints: communityRelays,
       trustedWidgetAuthorPubkeys: [],
       widgets: [],
@@ -300,7 +307,7 @@ export const loadCommunityCuratedWidgets = async (
     ]),
   )
   const targetingFilterPlan = makeCommunityContentFilterPlan(
-    [makeCommunityTargetingFilter(definition.pubkey, [SMART_WIDGET_KIND])],
+    [makeCommunityTargetingFilter(community.communityId, [SMART_WIDGET_KIND])],
     widgetTargetAuthorPubkeys,
   )
   const targetingResult = await loadTargetingEvents({
@@ -308,17 +315,18 @@ export const loadCommunityCuratedWidgets = async (
     relayFilters: targetingFilterPlan.relayFilters,
     localFilters: targetingFilterPlan.localFilters,
     priority,
-    owner: `community-widget-curation:${definition.pubkey}`,
+    owner: `community-widget-curation:${definition.pointer.address}`,
   })
   const targetingEvents = targetingResult.events
   logCommunityWidgetDebug("loaded curation sources", {
-    communityPubkey: definition.pubkey,
+    community,
     communityRelays,
     profileListEvents: profileListEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
     targetingEvents: targetingEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
   })
 
   const authorizedTargetingEvents = filterAuthorizedCommunityTargetingEvents({
+    community,
     definition,
     profileListEvents,
     events: targetingEvents,
@@ -340,14 +348,14 @@ export const loadCommunityCuratedWidgets = async (
     event => !deletedTargetIds.has(event.id),
   )
   logCommunityWidgetDebug("filtered targeting events", {
-    communityPubkey: definition.pubkey,
+    communityAddress: definition.pointer.address,
     widgetTargetAuthorPubkeys,
     trustedWidgetAuthorPubkeys,
     deletedTargetIds: Array.from(deletedTargetIds),
     eligibleTargetingEvents: eligibleTargetingEvents.map(event => ({
       id: event.id,
       pubkey: event.pubkey,
-      ref: parseTargetedPublication(event)?.ref,
+      ref: parseTargetedPublicationV2(event)?.source,
     })),
   })
 
@@ -355,7 +363,7 @@ export const loadCommunityCuratedWidgets = async (
 
   if (widgetFilterPlan.relayFilters.length === 0) {
     logCommunityWidgetDebug("no widget filters after curation filtering", {
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       targetingEvents: targetingEvents.length,
       eligibleTargetingEvents: eligibleTargetingEvents.length,
     })
@@ -367,7 +375,7 @@ export const loadCommunityCuratedWidgets = async (
         profileListResult.complete &&
         targetingResult.complete &&
         deleteResult.complete,
-      communityPubkey: definition.pubkey,
+      community,
       relayHints: communityRelays,
       trustedWidgetAuthorPubkeys,
       widgets: [],
@@ -398,7 +406,7 @@ export const loadCommunityCuratedWidgets = async (
   }
 
   logCommunityWidgetDebug("loaded curated widget events", {
-    communityPubkey: definition.pubkey,
+    communityAddress: definition.pointer.address,
     widgetFilters: widgetFilterPlan.relayFilters,
     widgetEvents: widgetEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
     widgets: widgets.map(widget => ({
@@ -412,7 +420,7 @@ export const loadCommunityCuratedWidgets = async (
 
   const dedupedWidgets = dedupeWidgets(widgets)
   const relayHints = normalizeRelays([
-    ...parsed.relays,
+    ...community.relayHints,
     ...communityRelays,
     ...getTargetingRelayHints(eligibleTargetingEvents),
   ])
@@ -421,7 +429,7 @@ export const loadCommunityCuratedWidgets = async (
     const targetingSources = getWidgetTargetingEvents(widget, eligibleTargetingEvents)
 
     recordCommunityWidgetRecommendationContext(getWidgetLineId(widget), {
-      communityPubkey: definition.pubkey,
+      community,
       relays: communityRelays,
       relayHints,
       definition,
@@ -441,7 +449,7 @@ export const loadCommunityCuratedWidgets = async (
       targetingResult.complete &&
       deleteResult.complete &&
       widgetResult.complete,
-    communityPubkey: definition.pubkey,
+    community,
     relayHints: communityRelays,
     trustedWidgetAuthorPubkeys,
     widgets: dedupedWidgets,

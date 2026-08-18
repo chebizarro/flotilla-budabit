@@ -5,10 +5,11 @@
   import {normalizePubkey} from "@app/core/community"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
     activeUserCommunityRefs,
+    activeExactCommunityPointer,
   } from "@app/core/community-state"
   import {
     communityExtensionPrompt,
@@ -26,14 +27,13 @@
   import {logCommunityWidgetDebug} from "@app/extensions/community-widget-debug"
   import {getWidgetLineId} from "@app/extensions/widget-identity"
   import type {SmartWidgetEvent} from "@app/extensions/types"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
+  import {makeExactCommunityInputValue} from "@app/util/community-stars"
 
   type Props = {
-    communityPubkey: string
     relayHints?: string[]
   }
 
-  const {communityPubkey, relayHints = []}: Props = $props()
+  const {relayHints = []}: Props = $props()
 
   let widgets = $state<SmartWidgetEvent[]>([])
   let trustedAuthorPubkeys = $state<string[]>([])
@@ -42,11 +42,12 @@
   let lastLoadEvidenceKey = ""
   let sawLoggedInUser = false
 
-  const normalizedCommunityPubkey = $derived(normalizePubkey(communityPubkey))
   const curationEvidence = $derived.by(() => {
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
     const matchesCommunity =
-      definition && normalizePubkey(definition.pubkey) === normalizedCommunityPubkey
+      definition &&
+      $activeExactCommunityPointer &&
+      definition.controllerPubkey === $activeExactCommunityPointer.controllerPubkey
     const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
     const reportState = matchesCommunity ? $activeCommunityReportState : undefined
 
@@ -65,7 +66,7 @@
   })
   const isCommunityMember = $derived(
     $activeUserCommunityRefs.some(
-      ref => normalizePubkey(ref.communityPubkey) === normalizedCommunityPubkey,
+      ref => ref.community.address === $activeExactCommunityPointer?.address,
     ),
   )
   const trustedWidgets = $derived(getTrustedCommunityWidgets(widgets, trustedAuthorPubkeys))
@@ -76,7 +77,14 @@
     trustedWidgets.some(widget => installedWidgetIds.has(getWidgetLineId(widget))),
   )
   const dismissed = $derived(
-    isCommunityExtensionPromptDismissed($pubkey || "", communityPubkey, $communityExtensionPrompt),
+    Boolean(
+      $activeExactCommunityPointer &&
+      isCommunityExtensionPromptDismissed(
+        $pubkey || "",
+        $activeExactCommunityPointer,
+        $communityExtensionPrompt,
+      ),
+    ),
   )
   const showPrompt = $derived(
     Boolean(
@@ -88,11 +96,13 @@
     ),
   )
   const settingsHref = $derived(
-    `/settings/extensions?community=${encodeURIComponent(communityPubkey)}&focus=trusted#community-extensions`,
+    `/settings/extensions?community=${encodeURIComponent($activeExactCommunityPointer?.naddr || "")}&focus=trusted#community-extensions`,
   )
 
   const dismiss = () => {
-    if ($pubkey) dismissCommunityExtensionPrompt($pubkey, communityPubkey)
+    if ($pubkey && $activeExactCommunityPointer) {
+      dismissCommunityExtensionPrompt($pubkey, $activeExactCommunityPointer)
+    }
   }
 
   $effect(() => {
@@ -106,7 +116,9 @@
   })
 
   $effect(() => {
-    const input = makeCommunityInputValue({pubkey: communityPubkey, relayHints})
+    const input = $activeExactCommunityPointer
+      ? makeExactCommunityInputValue($activeExactCommunityPointer)
+      : ""
     const evidence = curationEvidence
     const key =
       $pubkey && isCommunityMember && !dismissed && input && evidence.ready
@@ -140,7 +152,7 @@
         if (!result) return
         if (requestId !== loadRequestId || key !== loadKey) {
           logCommunityWidgetDebug("extensions prompt discarded stale curated widgets result", {
-            communityPubkey,
+            communityAddress: $activeExactCommunityPointer?.address,
             key,
             currentKey: loadKey,
             requestId,

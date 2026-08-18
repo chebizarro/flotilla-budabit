@@ -2,8 +2,9 @@ import {describe, expect, it, vi} from "vitest"
 import {finalizeEvent, generateSecretKey, getPublicKey} from "nostr-tools/pure"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  buildCommunityDefinition,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  parseCommunityDefinitionV2,
+  makeCommunityPointer,
   type CommunityAlertService,
 } from "./community"
 import type {ActiveUserCommunityRef} from "./community-membership"
@@ -44,6 +45,10 @@ const communityB = getPublicKey(communitySecretB)
 const userPubkey = getPublicKey(userSecret)
 const providerPubkey = getPublicKey(providerSecret)
 const handlerPubkey = getPublicKey(handlerSecret)
+const communityAddressA = makeCommunityPointer({
+  controllerPubkey: communityA,
+  communityId: communityA,
+})!.address
 const provider: CommunityAlertService = {
   servicePubkey: providerPubkey,
   requestRelay: "wss://alerts.example.com/",
@@ -55,25 +60,41 @@ const makeDefinition = ({
   secret,
   services,
   createdAt,
+  communityId = getPublicKey(secret),
 }: {
   secret: Uint8Array
   services: CommunityAlertService[]
   createdAt: number
+  communityId?: string
 }) => {
-  const template = buildCommunityDefinition({
+  const template = buildCommunityDefinitionV2({
+    communityId,
+    name: `Community ${communityId}`,
     relays: ["wss://community.example.com"],
-    sections: [{name: "General", kinds: [{kind: 1111}]}],
-    communityAlertServices: services,
+    sections: [
+      {
+        name: "General",
+        kinds: [{kind: 1111}],
+        profileLists: [{address: `30000:${getPublicKey(secret)}:members`}],
+      },
+    ],
+    services: services.map(service => ({
+      name: "community-alerts",
+      pubkey: service.servicePubkey,
+      requestRelay: service.requestRelay.replace(/\/$/, ""),
+      handlerAddress: service.handlerAddress,
+      handlerRelay: service.handlerRelay.replace(/\/$/, ""),
+    })),
   })
 
-  return parseCommunityDefinition(finalizeEvent({...template, created_at: createdAt}, secret))!
+  return parseCommunityDefinitionV2(finalizeEvent({...template, created_at: createdAt}, secret))!
 }
 
 const makeRef = (
   definition: ReturnType<typeof makeDefinition>,
   roles: ActiveUserCommunityRef["roles"] = ["member"],
 ): ActiveUserCommunityRef => ({
-  communityPubkey: definition.pubkey,
+  community: definition.pointer,
   definition,
   relayHints: definition.relays,
   roles,
@@ -82,7 +103,7 @@ const makeRef = (
 
 const makePayload = (overrides: Record<string, unknown> = {}) =>
   buildCommunityAlertPayload({
-    community: communityA,
+    community: communityAddressA,
     email: "Person@Example.com",
     locale: "en-US",
     manageUrl: "https://budabit.example.com/settings/notifications",
@@ -105,17 +126,17 @@ describe("verified per-community alert discovery", () => {
     const other = makeDefinition({secret: communitySecretB, services: [provider], createdAt: 30})
     const groups = discoverCommunityAlertProviders({
       communityRefs: [makeRef(older), makeRef(latest), makeRef(other)],
-      activeCommunityPubkey: communityB,
+      activeCommunityAddress: other.pointer.address,
     })
 
     expect(groups).toHaveLength(2)
-    expect(groups[0].communityPubkey).toBe(communityB)
-    expect(groups.find(group => group.communityPubkey === communityA)?.providers).toEqual([
-      {...replacement, advertisingCommunityPubkey: communityA},
-    ])
-    expect(groups.find(group => group.communityPubkey === communityB)?.providers).toEqual([
-      {...provider, advertisingCommunityPubkey: communityB},
-    ])
+    expect(groups[0].communityAddress).toBe(other.pointer.address)
+    expect(
+      groups.find(group => group.communityAddress === latest.pointer.address)?.providers,
+    ).toEqual([{...replacement, advertisingCommunityAddress: latest.pointer.address}])
+    expect(
+      groups.find(group => group.communityAddress === other.pointer.address)?.providers,
+    ).toEqual([{...provider, advertisingCommunityAddress: other.pointer.address}])
   })
 
   it("does not revive a provider removed by the latest verified definition", () => {
@@ -127,6 +148,27 @@ describe("verified per-community alert discovery", () => {
     ).toEqual([])
   })
 
+  it("groups same-controller sibling definitions by exact address", () => {
+    const first = makeDefinition({
+      secret: communitySecretA,
+      services: [provider],
+      createdAt: 10,
+      communityId: communityA,
+    })
+    const sibling = makeDefinition({
+      secret: communitySecretA,
+      services: [provider],
+      createdAt: 20,
+      communityId: communityB,
+    })
+
+    expect(
+      discoverCommunityAlertProviders({communityRefs: [makeRef(first), makeRef(sibling)]}).map(
+        group => group.communityAddress,
+      ),
+    ).toEqual([first.pointer.address, sibling.pointer.address].sort())
+  })
+
   it("rejects invalid signatures, mismatched refs, and refs without an active role", () => {
     const definition = makeDefinition({
       secret: communitySecretA,
@@ -134,7 +176,10 @@ describe("verified per-community alert discovery", () => {
       createdAt: 10,
     })
     const invalid = {...definition, event: {...definition.event, sig: "0".repeat(128)}}
-    const mismatched = {...makeRef(definition), communityPubkey: communityB}
+    const mismatched = {
+      ...makeRef(definition),
+      community: makeCommunityPointer({controllerPubkey: communityB, communityId: communityB})!,
+    }
 
     expect(isCommunityAlertEligibleRef(makeRef(definition))).toBe(true)
     expect(isCommunityAlertEligibleRef(makeRef(definition, []))).toBe(false)
@@ -174,9 +219,23 @@ describe("verified per-community alert discovery", () => {
 })
 
 describe("dedicated encrypted community alert settings", () => {
+  it("keeps same-controller sibling registrations independent by exact address", () => {
+    const first = makeCommunityPointer({controllerPubkey: communityA, communityId: communityA})!
+    const sibling = makeCommunityPointer({controllerPubkey: communityA, communityId: communityB})!
+    const normalized = normalizeCommunityAlertSettings({
+      version: 2,
+      deliveryProfile: {},
+      communities: {
+        [first.address]: {enabled: true, provider, preferences: {}},
+      },
+    })
+
+    expect(normalized.communities[first.address]?.enabled).toBe(true)
+    expect(normalized.communities[sibling.address]).toBeUndefined()
+  })
   it("normalizes one independent delivery profile and preserves cleanup snapshots", () => {
     const normalized = normalizeCommunityAlertSettings({
-      version: 1,
+      version: 2,
       deliveryProfile: {
         email: " Person@Example.COM ",
         intervalDays: 3,
@@ -184,7 +243,7 @@ describe("dedicated encrypted community alert settings", () => {
         timezone: "Europe/London",
       },
       communities: {
-        [communityA.toUpperCase()]: {
+        [communityAddressA]: {
           enabled: true,
           provider,
           pendingCleanup: [provider, provider, {servicePubkey: "bad"}],
@@ -208,7 +267,7 @@ describe("dedicated encrypted community alert settings", () => {
       localTime: "08:30",
       timezone: "Europe/London",
     })
-    expect(normalized.communities[communityA]).toMatchObject({
+    expect(normalized.communities[communityAddressA]).toMatchObject({
       enabled: true,
       provider,
       pendingCleanup: [provider],
@@ -231,7 +290,7 @@ describe("dedicated encrypted community alert settings", () => {
         repositories: ["repo"],
         handler: {relay: "wss://handler.example.com"},
       }),
-    ).toMatchObject({version: 1, deliveryProfile: {email: ""}, communities: {}})
+    ).toMatchObject({version: 2, deliveryProfile: {email: ""}, communities: {}})
   })
 
   it("decrypts settings only for the active signer", async () => {
@@ -246,7 +305,7 @@ describe("dedicated encrypted community alert settings", () => {
     } as TrustedEvent
     const decrypt = vi.fn().mockResolvedValue(
       JSON.stringify({
-        version: 1,
+        version: 2,
         deliveryProfile: {email: "Person@Example.com", timezone: "UTC"},
         communities: {},
       }),
@@ -272,7 +331,7 @@ describe("dedicated encrypted community alert settings", () => {
       sig: "sig",
     } as TrustedEvent
 
-    for (const plaintext of ["not json", JSON.stringify({version: 2})]) {
+    for (const plaintext of ["not json", JSON.stringify({version: 1})]) {
       await expect(
         decryptCommunityAlertSettingsEvent({
           event,
@@ -291,7 +350,7 @@ describe("strict community alert payloads and event tags", () => {
     expect(payload).toEqual({
       version: 1,
       channel: COMMUNITY_ALERTS_CHANNEL,
-      community: communityA,
+      community: communityAddressA,
       email: "person@example.com",
       locale: "en-US",
       manageUrl: "https://budabit.example.com/settings/notifications",
@@ -333,28 +392,28 @@ describe("strict community alert payloads and event tags", () => {
   it("builds exact subscription, per-user status, and deletion tags", () => {
     expect(COMMUNITY_ALERTS_SUBSCRIPTION_KIND).toBe(32830)
     expect(COMMUNITY_ALERTS_STATUS_KIND).toBe(32831)
-    expect(getCommunityAlertSubscriptionDtag(communityA)).toBe(
-      `budabit/community-alerts/${communityA}`,
+    expect(getCommunityAlertSubscriptionDtag(communityAddressA)).toBe(
+      `budabit/community-alerts/${communityAddressA}`,
     )
-    expect(getCommunityAlertStatusDtag(communityA, userPubkey)).toBe(
-      `budabit/community-alerts/${communityA}/${userPubkey}`,
+    expect(getCommunityAlertStatusDtag(communityAddressA, userPubkey)).toBe(
+      `budabit/community-alerts/${communityAddressA}/${userPubkey}`,
     )
-    expect(getCommunityAlertSubscriptionTags(communityA, providerPubkey)).toEqual([
-      ["d", `budabit/community-alerts/${communityA}`],
+    expect(getCommunityAlertSubscriptionTags(communityAddressA, providerPubkey)).toEqual([
+      ["d", `budabit/community-alerts/${communityAddressA}`],
       ["p", providerPubkey],
     ])
-    expect(getCommunityAlertStatusTags(communityA, userPubkey)).toEqual([
-      ["d", `budabit/community-alerts/${communityA}/${userPubkey}`],
+    expect(getCommunityAlertStatusTags(communityAddressA, userPubkey)).toEqual([
+      ["d", `budabit/community-alerts/${communityAddressA}/${userPubkey}`],
       ["p", userPubkey],
     ])
     expect(
       getCommunityAlertDeletionTags({
-        communityPubkey: communityA,
+        communityAddress: communityAddressA,
         userPubkey,
         servicePubkey: providerPubkey,
       }),
     ).toEqual([
-      ["a", `32830:${userPubkey}:budabit/community-alerts/${communityA}`],
+      ["a", `32830:${userPubkey}:budabit/community-alerts/${communityAddressA}`],
       ["p", providerPubkey],
     ])
   })
@@ -364,7 +423,7 @@ describe("strict community alert payloads and event tags", () => {
       {
         kind: COMMUNITY_ALERTS_SUBSCRIPTION_KIND,
         created_at: 10,
-        tags: getCommunityAlertSubscriptionTags(communityA, providerPubkey),
+        tags: getCommunityAlertSubscriptionTags(communityAddressA, providerPubkey),
         content: "encrypted",
       },
       userSecret,
@@ -373,7 +432,7 @@ describe("strict community alert payloads and event tags", () => {
       {
         kind: COMMUNITY_ALERTS_STATUS_KIND,
         created_at: 10,
-        tags: getCommunityAlertStatusTags(communityA, userPubkey),
+        tags: getCommunityAlertStatusTags(communityAddressA, userPubkey),
         content: "encrypted",
       },
       providerSecret,
@@ -386,16 +445,21 @@ describe("strict community alert payloads and event tags", () => {
     expect(
       selectCommunityAlertSubscriptionEvent(
         [extra, subscription],
-        communityA,
+        communityAddressA,
         userPubkey,
         provider,
       ),
     ).toEqual(subscription)
-    expect(selectCommunityAlertStatusEvent([status], communityA, userPubkey, provider)).toEqual(
-      status,
-    )
     expect(
-      selectCommunityAlertStatusEvent([status], communityB, userPubkey, provider),
+      selectCommunityAlertStatusEvent([status], communityAddressA, userPubkey, provider),
+    ).toEqual(status)
+    expect(
+      selectCommunityAlertStatusEvent(
+        [status],
+        makeCommunityPointer({controllerPubkey: communityB, communityId: communityB})!.address,
+        userPubkey,
+        provider,
+      ),
     ).toBeUndefined()
   })
 

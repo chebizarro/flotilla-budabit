@@ -5,7 +5,7 @@
   import {setContext} from "svelte"
   import {writable} from "svelte/store"
   import CommunityMenu from "@app/components/CommunityMenu.svelte"
-  import {activeCommunitySession} from "@app/core/community-state"
+  import {activeExactCommunityPointer} from "@app/core/community-state"
   import {REPO_LIST_HYDRATION_READY_KEY, repoAnnouncementRelaysStore} from "@app/core/git-state"
   import {preloadRepositoryList} from "@app/core/repo-list-preload"
   import SecondaryNav from "@lib/components/SecondaryNav.svelte"
@@ -15,7 +15,6 @@
   }
 
   const {children}: Props = $props()
-  const activeCommunityPubkey = $derived($activeCommunitySession?.communityPubkey || "")
   const repoListHydrationReady = writable(false)
   let repoListPreloadController: AbortController | null = null
 
@@ -66,9 +65,9 @@
   })
 </script>
 
-{#if activeCommunityPubkey}
+{#if $activeExactCommunityPointer}
   <SecondaryNav>
-    <CommunityMenu community={activeCommunityPubkey} />
+    <CommunityMenu community={$activeExactCommunityPointer} />
   </SecondaryNav>
 {/if}
 

@@ -4,7 +4,7 @@
 
   type CollectSelection = {
     personal: boolean
-    communityPubkeys: string[]
+    communityAddresses: string[]
   }
 
   const {
@@ -14,10 +14,10 @@
     submitLabel = "Collect",
     submittingLabel = "Collecting...",
     defaultPersonal = true,
-    defaultCommunityPubkeys = [],
+    defaultCommunityAddresses = [],
     communityOptions = [],
-    defaultCommunityPubkey = "",
-    lockedCommunityPubkeys = [],
+    defaultCommunityAddress = "",
+    lockedCommunityAddresses = [],
     allowEmpty = false,
     requireChanges = false,
     onCollect,
@@ -29,24 +29,24 @@
     submitLabel?: string
     submittingLabel?: string
     defaultPersonal?: boolean
-    defaultCommunityPubkeys?: string[]
+    defaultCommunityAddresses?: string[]
     communityOptions?: RepoCommunityOption[]
-    defaultCommunityPubkey?: string
-    lockedCommunityPubkeys?: string[]
+    defaultCommunityAddress?: string
+    lockedCommunityAddresses?: string[]
     allowEmpty?: boolean
     requireChanges?: boolean
     onCollect: (selection: CollectSelection) => Promise<void> | void
     onCancel?: () => void
   } = $props()
 
-  const initialCommunityPubkeys = Array.from(
-    new Set([defaultCommunityPubkey, ...defaultCommunityPubkeys]),
-  ).filter(pubkey => communityOptions.some(option => option.pubkey === pubkey))
-  const initialCommunityKey = initialCommunityPubkeys.slice().sort().join("\n")
-  const lockedCommunities = new Set(lockedCommunityPubkeys)
+  const initialCommunityAddresses = Array.from(
+    new Set([defaultCommunityAddress, ...defaultCommunityAddresses]),
+  ).filter(address => communityOptions.some(option => option.address === address))
+  const initialCommunityKey = initialCommunityAddresses.slice().sort().join("\n")
+  const lockedCommunities = new Set(lockedCommunityAddresses)
 
   let personal = $state(defaultPersonal)
-  let selectedCommunities = $state<string[]>(initialCommunityPubkeys)
+  let selectedCommunities = $state<string[]>(initialCommunityAddresses)
   let submitting = $state(false)
 
   const hasDestinations = $derived(personal || selectedCommunities.length > 0)
@@ -56,17 +56,17 @@
   )
   const canSubmit = $derived((allowEmpty || hasDestinations) && (!requireChanges || hasChanges))
 
-  const toggleCommunity = (pubkey: string, checked: boolean) => {
+  const toggleCommunity = (address: string, checked: boolean) => {
     selectedCommunities = checked
-      ? Array.from(new Set([...selectedCommunities, pubkey]))
-      : selectedCommunities.filter(value => value !== pubkey)
+      ? Array.from(new Set([...selectedCommunities, address]))
+      : selectedCommunities.filter(value => value !== address)
   }
 
   const collect = async () => {
     if (!canSubmit || submitting) return
     submitting = true
     try {
-      await onCollect({personal, communityPubkeys: selectedCommunities})
+      await onCollect({personal, communityAddresses: selectedCommunities})
     } finally {
       submitting = false
     }
@@ -87,14 +87,14 @@
       <span class="font-medium">{personalLabel}</span>
     </label>
 
-    {#each communityOptions as option (option.pubkey)}
+    {#each communityOptions as option (option.address)}
       <label class="flex items-center gap-3 rounded-md border border-border p-3">
         <input
           type="checkbox"
-          checked={selectedCommunities.includes(option.pubkey)}
-          disabled={submitting || lockedCommunities.has(option.pubkey)}
-          onchange={event => toggleCommunity(option.pubkey, event.currentTarget.checked)} />
-        <span class="min-w-0 flex-1 truncate">{option.label || option.pubkey}</span>
+          checked={selectedCommunities.includes(option.address || "")}
+          disabled={!option.address || submitting || lockedCommunities.has(option.address)}
+          onchange={event => toggleCommunity(option.address || "", event.currentTarget.checked)} />
+        <span class="min-w-0 flex-1 truncate">{option.label || option.communityId}</span>
       </label>
     {/each}
   </div>

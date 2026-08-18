@@ -201,7 +201,7 @@
       pubkey: $pubkey || "",
       mints,
       communities: $activeUserCommunityRefs.map(
-        ref => `${ref.communityPubkey}:${ref.definition.event.id}`,
+        ref => `${ref.community.address}:${ref.definition.event.id}`,
       ),
       profileLists: profileListEvents.map(event => `${event.id}:${event.created_at}`),
       reports: Array.from($communityMemberReportStates.entries()).map(([community, state]) => [
@@ -305,7 +305,7 @@
       bind:value={newMintUrl}
       onkeydown={e => e.key === "Enter" && add()} />
     <Button
-      class="btn btn-primary min-h-12 inline-flex w-full justify-center sm:w-auto"
+      class="btn btn-primary inline-flex min-h-12 w-full justify-center sm:w-auto"
       onclick={add}
       disabled={adding || !newMintUrl.trim()}>
       {adding ? "Adding…" : "+ Add"}

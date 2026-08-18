@@ -69,7 +69,7 @@
     cloneUrls: string[];
     hashtags: string[];
     earliestUniqueCommit: string;
-    communityPubkey: string;
+    communityAddress: string;
   }
 
   interface SaveCompleteResult {
@@ -149,7 +149,7 @@
   function searchMaintainerProfiles(query: string) {
     if (!searchProfiles) return Promise.resolve([]);
     return searchProfiles(query, {
-      communityPubkey: formData.communityPubkey || undefined,
+      communityAddress: formData.communityAddress || undefined,
     });
   }
 
@@ -212,7 +212,7 @@
         cloneUrls: copyList(),
         hashtags: copyList(),
         earliestUniqueCommit: "",
-        communityPubkey: "",
+        communityAddress: "",
       };
     }
 
@@ -238,7 +238,7 @@
       cloneUrls: editableCloneUrls,
       hashtags: copyList(repo.hashtags),
       earliestUniqueCommit: repo.earliestUniqueCommit || "",
-      communityPubkey: repo.community?.pubkey || "",
+      communityAddress: repo.community?.address || "",
     };
   }
 
@@ -274,15 +274,15 @@
   const declaredGraspServices = $derived.by(() =>
     mergeGraspServiceDescriptors([
       ...buildGraspServiceDescriptors(
-        findRepoCommunityOption(communityOptions, formData.communityPubkey)?.graspServers || [],
-        "community-10222"
+        findRepoCommunityOption(communityOptions, formData.communityAddress)?.graspServers || [],
+        "community-definition"
       ),
       ...buildGraspServiceDescriptors(personalGraspServerUrls, "user-10317"),
       ...buildGraspServiceDescriptors(
         communityOptions
-          .filter((option) => option.pubkey !== formData.communityPubkey)
+          .filter((option) => option.address !== formData.communityAddress)
           .flatMap((option) => option.graspServers || []),
-        "community-10222"
+        "community-definition"
       ),
     ])
   );
@@ -921,7 +921,7 @@
         hashtags: cleanHashtags,
         earliestUniqueCommit: formData.earliestUniqueCommit.trim().toLowerCase() || undefined,
         community: getRepoCommunityOptionBinding(
-          findRepoCommunityOption(communityOptions, formData.communityPubkey)
+          findRepoCommunityOption(communityOptions, formData.communityAddress)
         ),
         // Include all URLs in the event
         web: cleanWebUrls,
@@ -1001,7 +1001,7 @@
         cloneUrls: cleanCloneUrls,
         hashtags: cleanHashtags,
         earliestUniqueCommit: formData.earliestUniqueCommit.trim().toLowerCase(),
-        communityPubkey: formData.communityPubkey.trim().toLowerCase(),
+        communityAddress: formData.communityAddress.trim().toLowerCase(),
       };
       formData = cloneFormData(savedFormData);
       originalFormData = cloneFormData(savedFormData);
@@ -1116,8 +1116,8 @@
       formData.name !== original.name ||
       formData.description !== original.description ||
       formData.visibility !== original.visibility ||
-      formData.communityPubkey.trim().toLowerCase() !==
-        original.communityPubkey.trim().toLowerCase() ||
+      formData.communityAddress.trim().toLowerCase() !==
+        original.communityAddress.trim().toLowerCase() ||
       formData.defaultBranch !== original.defaultBranch ||
       formData.earliestUniqueCommit.trim().toLowerCase() !==
         original.earliestUniqueCommit.trim().toLowerCase();
@@ -1241,7 +1241,7 @@
 
         <RepoCommunitySelect
           options={communityOptions}
-          bind:value={formData.communityPubkey}
+          bind:value={formData.communityAddress}
           label="Repository community"
           description="Set, change, or remove the community bound to this repository identity."
           disabled={isEditing}
@@ -1332,7 +1332,7 @@
             getProfile={getProfile}
             searchProfiles={searchProfiles ? searchMaintainerProfiles : undefined}
             searchProfilesUpdateSignal={searchProfilesUpdateSignal}
-            searchProfilesContextKey={formData.communityPubkey}
+            searchProfilesContextKey={formData.communityAddress}
             add={(pubkey: string) => {
               if (!formData.maintainers.includes(pubkey)) {
                 formData.maintainers = [...formData.maintainers, pubkey];

@@ -52,13 +52,11 @@ export const buildCommunityWidgetEventTags = (draft: WidgetPublisherDraft): stri
 
 export const filterSelectedWidgetCommunityOptions = (
   options: WidgetCommunityOption[],
-  selectedPubkeys: string[],
+  selectedAddresses: string[],
 ) => {
-  const selected = new Set(
-    selectedPubkeys.map(pubkey => pubkey.trim().toLowerCase()).filter(Boolean),
-  )
+  const selected = new Set(selectedAddresses.map(address => address.trim()).filter(Boolean))
 
-  return options.filter(option => selected.has(option.pubkey.trim().toLowerCase()))
+  return options.filter(option => selected.has(option.community.address))
 }
 
 export {SMART_WIDGET_KIND}

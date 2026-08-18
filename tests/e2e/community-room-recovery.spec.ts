@@ -1,28 +1,34 @@
 import {expect, test} from "@playwright/test"
-import {finalizeEvent, getPublicKey} from "nostr-tools"
+import {finalizeEvent, getPublicKey, nip19} from "nostr-tools"
 import {MockRelay} from "./helpers/mock-relay"
 
-const relayUrl = "wss://community-room-recovery.example/"
+const relayUrl = "wss://community-room-recovery.example"
 const communitySecret = Uint8Array.from({length: 32}, (_, index) => index + 1)
 const communityPubkey = getPublicKey(communitySecret)
+const communityId = getPublicKey(new Uint8Array(32).fill(2))
 const outsiderSecret = Uint8Array.from({length: 32}, (_, index) => 32 - index)
+const profileListAddress = `30000:${communityPubkey}:general`
 
 const definition = finalizeEvent(
   {
-    kind: 10222,
+    kind: 32222,
     created_at: 1,
     content: "",
     tags: [
-      ["alt", "BudaBit community definition"],
+      ["d", communityId],
+      ["name", "Room Recovery Community"],
+      ["description", "Community room recovery test fixture"],
       ["r", relayUrl],
-      ["content", "rooms"],
+      ["content", "Room-creator"],
       ["k", "11", "room"],
-      ["content", "general"],
       ["k", "9", "room-message"],
+      ["a", profileListAddress, relayUrl],
+      ["content", "General"],
       ["k", "1111"],
       ["k", "7"],
       ["k", "1984"],
       ["k", "1985"],
+      ["a", profileListAddress, relayUrl],
     ],
   },
   communitySecret,
@@ -33,7 +39,7 @@ const room = finalizeEvent(
     kind: 11,
     created_at: 2,
     content: "Recovered after an incomplete lookup",
-    tags: [["h", communityPubkey], ["room"], ["title", "Recovered Room"]],
+    tags: [["h", communityId], ["room"], ["title", "Recovered Room"]],
   },
   communitySecret,
 )
@@ -44,7 +50,7 @@ const message = finalizeEvent(
     created_at: Math.floor(Date.now() / 1000),
     content: "Delayed room history",
     tags: [
-      ["h", communityPubkey],
+      ["h", communityId],
       ["E", room.id, relayUrl, communityPubkey],
       ["K", "11"],
     ],
@@ -58,7 +64,7 @@ const outsiderMessage = finalizeEvent(
     created_at: Math.floor(Date.now() / 1000) + 1,
     content: "Unauthorized room history",
     tags: [
-      ["h", communityPubkey],
+      ["h", communityId],
       ["E", room.id, relayUrl, communityPubkey],
       ["K", "11"],
     ],
@@ -66,8 +72,13 @@ const outsiderMessage = finalizeEvent(
   outsiderSecret,
 )
 
-const communityInput = `ncommunity://${communityPubkey}?relay=${encodeURIComponent(relayUrl)}`
-const roomPath = `/c/${encodeURIComponent(communityInput)}/rooms/${room.id}`
+const communityNaddr = nip19.naddrEncode({
+  kind: 32222,
+  pubkey: communityPubkey,
+  identifier: communityId,
+  relays: [relayUrl],
+})
+const roomPath = `/c/${communityNaddr}/rooms/${room.id}`
 
 test("recovers a slow room lookup in the background without duplicate errors", async ({page}) => {
   test.setTimeout(45_000)

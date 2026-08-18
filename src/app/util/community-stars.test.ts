@@ -1,150 +1,186 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {DELETE, REACTION, type TrustedEvent} from "@welshman/util"
-import * as nip19 from "nostr-tools/nip19"
-import {COMMUNITY_DEFINITION_KIND} from "@app/core/community"
-import {makeCommunityDefinitionAddress} from "@app/core/community-forms"
+import {COMMUNITY_DEFINITION_KIND_V2, makeCommunityPointer} from "@app/core/community"
 import {
   COMMUNITY_STAR_CONTENT,
-  makeCommunityInputValue,
+  makeExactCommunityInputValue,
+  makeCommunityStarDeleteV2,
   makeCommunityStarDeleteFilter,
-  makeCommunityStarReaction,
+  makeCommunityStarReactionV2,
   makeCommunityStarReactionFilter,
   makeRecentCommunityStarDeleteFilter,
   parseCommunityStarReaction,
   selectActiveCommunityStars,
 } from "@app/util/community-stars"
 
-const communityPubkey = "a".repeat(64)
-const userPubkey = "b".repeat(64)
-const otherUserPubkey = "c".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const pointer = makeCommunityPointer({
+  controllerPubkey: key(81),
+  communityId: key(82),
+  relayHints: ["wss://relay.example"],
+})!
+const sameIdBranch = makeCommunityPointer({
+  controllerPubkey: key(83),
+  communityId: pointer.communityId,
+})!
+const controllerSibling = makeCommunityPointer({
+  controllerPubkey: pointer.controllerPubkey,
+  communityId: key(86),
+})!
+const userPubkey = key(84)
+const otherUserPubkey = key(85)
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
-    id: "event-id",
+    id: "1".repeat(64),
     pubkey: userPubkey,
     created_at: 1,
     kind: REACTION,
     tags: [],
     content: "",
-    sig: "sig",
+    sig: "f".repeat(128),
     ...overrides,
   }) as TrustedEvent
 
-const makeStar = (id: string, pubkey = communityPubkey, created_at = 1) =>
-  makeEvent({
-    id,
-    created_at,
-    content: COMMUNITY_STAR_CONTENT,
-    tags: [
-      ["a", makeCommunityDefinitionAddress(pubkey), "wss://relay.example.com/"],
-      ["p", pubkey],
-      ["k", String(COMMUNITY_DEFINITION_KIND)],
-    ],
-  })
+const makeStar = (community = pointer, createdAt = 1) =>
+  makeEvent({...makeCommunityStarReactionV2(community), created_at: createdAt})
 
 describe("community stars", () => {
-  it("builds positive kind 7 reactions for community definitions", () => {
-    const reaction = makeCommunityStarReaction({
-      communityPubkey,
-      relayHints: ["wss://relay.example.com"],
-    })
+  it("builds exact branch reactions without a community person tag", () => {
+    const reaction = makeCommunityStarReactionV2(pointer)
 
     expect(reaction.kind).toBe(REACTION)
     expect(reaction.content).toBe(COMMUNITY_STAR_CONTENT)
-    expect(reaction.tags).toEqual(
-      expect.arrayContaining([
-        ["a", makeCommunityDefinitionAddress(communityPubkey), "wss://relay.example.com/"],
-        ["p", communityPubkey],
-        ["k", String(COMMUNITY_DEFINITION_KIND)],
-      ]),
-    )
+    expect(reaction.tags).toEqual([
+      ["h", pointer.communityId],
+      ["a", pointer.address, "wss://relay.example", "community"],
+      ["k", String(COMMUNITY_DEFINITION_KIND_V2)],
+    ])
+    expect(reaction.tags.some(tag => tag[0] === "p")).toBe(false)
   })
 
-  it("parses active community star reactions", () => {
-    const star = makeStar("star-1")
-
-    expect(parseCommunityStarReaction(star)).toMatchObject({
-      communityPubkey,
-      relayHints: ["wss://relay.example.com/"],
-      reaction: star,
-    })
-  })
-
-  it("filters deleted reaction events out of starred communities", () => {
-    const star = makeStar("star-1")
-    const deleteEvent = makeEvent({
-      id: "delete-1",
-      kind: DELETE,
-      content: "",
-      tags: [["e", star.id]],
-    })
-
+  it("parses only coherent exact branch reactions", () => {
+    expect(parseCommunityStarReaction(makeStar())?.community.address).toBe(pointer.address)
     expect(
-      selectActiveCommunityStars({
-        reactions: [star],
-        deleteEvents: [deleteEvent],
-        author: userPubkey,
-      }),
-    ).toEqual([])
+      parseCommunityStarReaction(
+        makeEvent({
+          ...makeStar(),
+          tags: [
+            ["h", pointer.communityId],
+            ["a", sameIdBranch.address, "", "community"],
+            ["p", pointer.communityId],
+          ],
+        }),
+      ),
+    ).toBeUndefined()
   })
 
-  it("ignores deletes from other users", () => {
-    const star = makeStar("star-1")
-    const deleteEvent = makeEvent({
-      id: "delete-1",
+  it("keeps same-ID branches independent", () => {
+    expect(
+      selectActiveCommunityStars({reactions: [makeStar(pointer), makeStar(sameIdBranch, 2)]}),
+    ).toHaveLength(2)
+  })
+
+  it("keeps communities from the same controller independent", () => {
+    expect(
+      selectActiveCommunityStars({reactions: [makeStar(pointer), makeStar(controllerSibling, 2)]}),
+    ).toHaveLength(2)
+  })
+
+  it("accepts only same-author exact V2 branch deletions", () => {
+    const star = makeStar()
+    const deletion = makeEvent({...makeCommunityStarDeleteV2(pointer, star.id)})
+    const outsiderDeletion = makeEvent({
+      ...makeCommunityStarDeleteV2(pointer, star.id),
+      kind: DELETE,
       pubkey: otherUserPubkey,
+    })
+
+    expect(selectActiveCommunityStars({reactions: [star], deleteEvents: [deletion]})).toEqual([])
+    expect(
+      selectActiveCommunityStars({reactions: [star], deleteEvents: [outsiderDeletion]}),
+    ).toHaveLength(1)
+  })
+
+  it("rejects unscoped and sibling-scoped star deletions", () => {
+    const star = makeStar()
+    const unscopedDeletion = makeEvent({
       kind: DELETE,
-      content: "",
-      tags: [["e", star.id]],
+      tags: [
+        ["e", star.id],
+        ["k", String(REACTION)],
+      ],
+    })
+    const siblingDeletion = makeEvent({...makeCommunityStarDeleteV2(sameIdBranch, star.id)})
+    const sameControllerSiblingDeletion = makeEvent({
+      ...makeCommunityStarDeleteV2(controllerSibling, star.id),
     })
 
     expect(
+      selectActiveCommunityStars({reactions: [star], deleteEvents: [unscopedDeletion]}),
+    ).toHaveLength(1)
+    expect(
+      selectActiveCommunityStars({reactions: [star], deleteEvents: [siblingDeletion]}),
+    ).toHaveLength(1)
+    expect(
       selectActiveCommunityStars({
         reactions: [star],
-        deleteEvents: [deleteEvent],
-        author: userPubkey,
+        deleteEvents: [sameControllerSiblingDeletion],
       }),
     ).toHaveLength(1)
   })
 
-  it("dedupes community stars by latest reaction", () => {
-    const older = makeStar("older", communityPubkey, 1)
-    const newer = makeStar("newer", communityPubkey, 2)
+  it("requires exact marked authority, event, and kind tags on star deletions", () => {
+    const star = makeStar()
+    const validTags = makeCommunityStarDeleteV2(pointer, star.id).tags
+    const invalidTagSets = [
+      validTags.map(tag => (tag[0] === "a" ? tag.slice(0, 3) : tag)),
+      validTags.filter(tag => tag[0] !== "e"),
+      validTags.map(tag => (tag[0] === "e" ? [...tag, "extra"] : tag)),
+      validTags.filter(tag => tag[0] !== "k"),
+      validTags.map(tag => (tag[0] === "k" ? ["k", "1"] : tag)),
+    ]
 
-    expect(selectActiveCommunityStars({reactions: [older, newer], author: userPubkey})).toEqual([
-      expect.objectContaining({reaction: newer}),
-    ])
+    for (const tags of invalidTagSets) {
+      expect(
+        selectActiveCommunityStars({
+          reactions: [star],
+          deleteEvents: [makeEvent({kind: DELETE, tags})],
+        }),
+      ).toHaveLength(1)
+    }
   })
 
-  it("builds filters for loading star reactions and deletes", () => {
-    const star = makeStar("star-1")
+  it("builds exact V2 star deletions", () => {
+    const star = makeStar()
 
+    expect(makeCommunityStarDeleteV2(pointer, star.id)).toEqual({
+      kind: DELETE,
+      content: "Deleted community star",
+      tags: [
+        ["h", pointer.communityId],
+        ["a", pointer.address, "wss://relay.example", "community"],
+        ["e", star.id],
+        ["k", String(REACTION)],
+      ],
+    })
+  })
+
+  it("builds V2 star and delete filters", () => {
+    const star = makeStar()
     expect(makeCommunityStarReactionFilter(userPubkey)).toMatchObject({
       kinds: [REACTION],
       authors: [userPubkey],
-      "#k": [String(COMMUNITY_DEFINITION_KIND)],
+      "#k": [String(COMMUNITY_DEFINITION_KIND_V2)],
     })
-    expect(makeCommunityStarDeleteFilter(userPubkey, [star])).toMatchObject({
-      kinds: [DELETE],
-      authors: [userPubkey],
-      "#e": [star.id],
-    })
+    expect(makeCommunityStarDeleteFilter(userPubkey, [star])).toMatchObject({"#e": [star.id]})
     expect(makeRecentCommunityStarDeleteFilter(userPubkey)).toMatchObject({
-      kinds: [DELETE],
-      authors: [userPubkey],
       "#k": [String(REACTION)],
     })
   })
 
-  it("preserves relay hints when building ncommunity input values", () => {
-    expect(
-      makeCommunityInputValue({pubkey: communityPubkey, relayHints: ["wss://relay.example.com"]}),
-    ).toBe(`ncommunity://${communityPubkey}?relay=wss%3A%2F%2Frelay.example.com%2F`)
-  })
-
-  it("builds npub community input values without relay hints", () => {
-    expect(makeCommunityInputValue({pubkey: communityPubkey})).toBe(
-      nip19.npubEncode(communityPubkey),
-    )
+  it("uses canonical definition naddr input values", () => {
+    expect(makeExactCommunityInputValue(pointer)).toBe(pointer.naddr)
   })
 })

@@ -4,13 +4,13 @@
   import {page} from "$app/stores"
   import Spinner from "@lib/components/Spinner.svelte"
   import PageContent from "@lib/components/PageContent.svelte"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
+  const community = $derived(parseExactCommunityRouteParam($page.params.community))
 
   $effect(() => {
-    if (browser && parsedCommunity) {
-      void goto(makeCommunityPath(parsedCommunity.pubkey), {replaceState: true})
+    if (browser && community) {
+      void goto(makeExactCommunityPath(community), {replaceState: true})
     }
   })
 </script>

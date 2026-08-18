@@ -1,6 +1,6 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {repository, tracker} from "@welshman/app"
-import type {TrustedEvent} from "@welshman/util"
+import {REACTION, type TrustedEvent} from "@welshman/util"
 import type {IDBTable} from "@lib/indexeddb"
 import {
   eventsAdapter,
@@ -11,13 +11,27 @@ import {
 } from "./storage"
 
 const pubkey = "1".repeat(64)
-const makeEvent = ({id, createdAt, content}: {id: string; createdAt: number; content: string}) =>
+const communityIdA = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+const communityIdB = "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+const makeEvent = ({
+  id,
+  createdAt,
+  content,
+  kind = 0,
+  tags = [],
+}: {
+  id: string
+  createdAt: number
+  content: string
+  kind?: number
+  tags?: string[][]
+}) =>
   ({
     id,
     pubkey,
     created_at: createdAt,
-    kind: 0,
-    tags: [],
+    kind,
+    tags,
     content,
     sig: "2".repeat(128),
   }) as TrustedEvent
@@ -83,6 +97,79 @@ describe("storage hydration", () => {
       ])
     } finally {
       stopTracker()
+      stopEvents()
+    }
+  })
+
+  it("caches kind 32222 sibling definitions by exact d coordinate, not legacy definitions", async () => {
+    vi.useFakeTimers()
+    const first = makeEvent({
+      id: "d".repeat(64),
+      createdAt: 30,
+      content: "",
+      kind: 32222,
+      tags: [["d", communityIdA]],
+    })
+    const second = makeEvent({
+      id: "e".repeat(64),
+      createdAt: 31,
+      content: "",
+      kind: 32222,
+      tags: [["d", communityIdB]],
+    })
+    const legacy = makeEvent({
+      id: "f".repeat(64),
+      createdAt: 32,
+      content: "",
+      kind: 10222,
+    })
+    const eventTable = makeTable<TrustedEvent>()
+    const stopEvents = await eventsAdapter.init(eventTable)
+
+    try {
+      repository.publish(first)
+      repository.publish(second)
+      repository.publish(legacy)
+      await vi.advanceTimersByTimeAsync(3000)
+
+      expect(
+        vi.mocked(eventTable.bulkPut).mock.calls.flatMap(([events]) => Array.from(events)),
+      ).toEqual([first, second])
+      expect(repository.getEvent(`0:${communityIdA}:`)).toBeUndefined()
+      expect(repository.getEvent(`0:${communityIdB}:`)).toBeUndefined()
+    } finally {
+      stopEvents()
+    }
+  })
+
+  it("caches community stars only when they target kind 32222", async () => {
+    vi.useFakeTimers()
+    const current = makeEvent({
+      id: "7".repeat(64),
+      createdAt: 40,
+      content: "+",
+      kind: REACTION,
+      tags: [["k", "32222"]],
+    })
+    const legacy = makeEvent({
+      id: "8".repeat(64),
+      createdAt: 41,
+      content: "+",
+      kind: REACTION,
+      tags: [["k", "10222"]],
+    })
+    const eventTable = makeTable<TrustedEvent>()
+    const stopEvents = await eventsAdapter.init(eventTable)
+
+    try {
+      repository.publish(current)
+      repository.publish(legacy)
+      await vi.advanceTimersByTimeAsync(3000)
+
+      expect(
+        vi.mocked(eventTable.bulkPut).mock.calls.flatMap(([events]) => Array.from(events)),
+      ).toEqual([current])
+    } finally {
       stopEvents()
     }
   })

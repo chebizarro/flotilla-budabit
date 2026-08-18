@@ -1,60 +1,49 @@
 import {DELETE, REACTION, makeEvent, type Filter, type TrustedEvent} from "@welshman/util"
-import * as nip19 from "nostr-tools/nip19"
 import {
-  COMMUNITY_DEFINITION_KIND,
-  makeCommunityNcommunity,
+  COMMUNITY_DEFINITION_KIND_V2,
+  type CommunityPointer,
+  makeCommunityAuthorityTagsV2,
+  makeCommunityPointer,
   normalizePubkey,
-  normalizeRelays,
+  parseCommunityAuthorityV2,
 } from "@app/core/community"
-import {
-  makeCommunityDefinitionAddress,
-  parseCommunityDefinitionAddress,
-} from "@app/core/community-forms"
 
 export const COMMUNITY_STAR_CONTENT = "+"
 export const COMMUNITY_STAR_LIMIT = 200
 export const COMMUNITY_STAR_DELETE_LOOKBACK_SECONDS = 60 * 60 * 24 * 30
 
 export type CommunityStarRef = {
-  communityPubkey: string
-  relayHints: string[]
+  community: CommunityPointer
   reaction: TrustedEvent
 }
 
-export const makeCommunityInputValue = ({
-  pubkey,
-  relayHints = [],
-}: {
-  pubkey: string
-  relayHints?: string[]
-}) => {
-  const normalizedPubkey = normalizePubkey(pubkey)
-  const relays = normalizeRelays(relayHints)
-  if (!normalizedPubkey) return ""
-  if (relays.length === 0) return nip19.npubEncode(normalizedPubkey)
+export const makeExactCommunityInputValue = (community: CommunityPointer) => {
+  const pointer = makeCommunityPointer({
+    controllerPubkey: community.controllerPubkey,
+    communityId: community.communityId,
+    relayHints: community.relayHints,
+  })
 
-  return makeCommunityNcommunity({pubkey: normalizedPubkey, relayHints: relays})
+  return pointer?.address === community.address ? pointer.naddr : ""
 }
 
-export const makeCommunityStarReaction = ({
-  communityPubkey,
-  relayHints = [],
-}: {
-  communityPubkey: string
-  relayHints?: string[]
-}) => {
-  const pubkey = normalizePubkey(communityPubkey)
-  if (!pubkey) throw new Error("Invalid community pubkey")
-
-  const address = makeCommunityDefinitionAddress(pubkey)
-  const relayHint = normalizeRelays(relayHints)[0]
-  const aTag = relayHint ? ["a", address, relayHint] : ["a", address]
-
+export const makeCommunityStarReactionV2 = (community: CommunityPointer) => {
   return makeEvent(REACTION, {
     content: COMMUNITY_STAR_CONTENT,
-    tags: [aTag, ["p", pubkey], ["k", String(COMMUNITY_DEFINITION_KIND)]],
+    tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+      ["k", String(COMMUNITY_DEFINITION_KIND_V2)],
+    ]),
   })
 }
+
+export const makeCommunityStarDeleteV2 = (community: CommunityPointer, reactionId: string) => ({
+  kind: DELETE,
+  content: "Deleted community star",
+  tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+    ["e", reactionId],
+    ["k", String(REACTION)],
+  ]),
+})
 
 export const makeCommunityStarReactionFilter = (author: string): Filter | undefined => {
   const pubkey = normalizePubkey(author)
@@ -63,7 +52,7 @@ export const makeCommunityStarReactionFilter = (author: string): Filter | undefi
   return {
     kinds: [REACTION],
     authors: [pubkey],
-    "#k": [String(COMMUNITY_DEFINITION_KIND)],
+    "#k": [String(COMMUNITY_DEFINITION_KIND_V2)],
     limit: COMMUNITY_STAR_LIMIT,
   }
 }
@@ -100,19 +89,14 @@ export const makeRecentCommunityStarDeleteFilter = (author: string): Filter | un
 export const parseCommunityStarReaction = (event: TrustedEvent): CommunityStarRef | undefined => {
   if (event.kind !== REACTION || event.content !== COMMUNITY_STAR_CONTENT) return undefined
 
-  const aTag = (event.tags || []).find(tag => tag[0] === "a")
-  const address = parseCommunityDefinitionAddress(aTag?.[1] || "")
-  if (!address) return undefined
+  const community = parseCommunityAuthorityV2(event)
+  if (!community) return undefined
 
   const kTag = (event.tags || []).find(tag => tag[0] === "k")?.[1]
-  if (kTag && kTag !== String(COMMUNITY_DEFINITION_KIND)) return undefined
+  if (kTag !== String(COMMUNITY_DEFINITION_KIND_V2)) return undefined
 
   return {
-    communityPubkey: address.pubkey,
-    relayHints: normalizeRelays([
-      aTag?.[2] || "",
-      ...(event.tags || []).filter(tag => tag[0] === "r").map(tag => tag[1] || ""),
-    ]),
+    community,
     reaction: event,
   }
 }
@@ -143,19 +127,36 @@ export const selectActiveCommunityStars = ({
   author?: string
 }): CommunityStarRef[] => {
   const normalizedAuthor = author ? normalizePubkey(author) : ""
-  const deletedIds = getDeletedReactionIds(deleteEvents, normalizedAuthor)
   const activeByCommunity = new Map<string, CommunityStarRef>()
 
   for (const event of reactions) {
     if (normalizedAuthor && event.pubkey !== normalizedAuthor) continue
-    if (deletedIds.has(event.id)) continue
-
     const star = parseCommunityStarReaction(event)
     if (!star) continue
 
-    const current = activeByCommunity.get(star.communityPubkey)
+    if (
+      deleteEvents.some(deletion => {
+        if (deletion.kind !== DELETE || deletion.pubkey !== event.pubkey) return false
+        if (parseCommunityAuthorityV2(deletion)?.address !== star.community.address) return false
+
+        const eventTags = deletion.tags.filter(tag => tag[0] === "e")
+        const kindTags = deletion.tags.filter(tag => tag[0] === "k")
+        return (
+          eventTags.length === 1 &&
+          eventTags[0].length === 2 &&
+          eventTags[0][1] === event.id &&
+          kindTags.length === 1 &&
+          kindTags[0].length === 2 &&
+          kindTags[0][1] === String(REACTION)
+        )
+      })
+    ) {
+      continue
+    }
+
+    const current = activeByCommunity.get(star.community.address)
     if (!current || event.created_at > current.reaction.created_at) {
-      activeByCommunity.set(star.communityPubkey, star)
+      activeByCommunity.set(star.community.address, star)
     }
   }
 

@@ -8,9 +8,9 @@
   import ReportItem from "@app/components/ReportItem.svelte"
   import {normalizePubkey} from "@app/core/community"
   import {
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
-    activeCommunityPubkey,
     activeCommunityReportState,
   } from "@app/core/community-state"
   import {
@@ -28,12 +28,14 @@
   const {url, event, scopeH = "", allowedAuthors = undefined}: Props = $props()
   const activeCommunityReportAuthors = $derived.by(() => {
     const scope = normalizePubkey(scopeH)
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
+    const pointer = $activeExactCommunityPointer
     if (
       !scope ||
-      scope !== normalizePubkey($activeCommunityPubkey || "") ||
-      scope !== normalizePubkey(definition?.pubkey || "") ||
-      !definition
+      !definition ||
+      !pointer ||
+      definition.pointer.address !== pointer.address ||
+      scope !== definition.communityId
     ) {
       return undefined
     }

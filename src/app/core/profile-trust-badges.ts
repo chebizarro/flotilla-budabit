@@ -1,10 +1,5 @@
 import type {TrustedEvent} from "@welshman/util"
-import {
-  getCommunitySectionDisplayName,
-  normalizePubkey,
-  normalizeRelays,
-  type CommunityDefinition,
-} from "@app/core/community"
+import {normalizePubkey, normalizeRelays, type CommunityDefinitionV2} from "@app/core/community"
 import {
   selectCommunityMemberList,
   type ActiveUserCommunityRef,
@@ -25,7 +20,7 @@ export type SharedProfileCommunityEvidenceItem = {
   key: string
   role: SharedProfileCommunityRole
   communityPubkey: string
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   relayHints: string[]
   adminSectionNames: string[]
   moderatorSections: CommunityMemberSectionRef[]
@@ -52,7 +47,7 @@ export type SharedProfileCommunityEvidenceInput = {
 export type ProfileFlagReportEvidenceItem = {
   key: string
   communityPubkey: string
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   relayHints: string[]
   event: TrustedEvent
   targetPubkey: string
@@ -112,8 +107,10 @@ const getReportReason = (
   return reasonTags.map(getReasonValue).find(Boolean) || event.content?.trim() || ""
 }
 
-const getReportState = (states: UserCommunityReportStates | undefined, communityPubkey: string) =>
-  states instanceof Map ? states.get(communityPubkey) : states?.[communityPubkey]
+const getDefinitionAddress = (definition: CommunityDefinitionV2) => definition.pointer.address
+
+const getReportState = (states: UserCommunityReportStates | undefined, communityAddress: string) =>
+  states instanceof Map ? states.get(communityAddress) : states?.[communityAddress]
 
 const countBanReports = (
   reportState: EffectiveCommunityReportState | undefined,
@@ -122,8 +119,8 @@ const countBanReports = (
   reportState?.personReports.filter(report => normalizePubkey(report.targetPubkey) === targetPubkey)
     .length || 0
 
-const getAdminSectionNames = (definition: CommunityDefinition) =>
-  definition.sections.map(getCommunitySectionDisplayName)
+const getAdminSectionNames = (definition: CommunityDefinitionV2) =>
+  definition.sections.map(section => section.name)
 
 const getRoleSortValue = (item: SharedProfileCommunityEvidenceItem) => {
   if (item.role === "banned") return item.banCount
@@ -163,9 +160,9 @@ const makeEvidenceItem = ({
   const grantCount = role === "member" ? memberSections.length : 0
 
   return {
-    key: `${role}:${ref.communityPubkey}`,
+    key: `${role}:${getDefinitionAddress(ref.definition)}`,
     role,
-    communityPubkey: ref.communityPubkey,
+    communityPubkey: ref.community.controllerPubkey,
     definition: ref.definition,
     relayHints: normalizeRelays([...(ref.relayHints || []), ...(ref.definition.relays || [])]),
     adminSectionNames,
@@ -190,12 +187,13 @@ export const getSharedProfileCommunityEvidenceGroups = ({
   const seenCommunities = new Set<string>()
 
   for (const ref of viewerCommunityRefs) {
-    const communityPubkey = normalizePubkey(ref.communityPubkey)
-    if (!communityPubkey || seenCommunities.has(communityPubkey)) continue
+    const communityPubkey = ref.community.controllerPubkey
+    const communityAddress = getDefinitionAddress(ref.definition)
+    if (!communityPubkey || !communityAddress || seenCommunities.has(communityAddress)) continue
 
-    seenCommunities.add(communityPubkey)
+    seenCommunities.add(communityAddress)
 
-    const reportState = getReportState(reportStates, communityPubkey)
+    const reportState = getReportState(reportStates, communityAddress)
     const banCount = countBanReports(reportState, target)
 
     if (banCount > 0) {
@@ -209,7 +207,7 @@ export const getSharedProfileCommunityEvidenceGroups = ({
       reportState,
     }).find(person => person.pubkey === target)
 
-    if (normalizePubkey(ref.definition.pubkey) === target || member?.isAdmin) {
+    if (ref.definition.controllerPubkey === target || member?.isAdmin) {
       items.push(
         makeEvidenceItem({
           role: "admin",
@@ -265,9 +263,9 @@ export const getProfileFlagReportEvidence = ({
 
   const refsByCommunity = new Map(
     viewerCommunityRefs.flatMap(ref => {
-      const communityPubkey = normalizePubkey(ref.communityPubkey)
+      const communityAddress = getDefinitionAddress(ref.definition)
 
-      return communityPubkey ? [[communityPubkey, ref] as const] : []
+      return communityAddress ? [[communityAddress, ref] as const] : []
     }),
   )
   const items: ProfileFlagReportEvidenceItem[] = []
@@ -281,13 +279,13 @@ export const getProfileFlagReportEvidence = ({
     const report = parseCommunityReport(event)
     if (!report || report.target !== "event" || report.targetPubkey !== target) continue
 
-    const ref = refsByCommunity.get(report.communityPubkey)
+    const ref = refsByCommunity.get(report.community.address)
     if (!ref) continue
 
     seenReports.add(event.id)
     items.push({
-      key: `${report.communityPubkey}:${event.id}`,
-      communityPubkey: report.communityPubkey,
+      key: `${report.community.address}:${event.id}`,
+      communityPubkey: report.controllerPubkey,
       definition: ref.definition,
       relayHints: normalizeRelays([...(ref.relayHints || []), ...(ref.definition.relays || [])]),
       event,

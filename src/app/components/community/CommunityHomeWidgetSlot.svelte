@@ -6,12 +6,12 @@
   import {normalizePubkey} from "@app/core/community"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {
-    activeCommunityDefinition,
     activeCommunityAuthorityReadiness,
-    activeCommunityProfile,
     activeCommunityProfileListEvents,
-    activeCommunityRelays,
     activeCommunityReportState,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
+    activeExactCommunityRelays,
     loadCommunityEventsWithStatus,
   } from "@app/core/community-state"
   import {getCommunitySectionAuthorityPubkeys} from "@app/core/community-permissions"
@@ -39,16 +39,29 @@
     WidgetHomeSlotType,
     WidgetResizeRequest,
   } from "@app/extensions/types"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
+  import {makeExactCommunityInputValue} from "@app/util/community-stars"
 
   type Props = {
     communityPubkey: string
+    communityAddress: string
     relayHints?: string[]
     slotType: WidgetHomeSlotType
   }
 
-  const {communityPubkey, relayHints = [], slotType}: Props = $props()
-
+  const {communityPubkey, communityAddress, relayHints = [], slotType}: Props = $props()
+  const exactCommunity = $derived(
+    $activeExactCommunityPointer?.address === communityAddress
+      ? $activeExactCommunityPointer
+      : undefined,
+  )
+  const exactDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
+  const contextDefinition = $derived(
+    exactDefinition ? {...exactDefinition, pubkey: exactDefinition.controllerPubkey} : undefined,
+  )
   let curatedWidgets = $state<SmartWidgetEvent[]>([])
   let loadKey = ""
   let loadRequestId = 0
@@ -92,7 +105,7 @@
 
   const getWidgetLoadKey = (widget: SmartWidgetEvent) =>
     [
-      normalizePubkey(communityPubkey),
+      communityAddress,
       normalizePubkey($pubkey || ""),
       slotType,
       getWidgetLineId(widget),
@@ -111,9 +124,8 @@
       : ""
   })
   const curationEvidence = $derived.by(() => {
-    const definition = $activeCommunityDefinition
-    const matchesCommunity =
-      definition && normalizePubkey(definition.pubkey) === normalizePubkey(communityPubkey)
+    const definition = exactDefinition
+    const matchesCommunity = definition && definition.pointer.address === communityAddress
     const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
     const reportState = matchesCommunity ? $activeCommunityReportState : undefined
 
@@ -131,11 +143,10 @@
     }
   })
   const communitySharedConfigAuthority = $derived.by(() => {
-    const definition = $activeCommunityDefinition
-    if (!definition || normalizePubkey(definition.pubkey) !== normalizePubkey(communityPubkey)) {
+    const definition = exactDefinition
+    if (!definition) {
       return {
         authorizedPubkeys: new Set<string>(),
-        legacyAuthorizedPubkeys: new Set<string>(),
         descriptorAuthorities: [] as CommunitySharedConfigDescriptorAuthority[],
       }
     }
@@ -164,12 +175,9 @@
     const descriptorAuthorities = Array.from(moderatorsByDescriptor.values())
     return {
       authorizedPubkeys: new Set([
-        normalizePubkey(definition.pubkey),
+        normalizePubkey(definition.controllerPubkey),
         ...descriptorAuthorities.flatMap(authority => Array.from(authority.moderatorPubkeys)),
       ]),
-      // Untagged legacy configs cannot be scoped to a section, so only the
-      // community owner is accepted for home-slot recovery.
-      legacyAuthorizedPubkeys: new Set([normalizePubkey(definition.pubkey)]),
       descriptorAuthorities,
     }
   })
@@ -203,11 +211,10 @@
   })
   const sharedConfigSlotWidgets = $derived.by(() => {
     return getEnabledCommunitySlotWidgetsWithSharedConfig({
-      communityPubkey,
+      communityAddress,
       sharedConfigEvents: communitySharedConfigEvents,
       authorizedPubkeys: communitySharedConfigAuthority.authorizedPubkeys,
       descriptorAuthorities: communitySharedConfigAuthority.descriptorAuthorities,
-      legacyAuthorizedPubkeys: communitySharedConfigAuthority.legacyAuthorizedPubkeys,
       installedWidgets,
       enabledIds: enabledWidgetIds,
       slotType,
@@ -215,55 +222,57 @@
   })
 
   const communityContext = $derived.by(() => {
-    if (
-      !$activeCommunityDefinition ||
-      normalizePubkey($activeCommunityDefinition.pubkey) !== normalizePubkey(communityPubkey) ||
-      !communityReadinessKey
-    ) {
+    if (!exactDefinition || !exactCommunity || !communityReadinessKey) {
       return undefined
     }
 
     return makeCommunityWidgetContext({
-      definition: $activeCommunityDefinition,
-      profile: $activeCommunityProfile,
+      definition: contextDefinition as any,
       profileListEvents: $activeCommunityProfileListEvents,
       reportState: $activeCommunityReportState,
       userPubkey: $pubkey || "",
-      relays: $activeCommunityRelays.length ? $activeCommunityRelays : relayHints,
+      relays: $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints,
       relayHints,
       readinessKey: communityReadinessKey,
     })
   })
   const communityRuntimeContext = $derived.by(() => {
-    const definition = $activeCommunityDefinition
-    if (
-      !communityContext ||
-      !definition ||
-      normalizePubkey(definition.pubkey) !== normalizePubkey(communityPubkey)
-    ) {
+    const definition = exactDefinition
+    if (!communityContext || !definition || !exactCommunity) {
       return undefined
     }
 
     return {
+      community: exactCommunity,
       definition,
       profileListEvents: $activeCommunityProfileListEvents,
       authorityEvidenceSettled: true,
       reportState: $activeCommunityReportState,
-      relays: $activeCommunityRelays.length ? $activeCommunityRelays : relayHints,
+      relays: $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints,
       relayHints,
       communityContext,
     }
   })
-  const frameWidgets = $derived.by(() => {
-    return mergeCommunitySlotWidgets(slotWidgets, sharedConfigSlotWidgets)
-  })
+  const frameWidgets = $derived.by(() =>
+    exactCommunity ? mergeCommunitySlotWidgets(slotWidgets, sharedConfigSlotWidgets) : [],
+  )
 
-  const makeWidgetContext = (widget: SmartWidgetEvent) => ({
-    slot: {type: slotType, label: widget.slot?.label},
-    community: {pubkey: communityPubkey, relays: relayHints},
-    ...(communityContext ? {communityContext} : {}),
-    ...(communityRuntimeContext ? {communityRuntimeContext} : {}),
-  })
+  const makeWidgetContext = (widget: SmartWidgetEvent) => {
+    if (!exactCommunity) return {}
+
+    return {
+      slot: {type: slotType, label: widget.slot?.label},
+      community: {
+        address: exactCommunity.address,
+        controllerPubkey: exactCommunity.controllerPubkey,
+        communityId: exactCommunity.communityId,
+        naddr: exactCommunity.naddr,
+        relays: relayHints,
+      },
+      ...(communityContext ? {communityContext} : {}),
+      ...(communityRuntimeContext ? {communityRuntimeContext} : {}),
+    }
+  }
 
   const resolveInitialWidgetHeight = (loadKey: string, request: WidgetResizeRequest) => {
     if (request.height === undefined || initiallyResolvedWidgetLoads[loadKey]) return
@@ -347,10 +356,10 @@
   $effect(() => {
     void loadRefreshNonce
     const normalizedCommunityPubkey = normalizePubkey(communityPubkey)
-    const relays = $activeCommunityRelays.length ? $activeCommunityRelays : relayHints
+    const relays = $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints
     const authorizedPubkeys = communitySharedConfigAuthority.authorizedPubkeys
     const key = normalizedCommunityPubkey
-      ? `${normalizedCommunityPubkey}:${relays.join("|")}:${Array.from(authorizedPubkeys).sort().join("|")}:${communityReadinessKey}`
+      ? `${communityAddress}:${relays.join("|")}:${Array.from(authorizedPubkeys).sort().join("|")}:${communityReadinessKey}`
       : ""
 
     if (!key || relays.length === 0 || authorizedPubkeys.size === 0) {
@@ -399,11 +408,11 @@
 
   $effect(() => {
     void loadRefreshNonce
-    const input = makeCommunityInputValue({pubkey: communityPubkey, relayHints})
+    const input = exactCommunity ? makeExactCommunityInputValue(exactCommunity) : ""
     const evidence = curationEvidence
     const baseKey =
       input && evidence.ready
-        ? `${slotType}:${normalizePubkey(communityPubkey)}:${normalizePubkey($pubkey || "")}:${relayHints.slice().sort().join(",")}:${evidence.key}`
+        ? `${slotType}:${communityAddress}:${normalizePubkey($pubkey || "")}:${relayHints.slice().sort().join(",")}:${evidence.key}`
         : ""
     const readinessKey = communityReadinessKey
     const key = baseKey ? `${baseKey}:${readinessKey}` : ""

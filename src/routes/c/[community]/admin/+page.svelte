@@ -2,7 +2,7 @@
   import {onDestroy, onMount} from "svelte"
   import {get as getStore, writable} from "svelte/store"
   import {page} from "$app/stores"
-  import {pubkey, repository, signer as sessionSigner} from "@welshman/app"
+  import {deriveProfile, pubkey, repository, signer as sessionSigner} from "@welshman/app"
   import {prep, type EventTemplate, type SignedEvent, type TrustedEvent} from "@welshman/util"
   import Settings from "@assets/icons/settings.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
@@ -24,28 +24,26 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityModeratorRequestReactionEvents,
     activeCommunityModeratorRequestStates,
     activeCommunityModeratorRequests,
-    activeCommunityProfile,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    activeCommunityRelays,
-    clearCommunityBootstrapCache,
+    activeExactCommunityRelays,
     hydratePubkeyProfiles,
     loadCommunityEvents,
     makeCommunityModeratorRequestDeleteFilters,
     makeCommunityModeratorRequestFilters,
     makeCommunityModeratorRequestReactionFilters,
-    setActiveCommunityDefinition,
+    setActiveExactCommunityDefinition,
   } from "@app/core/community-state"
   import {
-    findCommunitySection,
-    getCommunitySectionDisplayName,
     normalizePubkey,
-    parseCommunityDefinition,
-    type CommunityProfileListRef,
+    parseAddressRef,
+    parseCommunityDefinitionV2,
+    type CommunityProfileListRefV2,
   } from "@app/core/community"
   import {
     getEffectiveCommunityModerationActionsByReporter,
@@ -76,7 +74,7 @@
   } from "@app/core/community-publish"
   import {communityAdminSelectedTab, type CommunityAdminTab} from "@app/util/community-admin-tabs"
   import {setChecked} from "@app/util/notifications"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   type RequestStatusFilter = "pending" | "accepted" | "rejected"
   type ModeratorPersonTab = "grants" | "actions"
@@ -85,7 +83,7 @@
     sectionName: string
     displayName: string
     pubkey: string
-    profileLists: CommunityProfileListRef[]
+    profileLists: CommunityProfileListRefV2[]
     status: CommunityModeratorInviteStatus
   }
 
@@ -99,13 +97,25 @@
     banned: boolean
   }
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
-  const adminPath = $derived(communityPubkey ? makeCommunityPath(communityPubkey, "admin") : "")
+  const parsedCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityAddress = $derived(parsedCommunity?.address || "")
+  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
+  const controllerProfileStore = $derived(
+    communityPubkey ? deriveProfile(communityPubkey, parsedCommunity?.relayHints) : undefined,
+  )
+  const controllerProfile = $derived(
+    controllerProfileStore ? getStore(controllerProfileStore) : undefined,
+  )
+  const adminPath = $derived(
+    $activeExactCommunityPointer
+      ? makeExactCommunityPath($activeExactCommunityPointer, "admin")
+      : "",
+  )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      $activeExactCommunityPointer?.address === communityAddress &&
+      $activeExactCommunityDefinition?.pointer.address === communityAddress &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -145,27 +155,28 @@
     Boolean(
       $pubkey &&
       communityBootstrapReady &&
-      $activeCommunityDefinition &&
-      normalizePubkey($pubkey) === normalizePubkey($activeCommunityDefinition.pubkey),
+      $activeExactCommunityDefinition &&
+      normalizePubkey($pubkey) ===
+        normalizePubkey($activeExactCommunityDefinition.controllerPubkey),
     ),
   )
   const moderatorRequestFilters = $derived(
-    communityBootstrapReady && $activeCommunityDefinition
-      ? makeCommunityModeratorRequestFilters($activeCommunityDefinition)
+    communityBootstrapReady && $activeExactCommunityDefinition
+      ? makeCommunityModeratorRequestFilters($activeExactCommunityDefinition)
       : [],
   )
   const moderatorRequestReactionFilters = $derived(
-    communityBootstrapReady && $activeCommunityDefinition
+    communityBootstrapReady && $activeExactCommunityDefinition
       ? makeCommunityModeratorRequestReactionFilters(
-          $activeCommunityDefinition,
+          $activeExactCommunityDefinition,
           $activeCommunityModeratorRequests,
         )
       : [],
   )
   const moderatorRequestDeleteFilters = $derived(
-    communityBootstrapReady && $activeCommunityDefinition
+    communityBootstrapReady && $activeExactCommunityDefinition
       ? makeCommunityModeratorRequestDeleteFilters(
-          $activeCommunityDefinition,
+          $activeExactCommunityDefinition,
           $activeCommunityModeratorRequestReactionEvents,
         )
       : [],
@@ -192,7 +203,7 @@
   const moderatorInviteStates = $derived(
     communityBootstrapReady
       ? getCommunityModeratorInviteStates({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
         })
       : [],
@@ -200,16 +211,16 @@
   const moderatorSectionGrants = $derived.by((): ModeratorSectionGrant[] => {
     if (!communityBootstrapReady) return []
 
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
     if (!definition) return []
 
-    const communityOwner = normalizePubkey(definition.pubkey)
+    const communityOwner = normalizePubkey(definition.controllerPubkey)
 
     return definition.sections.flatMap(section => {
       const pubkeys = Array.from(
         new Set(
           section.profileLists
-            .map(ref => ref.pubkey)
+            .map(ref => parseAddressRef(ref.address)?.pubkey || "")
             .map(normalizePubkey)
             .filter(Boolean),
         ),
@@ -219,7 +230,7 @@
         if (userPubkey === communityOwner) return []
 
         const profileLists = section.profileLists.filter(
-          ref => normalizePubkey(ref.pubkey) === userPubkey,
+          ref => normalizePubkey(parseAddressRef(ref.address)?.pubkey || "") === userPubkey,
         )
         if (profileLists.length === 0) return []
         const statuses = moderatorInviteStates
@@ -236,7 +247,7 @@
         return [
           {
             sectionName: section.name,
-            displayName: getCommunitySectionDisplayName(section),
+            displayName: section.name,
             pubkey: userPubkey,
             profileLists,
             status,
@@ -280,14 +291,16 @@
     moderatorInviteStates.filter(invite => invite.status === "declined").length,
   )
   const communityPublishRelays = $derived(
-    getCommunityScopedPublishRelays($activeCommunityDefinition),
+    getCommunityScopedPublishRelays($activeExactCommunityDefinition),
   )
   const communityProfileRelays = $derived(
-    $activeCommunityRelays.length > 0 ? $activeCommunityRelays : communityPublishRelays,
+    $activeExactCommunityRelays.length > 0 ? $activeExactCommunityRelays : communityPublishRelays,
   )
   const communityDefinitionPublishRelays = $derived(
     getCommunityRootPublishRelays(communityPublishRelays, undefined, {
-      outboxRelays: getPubkeyOutboxRelays($pubkey || $activeCommunityDefinition?.pubkey),
+      outboxRelays: getPubkeyOutboxRelays(
+        $pubkey || $activeExactCommunityDefinition?.controllerPubkey,
+      ),
     }),
   )
   const communityPrimaryRelay = $derived(communityPublishRelays[0] || "")
@@ -364,8 +377,8 @@
   }
 
   const assertCanPublish = () => {
-    if (!communityBootstrapReady || !$activeCommunityDefinition || !canEditCommunity) {
-      pushToast({theme: "error", message: "Log in as this community pubkey first."})
+    if (!communityBootstrapReady || !$activeExactCommunityDefinition || !canEditCommunity) {
+      pushToast({theme: "error", message: "Log in as this community controller pubkey first."})
       return false
     }
 
@@ -389,11 +402,13 @@
     template: EventTemplate,
     createdAt?: number,
   ): Promise<SignedEvent> => {
-    if (!$activeCommunityDefinition || !$sessionSigner) {
-      throw new Error("Log in as this community pubkey first.")
+    if (!$activeExactCommunityDefinition || !$sessionSigner) {
+      throw new Error("Log in as this community controller pubkey first.")
     }
 
-    return $sessionSigner.sign(prep(template, $activeCommunityDefinition.pubkey, createdAt))
+    return $sessionSigner.sign(
+      prep(template, $activeExactCommunityDefinition.controllerPubkey, createdAt),
+    )
   }
 
   const publishVerifiedAdminEvent = async ({
@@ -429,13 +444,12 @@
       relays: communityDefinitionPublishRelays,
       requiredRelay: communityPrimaryRelay,
       label,
-      createdAt: getNextReplacementCreatedAt([$activeCommunityDefinition?.event]),
+      createdAt: getNextReplacementCreatedAt([$activeExactCommunityDefinition?.event]),
     })
-    const definition = parseCommunityDefinition(verified)
+    const definition = parseCommunityDefinitionV2(verified)
 
     if (definition) {
-      clearCommunityBootstrapCache(definition.pubkey)
-      setActiveCommunityDefinition(definition)
+      setActiveExactCommunityDefinition(definition)
     }
 
     return verified
@@ -475,7 +489,10 @@
     const reactions = getActiveReviewReactions(requestState)
 
     for (const [index, reaction] of reactions.entries()) {
-      const deleteEvent = makeModeratorRequestReactionDelete({reactionId: reaction.id})
+      const deleteEvent = makeModeratorRequestReactionDelete({
+        community: requestState.community,
+        reactionId: reaction.id,
+      })
 
       await publishVerifiedAdminEvent({
         template: deleteEvent,
@@ -492,7 +509,7 @@
       await deleteActiveReviewReactions(requestState)
       await publishModeratorReview(requestState, "+")
       const definitionUpdate = makeModeratorPromotionDefinitionUpdate({
-        definition: $activeCommunityDefinition!,
+        definition: $activeExactCommunityDefinition!,
         request: requestState,
       })
 
@@ -504,9 +521,13 @@
   }
 
   const acceptModeratorRequest = (requestState: ModeratorPromotionRequestState) => {
-    if (!assertCanPublish() || !$activeCommunityDefinition) return
+    if (!assertCanPublish() || !$activeExactCommunityDefinition) return
 
-    if (!findCommunitySection($activeCommunityDefinition, requestState.sectionName)) {
+    if (
+      !$activeExactCommunityDefinition.sections.some(
+        section => section.name === requestState.sectionName,
+      )
+    ) {
       pushToast({theme: "error", message: "This request targets a section that no longer exists."})
       return
     }
@@ -535,7 +556,7 @@
       if (revokeGrant) {
         await deleteActiveReviewReactions(requestState)
         const definitionUpdate = makeModeratorGrantRevokeDefinitionUpdate({
-          definition: $activeCommunityDefinition!,
+          definition: $activeExactCommunityDefinition!,
           sectionName: requestState.sectionName,
           moderatorPubkey: requestState.requesterPubkey,
         })
@@ -558,12 +579,14 @@
   }
 
   const rejectModeratorRequest = (requestState: ModeratorPromotionRequestState) => {
-    if (!assertCanPublish() || !$activeCommunityDefinition) return
+    if (!assertCanPublish() || !$activeExactCommunityDefinition) return
 
     const revokeGrant = requestState.status === "accepted"
 
     if (revokeGrant) {
-      const section = findCommunitySection($activeCommunityDefinition, requestState.sectionName)
+      const section = $activeExactCommunityDefinition.sections.find(
+        section => section.name === requestState.sectionName,
+      )
       const hasProfileListRef = section?.profileLists.some(
         ref => ref.address === requestState.profileListRef.address,
       )
@@ -593,11 +616,11 @@
   }
 
   const saveModeratorGrants = async (moderatorPubkey: string, sectionNames: string[]) => {
-    if (!assertCanPublish() || !$activeCommunityDefinition) return
+    if (!assertCanPublish() || !$activeExactCommunityDefinition) return
 
     await runVerifiedAdminAction(async () => {
       const definitionUpdate = makeModeratorGrantEditDefinitionUpdate({
-        definition: $activeCommunityDefinition!,
+        definition: $activeExactCommunityDefinition!,
         moderatorPubkey,
         sectionNames,
         relays: communityPublishRelays,
@@ -614,15 +637,15 @@
   }
 
   const openModeratorGrantEditor = (person: ModeratorGrantPerson) => {
-    if (!assertCanPublish() || !$activeCommunityDefinition) return
+    if (!assertCanPublish() || !$activeExactCommunityDefinition) return
 
     adminPublishStatus.set("")
     pushModal(CommunityModeratorGrantEditor, {
       pubkey: person.pubkey,
       relays: communityProfileRelays,
-      sections: $activeCommunityDefinition.sections.map(section => ({
+      sections: $activeExactCommunityDefinition.sections.map(section => ({
         name: section.name,
-        displayName: getCommunitySectionDisplayName(section),
+        displayName: section.name,
       })),
       selectedSectionNames: person.grants.map(grant => grant.sectionName),
       onSave: (sectionNames: string[]) => saveModeratorGrants(person.pubkey, sectionNames),
@@ -653,25 +676,25 @@
   })
 
   $effect(() => {
-    if (!communityBootstrapReady || $activeCommunityRelays.length === 0) return
+    if (!communityBootstrapReady || $activeExactCommunityRelays.length === 0) return
     if (moderatorRequestFilters.length === 0) return
-    const key = makeHydrationKey($activeCommunityRelays, moderatorRequestFilters)
+    const key = makeHydrationKey($activeExactCommunityRelays, moderatorRequestFilters)
     if (key === moderatorRequestHydrationKey) return
 
     moderatorRequestHydrationKey = key
-    void loadCommunityEvents($activeCommunityRelays, moderatorRequestFilters).catch(error => {
+    void loadCommunityEvents($activeExactCommunityRelays, moderatorRequestFilters).catch(error => {
       console.warn("[community] Failed to hydrate admin moderator requests", error)
     })
   })
 
   $effect(() => {
-    if (!communityBootstrapReady || $activeCommunityRelays.length === 0) return
+    if (!communityBootstrapReady || $activeExactCommunityRelays.length === 0) return
     if (moderatorRequestReactionFilters.length === 0) return
-    const key = makeHydrationKey($activeCommunityRelays, moderatorRequestReactionFilters)
+    const key = makeHydrationKey($activeExactCommunityRelays, moderatorRequestReactionFilters)
     if (key === moderatorReactionHydrationKey) return
 
     moderatorReactionHydrationKey = key
-    void loadCommunityEvents($activeCommunityRelays, moderatorRequestReactionFilters).catch(
+    void loadCommunityEvents($activeExactCommunityRelays, moderatorRequestReactionFilters).catch(
       error => {
         console.warn("[community] Failed to hydrate admin moderator request reviews", error)
       },
@@ -679,15 +702,17 @@
   })
 
   $effect(() => {
-    if (!communityBootstrapReady || $activeCommunityRelays.length === 0) return
+    if (!communityBootstrapReady || $activeExactCommunityRelays.length === 0) return
     if (moderatorRequestDeleteFilters.length === 0) return
-    const key = makeHydrationKey($activeCommunityRelays, moderatorRequestDeleteFilters)
+    const key = makeHydrationKey($activeExactCommunityRelays, moderatorRequestDeleteFilters)
     if (key === moderatorDeleteHydrationKey) return
 
     moderatorDeleteHydrationKey = key
-    void loadCommunityEvents($activeCommunityRelays, moderatorRequestDeleteFilters).catch(error => {
-      console.warn("[community] Failed to hydrate admin moderator review deletes", error)
-    })
+    void loadCommunityEvents($activeExactCommunityRelays, moderatorRequestDeleteFilters).catch(
+      error => {
+        console.warn("[community] Failed to hydrate admin moderator review deletes", error)
+      },
+    )
   })
 
   onDestroy(() => {
@@ -701,7 +726,7 @@
   {/snippet}
   {#snippet title()}<strong>Community Admin</strong>{/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={$activeExactCommunityPointer?.naddr} />
   {/snippet}
 </PageBar>
 
@@ -710,14 +735,14 @@
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading Community Admin...</Spinner>
     </p>
-  {:else if communityAdminUnavailable || !communityBootstrapReady || !$activeCommunityDefinition}
+  {:else if communityAdminUnavailable || !communityBootstrapReady || !$activeExactCommunityDefinition}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
       <p>Community Admin unavailable.</p>
       <Button class="btn btn-neutral btn-sm" onclick={retryCommunityAdmin}>Retry</Button>
     </div>
   {:else if !canEditCommunity}
     <p class="py-8 text-center opacity-70">
-      Log in as this community pubkey to publish community definition updates.
+      Log in as this community controller pubkey to publish community definition updates.
     </p>
   {:else}
     <div class="flex flex-wrap gap-2">
@@ -745,8 +770,8 @@
     {#if adminTab === "settings"}
       <CommunityCreate
         mode="edit"
-        definition={$activeCommunityDefinition}
-        profile={$activeCommunityProfile}
+        definition={$activeExactCommunityDefinition}
+        profile={controllerProfile}
         embedded />
     {:else if adminTab === "requests"}
       <section class="card2 bg-alt flex flex-col gap-4 p-4 shadow-md">

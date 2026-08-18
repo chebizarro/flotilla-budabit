@@ -1,501 +1,302 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
-  COMMUNITY_SECTION_ROOMS,
-  buildCommunityDefinition,
-  findCommunitySection,
-  makeCommunitySetupSection,
-  parseCommunityDefinition,
+  COMMUNITY_DEFINITION_KIND_V2,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+  parseCommunityId,
 } from "./community"
 import {
   MODERATOR_REQUEST_REACTION_KIND,
+  MODERATOR_REQUEST_ROLE,
   getModeratorPromotionRequestStates,
   getModeratorPromotionRequests,
   makeModeratorGrantEditDefinitionUpdate,
   makeModeratorGrantRevokeDefinitionUpdate,
   makeModeratorProfileListRequest,
   makeModeratorPromotionDefinitionUpdate,
+  makeModeratorRequestIdentifier,
   makeModeratorRequestReaction,
   makeModeratorRequestReactionDelete,
+  parseModeratorRequestEvent,
 } from "./community-moderator-requests"
 
-const communityPubkey = "a".repeat(64)
-const requesterPubkey = "b".repeat(64)
-const existingModeratorPubkey = "c".repeat(64)
-const emailDigestService = {
-  servicePubkey: requesterPubkey,
-  requestRelay: "wss://digest-requests.example.com/",
-  handlerAddress: `31990:${existingModeratorPubkey}:daily`,
-  handlerRelay: "wss://digest-handler.example.com/",
-}
-const communityAlertService = {
-  servicePubkey: requesterPubkey,
-  requestRelay: "wss://alerts-requests.example.com/",
-  handlerAddress: `31990:${existingModeratorPubkey}:alerts`,
-  handlerRelay: "wss://alerts-handler.example.com/",
-}
+const secret = (value: number) => new Uint8Array(32).fill(value)
+const controllerPubkey = getPublicKey(secret(1))
+const otherControllerPubkey = getPublicKey(secret(2))
+const communityId = getPublicKey(secret(3))
+const requesterPubkey = getPublicKey(secret(4))
+const existingModeratorPubkey = getPublicKey(secret(5))
+const community = makeCommunityPointer({
+  controllerPubkey,
+  communityId,
+  relayHints: ["wss://relay.example"],
+})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
-    id: "event-id",
-    pubkey: communityPubkey,
+    id: "a".repeat(64),
+    pubkey: controllerPubkey,
     created_at: 1,
     kind: 1,
     tags: [],
     content: "",
-    sig: "sig",
+    sig: "b".repeat(128),
     ...overrides,
   }) as TrustedEvent
 
-const makeDefinition = () => {
-  const setup = makeCommunitySetupSection({
-    communityPubkey,
-    profileListPubkey: existingModeratorPubkey,
-    relays: ["wss://relay.example.com"],
-    name: "General",
-  })
-  const template = buildCommunityDefinition({
-    relays: ["wss://relay.example.com"],
-    sections: [setup],
-    description: "A community",
-    blossomServers: ["https://blossom.example.com"],
-    graspServers: ["wss://grasp.example.com"],
-    emailDigestServices: [emailDigestService],
-    communityAlertServices: [communityAlertService],
-    otherServiceTags: [["service", "future-provider", "opaque"]],
-    mints: [{url: "https://mint.example.com", type: "cashu"}],
-    tos: {ref: "tos-document", relay: "wss://relay.example.com"},
-    location: "Online",
-    geohash: "u4pruydqqvj",
-  })
-
-  return parseCommunityDefinition(
-    makeEvent({kind: COMMUNITY_DEFINITION_KIND, pubkey: communityPubkey, tags: template.tags}),
-  )!
+const rootRef = {
+  address: `30000:${controllerPubkey}:budabit-${communityId}-general-root`,
+  relay: "wss://relay.example",
 }
 
-const makeRequest = ({created_at = 1}: {created_at?: number} = {}) => {
-  const profileList = makeModeratorProfileListRequest({
-    communityPubkey,
+const makeDefinition = () => {
+  const template = buildCommunityDefinitionV2({
+    communityId,
+    name: "Builders",
+    description: "A community",
+    relays: ["wss://relay.example"],
+    sections: [
+      {
+        name: "General",
+        kinds: [{kind: 1111}],
+        profileLists: [rootRef],
+      },
+      {
+        name: "Rooms",
+        kinds: [{kind: 42}],
+        profileLists: [rootRef],
+      },
+    ],
+  })
+  const tags = template.tags.flatMap(tag =>
+    tag[0] === "name"
+      ? [tag, ["x-top", "opaque"]]
+      : tag[0] === "k" && tag[1] === "1111"
+        ? [tag, ["x-section", "opaque"]]
+        : [tag],
+  )
+  return parseCommunityDefinitionV2(makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags}))!
+}
+
+const makeRequestEvent = (pointer = community, created_at = 1) => {
+  const template = makeModeratorProfileListRequest({
+    community: pointer,
     requesterPubkey,
     sectionName: "General",
-    relays: ["wss://relay.example.com"],
+    relays: ["wss://relay.example"],
   })
-
-  return {
-    profileList: makeEvent({
-      id: `profile-list-${created_at}`,
-      pubkey: requesterPubkey,
-      created_at,
-      kind: profileList.kind,
-      tags: profileList.tags,
-    }),
-  }
+  return makeEvent({
+    id: `request-${created_at}`,
+    pubkey: requesterPubkey,
+    created_at,
+    kind: template.kind,
+    tags: template.tags,
+  })
 }
 
-describe("community moderator promotion requests", () => {
-  it("parses requester-owned profile-list request events", () => {
-    const requestEvent = makeRequest()
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [requestEvent.profileList],
-      communityPubkey,
-    })
+const getRequest = (event = makeRequestEvent()) =>
+  getModeratorPromotionRequests({profileListEvents: [event], community})[0]
 
-    expect(request).toMatchObject({
+const findSamePrefixCommunityId = (value: string) => {
+  const prefix = value.slice(0, 12)
+  let suffix = BigInt(`0x${value.slice(12)}`) + 1n
+  while (suffix < 1n << 208n) {
+    const candidate = `${prefix}${suffix.toString(16).padStart(52, "0")}`
+    if (candidate !== value && parseCommunityId(candidate)) return candidate
+    suffix += 1n
+  }
+  throw new Error("Unable to make colliding community ID.")
+}
+
+describe("Communikeys V2 moderator requests", () => {
+  it("builds a full-ID request coordinate with one exact authority pair and role marker", () => {
+    const template = makeModeratorProfileListRequest({
+      community,
       requesterPubkey,
-      communityPubkey,
       sectionName: "General",
+      relays: ["wss://relay.example"],
     })
-    expect(request.profileListRef).toMatchObject({
-      pubkey: requesterPubkey,
-      relay: "wss://relay.example.com/",
-    })
+
+    expect(makeModeratorRequestIdentifier({community, sectionName: "General"})).toBe(
+      `budabit-${communityId}-general-moderator`,
+    )
+    expect(template.tags.filter(tag => tag[0] === "h")).toEqual([["h", communityId]])
+    expect(template.tags.filter(tag => tag[0] === "a" && tag[3] === "community")).toEqual([
+      ["a", community.address, "wss://relay.example", "community"],
+    ])
+    expect(template.tags).toContainEqual(["role", MODERATOR_REQUEST_ROLE])
+    expect(parseModeratorRequestEvent(makeRequestEvent(), community)?.community.address).toBe(
+      community.address,
+    )
   })
 
-  it("uses the latest replaceable request events by address", () => {
-    const older = makeRequest({created_at: 1})
-    const newer = makeRequest({created_at: 2})
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [newer.profileList, older.profileList],
-      communityPubkey,
-    })
+  it("rejects authority mismatches, duplicate scope, wrong role, and another exact branch", () => {
+    const valid = makeRequestEvent()
+    const otherBranch = makeCommunityPointer({
+      controllerPubkey: otherControllerPubkey,
+      communityId,
+    })!
+    const replaceTag = (name: string, replacement: string[]) =>
+      valid.tags.map(tag => (tag[0] === name ? replacement : tag))
 
-    expect(request.profileList.event.id).toBe("profile-list-2")
+    expect(
+      parseModeratorRequestEvent(
+        makeEvent({...valid, tags: replaceTag("h", ["h", getPublicKey(secret(8))])}),
+        community,
+      ),
+    ).toBeUndefined()
+    expect(
+      parseModeratorRequestEvent(
+        makeEvent({...valid, tags: [...valid.tags, ["h", communityId]]}),
+        community,
+      ),
+    ).toBeUndefined()
+    expect(
+      parseModeratorRequestEvent(
+        makeEvent({...valid, tags: replaceTag("role", ["role", "member-request"])}),
+        community,
+      ),
+    ).toBeUndefined()
+    expect(parseModeratorRequestEvent(makeRequestEvent(otherBranch), community)).toBeUndefined()
   })
 
-  it("derives pending, rejected, and deleted-reaction states", () => {
+  it("does not collide when two community IDs share their first 12 hex characters", () => {
+    const collidingId = findSamePrefixCommunityId(communityId)
+    const sibling = makeCommunityPointer({controllerPubkey, communityId: collidingId})!
+
+    expect(collidingId.slice(0, 12)).toBe(communityId.slice(0, 12))
+    expect(makeModeratorRequestIdentifier({community: sibling, sectionName: "General"})).not.toBe(
+      makeModeratorRequestIdentifier({community, sectionName: "General"}),
+    )
+    expect(parseModeratorRequestEvent(makeRequestEvent(sibling), community)).toBeUndefined()
+  })
+
+  it("accepts only controller-authored exact-branch decisions and deletes", () => {
     const definition = makeDefinition()
-    const requestEvent = makeRequest()
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [requestEvent.profileList],
-      communityPubkey,
-    })
-    const listReactionTemplate = makeModeratorRequestReaction({
+    const request = getRequest()
+    const decisionTemplate = makeModeratorRequestReaction({
       request,
       target: request.profileList,
       content: "-",
     })
-    const listReaction = makeEvent({
-      id: "reject-list",
+    const decision = makeEvent({
+      id: "decision",
       kind: MODERATOR_REQUEST_REACTION_KIND,
-      pubkey: communityPubkey,
+      pubkey: controllerPubkey,
       content: "-",
-      tags: listReactionTemplate.tags,
+      tags: decisionTemplate.tags,
     })
-    const deleteListReaction = makeEvent({
-      id: "delete-reject-list",
+    const deleteTemplate = makeModeratorRequestReactionDelete({community, reactionId: decision.id})
+    const deletion = makeEvent({
+      id: "deletion",
       kind: DELETE,
-      pubkey: communityPubkey,
-      tags: makeModeratorRequestReactionDelete({reactionId: listReaction.id}).tags,
+      pubkey: controllerPubkey,
+      tags: deleteTemplate.tags,
     })
+    const otherBranch = makeCommunityPointer({
+      controllerPubkey: otherControllerPubkey,
+      communityId,
+    })!
+    const wrongBranchDecision = {
+      ...decision,
+      tags: decision.tags.map(tag =>
+        tag[0] === "a" && tag[3] === "community"
+          ? ["a", otherBranch.address, "", "community"]
+          : tag,
+      ),
+    } as TrustedEvent
+    const mismatchedDelete = {
+      ...deletion,
+      tags: deletion.tags.map(tag => (tag[0] === "h" ? ["h", getPublicKey(secret(8))] : tag)),
+    } as TrustedEvent
 
-    expect(getModeratorPromotionRequestStates({definition, requests: [request]})[0].status).toBe(
-      "pending",
-    )
-    expect(
-      getModeratorPromotionRequestStates({definition, requests: [request]})[0].statusEvent?.id,
-    ).toBe("profile-list-1")
+    for (const template of [decisionTemplate, deleteTemplate]) {
+      expect(template.tags.filter(tag => tag[0] === "h")).toHaveLength(1)
+      expect(template.tags.filter(tag => tag[0] === "a" && tag[3] === "community")).toHaveLength(1)
+    }
     expect(
       getModeratorPromotionRequestStates({
         definition,
         requests: [request],
-        reactionEvents: [listReaction],
+        reactionEvents: [decision],
       })[0].status,
     ).toBe("rejected")
     expect(
       getModeratorPromotionRequestStates({
         definition,
         requests: [request],
-        reactionEvents: [listReaction],
-      })[0].statusEvent?.id,
-    ).toBe("reject-list")
+        reactionEvents: [decision],
+        deleteEvents: [deletion],
+      })[0].status,
+    ).toBe("pending")
     expect(
       getModeratorPromotionRequestStates({
         definition,
         requests: [request],
-        reactionEvents: [listReaction],
-        deleteEvents: [deleteListReaction],
+        reactionEvents: [{...decision, pubkey: communityId} as TrustedEvent],
       })[0].status,
     ).toBe("pending")
+    expect(
+      getModeratorPromotionRequestStates({
+        definition,
+        requests: [request],
+        reactionEvents: [wrongBranchDecision],
+      })[0].status,
+    ).toBe("pending")
+    expect(
+      getModeratorPromotionRequestStates({
+        definition,
+        requests: [request],
+        reactionEvents: [decision],
+        deleteEvents: [mismatchedDelete],
+      })[0].status,
+    ).toBe("rejected")
   })
 
-  it("appends accepted request refs to the community definition without overwriting refs", () => {
+  it("promotes, edits, and revokes refs losslessly with full-ID coordinates", () => {
     const definition = makeDefinition()
-    const requestEvent = makeRequest()
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [requestEvent.profileList],
-      communityPubkey,
-    })
-    const template = makeModeratorPromotionDefinitionUpdate({definition, request})
-    const updated = parseCommunityDefinition(
-      makeEvent({kind: COMMUNITY_DEFINITION_KIND, pubkey: communityPubkey, tags: template.tags}),
+    const request = getRequest()
+    const promotedTemplate = makeModeratorPromotionDefinitionUpdate({definition, request})
+    const promoted = parseCommunityDefinitionV2(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags: promotedTemplate.tags}),
     )!
-    const section = findCommunitySection(updated, "General")!
 
-    expect(updated.description).toBe("A community")
-    expect(updated.blossomServers).toEqual(["https://blossom.example.com"])
-    expect(updated.graspServers).toEqual(["wss://grasp.example.com"])
-    expect(updated.emailDigestServices).toEqual([emailDigestService])
-    expect(updated.communityAlertServices).toEqual([communityAlertService])
-    expect(updated.otherServiceTags).toEqual([["service", "future-provider", "opaque"]])
-    expect(updated.mints).toEqual([{url: "https://mint.example.com", type: "cashu"}])
-    expect(updated.tos).toEqual({ref: "tos-document", relay: "wss://relay.example.com/"})
-    expect(updated.location).toBe("Online")
-    expect(updated.geohash).toBe("u4pruydqqvj")
-    expect(section.profileLists.map(ref => ref.pubkey)).toEqual([
-      existingModeratorPubkey,
-      requesterPubkey,
-    ])
-    expect(section.badges).toEqual([])
+    expect(promotedTemplate.tags).toContainEqual(["x-top", "opaque"])
+    expect(promotedTemplate.tags).toContainEqual(["x-section", "opaque"])
+    expect(promoted.sections[0].profileLists).toContainEqual(request.profileListRef)
     expect(
-      getModeratorPromotionRequestStates({definition: updated, requests: [request]})[0].status,
+      getModeratorPromotionRequestStates({definition: promoted, requests: [request]})[0].status,
     ).toBe("accepted")
-    expect(
-      getModeratorPromotionRequestStates({definition: updated, requests: [request]})[0].statusEvent
-        ?.id,
-    ).toBe("event-id")
 
-    const secondTemplate = makeModeratorPromotionDefinitionUpdate({definition: updated, request})
-    const secondUpdate = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: secondTemplate.tags,
-      }),
+    const editedTemplate = makeModeratorGrantEditDefinitionUpdate({
+      definition: promoted,
+      moderatorPubkey: requesterPubkey,
+      sectionNames: ["General", "Rooms"],
+    })
+    const edited = parseCommunityDefinitionV2(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags: editedTemplate.tags}),
     )!
-    const secondSection = findCommunitySection(secondUpdate, "General")!
-
-    expect(secondSection.profileLists.map(ref => ref.address)).toEqual(
-      section.profileLists.map(ref => ref.address),
-    )
-    expect(secondSection.badges).toEqual([])
-  })
-
-  it("uses acceptance reactions as accepted status events when available", () => {
-    const definition = makeDefinition()
-    const requestEvent = makeRequest()
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [requestEvent.profileList],
-      communityPubkey,
-    })
-    const acceptedTemplate = makeModeratorPromotionDefinitionUpdate({definition, request})
-    const accepted = parseCommunityDefinition(
-      makeEvent({
-        id: "edited-after-acceptance",
-        created_at: 50,
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: acceptedTemplate.tags,
-      }),
+    const roomsRef = edited.sections[1].profileLists.find(ref =>
+      ref.address.includes(requesterPubkey),
     )!
-    const acceptanceTemplate = makeModeratorRequestReaction({
-      request,
-      target: request.profileList,
-      content: "+",
-    })
-    const acceptanceReaction = makeEvent({
-      id: "acceptance-reaction",
-      created_at: 10,
-      kind: MODERATOR_REQUEST_REACTION_KIND,
-      pubkey: communityPubkey,
-      content: "+",
-      tags: acceptanceTemplate.tags,
-    })
-    const [state] = getModeratorPromotionRequestStates({
-      definition: accepted,
-      requests: [request],
-      reactionEvents: [acceptanceReaction],
-    })
+    expect(roomsRef.address).toContain(`budabit-${communityId}-rooms`)
+    expect(editedTemplate.tags).toContainEqual(["x-top", "opaque"])
+    expect(editedTemplate.tags).toContainEqual(["x-section", "opaque"])
 
-    expect(state.status).toBe("accepted")
-    expect(state.statusEvent?.id).toBe("acceptance-reaction")
-    expect(state.statusChangedAt).toBe(10)
-  })
-
-  it("derives accepted request states from active grants when request events are incomplete", () => {
-    const definition = makeDefinition()
-    const requestEvent = makeRequest()
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [requestEvent.profileList],
-      communityPubkey,
-    })
-    const acceptedTemplate = makeModeratorPromotionDefinitionUpdate({definition, request})
-    const accepted = parseCommunityDefinition(
-      makeEvent({
-        id: "accepted-definition",
-        created_at: 10,
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: acceptedTemplate.tags,
-      }),
-    )!
-    const incompleteRequests = getModeratorPromotionRequests({
-      profileListEvents: [],
-      communityPubkey,
-    })
-
-    const incompleteStates = getModeratorPromotionRequestStates({
-      definition: accepted,
-      requests: incompleteRequests,
-      includeGranted: true,
-    })
-    const derivedState = incompleteStates.find(
-      state => state.requesterPubkey === requesterPubkey && state.sectionName === "General",
-    )
-    const completeStates = getModeratorPromotionRequestStates({
-      definition: accepted,
-      requests: [request],
-      includeGranted: true,
-    }).filter(state => state.requesterPubkey === requesterPubkey && state.sectionName === "General")
-
-    expect(incompleteRequests).toEqual([])
-    expect(derivedState).toMatchObject({
-      status: "accepted",
-      derivedFromGrant: true,
-      profileListRef: {address: request.profileListRef.address},
-    })
-    expect(derivedState?.statusEvent?.id).toBe("accepted-definition")
-    expect(completeStates).toHaveLength(1)
-    expect(completeStates[0].derivedFromGrant).toBeUndefined()
-  })
-
-  it("revokes moderator refs from one section without touching other refs", () => {
-    const general = makeCommunitySetupSection({
-      communityPubkey,
-      profileListPubkey: existingModeratorPubkey,
-      relays: ["wss://relay.example.com"],
-      name: "General",
-    })
-    const rooms = makeCommunitySetupSection({
-      communityPubkey,
-      profileListPubkey: requesterPubkey,
-      relays: ["wss://relay.example.com"],
-      name: COMMUNITY_SECTION_ROOMS,
-    })
-    const definition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: buildCommunityDefinition({
-          relays: ["wss://relay.example.com"],
-          sections: [general, rooms],
-          description: "A community",
-          blossomServers: ["https://blossom.example.com"],
-          graspServers: ["wss://grasp.example.com"],
-          emailDigestServices: [emailDigestService],
-          communityAlertServices: [communityAlertService],
-          otherServiceTags: [["service", "future-provider", "opaque"]],
-          mints: [{url: "https://mint.example.com", type: "cashu"}],
-          tos: {ref: "tos-document", relay: "wss://relay.example.com"},
-          location: "Online",
-          geohash: "u4pruydqqvj",
-        }).tags,
-      }),
-    )!
-    const requestEvent = makeRequest()
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [requestEvent.profileList],
-      communityPubkey,
-    })
-    const acceptedTemplate = makeModeratorPromotionDefinitionUpdate({definition, request})
-    const accepted = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: acceptedTemplate.tags,
-      }),
-    )!
-    const revokeTemplate = makeModeratorGrantRevokeDefinitionUpdate({
-      definition: accepted,
+    const revokedTemplate = makeModeratorGrantRevokeDefinitionUpdate({
+      definition: edited,
       sectionName: "General",
       moderatorPubkey: requesterPubkey,
     })
-    const revoked = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: revokeTemplate.tags,
-      }),
+    const revoked = parseCommunityDefinitionV2(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags: revokedTemplate.tags}),
     )!
-    const revokedGeneral = findCommunitySection(revoked, "General")!
-    const revokedRooms = findCommunitySection(revoked, COMMUNITY_SECTION_ROOMS)!
-
-    expect(revoked.description).toBe("A community")
-    expect(revoked.blossomServers).toEqual(["https://blossom.example.com"])
-    expect(revoked.graspServers).toEqual(["wss://grasp.example.com"])
-    expect(revoked.emailDigestServices).toEqual([emailDigestService])
-    expect(revoked.communityAlertServices).toEqual([communityAlertService])
-    expect(revoked.mints).toEqual([{url: "https://mint.example.com", type: "cashu"}])
-    expect(revoked.tos).toEqual({ref: "tos-document", relay: "wss://relay.example.com/"})
-    expect(revoked.location).toBe("Online")
-    expect(revoked.geohash).toBe("u4pruydqqvj")
-    expect(revokedGeneral.profileLists.map(ref => ref.pubkey)).toEqual([existingModeratorPubkey])
-    expect(revokedGeneral.badges).toEqual([])
-    expect(revokedRooms.profileLists.map(ref => ref.pubkey)).toEqual([requesterPubkey])
-    expect(revokedRooms.badges).toEqual([])
-  })
-
-  it("edits moderator refs across sections in one definition update", () => {
-    const general = makeCommunitySetupSection({
-      communityPubkey,
-      profileListPubkey: existingModeratorPubkey,
-      relays: ["wss://relay.example.com"],
-      name: "General",
-    })
-    const rooms = makeCommunitySetupSection({
-      communityPubkey,
-      profileListPubkey: existingModeratorPubkey,
-      relays: ["wss://relay.example.com"],
-      name: COMMUNITY_SECTION_ROOMS,
-    })
-    const goals = makeCommunitySetupSection({
-      communityPubkey,
-      profileListPubkey: requesterPubkey,
-      relays: ["wss://relay.example.com"],
-      name: "Goals",
-    })
-    const definition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: buildCommunityDefinition({
-          relays: ["wss://relay.example.com"],
-          sections: [general, rooms, goals],
-          description: "A community",
-          blossomServers: ["https://blossom.example.com"],
-          graspServers: ["wss://grasp.example.com"],
-          emailDigestServices: [emailDigestService],
-          communityAlertServices: [communityAlertService],
-          otherServiceTags: [["service", "future-provider", "opaque"]],
-          mints: [{url: "https://mint.example.com", type: "cashu"}],
-          tos: {ref: "tos-document", relay: "wss://relay.example.com"},
-          location: "Online",
-          geohash: "u4pruydqqvj",
-        }).tags,
-      }),
-    )!
-    const requestEvent = makeRequest()
-    const [request] = getModeratorPromotionRequests({
-      profileListEvents: [requestEvent.profileList],
-      communityPubkey,
-    })
-    const acceptedTemplate = makeModeratorPromotionDefinitionUpdate({definition, request})
-    const accepted = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: acceptedTemplate.tags,
-      }),
-    )!
-    const acceptedGeneral = findCommunitySection(accepted, "General")!
-    const preservedRequestRef = acceptedGeneral.profileLists.find(
-      ref => ref.pubkey === requesterPubkey,
-    )!
-    const editTemplate = makeModeratorGrantEditDefinitionUpdate({
-      definition: accepted,
-      moderatorPubkey: requesterPubkey,
-      sectionNames: ["General", COMMUNITY_SECTION_ROOMS],
-      relays: ["wss://relay.example.com"],
-    })
-    const edited = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: editTemplate.tags,
-      }),
-    )!
-    const editedGeneral = findCommunitySection(edited, "General")!
-    const editedRooms = findCommunitySection(edited, COMMUNITY_SECTION_ROOMS)!
-    const editedGoals = findCommunitySection(edited, "Goals")!
-    const newRoomsRef = editedRooms.profileLists.find(ref => ref.pubkey === requesterPubkey)!
-
-    expect(edited.description).toBe("A community")
-    expect(edited.blossomServers).toEqual(["https://blossom.example.com"])
-    expect(edited.graspServers).toEqual(["wss://grasp.example.com"])
-    expect(edited.emailDigestServices).toEqual([emailDigestService])
-    expect(edited.communityAlertServices).toEqual([communityAlertService])
-    expect(edited.otherServiceTags).toEqual([["service", "future-provider", "opaque"]])
-    expect(edited.mints).toEqual([{url: "https://mint.example.com", type: "cashu"}])
-    expect(edited.tos).toEqual({ref: "tos-document", relay: "wss://relay.example.com/"})
-    expect(edited.location).toBe("Online")
-    expect(edited.geohash).toBe("u4pruydqqvj")
-    expect(editedGeneral.profileLists.map(ref => ref.pubkey)).toEqual([
-      existingModeratorPubkey,
-      requesterPubkey,
-    ])
-    expect(editedGeneral.profileLists.find(ref => ref.pubkey === requesterPubkey)?.address).toBe(
-      preservedRequestRef.address,
-    )
-    expect(editedRooms.profileLists.map(ref => ref.pubkey)).toEqual([
-      existingModeratorPubkey,
-      requesterPubkey,
-    ])
-    expect(newRoomsRef.identifier).toBe(COMMUNITY_SECTION_ROOMS)
-    expect(newRoomsRef.relay).toBe("wss://relay.example.com/")
-    expect(editedGoals.profileLists.map(ref => ref.pubkey)).toEqual([])
-    expect(editedGeneral.badges).toEqual([])
-    expect(editedRooms.badges).toEqual([])
-    expect(editedGoals.badges).toEqual([])
+    expect(revoked.sections[0].profileLists).toEqual([rootRef])
+    expect(revoked.sections[1].profileLists).toContainEqual(roomsRef)
+    expect(revokedTemplate.tags).toContainEqual(["x-top", "opaque"])
+    expect(revokedTemplate.tags).toContainEqual(["x-section", "opaque"])
   })
 })

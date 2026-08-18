@@ -14,9 +14,9 @@
   import ProfileName from "@app/components/ProfileName.svelte"
   import {MESSAGE_KINDS} from "@app/core/state"
   import {
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityRelays,
     activeCommunityProfileListEvents,
-    activeCommunityRelays,
     activeCommunityReportState,
     getCommunityBadgeReadRelays,
   } from "@app/core/community-state"
@@ -42,12 +42,12 @@
   const filters: Filter[] = [{authors: [pubkey], limit: 1}]
   const events = deriveArray(deriveEventsById({repository, filters}))
   const badgeRelays = $derived(
-    getCommunityBadgeReadRelays({communityRelays: $activeCommunityRelays, pubkeys: [pubkey]}),
+    getCommunityBadgeReadRelays({communityRelays: $activeExactCommunityRelays, pubkeys: [pubkey]}),
   )
   const badgeDefinitionFilters = $derived(
-    $activeCommunityDefinition
+    $activeExactCommunityDefinition
       ? makeCommunityBadgeDefinitionFilters({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
         })
@@ -57,7 +57,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: badgeDefinitionFilters})),
   )
   const badgeDefinitions = $derived.by((): CommunityBadgeDefinition[] => {
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
     if (!definition) return []
 
     const creators = getCommunityBadgeCreatorPubkeys({
@@ -67,7 +67,7 @@
     })
 
     return $badgeDefinitionEvents
-      .map(event => parseCommunityBadgeDefinition(event, definition.pubkey))
+      .map(event => parseCommunityBadgeDefinition(event, definition.pointer))
       .filter((badge): badge is CommunityBadgeDefinition => Boolean(badge))
       .filter(badge => creators.includes(badge.pubkey))
   })
@@ -86,9 +86,9 @@
     deriveEventsAsc(deriveEventsById({repository, filters: profileBadgeFilters})),
   )
   const acceptedBadges = $derived.by(() =>
-    $activeCommunityDefinition
+    $activeExactCommunityDefinition
       ? getAcceptedCommunityBadges({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
           profileListEvents: $activeCommunityProfileListEvents,
           badgeAwardEvents: $badgeAwardEvents,
@@ -181,11 +181,9 @@
             <div class="rounded-box bg-base-200/60 p-3">
               <div class="text-xs uppercase tracking-wide opacity-60">Definition</div>
               <div class="mt-1 break-all text-xs opacity-75">{badge.definition.address}</div>
-              {#if badge.definition.communityPubkey}
-                <div class="mt-2 text-xs opacity-70">
-                  Community <ProfileName pubkey={badge.definition.communityPubkey} />
-                </div>
-              {/if}
+              <div class="mt-2 text-xs opacity-70">
+                Controller <ProfileName pubkey={badge.definition.community.controllerPubkey} />
+              </div>
             </div>
 
             <div class="rounded-box bg-base-200/60 p-3">

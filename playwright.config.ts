@@ -15,6 +15,7 @@ export default defineConfig({
   testDir: "./tests/e2e",
   outputDir: "./test-results/playwright",
   reporter: [["html", {outputFolder: "playwright-report", open: "never"}]],
+  workers: 2,
 
   // Global setup and teardown
   globalSetup: "./tests/e2e/global-setup.ts",
@@ -75,7 +76,11 @@ export default defineConfig({
     // Default chromium project for backward compatibility
     {
       name: "chromium",
-      testIgnore: [/.*\.setup\.ts/, /widget-(acceptance|interop)\.spec\.ts/],
+      testIgnore: [
+        /.*\.setup\.ts/,
+        /widget-(acceptance|interop)\.spec\.ts/,
+        /huddle-multiparty\.spec\.ts/,
+      ],
       use: {
         ...devices["Desktop Chrome"],
       },

@@ -6,12 +6,11 @@ import {verifyEvent} from "nostr-tools/pure"
 import {pushToast} from "@app/util/toast"
 import {activeRepoClass} from "@app/core/git-state"
 import {
-  activeCommunityDefinition,
+  activeExactCommunityDefinition,
+  activeExactCommunityPointer,
   activeCommunityPermissionStatus,
   activeCommunityProfileListEvents,
-  activeCommunityRelayHints,
-  activeCommunityRelays,
-  activeCommunityPublishRelays,
+  activeExactCommunityRelays,
   activeCommunityReportState,
   authenticateCommunityRelays,
   getCommunityPermissionReadiness,
@@ -23,11 +22,12 @@ import {
   type CommunityRelayLoadResult,
 } from "@app/core/community-state"
 import {
-  TARGETED_PUBLICATION_KIND,
+  TARGETED_PUBLICATION_KIND_V2,
   PROFILE_LIST_KIND,
   normalizePubkey,
   normalizeRelays,
-  type CommunityDefinition,
+  parseAddressRef,
+  type CommunityDefinitionV2,
 } from "@app/core/community"
 import {
   filterAuthorizedCommunityDescriptorEvents,
@@ -322,13 +322,13 @@ const verifyExternallySignedEvent = (event: any) =>
   })
 
 const authenticatePublishCommunityRelays = async (relays: string[] = []) => {
-  const activeRelaySet = new Set(normalizeRelayUrls(get(activeCommunityPublishRelays)))
+  const activeRelaySet = new Set(normalizeRelayUrls(get(activeExactCommunityRelays)))
   const communityRelays = relays.filter(relay => activeRelaySet.has(relay))
 
   if (communityRelays.length === 0) return
 
   await authenticateCommunityRelays(communityRelays, {
-    priorityRelays: get(activeCommunityRelayHints),
+    priorityRelays: get(activeExactCommunityPointer)?.relayHints || [],
   })
 }
 
@@ -584,7 +584,7 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
     const {event, relays} = parseNostrPublishPayload(payload)
     if (!relays?.length) throw new Error("No valid publish relays provided")
     if (
-      event?.kind === TARGETED_PUBLICATION_KIND ||
+      event?.kind === TARGETED_PUBLICATION_KIND_V2 ||
       (Array.isArray(event?.tags) &&
         event.tags.some((tag: unknown) => Array.isArray(tag) && tag[0] === "h"))
     ) {
@@ -871,20 +871,27 @@ const makeCommunitySharedConfigIdentifier = ({
   namespace,
   key,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   namespace: string
   key: string
-}) => `${COMMUNITY_SHARED_CONFIG_PREFIX}:${normalizePubkey(definition.pubkey)}:${namespace}:${key}`
+}) => `${COMMUNITY_SHARED_CONFIG_PREFIX}:${definition.pointer.address}:${namespace}:${key}`
 
-const makeCommunityProfileListFilters = (definition: CommunityDefinition) =>
+const makeCommunityProfileListFilters = (definition: CommunityDefinitionV2) =>
   definition.sections
     .flatMap(section => section.profileLists)
-    .map(ref => ({
-      kinds: [PROFILE_LIST_KIND],
-      authors: [ref.pubkey],
-      "#d": [ref.identifier],
-      limit: 1,
-    }))
+    .flatMap(ref => {
+      const address = parseAddressRef(ref.address)
+      return address
+        ? [
+            {
+              kinds: [PROFILE_LIST_KIND],
+              authors: [address.pubkey],
+              "#d": [address.identifier],
+              limit: 1,
+            },
+          ]
+        : []
+    })
 
 const dedupeEvents = <T extends {id?: string}>(events: T[]) =>
   Array.from(new Map(events.filter(event => event.id).map(event => [event.id, event])).values())
@@ -998,27 +1005,15 @@ const selectAuthorizedLiveStreams = ({
     )
     .slice(0, limit)
 
-const getLegacySharedConfigAuthors = (resolved: ResolvedCommunityEventDescriptor[]) => {
-  return new Set(
-    resolved
-      .flatMap(info => info.moderatorPubkeys)
-      .map(normalizePubkey)
-      .filter(Boolean),
-  )
-}
-
 const selectCommunitySharedConfigEvent = (
   events: any[],
   resolved: ResolvedCommunityEventDescriptor[],
 ) => {
-  const legacyAuthorizedPubkeys = getLegacySharedConfigAuthors(resolved)
-
   return events
     .filter(event =>
       isAuthorizedCommunitySharedConfigEvent({
         event,
         descriptorAuthorities: resolved,
-        legacyAuthorizedPubkeys,
         requireExactDescriptors: true,
       }),
     )
@@ -1144,7 +1139,7 @@ const isCommunityAuthorityLoading = (snapshot: ReturnType<typeof getCommunityReq
   return (
     getCommunityPermissionReadiness({
       status,
-      communityPubkey: snapshot.definition.pubkey,
+      communityPubkey: snapshot.definition.controllerPubkey,
       expectedKeyPrefix,
     }) === "loading"
   )
@@ -1176,6 +1171,10 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
 
   if (extensionRuntimeContext?.definition) {
     const definition = extensionRuntimeContext.definition
+    const community = extensionRuntimeContext.community
+    if (community.address !== definition.pointer.address) {
+      throw makeCommunityContextNotReadyError("Community context branch does not match definition")
+    }
     const profileListEvents = extensionRuntimeContext.profileListEvents || []
     const reportState = extensionRuntimeContext.reportState
     const relayHints = extensionRuntimeContext.relayHints?.length
@@ -1209,6 +1208,7 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
 
     return {
       source: "runtime" as const,
+      community,
       definition,
       profileListEvents,
       authorityEvidenceSettled: extensionRuntimeContext.authorityEvidenceSettled === true,
@@ -1221,11 +1221,11 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
     }
   }
 
-  const definition = get(activeCommunityDefinition)
+  const definition = get(activeExactCommunityDefinition)
   const profileListEvents = get(activeCommunityProfileListEvents)
   const reportState = get(activeCommunityReportState)
-  const activeRelays = get(activeCommunityRelays)
-  const activeRelayHints = get(activeCommunityRelayHints)
+  const activeRelays = get(activeExactCommunityRelays)
+  const activeRelayHints = get(activeExactCommunityPointer)?.relayHints || []
   const userPubkey = get(activeUserPubkey) || ""
 
   if (!definition) {
@@ -1234,8 +1234,7 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
 
   const extensionCommunityContext = getExtensionCommunityContext(ext)
   const matchingExtensionCommunityContext =
-    extensionCommunityContext &&
-    normalizePubkey(extensionCommunityContext.pubkey) === normalizePubkey(definition.pubkey)
+    extensionCommunityContext?.definitionAddress === definition.pointer.address
       ? extensionCommunityContext
       : undefined
   const relayHints = matchingExtensionCommunityContext?.relayHints?.length
@@ -1266,12 +1265,13 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
   const authorityEvidenceSettled =
     getCommunityPermissionReadiness({
       status: permissionStatus,
-      communityPubkey: definition.pubkey,
+      communityPubkey: definition.controllerPubkey,
       expectedKeyPrefix: permissionKeyPrefix,
     }) === "ready"
 
   return {
     source: "active" as const,
+    community: definition.pointer,
     definition,
     profileListEvents,
     authorityEvidenceSettled,
@@ -1636,7 +1636,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const authorizedCachedExactRefEvents = filterExactCommunityRefEvents(
       cachedExactRefEvents as TrustedEvent[],
       exactRefFilters,
-      snapshot.definition.pubkey,
+      snapshot.definition.controllerPubkey,
       descriptorInfos,
     )
 
@@ -1653,7 +1653,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       })
       const events = filterCommunityDescriptorEvents(
         authorizedCachedExactRefEvents as any,
-        snapshot.definition.pubkey,
+        snapshot.definition.controllerPubkey,
         descriptorInfos.map(info => info.descriptor),
       )
         .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
@@ -1679,14 +1679,14 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const exactRefEvents = filterExactCommunityRefEvents(
       dedupeEvents([...cachedExactRefEvents, ...loadedExactRefResult.events]) as TrustedEvent[],
       exactRefFilters,
-      snapshot.definition.pubkey,
+      snapshot.definition.controllerPubkey,
       descriptorInfos,
     )
 
     if (request.refs?.length) {
       const events = filterCommunityDescriptorEvents(
         exactRefEvents as any,
-        snapshot.definition.pubkey,
+        snapshot.definition.controllerPubkey,
         descriptorInfos.map(info => info.descriptor),
       )
         .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
@@ -1715,6 +1715,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     }
 
     const initialPlan = makeCommunityDescriptorQueryPlan({
+      community: snapshot.community,
       definition: snapshot.definition,
       profileListEvents: snapshot.profileListEvents,
       reportState: snapshot.reportState,
@@ -1745,6 +1746,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       ...loadedTargetingResult.events,
     ]).filter(event => matchFilters(initialPlan.localTargetingFilters, event))
     const plan = makeCommunityDescriptorQueryPlan({
+      community: snapshot.community,
       definition: snapshot.definition,
       profileListEvents: snapshot.profileListEvents,
       reportState: snapshot.reportState,
@@ -1760,7 +1762,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
         return (
           filterCommunityDescriptorEvents(
             [event],
-            snapshot.definition.pubkey,
+            snapshot.definition.controllerPubkey,
             plan.descriptors.filter(descriptor => targetKindSet.has(descriptor.kind)),
           ).length > 0
         )
@@ -1769,7 +1771,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       return (
         filterAuthorizedCommunityDescriptorEvents(
           [event],
-          snapshot.definition.pubkey,
+          snapshot.definition.controllerPubkey,
           descriptorInfos,
         ).length > 0
       )
@@ -1790,7 +1792,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     )
     const events = filterCommunityDescriptorEvents(
       dedupeEvents([...exactRefEvents, ...admittedOriginalEvents]) as any,
-      snapshot.definition.pubkey,
+      snapshot.definition.controllerPubkey,
       plan.descriptors,
     ).sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
     const limitedEvents = events.slice(0, request.limit)
@@ -1878,7 +1880,7 @@ registerBridgeHandler("community:queryLiveStreams", async (payload, ext) => {
       })
     }
 
-    const communityPubkey = normalizePubkey(snapshot.definition.pubkey)
+    const communityPubkey = normalizePubkey(snapshot.definition.controllerPubkey)
     const selectEvents = (events: any[]) =>
       selectAuthorizedLiveStreams({
         events,
@@ -2096,7 +2098,7 @@ registerBridgeHandler("community:publishSharedConfig", async (payload, ext) => {
       content: JSON.stringify(request.config),
       tags: [
         ["d", identifier],
-        ["p", normalizePubkey(snapshot.definition.pubkey)],
+        ["a", snapshot.definition.pointer.address],
         ["namespace", request.namespace],
         ["key", request.key],
         ...request.descriptors.map(descriptor =>

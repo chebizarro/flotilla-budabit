@@ -16,9 +16,9 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
   } from "@app/core/community-state"
   import {makeCommunityThread} from "@app/core/community-threads"
@@ -28,25 +28,28 @@
     canWriteCommunityTarget,
     getCommunityWriteTargetSectionName,
   } from "@app/core/community-permissions"
-  import {
-    makeCommunityPath,
-    makeCommunityThreadPath,
-    parseCommunityRouteParam,
-  } from "@app/util/routes"
+  import {makeExactCommunityThreadPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
-  const threadsPath = $derived(communityPubkey ? makeCommunityPath(communityPubkey, "threads") : "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
+  const threadsPath = $derived(routeCommunity ? makeExactCommunityThreadPath(routeCommunity) : "")
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -55,7 +58,7 @@
   )
   const threadSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityReady ? $activeCommunityDefinition : undefined,
+      communityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.thread,
     ),
   )
@@ -64,9 +67,9 @@
     Boolean(
       $pubkey &&
       communityReady &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.thread,
@@ -78,7 +81,7 @@
   const createThread = async () => {
     const trimmedTitle = title.trim()
     const trimmedContent = content.trim()
-    if (!communityPubkey || !trimmedTitle || !trimmedContent || creating) return
+    if (!routeCommunity || !communityId || !trimmedTitle || !trimmedContent || creating) return
     if (!communityReady) {
       pushToast({
         theme: "error",
@@ -94,7 +97,7 @@
       return
     }
 
-    const relays = $activeCommunityPublishRelays
+    const relays = $activeExactCommunityRelays
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return
@@ -106,7 +109,11 @@
       const event = prep(
         makeEvent(
           THREAD,
-          makeCommunityThread({communityPubkey, title: trimmedTitle, content: trimmedContent}),
+          makeCommunityThread({
+            communityPubkey: communityId,
+            title: trimmedTitle,
+            content: trimmedContent,
+          }),
         ),
         $pubkey!,
       )
@@ -114,7 +121,7 @@
         relays,
         event,
         label: "Community thread",
-        href: makeCommunityThreadPath(communityPubkey, event.id),
+        href: makeExactCommunityThreadPath(routeCommunity, event.id),
         preview: "retain-on-failure",
       })
     } catch (error) {
@@ -147,7 +154,7 @@
     <strong>Create a Thread</strong>
   {/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={routeCommunity?.naddr} />
   {/snippet}
 </PageBar>
 

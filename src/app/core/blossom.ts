@@ -2,7 +2,7 @@ import {get} from "svelte/store"
 import {localStorageProvider, synced} from "@welshman/store"
 import {normalizeUrl} from "@welshman/lib"
 import type {TrustedEvent} from "@welshman/util"
-import type {CommunityDefinition} from "@app/core/community"
+import {type CommunityDefinitionV2} from "@app/core/community"
 import {
   selectUserCommunityRefs,
   type UserCommunityReportStates,
@@ -164,12 +164,13 @@ export type BlossomListedBlob = BlossomBlobDescriptor & {
 
 export type BlossomUploadContext = {
   type: BlossomUploadContextType
-  communityPubkey?: string
+  communityAddress?: string
   communityName?: string
   label?: string
 }
 
 export type BlossomMemberCommunityRef = {
+  communityAddress: string
   communityPubkey: string
   communityName?: string
   relayHints: string[]
@@ -185,6 +186,7 @@ export type BlossomServerTarget = {
   group: BlossomMirrorTargetGroup
   priority: number
   label: string
+  communityAddress?: string
   communityPubkey?: string
   communityName?: string
 }
@@ -199,6 +201,7 @@ export type BlossomServerGroups = {
 export type BuildBlossomServerGroupsOptions = {
   currentCommunity?: {
     servers?: string[]
+    communityAddress?: string
     communityPubkey?: string
     communityName?: string
   }
@@ -374,7 +377,7 @@ export const selectMemberCommunityBlossomRefs = ({
   reportStates,
 }: {
   author?: string
-  definitions?: CommunityDefinition[]
+  definitions?: CommunityDefinitionV2[]
   definitionEvents?: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportStates?: BlossomMemberCommunityReportStates
@@ -385,16 +388,18 @@ export const selectMemberCommunityBlossomRefs = ({
     definitionEvents,
     profileListEvents,
     reportStates,
-  }).flatMap(definition => {
-    const blossomServers = normalizeBlossomServers(definition.definition.blossomServers)
+  }).flatMap(ref => {
+    const blossomServers = normalizeBlossomServers(ref.definition.blossomServers)
     if (blossomServers.length === 0) return []
 
     return [
       {
-        communityPubkey: definition.communityPubkey,
-        relayHints: definition.relayHints,
+        communityAddress: ref.community.address,
+        communityPubkey: ref.community.controllerPubkey,
+        communityName: ref.definition.metadata.name,
+        relayHints: ref.relayHints,
         blossomServers,
-        writableSections: definition.writableSections,
+        writableSections: ref.writableSections,
       } satisfies BlossomMemberCommunityRef,
     ]
   })
@@ -431,6 +436,7 @@ export const buildBlossomServerGroups = ({
       source: "current-community",
       group: "current-community",
       label: currentCommunity?.communityName || "Current community",
+      communityAddress: currentCommunity?.communityAddress,
       communityPubkey: currentCommunity?.communityPubkey,
       communityName: currentCommunity?.communityName,
     })
@@ -450,6 +456,7 @@ export const buildBlossomServerGroups = ({
         source: "member-community",
         group: "member-community",
         label: community.communityName || `Community ${community.communityPubkey.slice(0, 8)}`,
+        communityAddress: community.communityAddress,
         communityPubkey: community.communityPubkey,
         communityName: community.communityName,
       })
@@ -1045,8 +1052,8 @@ const normalizeUploadRecord = (value: unknown): BlossomUploadRecord | undefined 
     updatedAt: normalizeTimestamp(value.updatedAt, now),
     context: {
       type: contextType,
-      communityPubkey:
-        typeof context.communityPubkey === "string" ? context.communityPubkey : undefined,
+      communityAddress:
+        typeof context.communityAddress === "string" ? context.communityAddress : undefined,
       communityName: typeof context.communityName === "string" ? context.communityName : undefined,
       label: typeof context.label === "string" ? context.label : undefined,
     },

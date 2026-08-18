@@ -26,10 +26,11 @@
     timestampToDateInputValue,
   } from "@app/core/calendar-events"
   import type {BlossomUploadStage} from "@app/core/blossom"
+  import {activeExactCommunityDefinition} from "@app/core/community-state"
   import {startPublication} from "@app/core/publication-operations"
   import {assertReplaceablePublicationIsCurrent} from "@app/core/replaceable-publication"
   import {pushToast} from "@app/util/toast"
-  import {makeCommunityCalendarPath} from "@app/util/routes"
+  import {makeExactCommunityCalendarPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   type Props = {
     url: string
@@ -53,6 +54,7 @@
   }
 
   const {url, h, relays = [], redirectPath, header, initialValues}: Props = $props()
+  const community = $derived(parseExactCommunityRouteParam(url))
   const managedTagNames = new Set(["d", "title", "name", "location", "start", "end", "D", "h"])
 
   const uploading = writable(false)
@@ -166,7 +168,10 @@
           event,
           relays: publishRelays,
           label: "Calendar event",
-          href: h && identifier ? makeCommunityCalendarPath(h, identifier) : undefined,
+          href:
+            community && identifier
+              ? makeExactCommunityCalendarPath(community, identifier)
+              : undefined,
           preview: "retain-on-failure",
           validateRetry: assertReplaceablePublicationIsCurrent,
         })
@@ -231,7 +236,13 @@
   const tiptapContent = plainTextToTiptapHTML(content)
   const editor = makeEditor({
     url,
-    blossomContext: h ? {type: "community", communityPubkey: h} : undefined,
+    blossomContext:
+      h && $activeExactCommunityDefinition?.communityId === h
+        ? {
+            type: "community",
+            communityAddress: $activeExactCommunityDefinition.pointer.address,
+          }
+        : undefined,
     submit,
     uploadStage,
     uploading,

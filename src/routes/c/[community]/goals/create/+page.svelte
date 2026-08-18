@@ -18,15 +18,15 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
     getUserOutboxRelays,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND, normalizeRelays} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND_V2, normalizeRelays} from "@app/core/community"
   import {
-    makeTargetedPublicationForCommunity,
+    makeTargetedPublicationForCommunityV2,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -35,21 +35,28 @@
     getCommunityWriteTargetSectionName,
   } from "@app/core/community-permissions"
   import {publishLinkedOperation, type LinkedPublishOperation} from "@app/core/linked-publish"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityGoalPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
-  const goalsPath = $derived(communityPubkey ? makeCommunityPath(communityPubkey, "goals") : "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
+  const goalsPath = $derived(routeCommunity ? makeExactCommunityGoalPath(routeCommunity) : "")
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -58,7 +65,7 @@
   )
   const goalSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityReady ? $activeCommunityDefinition : undefined,
+      communityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.goal,
     ),
   )
@@ -67,9 +74,9 @@
     Boolean(
       $pubkey &&
       communityReady &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.goal,
@@ -88,12 +95,21 @@
   const createGoal = async () => {
     const trimmedTitle = title.trim()
     const trimmedSummary = summary.trim()
-    if (publishing || !$pubkey || !communityPubkey || !trimmedTitle || !trimmedSummary) return
+    if (
+      publishing ||
+      !$pubkey ||
+      !routeCommunity ||
+      !communityId ||
+      !trimmedTitle ||
+      !trimmedSummary
+    )
+      return
 
     const semanticInput = JSON.stringify({
       pubkey: $pubkey,
-      communityPubkey,
-      communityRelays: $activeCommunityPublishRelays,
+      communityId,
+      communityAddress,
+      communityRelays: $activeExactCommunityRelays,
       outboxRelays: getUserOutboxRelays(),
       title: trimmedTitle,
       summary: trimmedSummary,
@@ -114,7 +130,7 @@
       return
     }
 
-    const relays = $activeCommunityPublishRelays
+    const relays = $activeExactCommunityRelays
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return
@@ -158,13 +174,12 @@
           publishThunk({
             relays,
             event: makeEvent(
-              TARGETED_PUBLICATION_KIND,
-              makeTargetedPublicationForCommunity({
+              TARGETED_PUBLICATION_KIND_V2,
+              makeTargetedPublicationForCommunityV2({
                 targetingId,
                 originalKind: ZAP_GOAL,
                 originalRef: undefined,
-                communityPubkey,
-                communityRelay: originalAckRelay,
+                community: routeCommunity,
               }),
             ),
             optimistic: false,
@@ -196,7 +211,7 @@
     <strong>Create a Goal</strong>
   {/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={routeCommunity?.naddr} />
   {/snippet}
 </PageBar>
 

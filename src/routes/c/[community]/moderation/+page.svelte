@@ -22,12 +22,7 @@
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import {pushModal} from "@app/util/modal"
   import {pushToast} from "@app/util/toast"
-  import {
-    FORM_RESPONSE_KIND,
-    getCommunitySectionDisplayName,
-    getProfileListPubkeys,
-    normalizePubkey,
-  } from "@app/core/community"
+  import {FORM_RESPONSE_KIND, getProfileListPubkeys, normalizePubkey} from "@app/core/community"
   import {APP_RELAYS} from "@app/core/state"
   import {
     getOwnerMembershipGrantProfileList,
@@ -39,13 +34,14 @@
     activeCommunityAdmissionFormReadiness,
     activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
     activeCommunityReportDeleteEvents,
     activeCommunityReportEvents,
     activeCommunityReportReviewEvents,
     activeCommunityReportState,
-    activeCommunityRelays,
+    activeExactCommunityRelays,
     loadCommunityEvents,
     makeCommunityReportDeleteFilters,
     makeCommunityReportReviewFilters,
@@ -86,7 +82,7 @@
   } from "@app/core/community-relays"
   import {setChecked} from "@app/util/notifications"
   import {getAuthorRelayHints, normalizeRelayHints} from "@app/util/event-links"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   type ReviewApplication = {
     sectionName: string
@@ -103,15 +99,18 @@
   const FORM_PUBLISH_VERIFY_TIMEOUT = 5_000
   const REVIEW_EVIDENCE_LOAD_TIMEOUT = 5_000
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const parsedCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityAddress = $derived(parsedCommunity?.address || "")
+  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
   const moderationPath = $derived(
-    communityPubkey ? makeCommunityPath(communityPubkey, "moderation") : "",
+    $activeExactCommunityPointer
+      ? makeExactCommunityPath($activeExactCommunityPointer, "moderation")
+      : "",
   )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      $activeExactCommunityDefinition?.pointer.address === communityAddress &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -162,26 +161,29 @@
   type GovernanceThunk = ReturnType<typeof publishThunk>
   const failedFormPublishThunks = new Map<string, GovernanceThunk>()
   const communityPublishRelays = $derived(
-    getCommunityScopedPublishRelays($activeCommunityDefinition),
+    getCommunityScopedPublishRelays($activeExactCommunityDefinition),
   )
   const communityRootPublishRelays = $derived(
-    $activeCommunityDefinition
-      ? getCommunityRootPublishRelays(communityPublishRelays, $activeCommunityDefinition.pubkey)
+    $activeExactCommunityDefinition
+      ? getCommunityRootPublishRelays(
+          communityPublishRelays,
+          $activeExactCommunityDefinition.controllerPubkey,
+        )
       : communityPublishRelays,
   )
   const communityProfileRelays = $derived(
-    $activeCommunityRelays.length > 0 ? $activeCommunityRelays : communityPublishRelays,
+    $activeExactCommunityRelays.length > 0 ? $activeExactCommunityRelays : communityPublishRelays,
   )
 
   const moderationSections = $derived(
     communityBootstrapReady
-      ? ($activeCommunityDefinition?.sections || []).map(section => ({
+      ? ($activeExactCommunityDefinition?.sections || []).map(section => ({
           section,
-          displayName: getCommunitySectionDisplayName(section),
+          displayName: section.name,
           capability:
-            $pubkey && $activeCommunityDefinition
+            $pubkey && $activeExactCommunityDefinition
               ? getGrantCapability({
-                  definition: $activeCommunityDefinition,
+                  definition: $activeExactCommunityDefinition,
                   userPubkey: $pubkey,
                   sectionName: section.name,
                   profileListEvents: $activeCommunityProfileListEvents,
@@ -206,10 +208,10 @@
     manageableFormSections.length > 0 && missingFormSections.length === 0,
   )
   const canAccessModerationPage = $derived.by(() => {
-    if (!communityBootstrapReady || !$activeCommunityDefinition || !$pubkey) return false
+    if (!communityBootstrapReady || !$activeExactCommunityDefinition || !$pubkey) return false
     if (grantableSections.length > 0) return true
 
-    return isCommunityAdmin($activeCommunityDefinition, $pubkey)
+    return isCommunityAdmin($activeExactCommunityDefinition, $pubkey)
   })
   const moderationPermissionLoading = $derived(
     Boolean(communityModerationLoading && !canAccessModerationPage),
@@ -245,12 +247,12 @@
     responseIds.length ? [{kinds: [COMMUNITY_FORM_REVIEW_KIND], "#e": responseIds}] : [],
   )
   const reviewHistoryFilters = $derived(
-    communityBootstrapReady && $activeCommunityDefinition && responseApplicantPubkeys.length
+    communityBootstrapReady && $activeExactCommunityDefinition && responseApplicantPubkeys.length
       ? [
           {
             kinds: [COMMUNITY_FORM_REVIEW_KIND],
             "#p": responseApplicantPubkeys,
-            "#h": [$activeCommunityDefinition.pubkey],
+            "#h": [$activeExactCommunityDefinition.communityId],
             "#k": [String(FORM_RESPONSE_KIND)],
             limit: 500,
           },
@@ -275,7 +277,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: reviewHistoryFilters})),
   )
   const applications = $derived.by(() => {
-    if (!$activeCommunityDefinition) return []
+    if (!$activeExactCommunityDefinition) return []
 
     const sectionByForm = new Map<
       string,
@@ -299,12 +301,13 @@
         if (!matched) return undefined
 
         const moderators = getGrantCapableSectionModeratorPubkeys({
-          definition: $activeCommunityDefinition!,
+          definition: $activeExactCommunityDefinition!,
           sectionName: matched.sectionName,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
         })
         const state = getAdmissionSubmissionState({
+          community: matched.form.community,
           responseEvents: $responseEvents,
           deleteEvents: $deleteEvents,
           reviewEvents: $reviewEvents,
@@ -318,7 +321,7 @@
         const history = getAdmissionReviewHistory({
           reviewEvents: [...$reviewEvents, ...$reviewHistoryEvents],
           applicantPubkey: response!.event.pubkey,
-          communityPubkey: $activeCommunityDefinition!.pubkey,
+          community: $activeExactCommunityPointer,
           sectionName: matched.sectionName,
           moderatorPubkeys: moderators,
           excludeResponseId: state.response?.event.id,
@@ -339,10 +342,10 @@
     {label: "Rejected", items: rejectedApplications},
   ] satisfies Array<{label: string; items: ReviewApplication[]}>)
   const contentReports = $derived.by(() => {
-    if (!$activeCommunityDefinition) return []
+    if (!$activeExactCommunityDefinition) return []
 
     return getCommunityContentReports({
-      definition: $activeCommunityDefinition,
+      definition: $activeExactCommunityDefinition,
       reportEvents: $activeCommunityReportEvents,
       reviewEvents: $activeCommunityReportReviewEvents,
       deleteEvents: $activeCommunityReportDeleteEvents,
@@ -350,7 +353,7 @@
       reportState: $activeCommunityReportState,
     }).filter(report =>
       canReviewCommunityContentReport({
-        definition: $activeCommunityDefinition!,
+        definition: $activeExactCommunityDefinition!,
         reviewerPubkey: $pubkey || "",
         report,
         profileListEvents: $activeCommunityProfileListEvents,
@@ -365,8 +368,11 @@
     makeCommunityReportDeleteFilters($activeCommunityReportEvents),
   )
   const reportReviewFilters = $derived(
-    communityBootstrapReady && $activeCommunityDefinition
-      ? makeCommunityReportReviewFilters($activeCommunityDefinition, $activeCommunityReportEvents)
+    communityBootstrapReady && $activeExactCommunityDefinition
+      ? makeCommunityReportReviewFilters(
+          $activeExactCommunityDefinition.pointer,
+          $activeCommunityReportEvents,
+        )
       : [],
   )
   const reportEvidenceFilters = $derived([...reportDeleteFilters, ...reportReviewFilters])
@@ -426,7 +432,7 @@
       drafts[sectionName] ||
       makeAdmissionFormDraftFromForm({
         form,
-        communityPubkey: $activeCommunityDefinition?.pubkey || "",
+        community: $activeExactCommunityPointer!,
         sectionName,
         currentModeratorPubkey: $pubkey || "",
       })
@@ -714,7 +720,7 @@
   const publishSelectedForm = () => {
     if (
       !communityBootstrapReady ||
-      !$activeCommunityDefinition ||
+      !$activeExactCommunityDefinition ||
       !selected?.capability?.canGrant ||
       !selectedDraft
     ) {
@@ -744,7 +750,7 @@
 
         const template = makeAdmissionFormTemplate({
           identifier: selectedDraft.identifier,
-          communityPubkey: $activeCommunityDefinition.pubkey,
+          community: $activeExactCommunityPointer!,
           sectionName: selected.section.name,
           name: selectedDraft.name,
           description: selectedDraft.description,
@@ -754,7 +760,7 @@
 
         const operation = JSON.stringify({
           type: "admission-form",
-          community: $activeCommunityDefinition.pubkey,
+          community: $activeExactCommunityDefinition.pointer.address,
           section: selected.section.name,
           relays: communityPublishRelays,
           template,
@@ -819,10 +825,10 @@
   }
 
   const reviewApplication = (application: ReviewApplication, status: "granted" | "rejected") => {
-    if (!communityBootstrapReady || !$activeCommunityDefinition) return false
+    if (!communityBootstrapReady || !$activeExactCommunityDefinition) return false
 
     const capability = getGrantCapability({
-      definition: $activeCommunityDefinition,
+      definition: $activeExactCommunityDefinition,
       userPubkey: $pubkey || "",
       sectionName: application.sectionName,
       profileListEvents: $activeCommunityProfileListEvents,
@@ -851,10 +857,11 @@
     if (
       status === "granted" &&
       !profileList &&
-      isCommunityAdmin($activeCommunityDefinition, $pubkey || "")
+      $activeExactCommunityDefinition &&
+      isCommunityAdmin($activeExactCommunityDefinition, $pubkey || "")
     ) {
       const ownerGrantProfileList = getOwnerMembershipGrantProfileList({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         sectionName: application.sectionName,
         relays: communityPublishRelays,
       })
@@ -907,7 +914,7 @@
       responseId: application.response.event.id,
       applicantPubkey: applicant,
       formAddress: application.form.address,
-      communityPubkey: $activeCommunityDefinition.pubkey,
+      community: $activeExactCommunityPointer!,
       sectionName: application.sectionName,
       relays: communityPublishRelays,
       status,
@@ -966,7 +973,7 @@
 
     if (
       !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
+      $activeExactCommunityRelays.length === 0 ||
       responseIds.length === 0 ||
       filters.length === 0
     ) {
@@ -976,7 +983,7 @@
       return
     }
 
-    const key = JSON.stringify({relays: $activeCommunityRelays, filters})
+    const key = JSON.stringify({relays: $activeExactCommunityRelays, filters})
     if (applicationEvidenceKey === key) return
 
     applicationEvidenceKey = key
@@ -986,7 +993,12 @@
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), REVIEW_EVIDENCE_LOAD_TIMEOUT)
 
-    request({relays: $activeCommunityRelays, autoClose: true, filters, signal: controller.signal})
+    request({
+      relays: $activeExactCommunityRelays,
+      autoClose: true,
+      filters,
+      signal: controller.signal,
+    })
       .catch(error => {
         if (!controller.signal.aborted) {
           console.warn("[community-moderation] Failed to load application review evidence", error)
@@ -1010,7 +1022,7 @@
 
     if (
       !communityBootstrapReady ||
-      $activeCommunityRelays.length === 0 ||
+      $activeExactCommunityRelays.length === 0 ||
       $activeCommunityReportEvents.length === 0 ||
       filters.length === 0
     ) {
@@ -1020,7 +1032,7 @@
       return
     }
 
-    const key = JSON.stringify({relays: $activeCommunityRelays, filters})
+    const key = JSON.stringify({relays: $activeExactCommunityRelays, filters})
     if (reportEvidenceKey === key) return
 
     reportEvidenceKey = key
@@ -1030,7 +1042,12 @@
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), REVIEW_EVIDENCE_LOAD_TIMEOUT)
 
-    request({relays: $activeCommunityRelays, autoClose: true, filters, signal: controller.signal})
+    request({
+      relays: $activeExactCommunityRelays,
+      autoClose: true,
+      filters,
+      signal: controller.signal,
+    })
       .catch(error => {
         if (!controller.signal.aborted) {
           console.warn("[community-moderation] Failed to load report review evidence", error)
@@ -1050,13 +1067,18 @@
   })
 
   $effect(() => {
-    if (!communityBootstrapReady || $activeCommunityRelays.length === 0) return
+    if (!communityBootstrapReady || $activeExactCommunityRelays.length === 0) return
 
     const filters = [...responseFilters]
     if (filters.length === 0) return
 
     const controller = new AbortController()
-    request({relays: $activeCommunityRelays, autoClose: true, filters, signal: controller.signal})
+    request({
+      relays: $activeExactCommunityRelays,
+      autoClose: true,
+      filters,
+      signal: controller.signal,
+    })
 
     return () => controller.abort()
   })
@@ -1072,7 +1094,7 @@
   {/snippet}
   {#snippet title()}<strong>Community Moderation</strong>{/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={parsedCommunity?.naddr} />
   {/snippet}
 </PageBar>
 
@@ -1081,7 +1103,7 @@
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading Community Moderation...</Spinner>
     </p>
-  {:else if communityModerationUnavailable || !communityBootstrapReady || !$activeCommunityDefinition}
+  {:else if communityModerationUnavailable || !communityBootstrapReady || !$activeExactCommunityDefinition}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
       <p>Community Moderation unavailable.</p>
       <Button class="btn btn-neutral btn-sm" onclick={retryCommunityModeration}>Retry</Button>

@@ -1,4 +1,5 @@
 import {describe, expect, it, vi} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {
   ClientMessageType,
   getRequestSchedulerSnapshots,
@@ -19,7 +20,11 @@ import {
   type Filter,
   type TrustedEvent,
 } from "@welshman/util"
-import {buildTargetedPublication, TARGETED_PUBLICATION_KIND} from "./community"
+import {
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
+  TARGETED_PUBLICATION_KIND_V2,
+} from "./community"
 import {
   makeCommunityRoomMessagesFilter,
   makeCommunityThreadRepliesFilter,
@@ -28,8 +33,13 @@ import {
 import {buildCommunityHistoricalDiscoveryFilters} from "./community-live"
 
 const relay = "wss://relay.budabit.club/"
-const communityPubkey = "a".repeat(64)
-const authorPubkey = "b".repeat(64)
+const communityPubkey = getPublicKey(new Uint8Array(32).fill(126))
+const authorPubkey = getPublicKey(new Uint8Array(32).fill(127))
+const community = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: communityPubkey,
+})!
+const goalOriginalId = "1".repeat(64)
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -123,26 +133,26 @@ describe("community relay stress", () => {
       })
       const calendarWrapper = makeEvent({
         id: "calendar-wrapper",
-        kind: TARGETED_PUBLICATION_KIND,
-        tags: buildTargetedPublication({
+        kind: TARGETED_PUBLICATION_KIND_V2,
+        tags: buildTargetedPublicationV2({
           id: "calendar-target",
           kind: EVENT_TIME,
-          ref: {type: "a", value: `${EVENT_TIME}:${authorPubkey}:calendar-event`},
-          communities: [{pubkey: communityPubkey}],
+          source: {type: "a", value: `${EVENT_TIME}:${authorPubkey}:calendar-event`},
+          communities: [community],
         }).tags,
       })
       const goalWrapper = makeEvent({
         id: "goal-wrapper",
-        kind: TARGETED_PUBLICATION_KIND,
-        tags: buildTargetedPublication({
+        kind: TARGETED_PUBLICATION_KIND_V2,
+        tags: buildTargetedPublicationV2({
           id: "goal-target",
           kind: ZAP_GOAL,
-          ref: {type: "e", value: "goal-original"},
-          communities: [{pubkey: communityPubkey}],
+          source: {type: "e", value: goalOriginalId},
+          communities: [community],
         }).tags,
       })
       const discovery = loadFinite(
-        buildCommunityHistoricalDiscoveryFilters(communityPubkey),
+        buildCommunityHistoricalDiscoveryFilters(community),
         "community-discovery",
       )
       const discoveryReq = getReqs()[24]
@@ -173,7 +183,7 @@ describe("community relay stress", () => {
         kind: EVENT_TIME,
         tags: [["d", "calendar-event"]],
       })
-      const goalOriginal = makeEvent({id: "goal-original", kind: ZAP_GOAL})
+      const goalOriginal = makeEvent({id: goalOriginalId, kind: ZAP_GOAL})
       const room = loadFinite(
         [makeCommunityRoomMessagesFilter(communityPubkey, roomRoot.id)],
         "community-room",

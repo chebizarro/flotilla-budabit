@@ -5,7 +5,7 @@
   import ChatRound from "@assets/icons/chat-round.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import Link from "@lib/components/Link.svelte"
-  import {makeSpacePath} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
   import {notifications} from "@app/util/notifications"
 
   type Props = {
@@ -13,8 +13,9 @@
   }
 
   const {url}: Props = $props()
-  const chatPath = makeSpacePath(url, "chat")
-  const goalsPath = makeSpacePath(url, "goals")
+  const community = $derived(parseExactCommunityRouteParam(url))
+  const chatPath = $derived(community ? makeExactCommunityPath(community, "rooms") : "/explore")
+  const goalsPath = $derived(community ? makeExactCommunityPath(community, "goals") : "/explore")
 </script>
 
 <div class="card2 bg-alt md:hidden">

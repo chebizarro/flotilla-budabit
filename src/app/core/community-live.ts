@@ -9,12 +9,12 @@ import {
   type Filter,
   type TrustedEvent,
 } from "@welshman/util"
-import type {CommunityDefinition} from "@app/core/community"
+import type {CommunityDefinitionV2, CommunityPointer} from "@app/core/community"
 import {
   FORM_RESPONSE_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KINDS,
-  parseTargetedPublication,
+  parseTargetedPublicationV2,
 } from "@app/core/community"
 import {
   COMMUNITY_EXCLUSIVE_KINDS,
@@ -25,7 +25,7 @@ import {COMMUNITY_FORM_REVIEW_KIND} from "@app/core/community-forms"
 import type {ModeratorPromotionRequest} from "@app/core/community-moderator-requests"
 import {
   makeCommunityAdmissionFormFilters,
-  makeCommunityDefinitionFilter,
+  makeExactCommunityDefinitionFilter,
   makeCommunityModeratorRequestDeleteFilters,
   makeCommunityModeratorRequestFilters,
   makeCommunityModeratorRequestReactionFilters,
@@ -36,12 +36,12 @@ import {
 import {writable, type Readable} from "svelte/store"
 
 type CommunityLiveFilterInput = {
-  definition: CommunityDefinition
+  authorityDefinition: CommunityDefinitionV2
   admissionFormAddresses: string[]
 }
 
 type CommunityFiniteFollowUpFilterInput = {
-  definition: CommunityDefinition
+  authorityDefinition: CommunityDefinitionV2
   targetingEvents: TrustedEvent[]
   admissionResponseIds: string[]
   reportEvents: TrustedEvent[]
@@ -72,9 +72,9 @@ const normalizeCommunityLiveRelay = (relay: string) => {
   }
 }
 
-export const getCommunityLiveOwnershipKey = (communityPubkey: string, relay: string) => {
+export const getCommunityLiveOwnershipKey = (communityAddress: string, relay: string) => {
   const normalizedRelay = normalizeCommunityLiveRelay(relay)
-  return communityPubkey && normalizedRelay ? `${communityPubkey}\n${normalizedRelay}` : ""
+  return communityAddress && normalizedRelay ? `${communityAddress}\n${normalizedRelay}` : ""
 }
 
 const communityLiveOwnershipCounts = new Map<string, number>()
@@ -86,12 +86,12 @@ export const communityLiveOwnership: Readable<CommunityLiveOwnership> = {
 
 export const isCommunityLiveOwned = (
   ownership: CommunityLiveOwnership,
-  communityPubkey: string,
+  communityAddress: string,
   relay: string,
-) => ownership.has(getCommunityLiveOwnershipKey(communityPubkey, relay))
+) => ownership.has(getCommunityLiveOwnershipKey(communityAddress, relay))
 
-export const registerCommunityLiveOwnership = (communityPubkey: string, relay: string) => {
-  const key = getCommunityLiveOwnershipKey(communityPubkey, relay)
+export const registerCommunityLiveOwnership = (communityAddress: string, relay: string) => {
+  const key = getCommunityLiveOwnershipKey(communityAddress, relay)
   if (!key) return () => undefined
   communityLiveOwnershipCounts.set(key, (communityLiveOwnershipCounts.get(key) || 0) + 1)
   communityLiveOwnershipState.set(new Set(communityLiveOwnershipCounts.keys()))
@@ -111,9 +111,9 @@ export const registerCommunityLiveOwnership = (communityPubkey: string, relay: s
 export const normalizeCommunityLiveValues = (values: string[]) =>
   Array.from(new Set(values.filter(Boolean))).sort()
 
-export const buildCommunityHistoricalDiscoveryFilters = (communityPubkey: string): Filter[] => [
-  {kinds: [THREAD], "#h": [communityPubkey]},
-  makeCommunityTargetingFilter(communityPubkey, COMMUNITY_HISTORICAL_TARGET_KINDS),
+export const buildCommunityHistoricalDiscoveryFilters = (community: CommunityPointer): Filter[] => [
+  {kinds: [THREAD], "#h": [community.communityId]},
+  makeCommunityTargetingFilter(community.communityId, COMMUNITY_HISTORICAL_TARGET_KINDS),
 ]
 
 const chunkValues = <T>(values: T[], size: number) => {
@@ -166,10 +166,11 @@ const chunkFiltersByTag = (filters: Filter[], tag: string) =>
   })
 
 export const buildCommunityLiveFilters = ({
-  definition,
+  authorityDefinition,
   admissionFormAddresses,
 }: CommunityLiveFilterInput) => {
-  const profileListFilters = makeCommunityProfileListFilters(definition)
+  const community = authorityDefinition.pointer
+  const profileListFilters = makeCommunityProfileListFilters(authorityDefinition)
   const profileListAuthors = normalizeCommunityLiveValues(
     profileListFilters.flatMap(filter => filter.authors || []),
   )
@@ -177,9 +178,9 @@ export const buildCommunityLiveFilters = ({
     profileListFilters.flatMap(filter => filter["#d"] || []),
   )
   const filters: Filter[] = [
-    makeCommunityDefinitionFilter(definition.pubkey),
-    {kinds: COMMUNITY_EXCLUSIVE_KINDS, "#h": [definition.pubkey]},
-    makeCommunityTargetingFilter(definition.pubkey, TARGETED_PUBLICATION_KINDS),
+    makeExactCommunityDefinitionFilter(community),
+    {kinds: COMMUNITY_EXCLUSIVE_KINDS, "#h": [community.communityId]},
+    makeCommunityTargetingFilter(community.communityId, TARGETED_PUBLICATION_KINDS),
     ...(profileListAuthors.length && profileListIdentifiers.length
       ? [
           {
@@ -189,8 +190,9 @@ export const buildCommunityLiveFilters = ({
           } as Filter,
         ]
       : []),
-    ...makeCommunityAdmissionFormFilters(definition),
-    ...makeCommunityModeratorRequestFilters(definition),
+    ...profileListFilters.filter(filter => filter.kinds?.includes(DELETE)),
+    ...makeCommunityAdmissionFormFilters(authorityDefinition),
+    ...makeCommunityModeratorRequestFilters(authorityDefinition),
   ]
 
   pushTagChunkFilters(filters, [FORM_RESPONSE_KIND], "#a", admissionFormAddresses)
@@ -199,7 +201,7 @@ export const buildCommunityLiveFilters = ({
 }
 
 export const buildCommunityFiniteFollowUpFilters = ({
-  definition,
+  authorityDefinition,
   targetingEvents,
   admissionResponseIds,
   reportEvents,
@@ -209,15 +211,21 @@ export const buildCommunityFiniteFollowUpFilters = ({
   const filters: Filter[] = [
     ...makeTargetedPublicationOriginalFilterPlan(targetingEvents).relayFilters,
     ...chunkFiltersByTag(
-      makeCommunityModeratorRequestReactionFilters(definition, moderatorRequests),
+      makeCommunityModeratorRequestReactionFilters(authorityDefinition, moderatorRequests),
       "#e",
     ),
     ...chunkFiltersByTag(
-      makeCommunityModeratorRequestDeleteFilters(definition, moderatorRequestReactionEvents),
+      makeCommunityModeratorRequestDeleteFilters(
+        authorityDefinition,
+        moderatorRequestReactionEvents,
+      ),
       "#e",
     ),
     ...chunkFiltersByTag(makeCommunityReportDeleteFilters(reportEvents), "#e"),
-    ...chunkFiltersByTag(makeCommunityReportReviewFilters(definition, reportEvents), "#e"),
+    ...chunkFiltersByTag(
+      makeCommunityReportReviewFilters(authorityDefinition.pointer, reportEvents),
+      "#e",
+    ),
   ]
 
   pushTagChunkFilters(filters, [DELETE, COMMUNITY_FORM_REVIEW_KIND], "#e", admissionResponseIds)
@@ -226,7 +234,7 @@ export const buildCommunityFiniteFollowUpFilters = ({
 }
 
 const buildCommunityWorkflowFollowUpFilters = ({
-  definition,
+  authorityDefinition,
   admissionResponseIds,
   reportEvents,
   moderatorRequests,
@@ -234,15 +242,21 @@ const buildCommunityWorkflowFollowUpFilters = ({
 }: CommunityFiniteFollowUpFilterInput) => {
   const filters: Filter[] = [
     ...chunkFiltersByTag(
-      makeCommunityModeratorRequestReactionFilters(definition, moderatorRequests),
+      makeCommunityModeratorRequestReactionFilters(authorityDefinition, moderatorRequests),
       "#e",
     ),
     ...chunkFiltersByTag(
-      makeCommunityModeratorRequestDeleteFilters(definition, moderatorRequestReactionEvents),
+      makeCommunityModeratorRequestDeleteFilters(
+        authorityDefinition,
+        moderatorRequestReactionEvents,
+      ),
       "#e",
     ),
     ...chunkFiltersByTag(makeCommunityReportDeleteFilters(reportEvents), "#e"),
-    ...chunkFiltersByTag(makeCommunityReportReviewFilters(definition, reportEvents), "#e"),
+    ...chunkFiltersByTag(
+      makeCommunityReportReviewFilters(authorityDefinition.pointer, reportEvents),
+      "#e",
+    ),
   ]
 
   pushTagChunkFilters(filters, [DELETE, COMMUNITY_FORM_REVIEW_KIND], "#e", admissionResponseIds)
@@ -269,7 +283,9 @@ export const buildCommunityFiniteFollowUpRelayPlans = ({
   for (const relay of communityRelays) filtersByRelay.set(relay, communityFilters)
 
   for (const event of targetingEvents) {
-    const relay = normalizeCommunityLiveRelay(parseTargetedPublication(event)?.ref?.relay || "")
+    const relay = normalizeCommunityLiveRelay(
+      parseTargetedPublicationV2(event)?.source?.relay || "",
+    )
     if (!relay || communityRelaySet.has(relay)) continue
 
     filtersByRelay.set(

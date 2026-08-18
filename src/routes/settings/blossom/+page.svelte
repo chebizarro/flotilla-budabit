@@ -15,8 +15,8 @@
   import InputList from "@lib/components/InputList.svelte"
   import BlossomUploadStatus from "@app/components/BlossomUploadStatus.svelte"
   import {
-    activeCommunityBlossomServers,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeUserCommunityBlossomRefs,
   } from "@app/core/community-state"
   import {startBlossomMirrorJobs, uploadFile} from "@app/core/commands"
@@ -123,11 +123,10 @@
   const serverGroups = $derived(
     buildBlossomServerGroups({
       currentCommunity: {
-        servers: $activeCommunityBlossomServers,
-        communityPubkey: $activeCommunityDefinition?.pubkey,
-        communityName: $activeCommunityDefinition?.pubkey
-          ? `Community ${$activeCommunityDefinition.pubkey.slice(0, 8)}`
-          : undefined,
+        servers: $activeExactCommunityDefinition?.blossomServers || [],
+        communityAddress: $activeExactCommunityPointer?.address,
+        communityPubkey: $activeExactCommunityDefinition?.controllerPubkey,
+        communityName: $activeExactCommunityDefinition?.metadata.name,
       },
       personalServers,
       memberCommunities: $activeUserCommunityBlossomRefs,

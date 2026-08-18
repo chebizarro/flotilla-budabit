@@ -1,6 +1,7 @@
 <script lang="ts">
   import CommunityMenu from "@app/components/CommunityMenu.svelte"
-  import {activeCommunitySession} from "@app/core/community-state"
+  import {activeExactCommunityPointer} from "@app/core/community-state"
+  import {parseExactCommunityRouteParam} from "@app/util/routes"
   import {pushDrawer} from "@app/util/modal"
   import MenuDots from "@assets/icons/menu-dots.svg?dataurl"
   import Button from "@lib/components/Button.svelte"
@@ -11,15 +12,17 @@
   }
 
   const {community}: Props = $props()
-  const communityPubkey = $derived(community || $activeCommunitySession?.communityPubkey || "")
+  const communityPointer = $derived(
+    parseExactCommunityRouteParam(community) || $activeExactCommunityPointer,
+  )
 
   const openCommunityMenu = () => {
-    if (communityPubkey)
-      pushDrawer(CommunityMenu, {community: communityPubkey}, {replaceState: true})
+    if (communityPointer)
+      pushDrawer(CommunityMenu, {community: communityPointer}, {replaceState: true})
   }
 </script>
 
-{#if communityPubkey}
+{#if communityPointer}
   <Button
     aria-label="Open community menu"
     onclick={openCommunityMenu}

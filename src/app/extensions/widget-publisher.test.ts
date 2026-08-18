@@ -1,4 +1,6 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
+import {makeCommunityPointer} from "@app/core/community"
 import {
   buildCommunityWidgetEventTags,
   filterSelectedWidgetCommunityOptions,
@@ -82,15 +84,25 @@ describe("widget publisher helpers", () => {
     ).toEqual(["https://example.com/widget.html", "https://mirror.example/widget.html"])
   })
 
-  it("filters selected communities to eligible options", () => {
+  it("filters exact same-ID community branches independently", () => {
+    const communityId = getPublicKey(new Uint8Array(32).fill(3))
+    const first = makeCommunityPointer({
+      controllerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
+      communityId,
+    })!
+    const second = makeCommunityPointer({
+      controllerPubkey: getPublicKey(new Uint8Array(32).fill(4)),
+      communityId,
+    })!
+
     expect(
       filterSelectedWidgetCommunityOptions(
         [
-          {pubkey: "aaa", label: "Allowed"},
-          {pubkey: "bbb", label: "Also allowed"},
+          {community: first, label: "First branch"},
+          {community: second, label: "Second branch"},
         ],
-        ["aaa", "ccc"],
+        [second.address],
       ),
-    ).toEqual([{pubkey: "aaa", label: "Allowed"}])
+    ).toEqual([{community: second, label: "Second branch"}])
   })
 })

@@ -1,8 +1,8 @@
 <script lang="ts">
   import {browser} from "$app/environment"
   import {goto} from "$app/navigation"
-  import {activeCommunitySession} from "@app/core/community-state"
-  import {makeCommunityPath} from "@app/util/routes"
+  import {activeExactCommunityPointer} from "@app/core/community-state"
+  import {makeExactCommunityPath} from "@app/util/routes"
 
   let redirecting = $state(false)
 
@@ -10,8 +10,8 @@
     if (!browser || redirecting) return
 
     redirecting = true
-    const session = $activeCommunitySession
-    goto(session ? makeCommunityPath(session.communityPubkey) : "/explore", {replaceState: true})
+    const pointer = $activeExactCommunityPointer
+    goto(pointer ? makeExactCommunityPath(pointer) : "/explore", {replaceState: true})
   })
 </script>
 

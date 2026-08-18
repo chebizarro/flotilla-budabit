@@ -27,21 +27,17 @@ const parseDescriptorTags = (event: {tags?: string[][]}) => {
 export const isAuthorizedCommunitySharedConfigEvent = ({
   event,
   descriptorAuthorities,
-  legacyAuthorizedPubkeys,
   requireExactDescriptors = false,
 }: {
   event: {pubkey?: string; tags?: string[][]}
   descriptorAuthorities: CommunitySharedConfigDescriptorAuthority[]
-  legacyAuthorizedPubkeys: Iterable<string>
   requireExactDescriptors?: boolean
 }) => {
   const author = normalizePubkey(event.pubkey || "")
   if (!author) return false
 
   const parsed = parseDescriptorTags(event)
-  if (!parsed.declared) {
-    return new Set(Array.from(legacyAuthorizedPubkeys, normalizePubkey).filter(Boolean)).has(author)
-  }
+  if (!parsed.declared) return false
   if (!parsed.valid) return false
 
   const authorityByDescriptor = new Map(

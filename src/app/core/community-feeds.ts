@@ -11,12 +11,12 @@ import {
   getTagValue,
 } from "@welshman/util"
 import {
-  TARGETED_PUBLICATION_KIND,
+  TARGETED_PUBLICATION_KIND_V2,
   TARGETED_PUBLICATION_KINDS,
   normalizePubkey,
   normalizeRelays,
-  parseCommunityInput,
-  parseTargetedPublication,
+  parseCommunityId,
+  parseTargetedPublicationV2,
 } from "@app/core/community"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 
@@ -118,20 +118,23 @@ export const makeCommunityRepositoryFilter = (
 ): Filter => makeCommunityExclusiveFilter(communityPubkey, [GIT_REPO_ANNOUNCEMENT], extra)
 
 export const makeCommunityTargetingFilter = (
-  communityPubkey: string,
+  communityId: string,
   originalKinds: readonly number[] = TARGETED_PUBLICATION_KINDS,
   extra: Filter = {},
 ): Filter => ({
-  kinds: [TARGETED_PUBLICATION_KIND],
-  "#p": [communityPubkey],
+  kinds: [TARGETED_PUBLICATION_KIND_V2],
+  "#h": [communityId],
   "#k": originalKinds.map(String),
   ...extra,
 })
 
-export const eventTargetsCommunity = (event: TrustedEvent, communityPubkey: string) => {
-  const eventCommunityPubkey = parseCommunityInput(getTagValue("h", event.tags) || "")?.pubkey
+export const eventTargetsCommunity = (event: TrustedEvent, communityIdValue: string) => {
+  const communityId = parseCommunityId(communityIdValue)
+  const hTags = event.tags.filter(tag => tag[0] === "h")
+  if (!communityId || hTags.length !== 1 || hTags[0].length !== 2) return false
+  if (event.tags.some(tag => tag[0] === "p" && tag[1] === communityId)) return false
 
-  return Boolean(eventCommunityPubkey && eventCommunityPubkey === normalizePubkey(communityPubkey))
+  return parseCommunityId(hTags[0][1] || "") === communityId
 }
 
 export const isRoomRoot = (event: TrustedEvent, communityPubkey?: string) => {
@@ -182,10 +185,10 @@ export const makeTargetedPublicationOriginalFilters = (
     : undefined
 
   for (const event of targetingEvents) {
-    const targeting = parseTargetedPublication(event)
+    const targeting = parseTargetedPublicationV2(event)
     if (!targeting) continue
 
-    if (!targeting.ref) {
+    if (!targeting.source) {
       filters.push({
         kinds: [targeting.kind],
         "#h": [targeting.id],
@@ -195,17 +198,17 @@ export const makeTargetedPublicationOriginalFilters = (
       continue
     }
 
-    if (targeting.ref.type === "e") {
+    if (targeting.source.type === "e") {
       filters.push({
         kinds: [targeting.kind],
-        ids: [targeting.ref.value],
+        ids: [targeting.source.value],
         limit: 1,
         ...(allowedAuthors?.length ? {authors: allowedAuthors} : {}),
       })
       continue
     }
 
-    const [kindValue, author, ...identifierParts] = targeting.ref.value.split(":")
+    const [kindValue, author, ...identifierParts] = targeting.source.value.split(":")
     const kind = Number.parseInt(kindValue || "", 10)
     const identifier = identifierParts.join(":")
 
@@ -225,10 +228,10 @@ export const makeTargetedPublicationOriginalFilterPlan = (
   const localFilters: Filter[] = []
 
   for (const event of authorizedTargetingEvents) {
-    const targeting = parseTargetedPublication(event)
+    const targeting = parseTargetedPublicationV2(event)
     if (!targeting) continue
 
-    if (!targeting.ref) {
+    if (!targeting.source) {
       const filter = {
         kinds: [targeting.kind],
         authors: [event.pubkey],
@@ -240,14 +243,14 @@ export const makeTargetedPublicationOriginalFilterPlan = (
       continue
     }
 
-    if (targeting.ref.type === "e") {
-      const filter = {kinds: [targeting.kind], ids: [targeting.ref.value], limit: 1}
+    if (targeting.source.type === "e") {
+      const filter = {kinds: [targeting.kind], ids: [targeting.source.value], limit: 1}
       relayFilters.push(filter)
       localFilters.push(filter)
       continue
     }
 
-    const [kindValue, author, ...identifierParts] = targeting.ref.value.split(":")
+    const [kindValue, author, ...identifierParts] = targeting.source.value.split(":")
     const kind = Number.parseInt(kindValue || "", 10)
     const identifier = identifierParts.join(":")
 
@@ -267,10 +270,10 @@ export const makeTargetedPublicationOriginalRelayHintPlans = (
   const eventsByRelay = new Map<string, TrustedEvent[]>()
 
   for (const event of authorizedTargetingEvents) {
-    const ref = parseTargetedPublication(event)?.ref
-    if (!ref?.relay) continue
+    const source = parseTargetedPublicationV2(event)?.source
+    if (!source?.relay) continue
 
-    const relay = normalizeRelays([ref.relay])[0]
+    const relay = normalizeRelays([source.relay])[0]
     if (!relay) continue
 
     const events = eventsByRelay.get(relay) || []

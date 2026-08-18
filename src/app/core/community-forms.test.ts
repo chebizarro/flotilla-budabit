@@ -1,6 +1,13 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {DELETE, type TrustedEvent} from "@welshman/util"
-import {COMMUNITY_SECTION_THREADS, FORM_RESPONSE_KIND, FORM_TEMPLATE_KIND} from "./community"
+import {
+  COMMUNITY_SECTION_THREADS,
+  FORM_RESPONSE_KIND,
+  FORM_TEMPLATE_KIND,
+  makeCommunityAuthorityTagsV2,
+  makeCommunityPointer,
+} from "./community"
 import {
   COMMUNITY_FORM_REVIEW_KIND,
   getAdmissionReviewHistory,
@@ -16,7 +23,6 @@ import {
   makeAdmissionResponseDelete,
   makeAdmissionReview,
   makeDefaultAdmissionFormDraft,
-  makeCommunityDefinitionAddress,
   parseAdmissionForm,
   parseAdmissionResponse,
   parseAdmissionReview,
@@ -26,11 +32,23 @@ import {
   validateAdmissionFormDraft,
 } from "./community-forms"
 
-const communityPubkey = "a".repeat(64)
-const moderatorPubkey = "b".repeat(64)
-const otherModeratorPubkey = "c".repeat(64)
-const applicantPubkey = "d".repeat(64)
-const outsiderPubkey = "e".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = key(1)
+const communityId = key(2)
+const moderatorPubkey = key(3)
+const otherModeratorPubkey = key(4)
+const applicantPubkey = key(5)
+const outsiderPubkey = key(6)
+const community = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId,
+  relayHints: ["wss://relay.example.com"],
+})!
+const siblingCommunity = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: key(7),
+  relayHints: ["wss://sibling.example.com"],
+})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -52,30 +70,31 @@ const makeFormEvent = (overrides: Partial<TrustedEvent> = {}) =>
     created_at: 10,
     tags: [
       ["d", "repo-application"],
-      ["a", makeCommunityDefinitionAddress(communityPubkey), "wss://relay.example.com"],
-      ["content", "Repositories"],
-      ["name", "Repository curator application"],
-      ["settings", JSON.stringify({description: "Tell us what you will curate."})],
-      ["relay", "wss://relay.example.com"],
-      [
-        "field",
-        "experience",
-        "text",
-        "What experience do you have?",
-        "",
-        JSON.stringify({required: true}),
-      ],
-      [
-        "field",
-        "focus",
-        "option",
-        "What will you curate?",
-        JSON.stringify([
-          ["tools", "Developer tools"],
-          ["protocols", "Protocols", JSON.stringify({featured: true})],
-        ]),
-        "{}",
-      ],
+      ...makeCommunityAuthorityTagsV2(community, "wss://relay.example.com", [
+        ["content", "Repositories"],
+        ["name", "Repository curator application"],
+        ["settings", JSON.stringify({description: "Tell us what you will curate."})],
+        ["relay", "wss://relay.example.com"],
+        [
+          "field",
+          "experience",
+          "text",
+          "What experience do you have?",
+          "",
+          JSON.stringify({required: true}),
+        ],
+        [
+          "field",
+          "focus",
+          "option",
+          "What will you curate?",
+          JSON.stringify([
+            ["tools", "Developer tools"],
+            ["protocols", "Protocols", JSON.stringify({featured: true})],
+          ]),
+          "{}",
+        ],
+      ]),
     ],
     ...overrides,
   })
@@ -85,7 +104,7 @@ describe("community admission forms", () => {
     expect(
       makeAdmissionFormTemplate({
         identifier: "repo-application",
-        communityPubkey,
+        community,
         sectionName: "Repositories",
         name: "Repository application",
         description: "Apply to publish repositories.",
@@ -105,7 +124,8 @@ describe("community admission forms", () => {
       content: "",
       tags: [
         ["d", "repo-application"],
-        ["a", makeCommunityDefinitionAddress(communityPubkey)],
+        ["h", communityId],
+        ["a", community.address, "wss://relay.example.com", "community"],
         ["content", "Repositories"],
         ["name", "Repository application"],
         ["settings", JSON.stringify({description: "Apply to publish repositories."})],
@@ -139,8 +159,7 @@ describe("community admission forms", () => {
       identifier: "repo-application",
       name: "Repository curator application",
       description: "Tell us what you will curate.",
-      communityAddress: makeCommunityDefinitionAddress(communityPubkey),
-      communityPubkey,
+      community,
       sectionName: "Repositories",
       relays: ["wss://relay.example.com/"],
       fieldOrder: ["experience", "focus"],
@@ -155,6 +174,29 @@ describe("community admission forms", () => {
       {id: "tools", label: "Developer tools", settings: {}},
       {id: "protocols", label: "Protocols", settings: {featured: true}},
     ])
+  })
+
+  it("rejects malformed or mismatched form authority", () => {
+    const valid = makeFormEvent()
+    const otherCommunity = makeCommunityPointer({
+      controllerPubkey: communityPubkey,
+      communityId: key(7),
+    })!
+
+    expect(
+      parseAdmissionForm(makeFormEvent({tags: [...valid.tags, ["h", communityId]]})),
+    ).toBeUndefined()
+    expect(
+      parseAdmissionForm(
+        makeFormEvent({
+          tags: valid.tags.map(tag =>
+            tag[0] === "a" && tag[3] === "community"
+              ? ["a", otherCommunity.address, "", "community"]
+              : tag,
+          ),
+        }),
+      ),
+    ).toBeUndefined()
   })
 
   it("selects the latest form update per address", () => {
@@ -192,7 +234,7 @@ describe("community admission forms", () => {
     expect(
       selectActiveAdmissionForm({
         events: [repoForm, newerThreadForm, outsiderForm],
-        communityPubkey,
+        community,
         sectionName: "Repositories",
         moderatorPubkeys: [moderatorPubkey],
       })?.event.id,
@@ -222,7 +264,7 @@ describe("community admission forms", () => {
     expect(
       selectActiveAdmissionForm({
         events: [ownerOlderForm, moderatorNewerForm],
-        communityPubkey,
+        community,
         sectionName: "Repositories",
         moderatorPubkeys,
       })?.event.id,
@@ -230,7 +272,7 @@ describe("community admission forms", () => {
     expect(
       selectActiveAdmissionForm({
         events: [ownerOlderForm, moderatorNewerForm, ownerNewestForm],
-        communityPubkey,
+        community,
         sectionName: "Repositories",
         moderatorPubkeys,
       })?.event.id,
@@ -244,6 +286,7 @@ describe("community admission forms", () => {
       kind: FORM_RESPONSE_KIND,
       pubkey: applicantPubkey,
       tags: makeAdmissionResponse({
+        community,
         formAddress: makeAdmissionFormAddress(moderatorPubkey, "repo-application"),
         values: {experience: "I can help."},
       }).tags,
@@ -254,8 +297,10 @@ describe("community admission forms", () => {
       pubkey: moderatorPubkey,
       content: "+",
       tags: makeAdmissionReview({
+        community,
         responseId: "response",
         applicantPubkey,
+        formAddress: makeAdmissionFormAddress(moderatorPubkey, "repo-application"),
         status: "granted",
       }).tags,
     })
@@ -263,13 +308,14 @@ describe("community admission forms", () => {
     expect(
       selectActiveAdmissionForm({
         events: [formEvent],
-        communityPubkey,
+        community,
         sectionName: "Repositories",
         moderatorPubkeys: [],
       }),
     ).toBeUndefined()
     expect(
       getAdmissionSubmissionState({
+        community,
         responseEvents: [response],
         deleteEvents: [],
         reviewEvents: [review],
@@ -286,6 +332,7 @@ describe("community admission forms", () => {
       kind: FORM_RESPONSE_KIND,
       pubkey: applicantPubkey,
       tags: makeAdmissionResponse({
+        community,
         formAddress: makeAdmissionFormAddress(moderatorPubkey, "repo-application"),
         values: {experience: "I can help."},
       }).tags,
@@ -296,14 +343,17 @@ describe("community admission forms", () => {
       pubkey: communityPubkey,
       content: "+",
       tags: makeAdmissionReview({
+        community,
         responseId: "response",
         applicantPubkey,
+        formAddress: makeAdmissionFormAddress(moderatorPubkey, "repo-application"),
         status: "granted",
       }).tags,
     })
 
     expect(
       getAdmissionSubmissionState({
+        community,
         responseEvents: [response],
         deleteEvents: [],
         reviewEvents: [review],
@@ -315,16 +365,16 @@ describe("community admission forms", () => {
   })
 
   it("builds structured drafts with generated identifiers", () => {
-    const draft = makeDefaultAdmissionFormDraft({communityPubkey, sectionName: "General Chat"})
+    const draft = makeDefaultAdmissionFormDraft({community, sectionName: "General Chat"})
 
     expect(draft).toMatchObject({
-      identifier: `community-${communityPubkey.slice(0, 12)}-general-chat-application`,
+      identifier: `budabit-${communityId}-general-chat-application`,
       name: "General Chat application",
       description: "Request access to publish in the General Chat section.",
     })
     expect(draft.questions[0].label).toBe("Describe your application to publish in General Chat")
-    expect(makeAdmissionFormIdentifier({communityPubkey, sectionName: "!!!"})).toBe(
-      `community-${communityPubkey.slice(0, 12)}-section-application`,
+    expect(makeAdmissionFormIdentifier({community, sectionName: "!!!"})).toBe(
+      `budabit-${communityId}-section-application`,
     )
   })
 
@@ -332,14 +382,12 @@ describe("community admission forms", () => {
     const otherModeratorForm = parseAdmissionForm(makeFormEvent({pubkey: otherModeratorPubkey}))!
     const draft = makeAdmissionFormDraftFromForm({
       form: otherModeratorForm,
-      communityPubkey,
+      community,
       sectionName: "Repositories",
       currentModeratorPubkey: moderatorPubkey,
     })
 
-    expect(draft.identifier).toBe(
-      `community-${communityPubkey.slice(0, 12)}-repositories-application`,
-    )
+    expect(draft.identifier).toBe(`budabit-${communityId}-repositories-application`)
     expect(draft.name).toBe("Repository curator application")
     expect(draft.description).toBe("Tell us what you will curate.")
     expect(draft.questions).toEqual([
@@ -367,7 +415,7 @@ describe("community admission forms", () => {
     const currentModeratorForm = parseAdmissionForm(makeFormEvent())!
     const draft = makeAdmissionFormDraftFromForm({
       form: currentModeratorForm,
-      communityPubkey,
+      community,
       sectionName: "Repositories",
       currentModeratorPubkey: moderatorPubkey,
     })
@@ -437,17 +485,18 @@ describe("community admission responses", () => {
       kind: FORM_RESPONSE_KIND,
       pubkey: applicantPubkey,
       created_at: 20,
-      tags: [
-        ["a", formAddress],
+      tags: makeCommunityAuthorityTagsV2(community, "wss://relay.example.com", [
+        ["a", formAddress, "", "form"],
         ["response", "experience", "I maintain protocol tools.", "{}"],
         ["response", "focus", "tools;protocols", JSON.stringify({source: "test"})],
-      ],
+      ]),
       ...overrides,
     })
 
   it("builds and parses identified form responses", () => {
     expect(
       makeAdmissionResponse({
+        community,
         formAddress,
         values: {experience: "I build things", focus: ["tools", "protocols"]},
       }),
@@ -455,7 +504,9 @@ describe("community admission responses", () => {
       kind: FORM_RESPONSE_KIND,
       content: "",
       tags: [
-        ["a", formAddress],
+        ["h", communityId],
+        ["a", community.address, "wss://relay.example.com", "community"],
+        ["a", formAddress, "", "form"],
         ["response", "experience", "I build things", "{}"],
         ["response", "focus", "tools;protocols", "{}"],
       ],
@@ -477,13 +528,16 @@ describe("community admission responses", () => {
 
   it("builds and parses response metadata for other explanations", () => {
     const template = makeAdmissionResponse({
+      community,
       formAddress,
       values: {focus: ["tools", "other"]},
       metadata: {focus: {other: {other: "Pizza maker tools"}}},
     })
 
     expect(template.tags).toEqual([
-      ["a", formAddress],
+      ["h", communityId],
+      ["a", community.address, "wss://relay.example.com", "community"],
+      ["a", formAddress, "", "form"],
       ["response", "focus", "tools;other", JSON.stringify({other: {other: "Pizza maker tools"}})],
     ])
 
@@ -496,6 +550,43 @@ describe("community admission responses", () => {
       value: "tools;other",
       metadata: {other: {other: "Pizza maker tools"}},
     })
+  })
+
+  it("rejects responses and reviews with invalid authority or role markers", () => {
+    const response = makeResponseEvent()
+    const review = makeEvent({
+      kind: COMMUNITY_FORM_REVIEW_KIND,
+      content: "+",
+      tags: makeAdmissionReview({
+        community,
+        responseId: response.id,
+        applicantPubkey,
+        formAddress,
+        status: "granted",
+      }).tags,
+    })
+
+    expect(
+      parseAdmissionResponse(
+        makeResponseEvent({
+          tags: response.tags.map(tag => (tag[3] === "form" ? ["a", tag[1]] : tag)),
+        }),
+      ),
+    ).toBeUndefined()
+    expect(
+      parseAdmissionResponse(makeResponseEvent({tags: [...response.tags, ["h", communityId]]})),
+    ).toBeUndefined()
+    expect(
+      parseAdmissionReview(
+        makeEvent({
+          ...review,
+          tags: review.tags.map(tag => (tag[4] === "response" ? ["e", tag[1]] : tag)),
+        }),
+      ),
+    ).toBeUndefined()
+    expect(
+      parseAdmissionReview(makeEvent({...review, tags: [...review.tags, ["p", outsiderPubkey]]})),
+    ).toBeUndefined()
   })
 
   it("resolves choice response values to option labels", () => {
@@ -551,24 +642,158 @@ describe("community admission responses", () => {
       kind: DELETE,
       pubkey: applicantPubkey,
       created_at: 21,
-      tags: makeAdmissionResponseDelete({responseId: "newer-response"}).tags,
+      tags: makeAdmissionResponseDelete({community, responseId: "newer-response"}).tags,
     })
     const outsiderDelete = makeEvent({
       id: "outsider-delete",
       kind: DELETE,
       pubkey: outsiderPubkey,
       created_at: 22,
-      tags: makeAdmissionResponseDelete({responseId: "older-response"}).tags,
+      tags: makeAdmissionResponseDelete({community, responseId: "older-response"}).tags,
     })
 
     expect(
       selectActiveAdmissionResponse({
+        community,
         events: [older, newer],
         deleteEvents: [deleteNewer, outsiderDelete],
         formAddress,
         applicantPubkey,
       })?.event.id,
     ).toBe("older-response")
+  })
+
+  it("does not select responses or deletions injected from a sibling community", () => {
+    const current = makeResponseEvent({id: "current-response", created_at: 20})
+    const sibling = makeResponseEvent({
+      id: "sibling-response",
+      created_at: 30,
+      tags: makeAdmissionResponse({
+        community: siblingCommunity,
+        formAddress,
+        values: {experience: "Injected sibling response."},
+      }).tags,
+    })
+    const siblingDelete = makeEvent({
+      kind: DELETE,
+      pubkey: applicantPubkey,
+      tags: makeAdmissionResponseDelete({
+        community: siblingCommunity,
+        responseId: current.id,
+      }).tags,
+    })
+
+    expect(
+      selectActiveAdmissionResponse({
+        community,
+        events: [current, sibling],
+        deleteEvents: [siblingDelete],
+        formAddress,
+        applicantPubkey,
+      })?.event.id,
+    ).toBe("current-response")
+  })
+
+  it("does not accept legacy or ambiguous admission response deletions", () => {
+    const response = makeResponseEvent({id: "current-response"})
+    const legacyDelete = makeEvent({
+      kind: DELETE,
+      pubkey: applicantPubkey,
+      tags: [
+        ["e", response.id],
+        ["k", String(FORM_RESPONSE_KIND)],
+      ],
+    })
+    const ambiguousDelete = makeEvent({
+      kind: DELETE,
+      pubkey: applicantPubkey,
+      tags: [
+        ...makeAdmissionResponseDelete({community, responseId: response.id}).tags,
+        ["e", "other-response"],
+      ],
+    })
+
+    expect(
+      selectActiveAdmissionResponse({
+        community,
+        events: [response],
+        deleteEvents: [legacyDelete, ambiguousDelete],
+        formAddress,
+        applicantPubkey,
+      })?.event.id,
+    ).toBe(response.id)
+  })
+
+  it("requires reviews to match the current community, form, response, and applicant", () => {
+    const response = makeResponseEvent({id: "shared-response", created_at: 20})
+    const currentGrant = makeEvent({
+      id: "current-grant",
+      kind: COMMUNITY_FORM_REVIEW_KIND,
+      pubkey: moderatorPubkey,
+      created_at: 30,
+      content: "+",
+      tags: makeAdmissionReview({
+        community,
+        responseId: response.id,
+        applicantPubkey,
+        formAddress,
+        status: "granted",
+      }).tags,
+    })
+    const makeInjectedReview = ({
+      id,
+      injectedCommunity = community,
+      injectedFormAddress = formAddress,
+      injectedApplicant = applicantPubkey,
+      createdAt,
+    }: {
+      id: string
+      injectedCommunity?: typeof community
+      injectedFormAddress?: string
+      injectedApplicant?: string
+      createdAt: number
+    }) =>
+      makeEvent({
+        id,
+        kind: COMMUNITY_FORM_REVIEW_KIND,
+        pubkey: moderatorPubkey,
+        created_at: createdAt,
+        content: "-",
+        tags: makeAdmissionReview({
+          community: injectedCommunity,
+          responseId: response.id,
+          applicantPubkey: injectedApplicant,
+          formAddress: injectedFormAddress,
+          status: "rejected",
+        }).tags,
+      })
+    const siblingReject = makeInjectedReview({
+      id: "sibling-reject",
+      injectedCommunity: siblingCommunity,
+      createdAt: 40,
+    })
+    const otherFormReject = makeInjectedReview({
+      id: "other-form-reject",
+      injectedFormAddress: makeAdmissionFormAddress(moderatorPubkey, "other-application"),
+      createdAt: 41,
+    })
+    const otherApplicantReject = makeInjectedReview({
+      id: "other-applicant-reject",
+      injectedApplicant: outsiderPubkey,
+      createdAt: 42,
+    })
+
+    expect(
+      getAdmissionSubmissionState({
+        community,
+        responseEvents: [response],
+        deleteEvents: [],
+        reviewEvents: [currentGrant, siblingReject, otherFormReject, otherApplicantReject],
+        formAddress,
+        applicantPubkey,
+        moderatorPubkeys: [moderatorPubkey],
+      }),
+    ).toMatchObject({status: "granted", review: {event: {id: "current-grant"}}})
   })
 
   it("classifies pending, granted, and rejected submissions", () => {
@@ -579,8 +804,10 @@ describe("community admission responses", () => {
       pubkey: moderatorPubkey,
       created_at: 30,
       tags: makeAdmissionReview({
+        community,
         responseId: "response-event",
         applicantPubkey,
+        formAddress,
         status: "granted",
       }).tags,
       content: "+",
@@ -591,8 +818,10 @@ describe("community admission responses", () => {
       pubkey: moderatorPubkey,
       created_at: 31,
       tags: makeAdmissionReview({
+        community,
         responseId: "response-event",
         applicantPubkey,
+        formAddress,
         status: "rejected",
       }).tags,
       content: "-",
@@ -612,6 +841,7 @@ describe("community admission responses", () => {
     })
     expect(
       getAdmissionSubmissionState({
+        community,
         responseEvents: [response],
         deleteEvents: [],
         reviewEvents: [],
@@ -622,6 +852,7 @@ describe("community admission responses", () => {
     ).toBe("pending")
     expect(
       getAdmissionSubmissionState({
+        community,
         responseEvents: [response],
         deleteEvents: [],
         reviewEvents: [grant, laterReject, outsiderGrant],
@@ -632,6 +863,7 @@ describe("community admission responses", () => {
     ).toBe("rejected")
     expect(
       getAdmissionSubmissionState({
+        community,
         responseEvents: [response],
         deleteEvents: [],
         reviewEvents: [laterReject],
@@ -650,10 +882,10 @@ describe("community admission responses", () => {
       pubkey: moderatorPubkey,
       created_at: 30,
       tags: makeAdmissionReview({
+        community,
         responseId: "old-response",
         applicantPubkey,
         formAddress,
-        communityPubkey,
         sectionName: "Repositories",
         status: "rejected",
       }).tags,
@@ -665,10 +897,10 @@ describe("community admission responses", () => {
       pubkey: moderatorPubkey,
       created_at: 40,
       tags: makeAdmissionReview({
+        community,
         responseId: "current-response",
         applicantPubkey,
         formAddress,
-        communityPubkey,
         sectionName: "Repositories",
         status: "granted",
       }).tags,
@@ -680,10 +912,10 @@ describe("community admission responses", () => {
       pubkey: moderatorPubkey,
       created_at: 50,
       tags: makeAdmissionReview({
+        community,
         responseId: "wrong-section-response",
         applicantPubkey,
         formAddress,
-        communityPubkey,
         sectionName: COMMUNITY_SECTION_THREADS,
         status: "rejected",
       }).tags,
@@ -701,7 +933,7 @@ describe("community admission responses", () => {
     const history = getAdmissionReviewHistory({
       reviewEvents: [oldReject, currentGrant, wrongSection, outsiderReview, oldReject],
       applicantPubkey,
-      communityPubkey,
+      community,
       sectionName: "Repositories",
       moderatorPubkeys: [moderatorPubkey],
       excludeResponseId: "current-response",
@@ -723,31 +955,42 @@ describe("community admission responses", () => {
   })
 
   it("builds delete and review event templates", () => {
-    expect(makeAdmissionResponseDelete({responseId: "response-event"})).toEqual({
+    expect(makeAdmissionResponseDelete({community, responseId: "response-event"})).toEqual({
       kind: DELETE,
       content: "Deleted application submission",
       tags: [
+        ["h", communityId],
+        ["a", community.address, "wss://relay.example.com", "community"],
         ["e", "response-event"],
-        ["k", "1069"],
-      ],
-    })
-    expect(
-      makeAdmissionReview({responseId: "response-event", applicantPubkey, status: "rejected"}),
-    ).toEqual({
-      kind: COMMUNITY_FORM_REVIEW_KIND,
-      content: "-",
-      tags: [
-        ["e", "response-event"],
-        ["p", applicantPubkey],
         ["k", "1069"],
       ],
     })
     expect(
       makeAdmissionReview({
+        community,
         responseId: "response-event",
         applicantPubkey,
         formAddress,
-        communityPubkey,
+        status: "rejected",
+      }),
+    ).toEqual({
+      kind: COMMUNITY_FORM_REVIEW_KIND,
+      content: "-",
+      tags: [
+        ["h", communityId],
+        ["a", community.address, "wss://relay.example.com", "community"],
+        ["e", "response-event", "", "", "response"],
+        ["p", applicantPubkey],
+        ["k", "1069"],
+        ["a", formAddress, "", "form"],
+      ],
+    })
+    expect(
+      makeAdmissionReview({
+        community,
+        responseId: "response-event",
+        applicantPubkey,
+        formAddress,
         sectionName: "General",
         relays: ["wss://community.example"],
         status: "granted",
@@ -755,11 +998,12 @@ describe("community admission responses", () => {
     ).toMatchObject({
       content: "+",
       tags: [
-        ["e", "response-event"],
+        ["h", communityId],
+        ["a", community.address, "wss://relay.example.com", "community"],
+        ["e", "response-event", "", "", "response"],
         ["p", applicantPubkey],
         ["k", "1069"],
-        ["a", formAddress],
-        ["h", communityPubkey],
+        ["a", formAddress, "", "form"],
         ["content", "General"],
         ["relay", "wss://community.example/"],
       ],

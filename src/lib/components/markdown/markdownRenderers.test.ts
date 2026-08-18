@@ -1,6 +1,7 @@
 import {describe, expect, it, vi, beforeEach} from "vitest"
 import {createRenderers} from "./markdownRenderers"
 import {nip19} from "nostr-tools"
+import {naddrEncode} from "nostr-tools/nip19"
 import {Marked} from "marked"
 import {getEncodedToken} from "@cashu/cashu-ts"
 
@@ -33,10 +34,14 @@ describe("markdownRenderers", () => {
     vi.mocked(nip19.decode).mockReset()
   })
   describe("createRenderers", () => {
-    const communityPubkey = "a".repeat(64)
-    const ncommunity = `ncommunity://${communityPubkey}?relay=${encodeURIComponent(
-      "wss://relay.example.com",
-    )}`
+    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+    const communityNaddr = naddrEncode({
+      kind: 32222,
+      pubkey: controller,
+      identifier: communityId,
+      relays: ["wss://relay.example"],
+    })
 
     it("returns image renderer that produces img tag", () => {
       const renderers = createRenderers()
@@ -234,13 +239,13 @@ describe("markdownRenderers", () => {
       expect(html).toContain(`data-pubkey="${pubkey}"`)
     })
 
-    it("renders ncommunity link as community placeholder", () => {
+    it("renders a community naddr link as an exact pointer placeholder", () => {
       const renderers = createRenderers()
-      const html = renderers.link!({href: ncommunity, text: "Community"} as any)
+      const html = renderers.link!({href: communityNaddr, text: "Community"} as any)
 
       expect(html).toContain("markdown-community-placeholder")
-      expect(html).toContain(`data-pubkey="${communityPubkey}"`)
-      expect(html).toContain("wss://relay.example.com/")
+      expect(html).toContain(`data-naddr="${communityNaddr}"`)
+      expect(html).not.toContain("data-pubkey")
     })
 
     it("renders nprofile link as profile placeholder", () => {

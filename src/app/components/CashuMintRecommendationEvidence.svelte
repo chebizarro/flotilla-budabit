@@ -59,7 +59,7 @@
         label: countLabel(recommendation.counts.communities, "Community", "Communities"),
         evidence: uniqueBy(
           recommendation.evidence.filter(item => item.kind === "community"),
-          item => item.communityPubkey || item.pubkey,
+          item => item.communityAddress || item.communityPubkey || item.pubkey,
         ),
       })
     }
@@ -118,7 +118,7 @@
     if (evidence.kind === "own_nutzap") return "From your existing public Cashu mint list"
     if (evidence.kind === "follow") return "You follow"
     if (evidence.kind === "community") {
-      return evidence.source === "10222" ? "Community mint" : "Community endorsement"
+      return evidence.source === "32222" ? "Community mint" : "Community endorsement"
     }
     if (evidence.kind === "moderator") {
       const count = evidence.moderatorSectionCount || 0

@@ -18,13 +18,13 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
-    activeCommunityRelays,
+    activeExactCommunityPointer,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND, normalizeRelays} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND_V2, normalizeRelays} from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
@@ -42,7 +42,7 @@
   } from "@app/core/community-feeds"
   import {
     makeAddressablePublicationRef,
-    makeTargetedPublicationForCommunity,
+    makeTargetedPublicationForCommunityV2,
   } from "@app/core/community-targeting"
   import {
     buildRepoCommunityContexts,
@@ -51,14 +51,22 @@
   } from "@app/core/repo-community-context"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {loadBoundedCommunityHistory} from "@app/core/requests"
-  import {parseCommunityRouteParam} from "@app/util/routes"
+  import {parseExactCommunityRouteParam} from "@app/util/routes"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress &&
+      $activeExactCommunityDefinition.controllerPubkey === communityPubkey
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -82,9 +90,9 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const repoAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.repository,
           reportState: $activeCommunityReportState,
@@ -94,7 +102,7 @@
   const directRepoFilterPlan = $derived.by(() =>
     communityAuthorityReady
       ? makeCommunityContentFilterPlan(
-          [makeCommunityRepositoryFilter(communityPubkey)],
+          [makeCommunityRepositoryFilter(communityId)],
           repoAuthorPubkeys,
         )
       : {relayFilters: [], localFilters: []},
@@ -107,8 +115,12 @@
       : undefined,
   )
   const communityRepoAssociationFilters = $derived(
-    communityAuthorityReady && communityPubkey
-      ? [makeCommunityTargetingFilter(communityPubkey, [GIT_REPO_ANNOUNCEMENT])]
+    communityAuthorityReady && $activeExactCommunityPointer
+      ? [
+          makeCommunityTargetingFilter($activeExactCommunityPointer.communityId, [
+            GIT_REPO_ANNOUNCEMENT,
+          ]),
+        ]
       : [],
   )
   const communityRepoAssociationFilterPlan = $derived(
@@ -127,9 +139,13 @@
       : undefined,
   )
   const authorizedCommunityRepoAssociationEvents = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition && $communityRepoAssociationEventsStore
+    communityAuthorityReady &&
+    communityDefinition &&
+    $activeExactCommunityPointer &&
+    $communityRepoAssociationEventsStore
       ? filterAuthorizedCommunityTargetingEvents({
-          definition: $activeCommunityDefinition,
+          community: $activeExactCommunityPointer,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           events: $communityRepoAssociationEventsStore as TrustedEvent[],
           reportState: $activeCommunityReportState,
@@ -151,12 +167,12 @@
       : undefined,
   )
   const repoReportStates = $derived.by(() =>
-    communityPubkey && $activeCommunityReportState
-      ? new Map([[communityPubkey, $activeCommunityReportState]])
+    $activeExactCommunityPointer && $activeCommunityReportState
+      ? new Map([[$activeExactCommunityPointer.address, $activeCommunityReportState]])
       : undefined,
   )
   const repos = $derived.by(() => {
-    if (!communityPubkey || !communityAuthorityReady || !$activeCommunityDefinition) return []
+    if (!communityId || !communityAuthorityReady || !communityDefinition) return []
 
     const associationEvents = authorizedCommunityRepoAssociationEvents
     const candidates = [
@@ -169,11 +185,12 @@
       const context = buildRepoCommunityContexts({
         repoEvent: event,
         associationEvents,
-        definitions: [$activeCommunityDefinition],
+        definitions: [communityDefinition],
         profileListEvents: $activeCommunityProfileListEvents,
         reportStates: repoReportStates,
         activeCommunityPubkey: communityPubkey,
-      }).find(context => context.communityPubkey === communityPubkey)
+        activeCommunityAddress: $activeExactCommunityPointer?.address,
+      }).find(context => context.communityAddress === $activeExactCommunityPointer?.address)
       if (!isEndorsedRepoCommunityContext(context)) continue
 
       const address = getRepoAddress(event)
@@ -191,9 +208,9 @@
     Boolean(
       $pubkey &&
       communityAuthorityReady &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.repository,
@@ -203,19 +220,19 @@
   )
   const repoSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.repository,
     ),
   )
   const repoAccessMessage = $derived(`Request ${repoSectionName} access to publish repositories.`)
 
   const createRepoAnnouncement = () => {
-    if (!$pubkey || !communityPubkey || !name.trim()) return
+    if (!$pubkey || !communityId || !name.trim()) return
     if (!canCreateRepo) {
       pushToast({theme: "error", message: repoAccessMessage})
       return
     }
-    const relays = $activeCommunityPublishRelays
+    const relays = $activeExactCommunityRelays
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return
@@ -226,7 +243,7 @@
       content: "",
       tags: [
         ["d", repoId],
-        ["h", communityPubkey, relays[0]],
+        ["h", communityId, relays[0]],
         ["name", name.trim()],
         ["description", description.trim()],
         ...(clone.trim() ? [["clone", clone.trim()]] : []),
@@ -245,8 +262,8 @@
     publishThunk({
       relays: associationRelays,
       event: makeEvent(
-        TARGETED_PUBLICATION_KIND,
-        makeTargetedPublicationForCommunity({
+        TARGETED_PUBLICATION_KIND_V2,
+        makeTargetedPublicationForCommunityV2({
           targetingId,
           originalKind: GIT_REPO_ANNOUNCEMENT,
           originalRef: makeAddressablePublicationRef({
@@ -255,8 +272,7 @@
             identifier: repoId,
             relay: relays[0],
           }),
-          communityPubkey,
-          communityRelay: relays[0],
+          community: $activeExactCommunityPointer!,
         }),
       ),
     })
@@ -307,7 +323,7 @@
   )
   $effect(() => {
     void directRepoRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
     const relayFilters = directRepoFilterPlan.relayFilters
     const localFilters = directRepoFilterPlan.localFilters
 
@@ -362,7 +378,7 @@
 
   $effect(() => {
     void directRepoRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
     const relayFilters = communityRepoAssociationFilterPlan.relayFilters
     const localFilters = communityRepoAssociationFilterPlan.localFilters
 
@@ -433,7 +449,7 @@
 
     const plans = [
       {
-        relays: $activeCommunityRelays,
+        relays: $activeExactCommunityRelays,
         relayFilters: targetedRepoFilterPlan.relayFilters,
         localFilters: targetedRepoFilterPlan.localFilters,
       },
@@ -489,7 +505,7 @@
     <strong>Repositories</strong>
   {/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={routeCommunity?.naddr} />
   {/snippet}
 </PageBar>
 

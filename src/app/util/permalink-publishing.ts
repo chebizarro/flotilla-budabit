@@ -3,17 +3,17 @@ import {makeEvent, normalizeRelayUrl, isRelayUrl, type TrustedEvent} from "@wels
 import {randomId} from "@welshman/lib"
 import {GIT_PERMALINK, type PermalinkEvent} from "@nostr-git/core/types"
 import type {RepoCommunityOption} from "@nostr-git/ui"
-import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
+import {TARGETED_PUBLICATION_KIND_V2, makeCommunityPointer} from "@app/core/community"
 import {
   makeEventPublicationRef,
-  makeTargetedPublicationForCommunity,
+  makeTargetedPublicationForCommunityV2,
   withPublicationTargetingId,
 } from "@app/core/community-targeting"
 import {requireRepoPublicationScope} from "@app/core/repo-publication"
 
 export type PublicationDestinationSelection = {
   personal: boolean
-  communityPubkeys: string[]
+  communityAddresses: string[]
 }
 
 export type PublishedPermalink = {
@@ -46,7 +46,8 @@ const clonePermalink = (permalink: PermalinkEvent, createdAt: number): Permalink
   tags: withoutTargetingTags(permalink.tags || []),
 })
 
-const getCommunityLabel = (community: RepoCommunityOption) => community.label || community.pubkey
+const getCommunityLabel = (community: RepoCommunityOption) =>
+  community.label || community.controllerPubkey
 
 const getDeclaredCommunityRelays = (community: RepoCommunityOption) =>
   normalizeRelays([community.relay || "", ...(community.relays || [])])
@@ -91,13 +92,21 @@ export const publishPermalinkToDestinations = ({
     }
   }
 
-  for (const [index, communityPubkey] of selection.communityPubkeys.entries()) {
-    const community = communityOptions.find(option => option.pubkey === communityPubkey)
+  for (const [index, communityAddress] of selection.communityAddresses.entries()) {
+    const community = communityOptions.find(option => option.address === communityAddress)
     if (!community) continue
 
     const targetingId = randomId()
     const communityRelays = getCommunityRelays(community, baseRelays)
     const declaredCommunityRelays = getDeclaredCommunityRelays(community)
+    const communityPointer = makeCommunityPointer({
+      controllerPubkey: community.controllerPubkey,
+      communityId: community.communityId,
+      relayHints: declaredCommunityRelays,
+    })
+    if (!communityPointer || communityPointer.address !== community.address) {
+      throw new Error("Selected community is unavailable.")
+    }
     const permalinkEvent = withPublicationTargetingId(
       clonePermalink(permalink, createdAt + 1 + index * 2),
       targetingId,
@@ -109,8 +118,8 @@ export const publishPermalinkToDestinations = ({
       firstPublished ||= {event: publishedPermalink, relays: communityRelays}
     }
 
-    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND, {
-      ...makeTargetedPublicationForCommunity({
+    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
+      ...makeTargetedPublicationForCommunityV2({
         targetingId,
         originalKind: GIT_PERMALINK,
         originalRef: publishedPermalink?.id
@@ -120,8 +129,7 @@ export const publishPermalinkToDestinations = ({
               pubkey: publishedPermalink.pubkey,
             })
           : undefined,
-        communityPubkey: community.pubkey,
-        communityRelay: declaredCommunityRelays[0],
+        community: communityPointer,
       }),
       created_at: createdAt + 2 + index * 2,
     })

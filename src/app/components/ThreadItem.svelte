@@ -13,10 +13,12 @@
     getCommunityCensorReason,
     getCommunityReportEventAddress,
   } from "@app/core/community-reports"
-  import {makeThreadPath} from "@app/util/routes"
+  import {makeExactCommunityThreadPath} from "@app/util/routes"
+  import type {CommunityPointer} from "@app/core/community"
 
   type Props = {
     url: string
+    community?: CommunityPointer
     event: TrustedEvent
     relays?: string[]
     publishRelays?: string[]
@@ -32,6 +34,7 @@
 
   const {
     url,
+    community,
     event,
     relays = [],
     publishRelays = undefined,
@@ -61,7 +64,7 @@
 
 <Link
   class="col-2 card2 bg-alt relative w-full cursor-pointer shadow-xl"
-  href={makeThreadPath(url, event.id)}>
+  href={community ? makeExactCommunityThreadPath(community, event.id) : ""}>
   {#if censorReason}
     <ModeratedContent reason={censorReason} />
   {:else if title}
@@ -82,6 +85,7 @@
       </div>
       {#if !operationId}
         <ThreadActions
+          {community}
           showActivity
           {url}
           {relays}

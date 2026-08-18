@@ -1,10 +1,13 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   PROFILE_LIST_KIND,
-  parseCommunityDefinition,
-  type CommunityDefinition,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+  type CommunityDefinitionV2,
 } from "@app/core/community"
 import type {ActiveUserCommunityRef} from "@app/core/community-membership"
 import {
@@ -17,18 +20,32 @@ import {
   getSharedProfileCommunityEvidenceGroups,
 } from "./profile-trust-badges"
 
-const targetPubkey = "a".repeat(64)
-const sharedCommunityPubkey = "b".repeat(64)
-const otherSharedCommunityPubkey = "c".repeat(64)
-const unsharedCommunityPubkey = "d".repeat(64)
-const memberListOwner = "e".repeat(64)
-const otherMemberListOwner = "f".repeat(64)
-const viewerPubkey = "9".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const targetPubkey = key(20)
+const sharedCommunityPubkey = getPublicKey(new Uint8Array(32).fill(2))
+const otherSharedCommunityPubkey = getPublicKey(new Uint8Array(32).fill(3))
+const unsharedCommunityPubkey = key(4)
+const memberListOwner = key(5)
+const otherMemberListOwner = key(6)
+const viewerPubkey = key(9)
+const reportCommunityId = getPublicKey(new Uint8Array(32).fill(10))
+const communityIds = new Map<string, string>()
+const getCommunityId = (id: string) => {
+  if (id === reportCommunityId) return id
+  const current = communityIds.get(id)
+  if (current) return current
+  const communityId = getPublicKey(new Uint8Array(32).fill(communityIds.size + 100))
+  communityIds.set(id, communityId)
+  return communityId
+}
+const makeReportCommunity = (controllerPubkey: string) =>
+  makeCommunityPointer({controllerPubkey, communityId: reportCommunityId})!
+const getDefinitionAddress = (definition: CommunityDefinitionV2) => definition.pointer.address
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
     id: "event-id",
-    pubkey: "1".repeat(64),
+    pubkey: key(1),
     created_at: 1,
     kind: 1,
     tags: [],
@@ -46,19 +63,24 @@ const makeDefinition = ({
   pubkey: string
   sections: Array<{name: string; profileListAddresses: string[]}>
 }) =>
-  parseCommunityDefinition(
+  parseCommunityDefinitionV2(
     makeEvent({
       id,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://relay.example.com"],
-        ...sections.flatMap(section => [
-          ["content", section.name],
-          ["k", "1111"],
-          ...section.profileListAddresses.map(address => ["a", address]),
-        ]),
-      ],
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      tags: buildCommunityDefinitionV2({
+        communityId: getCommunityId(id),
+        name: id,
+        relays: ["wss://relay.example.com"],
+        sections: sections.map((section, index) => ({
+          name: section.name,
+          kinds: [{kind: 1111 + index}],
+          profileLists: (section.profileListAddresses.length > 0
+            ? section.profileListAddresses
+            : [`${PROFILE_LIST_KIND}:${pubkey}:${section.name}`]
+          ).map(address => ({address})),
+        })),
+      }).tags,
     }),
   )!
 
@@ -80,30 +102,146 @@ const makeProfileList = ({
     tags: [["d", identifier], ...members.map(member => ["p", member])],
   })
 
-const makeViewerRef = (definition: CommunityDefinition) =>
+const makeViewerRef = (definition: CommunityDefinitionV2) =>
   ({
-    communityPubkey: definition.pubkey,
+    community: definition.pointer,
     definition,
     relayHints: definition.relays,
     roles: ["member"],
     writableSections: definition.sections.map(section => section.name),
   }) as ActiveUserCommunityRef
 
-const makeReportState = (targetPubkeys: string[]): EffectiveCommunityReportState =>
-  ({
+const makeReportState = (
+  controllerPubkey: string,
+  targetPubkeys: string[],
+): EffectiveCommunityReportState => {
+  const community = makeReportCommunity(controllerPubkey)
+
+  return {
     eventReports: [],
     personReports: targetPubkeys.map((targetPubkey, index) => ({
       target: "person",
       targetPubkey,
-      communityPubkey: sharedCommunityPubkey,
-      communityAddress: `${COMMUNITY_DEFINITION_KIND}:${sharedCommunityPubkey}:`,
-      reporterPubkey: `reporter-${index}`,
+      community,
+      communityAddress: community.address,
+      communityId: reportCommunityId,
+      controllerPubkey,
+      reporterPubkey: viewerPubkey,
       adminAuthored: true,
       event: makeEvent({id: `report-${index}`, created_at: index}),
     })),
-  }) as EffectiveCommunityReportState
+  }
+}
 
 describe("profile trust badges", () => {
+  it("keeps same-controller community branches as separate role evidence", () => {
+    const controllerPubkey = sharedCommunityPubkey
+    const firstDefinition = makeDefinition({
+      id: "first-branch",
+      pubkey: controllerPubkey,
+      sections: [
+        {
+          name: "General",
+          profileListAddresses: [`${PROFILE_LIST_KIND}:${memberListOwner}:General`],
+        },
+      ],
+    })
+    const secondDefinition = makeDefinition({
+      id: "second-branch",
+      pubkey: controllerPubkey,
+      sections: [
+        {
+          name: "General",
+          profileListAddresses: [`${PROFILE_LIST_KIND}:${otherMemberListOwner}:General`],
+        },
+      ],
+    })
+    const groups = getSharedProfileCommunityEvidenceGroups({
+      targetPubkey,
+      viewerCommunityRefs: [makeViewerRef(firstDefinition), makeViewerRef(secondDefinition)],
+      profileListEvents: [
+        makeProfileList({
+          id: "first-members",
+          pubkey: memberListOwner,
+          identifier: "General",
+          members: [targetPubkey],
+        }),
+        makeProfileList({
+          id: "second-members",
+          pubkey: otherMemberListOwner,
+          identifier: "General",
+          members: [targetPubkey],
+        }),
+      ],
+    })
+
+    expect(groups[0].items).toHaveLength(2)
+    expect(new Set(groups[0].items.map(item => item.key))).toEqual(
+      new Set([
+        `member:${getDefinitionAddress(firstDefinition)}`,
+        `member:${getDefinitionAddress(secondDefinition)}`,
+      ]),
+    )
+  })
+
+  it("keeps same-ID branches under different controllers as separate moderation state", () => {
+    const firstDefinition = makeDefinition({
+      id: reportCommunityId,
+      pubkey: sharedCommunityPubkey,
+      sections: [{name: "General", profileListAddresses: []}],
+    })
+    const secondDefinition = makeDefinition({
+      id: reportCommunityId,
+      pubkey: otherSharedCommunityPubkey,
+      sections: [{name: "General", profileListAddresses: []}],
+    })
+    const groups = getSharedProfileCommunityEvidenceGroups({
+      targetPubkey,
+      viewerCommunityRefs: [makeViewerRef(firstDefinition), makeViewerRef(secondDefinition)],
+      reportStates: new Map([
+        [
+          getDefinitionAddress(firstDefinition),
+          makeReportState(sharedCommunityPubkey, [targetPubkey]),
+        ],
+      ]),
+    })
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0].role).toBe("banned")
+    expect(groups[0].items).toHaveLength(1)
+    expect(groups[0].items[0].definition).toBe(firstDefinition)
+  })
+
+  it("accepts profile report evidence only from the exact shared branch", () => {
+    const sharedDefinition = makeDefinition({
+      id: reportCommunityId,
+      pubkey: sharedCommunityPubkey,
+      sections: [{name: "General", profileListAddresses: []}],
+    })
+    const siblingCommunityId = getPublicKey(new Uint8Array(32).fill(11))
+    const siblingReport = makeEvent({
+      id: "sibling-report",
+      pubkey: viewerPubkey,
+      ...makeCommunityEventReport({
+        community: makeCommunityPointer({
+          controllerPubkey: sharedCommunityPubkey,
+          communityId: siblingCommunityId,
+        })!,
+        sectionName: "General",
+        eventId: "reported-event",
+        eventPubkey: targetPubkey,
+      }),
+    })
+
+    const reports = getProfileFlagReportEvidence({
+      targetPubkey,
+      viewerPubkey,
+      viewerCommunityRefs: [makeViewerRef(sharedDefinition)],
+      reportEvents: [siblingReport],
+    })
+
+    expect(reports).toEqual([])
+  })
   it("only presents community role evidence shared with the logged-in user", () => {
     const sharedAddress = `${PROFILE_LIST_KIND}:${memberListOwner}:General`
     const unsharedModeratorAddress = `${PROFILE_LIST_KIND}:${targetPubkey}:General`
@@ -135,7 +273,7 @@ describe("profile trust badges", () => {
       ],
     })
 
-    expect(unsharedDefinition.pubkey).toBe(unsharedCommunityPubkey)
+    expect(unsharedDefinition.controllerPubkey).toBe(unsharedCommunityPubkey)
     expect(groups.map(group => group.role)).toEqual(["member"])
     expect(groups[0].items.map(item => item.communityPubkey)).toEqual([sharedCommunityPubkey])
   })
@@ -231,9 +369,18 @@ describe("profile trust badges", () => {
         }),
       ],
       reportStates: new Map([
-        [sharedCommunityPubkey, makeReportState([targetPubkey])],
-        [otherSharedCommunityPubkey, makeReportState([targetPubkey])],
-        [unsharedCommunityPubkey, makeReportState([targetPubkey])],
+        [
+          getDefinitionAddress(sharedDefinition),
+          makeReportState(sharedCommunityPubkey, [targetPubkey]),
+        ],
+        [
+          getDefinitionAddress(otherSharedDefinition),
+          makeReportState(otherSharedCommunityPubkey, [targetPubkey]),
+        ],
+        [
+          `${COMMUNITY_DEFINITION_KIND_V2}:${unsharedCommunityPubkey}:${reportCommunityId}`,
+          makeReportState(unsharedCommunityPubkey, [targetPubkey]),
+        ],
       ]),
     })
 
@@ -246,16 +393,16 @@ describe("profile trust badges", () => {
 
   it("collects only the logged-in user's event-targeted reports in shared communities", () => {
     const sharedDefinition = makeDefinition({
-      id: "shared",
+      id: reportCommunityId,
       pubkey: sharedCommunityPubkey,
       sections: [{name: "General", profileListAddresses: []}],
     })
-    const otherReporter = "8".repeat(64)
+    const otherReporter = key(8)
     const ownEventReport = makeEvent({
       id: "own-event-report",
       pubkey: viewerPubkey,
       ...makeCommunityEventReport({
-        communityPubkey: sharedCommunityPubkey,
+        community: makeReportCommunity(sharedCommunityPubkey),
         sectionName: "General",
         eventId: "reported-event",
         eventPubkey: targetPubkey,
@@ -268,13 +415,16 @@ describe("profile trust badges", () => {
     const ownPersonReport = makeEvent({
       id: "own-person-report",
       pubkey: viewerPubkey,
-      ...makeCommunityPersonReport({communityPubkey: sharedCommunityPubkey, pubkey: targetPubkey}),
+      ...makeCommunityPersonReport({
+        community: makeReportCommunity(sharedCommunityPubkey),
+        pubkey: targetPubkey,
+      }),
     })
     const otherReporterEventReport = makeEvent({
       id: "other-reporter-event-report",
       pubkey: otherReporter,
       ...makeCommunityEventReport({
-        communityPubkey: sharedCommunityPubkey,
+        community: makeReportCommunity(sharedCommunityPubkey),
         sectionName: "General",
         eventId: "other-reported-event",
         eventPubkey: targetPubkey,
@@ -284,13 +434,12 @@ describe("profile trust badges", () => {
       id: "unshared-event-report",
       pubkey: viewerPubkey,
       ...makeCommunityEventReport({
-        communityPubkey: unsharedCommunityPubkey,
+        community: makeReportCommunity(unsharedCommunityPubkey),
         sectionName: "General",
         eventId: "unshared-reported-event",
         eventPubkey: targetPubkey,
       }),
     })
-
     const reports = getProfileFlagReportEvidence({
       targetPubkey,
       viewerPubkey,
@@ -317,7 +466,7 @@ describe("profile trust badges", () => {
 
   it("preserves addressable flag metadata when the report target is an address", () => {
     const sharedDefinition = makeDefinition({
-      id: "shared",
+      id: reportCommunityId,
       pubkey: sharedCommunityPubkey,
       sections: [{name: "General", profileListAddresses: []}],
     })
@@ -325,14 +474,17 @@ describe("profile trust badges", () => {
     const addressReport = makeEvent({
       id: "address-report",
       pubkey: viewerPubkey,
-      kind: 1984,
-      tags: [
-        ["a", targetAddress, "wss://relay.example.com", "malware"],
-        ["p", targetPubkey],
-        ["h", sharedCommunityPubkey],
-        ["content", "General"],
-      ],
+      ...makeCommunityEventReport({
+        community: makeReportCommunity(sharedCommunityPubkey),
+        sectionName: "General",
+        eventId: "",
+        eventPubkey: targetPubkey,
+        targetAddress,
+      }),
     })
+    addressReport.tags = addressReport.tags.map(tag =>
+      tag[0] === "a" && tag[1] === targetAddress ? [tag[0], tag[1], "malware"] : tag,
+    )
 
     const reports = getProfileFlagReportEvidence({
       targetPubkey,

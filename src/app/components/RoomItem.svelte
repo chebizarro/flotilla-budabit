@@ -30,12 +30,14 @@
   } from "@app/core/community-reports"
   import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
   import {deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
-  import {getRoomItemPath} from "@app/util/routes"
+  import type {CommunityPointer} from "@app/core/community"
+  import {getExactCommunityEventPath} from "@app/util/routes"
   import {pushModal} from "@app/util/modal"
   import CommunityWidgetSlotLaunchers from "@app/components/community/CommunityWidgetSlotLaunchers.svelte"
 
   interface Props {
     url: string
+    community?: CommunityPointer
     event: TrustedEvent
     replyTo?: (event: TrustedEvent) => void
     showPubkey?: boolean
@@ -56,6 +58,7 @@
 
   const {
     url,
+    community = undefined,
     event,
     replyTo = undefined,
     showPubkey = false,
@@ -74,7 +77,8 @@
     onEdit,
   }: Props = $props()
 
-  const path = getRoomItemPath(url, event)
+  const path = community ? getExactCommunityEventPath(event, community) : undefined
+  const communityContextUrl = $derived(community?.address || url)
   const today = formatTimestampAsDate(now())
   const profileRelayHints = $derived.by(() =>
     (profileRelays.length > 0
@@ -130,7 +134,8 @@
 
   const onTap = () =>
     pushModal(RoomItemMenuMobile, {
-      url,
+      url: communityContextUrl,
+      community,
       event,
       reply,
       edit,
@@ -293,7 +298,7 @@
           </Button>
         {/if}
         <RoomItemMenuButton
-          {url}
+          url={communityContextUrl}
           {event}
           {readOnly}
           class={menuButtonClass}
@@ -306,7 +311,12 @@
           relayHints={relayTargets}
           slotType="chat-message-actions"
           variant="message-actions"
-          context={{message: event, scopeH, communitySectionName}} />
+          context={{
+            message: event,
+            communityAddress: community?.address,
+            scopeH,
+            communitySectionName,
+          }} />
       {/if}
     </div>
   {/if}

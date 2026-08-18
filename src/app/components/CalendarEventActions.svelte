@@ -17,7 +17,8 @@
     makeGoogleCalendarEventUrl,
   } from "@app/core/calendar-export"
   import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
-  import {makeCalendarPath, makeSpacePath} from "@app/util/routes"
+  import {makeExactCommunityCalendarPath} from "@app/util/routes"
+  import type {CommunityPointer} from "@app/core/community"
   import {pushModal} from "@app/util/modal"
   import {downloadText} from "@lib/html"
   import CalendarAdd from "@assets/icons/calendar-add.svg?dataurl"
@@ -26,6 +27,7 @@
 
   type Props = {
     url: string
+    community?: CommunityPointer
     event: TrustedEvent
     showRoom?: boolean
     showActivity?: boolean
@@ -44,6 +46,7 @@
 
   const {
     url,
+    community = undefined,
     event,
     showRoom,
     showActivity,
@@ -62,7 +65,7 @@
 
   const h = getTagValue("h", event.tags)
   const eventRouteParam = getTagValue("d", event.tags) || event.id
-  const path = makeCalendarPath(url, eventRouteParam)
+  const path = community ? makeExactCommunityCalendarPath(community, eventRouteParam) : ""
   const canExport = $derived(Boolean(makeCalendarEventIcs(event)))
   const actionRelays = $derived(publishRelays ?? (relays.length > 0 ? relays : url ? [url] : []))
   const reactionRelayTargets = $derived(reactionRelays ?? actionRelays)
@@ -99,15 +102,13 @@
       ...template,
       event,
       relays: reactionRelayTargets,
-      tags: [...(template.tags || []), ...(scopeH ? [["h", scopeH]] : [])],
+      tags: template.tags || [],
     })
 </script>
 
 <div class="flex flex-grow flex-wrap items-center justify-end gap-2">
   {#if h && showRoom}
-    <Link href={makeSpacePath(url, h)} class="btn btn-neutral btn-xs rounded-full">
-      Posted in #<RoomName {h} {url} />
-    </Link>
+    <span class="btn btn-neutral btn-xs rounded-full">Posted in #<RoomName {h} {url} /></span>
   {/if}
   <ReactionSummary
     {url}

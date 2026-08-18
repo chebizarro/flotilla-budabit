@@ -1,21 +1,26 @@
 import {describe, expect, it} from "vitest"
-import {BADGE_DEFINITION, type TrustedEvent} from "@welshman/util"
+import {getPublicKey} from "nostr-tools"
+import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
   RENOUNCED_COMMUNITIES_DTAG,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
 } from "@app/core/community"
-import {makeCommunityDefinitionAddress} from "@app/core/community-forms"
 import {COMMUNITY_STAR_CONTENT} from "@app/util/community-stars"
+import {makeAdmissionFormTemplate} from "@app/core/community-forms"
 import {selectPreferredCommunities} from "@app/util/community-preferences"
 
-const userPubkey = "a".repeat(64)
-const moderatorCommunityPubkey = "b".repeat(64)
-const starredCommunityPubkey = "c".repeat(64)
-const otherCommunityPubkey = "d".repeat(64)
-const memberCommunityPubkey = "e".repeat(64)
+const userPubkey = getPublicKey(new Uint8Array(32).fill(1))
+const moderatorCommunityPubkey = getPublicKey(new Uint8Array(32).fill(2))
+const starredCommunityPubkey = getPublicKey(new Uint8Array(32).fill(3))
+const otherCommunityPubkey = getPublicKey(new Uint8Array(32).fill(4))
+const memberCommunityPubkey = getPublicKey(new Uint8Array(32).fill(5))
+const communityPointer = (controllerPubkey: string) =>
+  makeCommunityPointer({controllerPubkey, communityId: controllerPubkey})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -34,31 +39,38 @@ const makeDefinition = ({
   pubkey,
   created_at = 1,
   profileListPubkey = userPubkey,
-  badgePubkey = userPubkey,
   listIdentifier = "general-list",
-  badgeIdentifier = "general-badge",
 }: {
   id: string
   pubkey: string
   created_at?: number
   profileListPubkey?: string
-  badgePubkey?: string
   listIdentifier?: string
-  badgeIdentifier?: string
-}) =>
-  makeEvent({
+}) => {
+  const communityId = getPublicKey(
+    new Uint8Array(32).fill(
+      (Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 254) + 1,
+    ),
+  )
+  return makeEvent({
     id,
     pubkey,
     created_at,
-    kind: COMMUNITY_DEFINITION_KIND,
-    tags: [
-      ["r", "wss://community.example.com"],
-      ["content", "General"],
-      ["k", "7"],
-      ["a", `${PROFILE_LIST_KIND}:${profileListPubkey}:${listIdentifier}`],
-      ["badge", `${BADGE_DEFINITION}:${badgePubkey}:${badgeIdentifier}`],
-    ],
+    kind: COMMUNITY_DEFINITION_KIND_V2,
+    tags: buildCommunityDefinitionV2({
+      communityId,
+      name: id,
+      relays: ["wss://community.example.com"],
+      sections: [
+        {
+          name: "General",
+          kinds: [{kind: 7}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${profileListPubkey}:${listIdentifier}`}],
+        },
+      ],
+    }).tags,
   })
+}
 
 const makeProfileList = (identifier: string, created_at = 1) =>
   makeEvent({
@@ -76,10 +88,13 @@ const makeStar = (communityPubkey: string, created_at = 1) => {
     created_at,
     kind: 7,
     content: COMMUNITY_STAR_CONTENT,
-    tags: [["a", makeCommunityDefinitionAddress(communityPubkey), "wss://star.example.com"]],
+    tags: [["a", communityPointer(communityPubkey).address, "wss://star.example.com"]],
   })
 
-  return {communityPubkey, relayHints: ["wss://star.example.com/"], reaction}
+  return {
+    community: communityPointer(communityPubkey),
+    reaction,
+  }
 }
 
 const makeMemberCommunityRef = ({
@@ -91,11 +106,11 @@ const makeMemberCommunityRef = ({
   roles?: string[]
   created_at?: number
 }) => {
-  const definition = parseCommunityDefinition(
+  const definition = parseCommunityDefinitionV2(
     makeDefinition({id: `definition-${communityPubkey}`, pubkey: communityPubkey, created_at}),
   )!
 
-  return {communityPubkey, relayHints: definition.relays, roles, definition}
+  return {community: definition.pointer, relayHints: definition.relays, roles, definition}
 }
 
 describe("community preferences", () => {
@@ -156,7 +171,7 @@ describe("community preferences", () => {
     ])
   })
 
-  it("combines role scores for the same community", () => {
+  it("does not combine roles from different definitions owned by the same controller", () => {
     const adminDefinition = makeDefinition({id: "admin", pubkey: userPubkey, created_at: 1})
     const starred = makeStar(userPubkey, 5)
 
@@ -169,11 +184,32 @@ describe("community preferences", () => {
     ).toEqual([
       expect.objectContaining({
         communityPubkey: userPubkey,
-        score: 9,
+        score: 8,
         isAdmin: true,
+        isStarred: false,
+      }),
+      expect.objectContaining({
+        communityPubkey: userPubkey,
+        score: 1,
+        isAdmin: false,
         isStarred: true,
         lastInteractedAt: 5,
       }),
+    ])
+  })
+
+  it("keeps authored sibling definitions as separate preferences", () => {
+    const first = makeDefinition({id: "first", pubkey: userPubkey, created_at: 1})
+    const second = makeDefinition({id: "second", pubkey: userPubkey, created_at: 2})
+
+    expect(
+      selectPreferredCommunities({
+        adminDefinitionEvents: [first, second],
+        author: userPubkey,
+      }).map(preference => preference.communityAddress),
+    ).toEqual([
+      parseCommunityDefinitionV2(second)!.pointer.address,
+      parseCommunityDefinitionV2(first)!.pointer.address,
     ])
   })
 
@@ -183,11 +219,13 @@ describe("community preferences", () => {
       pubkey: userPubkey,
       created_at: 4,
       kind: FORM_TEMPLATE_KIND,
-      tags: [
-        ["d", "repo-application"],
-        ["a", makeCommunityDefinitionAddress(moderatorCommunityPubkey)],
-        ["content", "Repositories"],
-      ],
+      tags: makeAdmissionFormTemplate({
+        identifier: "repo-application",
+        community: communityPointer(moderatorCommunityPubkey),
+        sectionName: "Repositories",
+        name: "Repository application",
+        fields: [],
+      }).tags,
     })
 
     expect(selectPreferredCommunities({moderatorFormEvents: [form], author: userPubkey})).toEqual([
@@ -215,7 +253,11 @@ describe("community preferences", () => {
           memberRef,
         ],
         adminDefinitionEvents: [adminDefinition],
-        excludedCommunityPubkeys: [userPubkey, memberCommunityPubkey, starredCommunityPubkey],
+        excludedCommunityAddresses: [
+          communityPointer(userPubkey).address,
+          memberRef.definition.pointer.address,
+          communityPointer(starredCommunityPubkey).address,
+        ],
         author: userPubkey,
       }).map(community => community.communityPubkey),
     ).toEqual([userPubkey])
@@ -249,7 +291,6 @@ describe("community preferences", () => {
       pubkey: otherCommunityPubkey,
       profileListPubkey: otherCommunityPubkey,
       listIdentifier: "general-list",
-      badgePubkey: otherCommunityPubkey,
     })
     const profileList = makeProfileList("general-list", 3)
 
@@ -260,5 +301,45 @@ describe("community preferences", () => {
         author: userPubkey,
       }),
     ).toEqual([])
+  })
+
+  it("drops deleted moderator-list authority and accepts a later recreation", () => {
+    const definition = makeDefinition({
+      id: "moderator-authority",
+      pubkey: moderatorCommunityPubkey,
+      listIdentifier: "moderator-list",
+    })
+    const list = makeProfileList("moderator-list", 2)
+    const address = `${PROFILE_LIST_KIND}:${userPubkey}:moderator-list`
+    const deletion = makeEvent({
+      id: "delete-moderator-list",
+      pubkey: userPubkey,
+      created_at: 2,
+      kind: DELETE,
+      tags: [["a", address]],
+    })
+    const recreated = {...list, id: "recreated-moderator-list", created_at: 3}
+    const select = (events: TrustedEvent[]) =>
+      selectPreferredCommunities({
+        moderatorProfileListEvents: events,
+        moderatorDefinitionEvents: [definition],
+        author: userPubkey,
+      })
+
+    expect(select([list, deletion])).toEqual([])
+    expect(select([list, deletion, recreated])).toHaveLength(1)
+    expect(select([list, {...deletion, pubkey: otherCommunityPubkey}])).toHaveLength(1)
+    expect(
+      select([
+        list,
+        {
+          ...deletion,
+          tags: [
+            ["a", address],
+            ["a", `${address}-other`],
+          ],
+        },
+      ]),
+    ).toHaveLength(1)
   })
 })

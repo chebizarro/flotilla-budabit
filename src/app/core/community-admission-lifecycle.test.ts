@@ -1,18 +1,20 @@
 import {describe, expect, it, vi} from "vitest"
 import type {RequestOptions} from "@welshman/net"
 import {DELETE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
+import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
-  TARGETED_PUBLICATION_KIND,
-  parseCommunityDefinition,
+  TARGETED_PUBLICATION_KIND_V2,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
 } from "./community"
 import {makeCommunityGrantEvent, makeCommunityRevokeEvent} from "./community-admin"
-import {makeModeratorGrantRevokeDefinitionUpdate} from "./community-moderator-requests"
 import {
-  makeTargetedPublicationForCommunity,
+  makeTargetedPublicationForCommunityV2,
   makeAddressablePublicationRef,
 } from "./community-targeting"
 import {
@@ -38,12 +40,17 @@ import {
   getAdmissionSubmissionState,
 } from "./community-forms"
 
-const communityPubkey = "a".repeat(64)
-const moderatorPubkey = "b".repeat(64)
-const applicantPubkey = "c".repeat(64)
-const outsiderPubkey = "d".repeat(64)
-const approvedCalendarPubkey = "e".repeat(64)
-const unauthorizedCalendarPubkey = "f".repeat(64)
+const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = testPubkey(31)
+const communityPointer = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: communityPubkey,
+})!
+const moderatorPubkey = testPubkey(32)
+const applicantPubkey = testPubkey(33)
+const outsiderPubkey = testPubkey(34)
+const approvedCalendarPubkey = testPubkey(35)
+const unauthorizedCalendarPubkey = testPubkey(36)
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -63,6 +70,9 @@ const generalListRef = {
   identifier: "General",
   address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:General`,
 }
+const ownerGeneralListRef = {
+  address: `${PROFILE_LIST_KIND}:${communityPubkey}:General`,
+}
 const repoListRef = {
   kind: PROFILE_LIST_KIND,
   pubkey: moderatorPubkey,
@@ -75,31 +85,39 @@ const calendarListRef = {
   identifier: "Calendar-event-creator",
   address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:Calendar-event-creator`,
 }
-const definition = parseCommunityDefinition(
+const definition = parseCommunityDefinitionV2(
   makeEvent({
     id: "community-definition",
-    kind: COMMUNITY_DEFINITION_KIND,
+    kind: COMMUNITY_DEFINITION_KIND_V2,
     pubkey: communityPubkey,
-    tags: [
-      ["r", "wss://community.example"],
-      ["content", "General"],
-      ["k", "9", "room-message"],
-      ["k", "1111"],
-      ["k", "7"],
-      ["a", generalListRef.address],
-      ["content", "Repositories"],
-      ["k", "30617"],
-      ["a", repoListRef.address],
-      ["content", "Calendar-event-creator"],
-      ["k", String(EVENT_TIME)],
-      ["a", calendarListRef.address],
-    ],
+    tags: buildCommunityDefinitionV2({
+      communityId: communityPointer.communityId,
+      name: "Admission lifecycle",
+      relays: ["wss://community.example"],
+      sections: [
+        {
+          name: "General",
+          kinds: [{kind: 9, subtype: "room-message"}, {kind: 1111}, {kind: 7}],
+          profileLists: [ownerGeneralListRef, generalListRef],
+        },
+        {
+          name: "Repositories",
+          kinds: [{kind: 30617}],
+          profileLists: [repoListRef],
+        },
+        {
+          name: "Calendar-event-creator",
+          kinds: [{kind: EVENT_TIME}],
+          profileLists: [calendarListRef],
+        },
+      ],
+    }).tags,
   }),
 )!
 
 const formTemplate = makeAdmissionFormTemplate({
   identifier: "general-application",
-  communityPubkey,
+  community: communityPointer,
   sectionName: "General",
   name: "General application",
   fields: [
@@ -131,7 +149,7 @@ const form = selectActiveAdmissionForm({
       tags: formTemplate.tags,
     }),
   ],
-  communityPubkey,
+  community: communityPointer,
   sectionName: "General",
   moderatorPubkeys: [moderatorPubkey],
 })!
@@ -148,6 +166,7 @@ describe("community admission lifecycle integration", () => {
       pubkey: applicantPubkey,
       created_at: 10,
       tags: makeAdmissionResponse({
+        community: communityPointer,
         formAddress,
         values: {intro: "I build room tools.", focus: "rooms"},
       }).tags,
@@ -158,6 +177,7 @@ describe("community admission lifecycle integration", () => {
       pubkey: applicantPubkey,
       created_at: 11,
       tags: makeAdmissionResponse({
+        community: communityPointer,
         formAddress,
         values: {intro: "A duplicate active submission.", focus: "threads"},
       }).tags,
@@ -165,6 +185,7 @@ describe("community admission lifecycle integration", () => {
 
     expect(
       getAdmissionSubmissionState({
+        community: communityPointer,
         responseEvents: [firstResponse, duplicateResponse],
         deleteEvents: [],
         reviewEvents: [],
@@ -179,7 +200,10 @@ describe("community admission lifecycle integration", () => {
       kind: DELETE,
       pubkey: applicantPubkey,
       created_at: 12,
-      tags: makeAdmissionResponseDelete({responseId: "response-2"}).tags,
+      tags: makeAdmissionResponseDelete({
+        community: communityPointer,
+        responseId: "response-2",
+      }).tags,
     })
     const revisedResponse = makeEvent({
       id: "response-3",
@@ -187,6 +211,7 @@ describe("community admission lifecycle integration", () => {
       pubkey: applicantPubkey,
       created_at: 13,
       tags: makeAdmissionResponse({
+        community: communityPointer,
         formAddress,
         values: {intro: "A revised application.", focus: "threads"},
       }).tags,
@@ -200,6 +225,8 @@ describe("community admission lifecycle integration", () => {
       tags: makeAdmissionReview({
         responseId: "response-3",
         applicantPubkey,
+        formAddress,
+        community: communityPointer,
         status: "rejected",
       }).tags,
     })
@@ -212,12 +239,15 @@ describe("community admission lifecycle integration", () => {
       tags: makeAdmissionReview({
         responseId: "response-3",
         applicantPubkey,
+        formAddress,
+        community: communityPointer,
         status: "granted",
       }).tags,
     })
 
     expect(
       getAdmissionSubmissionState({
+        community: communityPointer,
         responseEvents: [firstResponse, duplicateResponse, revisedResponse],
         deleteEvents: [deleteDuplicate],
         reviewEvents: [rejection],
@@ -228,6 +258,7 @@ describe("community admission lifecycle integration", () => {
     ).toBe("rejected")
     expect(
       getAdmissionSubmissionState({
+        community: communityPointer,
         responseEvents: [firstResponse, duplicateResponse, revisedResponse],
         deleteEvents: [deleteDuplicate],
         reviewEvents: [rejection, grantReview],
@@ -268,7 +299,7 @@ describe("community admission lifecycle integration", () => {
         responseId: "response-3",
         applicantPubkey,
         formAddress,
-        communityPubkey,
+        community: communityPointer,
         sectionName: "General",
         status: "rejected",
       }).tags,
@@ -303,6 +334,7 @@ describe("community admission lifecycle integration", () => {
     ).toBe(false)
     expect(
       getAdmissionSubmissionState({
+        community: communityPointer,
         responseEvents: [firstResponse, duplicateResponse, revisedResponse],
         deleteEvents: [deleteDuplicate],
         reviewEvents: [rejection, grantReview, revokeReview],
@@ -337,9 +369,9 @@ describe("community admission lifecycle integration", () => {
     })
     const approvedTargeting = makeEvent({
       id: "approved-targeting",
-      kind: TARGETED_PUBLICATION_KIND,
+      kind: TARGETED_PUBLICATION_KIND_V2,
       pubkey: approvedCalendarPubkey,
-      tags: makeTargetedPublicationForCommunity({
+      tags: makeTargetedPublicationForCommunityV2({
         targetingId: "approved-event",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -347,14 +379,14 @@ describe("community admission lifecycle integration", () => {
           pubkey: approvedCalendarPubkey,
           identifier: "approved-event",
         }),
-        communityPubkey,
+        community: communityPointer,
       }).tags,
     })
     const unauthorizedTargeting = makeEvent({
       id: "unauthorized-targeting",
-      kind: TARGETED_PUBLICATION_KIND,
+      kind: TARGETED_PUBLICATION_KIND_V2,
       pubkey: unauthorizedCalendarPubkey,
-      tags: makeTargetedPublicationForCommunity({
+      tags: makeTargetedPublicationForCommunityV2({
         targetingId: "unauthorized-event",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -362,7 +394,7 @@ describe("community admission lifecycle integration", () => {
           pubkey: unauthorizedCalendarPubkey,
           identifier: "unauthorized-event",
         }),
-        communityPubkey,
+        community: communityPointer,
       }).tags,
     })
 
@@ -392,17 +424,14 @@ describe("community admission lifecycle integration", () => {
       pubkey: moderatorPubkey,
       tags: grantEvent.tags,
     })
-    const revokeTemplate = makeModeratorGrantRevokeDefinitionUpdate({
-      definition,
-      sectionName: "General",
-      moderatorPubkey,
-    })
-    const revokedDefinition = parseCommunityDefinition(
+    const revokedDefinition = parseCommunityDefinitionV2(
       makeEvent({
         id: "community-definition-revoked",
-        kind: COMMUNITY_DEFINITION_KIND,
+        kind: COMMUNITY_DEFINITION_KIND_V2,
         pubkey: communityPubkey,
-        tags: revokeTemplate.tags,
+        tags: definition.event.tags.filter(
+          tag => !(tag[0] === "a" && tag[1] === generalListRef.address),
+        ),
       }),
     )!
     const response = makeEvent({
@@ -410,6 +439,7 @@ describe("community admission lifecycle integration", () => {
       kind: FORM_RESPONSE_KIND,
       pubkey: applicantPubkey,
       tags: makeAdmissionResponse({
+        community: communityPointer,
         formAddress,
         values: {intro: "I was approved by a removed moderator."},
       }).tags,
@@ -423,6 +453,8 @@ describe("community admission lifecycle integration", () => {
       tags: makeAdmissionReview({
         responseId: response.id,
         applicantPubkey,
+        formAddress,
+        community: communityPointer,
         status: "granted",
       }).tags,
     })
@@ -451,13 +483,14 @@ describe("community admission lifecycle integration", () => {
     expect(
       selectActiveAdmissionForm({
         events: [form.event],
-        communityPubkey,
+        community: communityPointer,
         sectionName: "General",
         moderatorPubkeys: currentModerators,
       }),
     ).toBeUndefined()
     expect(
       getAdmissionSubmissionState({
+        community: communityPointer,
         responseEvents: [response],
         deleteEvents: [],
         reviewEvents: [grantReview],

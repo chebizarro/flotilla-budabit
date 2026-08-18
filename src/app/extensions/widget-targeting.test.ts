@@ -1,5 +1,11 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
-import {TARGETED_PUBLICATION_KIND, buildTargetedPublication} from "@app/core/community"
+import {getPublicKey} from "nostr-tools/pure"
+import {
+  TARGETED_PUBLICATION_KIND_V2,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
+  parseTargetedPublicationV2,
+} from "@app/core/community"
 import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import type {TrustedEvent} from "@welshman/util"
 
@@ -22,8 +28,16 @@ import {
 } from "./widget-targeting"
 
 const widgetPubkey = "a".repeat(64)
-const communityPubkey = "b".repeat(64)
-const secondCommunityPubkey = "c".repeat(64)
+const firstCommunity = makeCommunityPointer({
+  controllerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
+  communityId: getPublicKey(new Uint8Array(32).fill(3)),
+  relayHints: ["wss://community.example"],
+})!
+const secondCommunity = makeCommunityPointer({
+  controllerPubkey: getPublicKey(new Uint8Array(32).fill(4)),
+  communityId: firstCommunity.communityId,
+  relayHints: ["wss://second.example"],
+})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -55,20 +69,20 @@ describe("widget targeting", () => {
         baseRelays: ["wss://base.example"],
         communityOptions: [
           {
-            pubkey: communityPubkey,
+            community: firstCommunity,
             relays: ["wss://community.example"],
             relayHints: ["wss://hint.example"],
           },
-          {pubkey: secondCommunityPubkey, relays: ["wss://second.example"]},
+          {community: secondCommunity, relays: ["wss://second.example"]},
         ],
-        communityPubkeys: [secondCommunityPubkey, communityPubkey],
+        communityAddresses: [secondCommunity.address, firstCommunity.address],
       }),
     ).toEqual(["wss://base.example/", "wss://second.example/", "wss://community.example/"])
   })
 
   it("keeps relay hints available for reads without using them for publishing", () => {
     const option = {
-      pubkey: communityPubkey,
+      community: firstCommunity,
       relays: ["wss://community.example"],
       relayHints: ["wss://hint.example"],
     }
@@ -80,7 +94,7 @@ describe("widget targeting", () => {
     expect(
       getWidgetTargetPublishRelays({
         communityOptions: [option],
-        communityPubkeys: [communityPubkey],
+        communityAddresses: [firstCommunity.address],
       }),
     ).toEqual(["wss://community.example/"])
   })
@@ -91,12 +105,12 @@ describe("widget targeting", () => {
         baseRelays: ["wss://base.example"],
         communityOptions: [
           {
-            pubkey: communityPubkey,
+            community: firstCommunity,
             label: "No Relay Community",
             relayHints: ["wss://hint.example"],
           },
         ],
-        communityPubkeys: [communityPubkey],
+        communityAddresses: [firstCommunity.address],
       }),
     ).toThrow(
       "Target communities must declare relays before publishing widgets: No Relay Community",
@@ -108,23 +122,24 @@ describe("widget targeting", () => {
       getWidgetTargetPublishRelays({
         baseRelays: ["wss://base.example"],
         communityOptions: [],
-        communityPubkeys: [communityPubkey],
+        communityAddresses: [firstCommunity.address],
       }),
     ).toThrow("Target communities are not available for widget publishing")
   })
 
   it("extracts original and community relay hints from targeting events", () => {
     const event = makeEvent({
-      kind: TARGETED_PUBLICATION_KIND,
-      tags: buildTargetedPublication({
+      kind: TARGETED_PUBLICATION_KIND_V2,
+      content: "",
+      tags: buildTargetedPublicationV2({
         id: "target-weather",
         kind: SMART_WIDGET_KIND,
-        ref: {
+        source: {
           type: "a",
           value: `${SMART_WIDGET_KIND}:${widgetPubkey}:weather`,
           relay: "wss://widgets.example",
         },
-        communities: [{pubkey: communityPubkey, relay: "wss://community.example"}],
+        communities: [firstCommunity],
       }).tags,
     })
 
@@ -139,10 +154,10 @@ describe("widget targeting", () => {
       widget: {pubkey: widgetPubkey, identifier: "weather"},
       baseRelays: ["wss://base.example"],
       communityOptions: [
-        {pubkey: communityPubkey, relays: ["wss://community.example"]},
-        {pubkey: secondCommunityPubkey, relays: ["wss://second.example"]},
+        {community: firstCommunity, relays: ["wss://community.example"]},
+        {community: secondCommunity, relays: ["wss://second.example"]},
       ],
-      communityPubkeys: [communityPubkey, secondCommunityPubkey],
+      communityAddresses: [firstCommunity.address, secondCommunity.address],
       originalRelay: "wss://widgets.example",
       targetingId: "target-weather",
       createdAt: 123,
@@ -159,15 +174,20 @@ describe("widget targeting", () => {
       "wss://community.example/",
       "wss://second.example/",
     ])
-    expect(event).toMatchObject({kind: TARGETED_PUBLICATION_KIND, created_at: 123})
+    expect(event).toMatchObject({kind: TARGETED_PUBLICATION_KIND_V2, content: "", created_at: 123})
     expect(event.tags).toEqual([
       ["d", "target-weather"],
-      ["a", `${SMART_WIDGET_KIND}:${widgetPubkey}:weather`, "wss://widgets.example/"],
+      ["a", `${SMART_WIDGET_KIND}:${widgetPubkey}:weather`, "wss://widgets.example", "source"],
       ["k", String(SMART_WIDGET_KIND)],
-      ["p", communityPubkey],
-      ["r", "wss://community.example/"],
-      ["p", secondCommunityPubkey],
-      ["r", "wss://second.example/"],
+      ["h", firstCommunity.communityId],
+      ["a", firstCommunity.address, "wss://community.example", "community"],
+      ["h", secondCommunity.communityId],
+      ["a", secondCommunity.address, "wss://second.example", "community"],
     ])
+    const publishedEvent = event as TrustedEvent
+    expect(
+      parseTargetedPublicationV2(publishedEvent)!.communities.map(community => community.address),
+    ).toEqual([firstCommunity.address, secondCommunity.address])
+    expect(publishedEvent.tags.some(tag => tag[0] === "p")).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 <script lang="ts">
   import {goto} from "$app/navigation"
-  import {profilesByPubkey, pubkey} from "@welshman/app"
+  import {pubkey} from "@welshman/app"
   import {getTagValue, makeEvent, prep, THREAD, type TrustedEvent} from "@welshman/util"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
   import AltArrowRight from "@assets/icons/alt-arrow-right.svg?dataurl"
@@ -21,8 +21,7 @@
   } from "@app/core/community-permissions"
   import {getQuoteEventTags} from "@app/util/git-quote"
   import {getEventShareRelayHints, makeEventShareNostrUri} from "@app/util/event-share"
-  import {formatShortNpub} from "@app/util/pubkeys"
-  import {makeCommunityThreadPath} from "@app/util/routes"
+  import {makeExactCommunityThreadPath} from "@app/util/routes"
   import {pushToast} from "@app/util/toast"
   import {startPublication} from "@app/core/publication-operations"
   import {GIT_ISSUE, GIT_PULL_REQUEST} from "@nostr-git/core/events"
@@ -31,10 +30,10 @@
     event: TrustedEvent
     url?: string
     relays?: string[]
-    defaultCommunityPubkey?: string
+    defaultCommunityAddress?: string
   }
 
-  const {event, url = "", relays = [], defaultCommunityPubkey = ""}: Props = $props()
+  const {event, url = "", relays = [], defaultCommunityAddress = ""}: Props = $props()
 
   const getActivityKindLabel = () => {
     if (event.kind === GIT_ISSUE) return "issue"
@@ -46,12 +45,6 @@
     const subject = getTagValue("subject", event.tags) || "Untitled"
 
     return `Discuss ${getActivityKindLabel()}: ${subject}`
-  }
-
-  const getCommunityLabel = (pubkey: string) => {
-    const profile = $profilesByPubkey.get(pubkey)
-
-    return profile?.display_name || profile?.name || formatShortNpub(pubkey) || "Community"
   }
 
   const back = () => history.back()
@@ -76,7 +69,7 @@
         makeEvent(
           THREAD,
           makeCommunityThread({
-            communityPubkey: selectedCommunity.communityPubkey,
+            communityPubkey: selectedCommunity.community.communityId,
             title: trimmedTitle,
             content,
             tags: quoteTags,
@@ -84,7 +77,7 @@
         ),
         $pubkey,
       )
-      const href = makeCommunityThreadPath(selectedCommunity.communityPubkey, threadEvent.id)
+      const href = makeExactCommunityThreadPath(selectedCommunity.community, threadEvent.id)
       startPublication({
         relays: publishRelays,
         event: threadEvent,
@@ -108,7 +101,7 @@
 
   let title = $state(getDefaultTitle())
   let context = $state("")
-  let selectedCommunityPubkey = $state("")
+  let selectedCommunityAddress = $state("")
   let publishing = $state(false)
 
   const quoteRelayHints = $derived(getEventShareRelayHints(event, {url, relays}))
@@ -132,7 +125,7 @@
     ),
   )
   const selectedCommunity = $derived(
-    threadCommunityOptions.find(ref => ref.communityPubkey === selectedCommunityPubkey),
+    threadCommunityOptions.find(ref => ref.community.address === selectedCommunityAddress),
   )
   const publishRelays = $derived(
     selectedCommunity ? getCommunityScopedPublishRelays(selectedCommunity.definition) : [],
@@ -140,16 +133,16 @@
 
   $effect(() => {
     if (
-      selectedCommunityPubkey &&
-      threadCommunityOptions.some(ref => ref.communityPubkey === selectedCommunityPubkey)
+      selectedCommunityAddress &&
+      threadCommunityOptions.some(ref => ref.community.address === selectedCommunityAddress)
     ) {
       return
     }
 
-    selectedCommunityPubkey =
-      threadCommunityOptions.find(ref => ref.communityPubkey === defaultCommunityPubkey)
-        ?.communityPubkey ||
-      threadCommunityOptions[0]?.communityPubkey ||
+    selectedCommunityAddress =
+      threadCommunityOptions.find(ref => ref.community.address === defaultCommunityAddress)
+        ?.community.address ||
+      threadCommunityOptions[0]?.community.address ||
       ""
   })
 </script>
@@ -174,10 +167,9 @@
         <p>Community</p>
       {/snippet}
       {#snippet input()}
-        <select bind:value={selectedCommunityPubkey} class="select select-bordered w-full">
-          {#each threadCommunityOptions as option (option.communityPubkey)}
-            <option value={option.communityPubkey}
-              >{getCommunityLabel(option.communityPubkey)}</option>
+        <select bind:value={selectedCommunityAddress} class="select select-bordered w-full">
+          {#each threadCommunityOptions as option (option.community.address)}
+            <option value={option.community.address}>{option.definition.metadata.name}</option>
           {/each}
         </select>
       {/snippet}

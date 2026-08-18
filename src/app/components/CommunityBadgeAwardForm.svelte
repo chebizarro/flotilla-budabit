@@ -13,13 +13,12 @@
   import {preventDefault} from "@lib/html"
   import {pushModal} from "@app/util/modal"
   import {pushToast} from "@app/util/toast"
-  import {normalizePubkey, normalizeRelays} from "@app/core/community"
+  import {normalizePubkey, normalizeRelays, type CommunityPointer} from "@app/core/community"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityRelays,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
-    activeCommunityRelays,
     activeCommunityReportState,
     getCommunityBadgeRelays,
   } from "@app/core/community-state"
@@ -35,6 +34,7 @@
   } from "@app/core/community-badges"
 
   type Props = {
+    community: CommunityPointer
     recipientPubkey?: string
     title?: string
     description?: string
@@ -45,6 +45,7 @@
   }
 
   const {
+    community,
     recipientPubkey = "",
     title = "Award badge",
     description = "Badge awards publish one immutable award event for exactly one recipient.",
@@ -54,29 +55,34 @@
     ...props
   }: Props = $props()
 
-  const communityPubkey = $derived($activeCommunityDefinition?.pubkey || "")
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
+      $activeExactCommunityDefinition?.pointer.address === community.address &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(!communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const badgeRelays = $derived(
-    normalizeRelays(getCommunityBadgeRelays(communityBootstrapReady ? $activeCommunityRelays : [])),
+    normalizeRelays(
+      getCommunityBadgeRelays(communityBootstrapReady ? $activeExactCommunityRelays : []),
+    ),
   )
-  const badgePublishRelays = $derived(communityBootstrapReady ? $activeCommunityPublishRelays : [])
-  const communityProfileRelays = $derived(communityBootstrapReady ? $activeCommunityRelays : [])
+  const badgePublishRelays = $derived(
+    communityBootstrapReady ? normalizeRelays($activeExactCommunityDefinition?.relays || []) : [],
+  )
+  const communityProfileRelays = $derived(
+    communityBootstrapReady ? $activeExactCommunityRelays : [],
+  )
   const canManageBadges = $derived(
     Boolean(
       communityBootstrapReady &&
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       $pubkey &&
       canCreateCommunityBadge({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         pubkey: $pubkey,
         profileListEvents: $activeCommunityProfileListEvents,
         reportState: $activeCommunityReportState,
@@ -84,9 +90,9 @@
     ),
   )
   const badgeDefinitionFilters = $derived(
-    communityBootstrapReady && $activeCommunityDefinition
+    communityBootstrapReady && $activeExactCommunityDefinition
       ? makeCommunityBadgeDefinitionFilters({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
         })
@@ -96,9 +102,9 @@
     deriveEventsAsc(deriveEventsById({repository, filters: badgeDefinitionFilters})),
   )
   const badgeDefinitions = $derived.by((): CommunityBadgeDefinition[] =>
-    $activeCommunityDefinition
+    $activeExactCommunityDefinition
       ? selectCommunityBadgeDefinitions({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
@@ -159,7 +165,11 @@
     operation: string,
     template: {kind: number; content: string; tags: string[][]},
   ) => {
-    const intent = JSON.stringify({operation, relays: badgePublishRelays})
+    const intent = JSON.stringify({
+      communityAddress: community.address,
+      operation,
+      relays: badgePublishRelays,
+    })
     const failedThunk = failedAwardThunks.get(intent)
     if (!failedThunk && badgePublishRelays.length === 0) {
       throw new Error("No badge relays are available.")
@@ -242,6 +252,7 @@
           await publishTemplate(
             `badge-award:create:${selectedDefinition.address}:${targetPubkey}`,
             makeCommunityBadgeAwardEvent({
+              community,
               definitionAddress: selectedDefinition.address,
               recipientPubkey: targetPubkey,
             }),

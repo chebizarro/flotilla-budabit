@@ -18,19 +18,19 @@ describe("GRASP service coupling", () => {
     expect(
       mergeGraspServiceDescriptors([
         ...buildGraspServiceDescriptors(["wss://grasp.example/"], "user-10317"),
-        ...buildGraspServiceDescriptors(["wss://grasp.example"], "community-10222"),
+        ...buildGraspServiceDescriptors(["wss://grasp.example"], "community-definition"),
       ])
     ).toEqual([
       {
         relayUrl: "wss://grasp.example",
         httpBaseAliases: ["https://grasp.example"],
-        sources: ["user-10317", "community-10222"],
+        sources: ["user-10317", "community-definition"],
       },
     ]);
   });
 
   it("flags known GRASP relays that have no selected target", () => {
-    const services = buildGraspServiceDescriptors(["wss://grasp.example"], "community-10222");
+    const services = buildGraspServiceDescriptors(["wss://grasp.example"], "community-definition");
     expect(
       getUnbackedKnownGraspRelayUrls({
         repoRelayUrls: ["wss://relay.example", "wss://grasp.example"],
@@ -67,7 +67,7 @@ describe("GRASP service coupling", () => {
         relayUrls: ["wss://git.community.example"],
         knownServices: buildGraspServiceDescriptors(
           ["wss://events.community.example"],
-          "community-10222"
+          "community-definition"
         ),
         enrichKnownServices: true,
       })
@@ -79,7 +79,7 @@ describe("GRASP service coupling", () => {
           "https://git.community.example",
           "https://events.community.example/git",
         ],
-        sources: ["community-10222", "nip11"],
+        sources: ["community-definition", "nip11"],
       },
     ]);
   });

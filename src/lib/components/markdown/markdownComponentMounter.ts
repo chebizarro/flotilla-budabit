@@ -10,6 +10,7 @@ import ContentLinkBlock from "@app/components/ContentLinkBlock.svelte"
 import ContentQuote from "@app/components/ContentQuote.svelte"
 import ContentToken from "@app/components/ContentToken.svelte"
 import CommunityLinkCard from "@app/components/community/CommunityLinkCard.svelte"
+import {parseCommunityNaddr} from "@app/core/community"
 
 export interface MountedComponent {
   target: Element
@@ -106,18 +107,19 @@ function mountCommunityPlaceholders(
 ): void {
   const communityPlaceholders = container.querySelectorAll(".markdown-community-placeholder")
   communityPlaceholders.forEach(placeholder => {
-    const pubkey = placeholder.getAttribute("data-pubkey")
-    if (!pubkey) return
+    const naddr = placeholder.getAttribute("data-naddr")
+    if (!naddr) return
 
     try {
-      const relays = parseRelaysAttribute(placeholder.getAttribute("data-relays"), "community")
+      const value = parseCommunityNaddr(naddr)
+      if (!value) return
       const containerElement = document.createElement("div")
       placeholder.replaceWith(containerElement)
 
       const communityComponent = mount(CommunityLinkCard, {
         target: containerElement,
         props: {
-          value: {pubkey, relays, source: "ncommunity"},
+          value,
         },
       })
 

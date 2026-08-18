@@ -411,8 +411,12 @@ export class MockRelay {
                 ) => Promise<"eose" | "stall" | "disconnect" | undefined>
               }
             ).__mockRelaySubscriptionOutcome?.(filters, this.url)
+            const configuredUrl = this.url.endsWith("/") ? this.url.slice(0, -1) : `${this.url}/`
             const subscriptionOutcome =
-              callbackOutcome || subscriptionOutcomesByRelay[this.url] || "eose"
+              callbackOutcome ||
+              subscriptionOutcomesByRelay[this.url] ||
+              subscriptionOutcomesByRelay[configuredUrl] ||
+              "eose"
             if (subscriptionOutcome === "stall") return
             if (subscriptionOutcome === "disconnect") {
               setTimeout(() => this.close(1006, "offline"), latency)
@@ -430,7 +434,10 @@ export class MockRelay {
             setTimeout(() => {
               if (!this.subscriptions.has(subId)) return
 
-              const availableEvents = [...seedEvents, ...(seedEventsByRelay[this.url] || [])]
+              const availableEvents = [
+                ...seedEvents,
+                ...(seedEventsByRelay[this.url] || seedEventsByRelay[configuredUrl] || []),
+              ]
               const matchingEvents = availableEvents.filter((event: NostrEvent) =>
                 this.eventMatchesFilters(event, filters),
               )
@@ -446,7 +453,9 @@ export class MockRelay {
 
           private handleEvent(params: unknown[]): void {
             const event = params[0] as NostrEvent
-            const response = publishResponsesByRelay[this.url]
+            const configuredUrl = this.url.endsWith("/") ? this.url.slice(0, -1) : `${this.url}/`
+            const response =
+              publishResponsesByRelay[this.url] || publishResponsesByRelay[configuredUrl]
             const outcome = response?.outcome || "accept"
 
             if (debug) {
@@ -461,7 +470,8 @@ export class MockRelay {
             ).__mockRelayPublish?.(event, this.url)
 
             if (outcome === "accept" && response?.retain) {
-              const retainedEvents = seedEventsByRelay[this.url] || []
+              const retainedEvents =
+                seedEventsByRelay[this.url] || seedEventsByRelay[configuredUrl] || []
               if (!retainedEvents.some((candidate: NostrEvent) => candidate.id === event.id)) {
                 retainedEvents.push(event)
               }

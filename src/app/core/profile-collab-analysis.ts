@@ -16,9 +16,9 @@ import {
   loadRepoAnnouncementByAddress,
   repoAnnouncementsByAddress,
 } from "@app/core/git-state"
-import type {CommunityDefinition} from "@app/core/community"
+import type {CommunityDefinitionV2, CommunityPointer} from "@app/core/community"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
-import {userRenouncedCommunityPubkeys} from "@app/core/community-renunciations"
+import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
 import {loadBudabitProfile} from "@app/core/profile-resolver"
 import {buildCommunityTrustAssessments} from "./community-trust"
 
@@ -102,8 +102,8 @@ type BuildProfileCodeTrustAnalysisInput = {
 }
 
 export type ProfileCodeTrustCommunityContext = {
-  communityPubkey?: string
-  definitions?: CommunityDefinition[]
+  community: CommunityPointer
+  definitions: CommunityDefinitionV2[]
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }
@@ -482,7 +482,8 @@ export const loadProfileCodeTrustAnalysis = async (
   }: {force?: boolean; communityContext?: ProfileCodeTrustCommunityContext} = {},
 ) => {
   const viewerPubkey = pubkey.get() || ""
-  const communityContextPubkey = communityContext?.communityPubkey || ""
+  const communityContextAddress = communityContext?.community.address || ""
+  const communityContextPubkey = communityContext?.community.controllerPubkey || ""
 
   if (!viewerPubkey) {
     throw new Error("Sign in to analyze code collaboration.")
@@ -492,7 +493,7 @@ export const loadProfileCodeTrustAnalysis = async (
     const cached = getCachedProfileCodeTrustAnalysis(
       viewerPubkey,
       targetPubkey,
-      communityContextPubkey,
+      communityContextAddress,
     )
 
     if (cached) {
@@ -632,7 +633,7 @@ export const loadProfileCodeTrustAnalysis = async (
     communityAlignedScores,
     communityContextPubkey,
     communityContextAvailable: Boolean(
-      communityContextPubkey && communityContext?.definitions?.length,
+      communityContextAddress && communityContext?.definitions.length,
     ),
     pullRequests,
     appliedStatuses,
@@ -651,7 +652,7 @@ export const loadProfileCodeTrustAnalysis = async (
     const next = new Map(entries)
 
     next.set(
-      getProfileCodeTrustAnalysisKey(viewerPubkey, targetPubkey, communityContextPubkey),
+      getProfileCodeTrustAnalysisKey(viewerPubkey, targetPubkey, communityContextAddress),
       analysis,
     )
 
@@ -670,23 +671,27 @@ const getProfileCommunityAlignedScores = ({
   candidatePubkeys: string[]
   communityContext?: ProfileCodeTrustCommunityContext
 }) => {
-  const definitions = (communityContext?.definitions || []).filter(Boolean)
-  const communityPubkey = communityContext?.communityPubkey || definitions[0]?.pubkey || ""
+  const definitions = communityContext?.definitions || []
+  const community = communityContext?.community
 
-  if (!communityPubkey || definitions.length === 0 || candidatePubkeys.length === 0) {
+  if (!community || definitions.length === 0 || candidatePubkeys.length === 0) {
     return new Map<string, number>()
   }
 
   const assessments = buildCommunityTrustAssessments({
     viewerPubkey,
     candidatePubkeys,
-    context: {scope: "active_community", communityPubkey},
+    context: {
+      scope: "active_community",
+      communityAddress: community.address,
+      communityPubkey: community.controllerPubkey,
+    },
     definitions,
     profileListEvents: communityContext?.profileListEvents || [],
     reportStates: communityContext?.reportState
-      ? new Map([[communityPubkey, communityContext.reportState]])
+      ? new Map([[community.address, communityContext.reportState]])
       : undefined,
-    renouncedCommunityPubkeys: get(userRenouncedCommunityPubkeys),
+    renouncedCommunityAddresses: get(userRenouncedCommunityAddresses),
   })
 
   return new Map(

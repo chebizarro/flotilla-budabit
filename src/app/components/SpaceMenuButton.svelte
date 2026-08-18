@@ -4,12 +4,13 @@
   import Button from "@lib/components/Button.svelte"
   import SpaceMenu from "@app/components/SpaceMenu.svelte"
   import {notifications} from "@app/util/notifications"
-  import {makeSpacePath} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
   import {pushDrawer} from "@app/util/modal"
 
   const {url} = $props()
 
-  const path = makeSpacePath(url)
+  const community = $derived(parseExactCommunityRouteParam(url))
+  const path = $derived(community ? makeExactCommunityPath(community) : "/explore")
 
   const openMenu = () => pushDrawer(SpaceMenu, {url})
 </script>

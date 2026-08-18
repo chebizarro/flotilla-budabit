@@ -4,9 +4,10 @@ import {readFileSync} from "node:fs"
 import {finalizeEvent, generateSecretKey, getPublicKey} from "nostr-tools/pure"
 import {AuthStateEvent, AuthStatus} from "@welshman/net"
 import type {TrustedEvent} from "@welshman/util"
+import {makeCommunityPointer} from "./community"
 import {
-  buildCommunityDefinition,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  parseCommunityDefinitionV2,
   type CommunityEmailDigestService,
 } from "./community"
 import {
@@ -58,6 +59,10 @@ const communityB = getPublicKey(communitySecretB)
 const userPubkey = getPublicKey(userSecret)
 const servicePubkey = getPublicKey(serviceSecret)
 const handlerPubkey = getPublicKey(handlerSecret)
+const communityAddressA = makeCommunityPointer({
+  controllerPubkey: communityA,
+  communityId: communityA,
+})!.address
 const provider: CommunityEmailDigestService = {
   servicePubkey,
   requestRelay: "wss://requests.example.com/",
@@ -69,13 +74,28 @@ const makeDefinition = (
   secret: Uint8Array,
   services: CommunityEmailDigestService[],
   createdAt: number,
+  communityId: string,
 ) => {
-  const template = buildCommunityDefinition({
+  const template = buildCommunityDefinitionV2({
+    communityId,
+    name: `Community ${communityId}`,
     relays: ["wss://community.example.com"],
-    sections: [{name: "General", kinds: [{kind: 1111}]}],
-    emailDigestServices: services,
+    sections: [
+      {
+        name: "General",
+        kinds: [{kind: 1111}],
+        profileLists: [{address: `30000:${getPublicKey(secret)}:members`}],
+      },
+    ],
+    services: services.map(service => ({
+      name: "email-digest",
+      pubkey: service.servicePubkey,
+      requestRelay: service.requestRelay.replace(/\/$/, ""),
+      handlerAddress: service.handlerAddress,
+      handlerRelay: service.handlerRelay.replace(/\/$/, ""),
+    })),
   })
-  return parseCommunityDefinition(finalizeEvent({...template, created_at: createdAt}, secret))!
+  return parseCommunityDefinitionV2(finalizeEvent({...template, created_at: createdAt}, secret))!
 }
 
 const makeWatchState = (repos: RepoWatchState["repos"]): RepoWatchState => ({
@@ -111,6 +131,30 @@ const makePayload = (overrides: Record<string, unknown> = {}) =>
   })
 
 describe("email digest settings", () => {
+  it("keeps same-controller sibling provider choices independent by exact address", () => {
+    const controllerPubkey = communityA
+    const first = makeCommunityPointer({
+      controllerPubkey,
+      communityId: communityA,
+    })!
+    const sibling = makeCommunityPointer({
+      controllerPubkey,
+      communityId: communityB,
+    })!
+    const normalized = normalizeEmailDigestSettings({
+      version: 2,
+      enabled: true,
+      email: "person@example.com",
+      intervalDays: 3,
+      localTime: "08:45",
+      timezone: "Europe/London",
+      selectedCommunityAddress: first.address,
+      provider,
+    })
+
+    expect(normalized.selectedCommunityAddress).toBe(first.address)
+    expect(normalized.selectedCommunityAddress).not.toBe(sibling.address)
+  })
   it("keeps encrypted settings out of the shared plaintext cache", () => {
     const source = readFileSync(new URL("./email-digest-state.ts", import.meta.url), "utf8")
     expect(source).not.toContain("ensurePlaintext")
@@ -120,24 +164,24 @@ describe("email digest settings", () => {
   it("normalizes versioned settings and preserves a valid provider snapshot", () => {
     expect(
       normalizeEmailDigestSettings({
-        version: 1,
+        version: 2,
         enabled: true,
         email: "  Person@Example.COM ",
         intervalDays: 3,
         localTime: "08:45",
         timezone: "Europe/London",
-        selectedCommunityPubkey: communityA.toUpperCase(),
+        selectedCommunityAddress: communityAddressA,
         provider: {...provider, requestRelay: "WSS://REQUESTS.EXAMPLE.COM"},
         publicEmail: "must-not-survive@example.com",
       }),
     ).toEqual({
-      version: 1,
+      version: 2,
       enabled: true,
       email: "person@example.com",
       intervalDays: 3,
       localTime: "08:45",
       timezone: "Europe/London",
-      selectedCommunityPubkey: communityA,
+      selectedCommunityAddress: communityAddressA,
       provider,
     })
     expect(EMAIL_DIGEST_SETTINGS_DTAG).toBe("budabit/email-digest-settings")
@@ -145,36 +189,36 @@ describe("email digest settings", () => {
 
   it("disables malformed enabled settings instead of retaining partial values", () => {
     const normalized = normalizeEmailDigestSettings({
-      version: 1,
+      version: 2,
       enabled: true,
       email: "not-an-email",
       intervalDays: 31,
       localTime: "25:00",
       timezone: "Not/AZone",
-      selectedCommunityPubkey: "bad",
+      selectedCommunityAddress: "bad",
       provider,
     })
 
     expect(normalized).toMatchObject({
-      version: 1,
+      version: 2,
       enabled: false,
       email: "",
       intervalDays: 7,
       localTime: "09:00",
-      selectedCommunityPubkey: "",
+      selectedCommunityAddress: "",
     })
   })
 
   it("does not interpret unversioned or unsupported preference payloads", () => {
     const normalized = normalizeEmailDigestSettings({
-      version: 2,
+      version: 1,
       enabled: true,
       email: "person@example.com",
-      selectedCommunityPubkey: communityA,
+      selectedCommunityAddress: communityAddressA,
       provider,
     })
 
-    expect(normalized).toMatchObject({version: 1, enabled: false, email: ""})
+    expect(normalized).toMatchObject({version: 2, enabled: false, email: ""})
     expect(normalized.provider).toBeUndefined()
   })
 
@@ -190,13 +234,13 @@ describe("email digest settings", () => {
     } as TrustedEvent
     const decrypt = vi.fn().mockResolvedValue(
       JSON.stringify({
-        version: 1,
+        version: 2,
         enabled: true,
         email: "Person@Example.com",
         intervalDays: 7,
         localTime: "09:00",
         timezone: "UTC",
-        selectedCommunityPubkey: communityA,
+        selectedCommunityAddress: communityAddressA,
         provider,
       }),
     )
@@ -213,13 +257,13 @@ describe("email digest settings", () => {
 
 describe("verified email digest provider discovery", () => {
   it("deduplicates descriptors, retains endorsements, and puts the active community first", () => {
-    const activeDefinition = makeDefinition(communitySecretA, [provider], 20)
-    const memberDefinition = makeDefinition(communitySecretB, [provider], 30)
+    const activeDefinition = makeDefinition(communitySecretA, [provider], 20, communityA)
+    const memberDefinition = makeDefinition(communitySecretB, [provider], 30, communityB)
     const providers = discoverEmailDigestProviders({
       activeCommunityDefinition: activeDefinition,
       communityRefs: [
         {
-          communityPubkey: communityB,
+          community: memberDefinition.pointer,
           definition: memberDefinition,
           relayHints: [],
           roles: ["member"],
@@ -230,11 +274,14 @@ describe("verified email digest provider discovery", () => {
 
     expect(providers).toHaveLength(1)
     expect(providers[0]).toMatchObject({...provider, isActiveCommunity: true})
-    expect(providers[0].endorsingCommunityPubkeys).toEqual([communityA, communityB])
+    expect(providers[0].endorsingCommunities.map(({pointer}) => pointer.address)).toEqual([
+      activeDefinition.pointer.address,
+      memberDefinition.pointer.address,
+    ])
   })
 
-  it("rejects a kind 10222 definition with an invalid signature", () => {
-    const definition = makeDefinition(communitySecretA, [provider], 20)
+  it("rejects a kind 32222 definition with an invalid signature", () => {
+    const definition = makeDefinition(communitySecretA, [provider], 20, communityA)
     const invalid = {
       ...definition,
       event: {...definition.event, sig: "0".repeat(128)},
@@ -246,6 +293,33 @@ describe("verified email digest provider discovery", () => {
         communityRefs: [],
       }),
     ).toEqual([])
+  })
+
+  it("retains same-controller sibling endorsements by exact address", () => {
+    const first = makeDefinition(communitySecretA, [provider], 20, communityA)
+    const sibling = makeDefinition(communitySecretA, [provider], 30, communityB)
+    const providers = discoverEmailDigestProviders({
+      communityRefs: [
+        {
+          community: first.pointer,
+          definition: first,
+          relayHints: first.relays,
+          roles: ["member"],
+          writableSections: [],
+        },
+        {
+          community: sibling.pointer,
+          definition: sibling,
+          relayHints: sibling.relays,
+          roles: ["member"],
+          writableSections: [],
+        },
+      ],
+    })
+
+    expect(providers[0].endorsingCommunities.map(({pointer}) => pointer.address).sort()).toEqual(
+      [first.pointer.address, sibling.pointer.address].sort(),
+    )
   })
 
   it("uses signed handler metadata as the provider identity fallback", () => {
@@ -744,23 +818,43 @@ describe("email digest event and status restrictions", () => {
 })
 
 describe("email digest watch auto-sync boundaries", () => {
+  const endorsingDefinition = makeDefinition(communitySecretA, [provider], 20, communityA)
+  const advertisedProvider = {
+    ...provider,
+    endorsingCommunities: [endorsingDefinition],
+    isActiveCommunity: true,
+  }
   const enabledSettings: EmailDigestSettings = {
-    version: 1,
+    version: 2,
     enabled: true,
     email: "person@example.com",
     intervalDays: 7,
     localTime: "09:00",
     timezone: "UTC",
-    selectedCommunityPubkey: communityA,
+    selectedCommunityAddress: communityAddressA,
     provider,
   }
 
   it("syncs only enabled digests whose exact provider remains advertised", () => {
-    expect(shouldAutoSyncEmailDigest(enabledSettings, [provider])).toBe(true)
-    expect(shouldAutoSyncEmailDigest({...enabledSettings, enabled: false}, [provider])).toBe(false)
+    expect(shouldAutoSyncEmailDigest(enabledSettings, [advertisedProvider])).toBe(true)
+    expect(
+      shouldAutoSyncEmailDigest(
+        {
+          ...enabledSettings,
+          selectedCommunityAddress: makeCommunityPointer({
+            controllerPubkey: communityA,
+            communityId: communityB,
+          })!.address,
+        },
+        [advertisedProvider],
+      ),
+    ).toBe(false)
+    expect(
+      shouldAutoSyncEmailDigest({...enabledSettings, enabled: false}, [advertisedProvider]),
+    ).toBe(false)
     expect(
       shouldAutoSyncEmailDigest(enabledSettings, [
-        {...provider, requestRelay: "wss://other.example.com/"},
+        {...advertisedProvider, requestRelay: "wss://other.example.com/"},
       ]),
     ).toBe(false)
   })

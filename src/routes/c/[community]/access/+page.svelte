@@ -32,16 +32,17 @@
   import {preventDefault, stopPropagation} from "@lib/html"
   import {pushModal} from "@app/util/modal"
   import {pushToast} from "@app/util/toast"
-  import {FORM_RESPONSE_KIND, getCommunitySectionDisplayName} from "@app/core/community"
+  import {FORM_RESPONSE_KIND} from "@app/core/community"
   import {
     activeCommunityAdmissionForms,
     activeCommunityAdmissionFormReadiness,
     activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    activeCommunityRelays,
+    activeExactCommunityRelays,
     activeCommunityUserModeratorRequestStates,
     activeCommunityUserModeratorRequestsLoading,
     hydratePubkeyProfiles,
@@ -51,7 +52,7 @@
   import {
     rejoinCommunity,
     renounceCommunity,
-    userRenouncedCommunityPubkeys,
+    userRenouncedCommunityAddresses,
   } from "@app/core/community-renunciations"
   import {
     getGrantCapability,
@@ -83,7 +84,7 @@
     getNotificationCheckedAt,
     setChecked,
   } from "@app/util/notifications"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   type AccessPageTab = "requests" | "members"
 
@@ -106,12 +107,14 @@
     detail?: string
   }
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const parsedCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
+  const exactCommunityId = $derived($activeExactCommunityPointer?.communityId || "")
+  const exactCommunityRoute = $derived($activeExactCommunityPointer?.naddr || "")
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      $activeExactCommunityDefinition?.controllerPubkey === communityPubkey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -159,32 +162,42 @@
     isCommunityPersonBanned($activeCommunityReportState, $pubkey || ""),
   )
   const communityPublishRelays = $derived(
-    getCommunityScopedPublishRelays($activeCommunityDefinition),
+    getCommunityScopedPublishRelays($activeExactCommunityDefinition),
   )
   const communityProfileRelays = $derived(
-    $activeCommunityRelays.length > 0 ? $activeCommunityRelays : communityPublishRelays,
+    $activeExactCommunityRelays.length > 0 ? $activeExactCommunityRelays : communityPublishRelays,
   )
   const moderationPath = $derived(
-    communityPubkey ? makeCommunityPath(communityPubkey, "moderation") : "",
+    $activeExactCommunityPointer
+      ? makeExactCommunityPath($activeExactCommunityPointer, "moderation")
+      : "",
   )
-  const accessPath = $derived(communityPubkey ? makeCommunityPath(communityPubkey, "access") : "")
-  const adminPath = $derived(communityPubkey ? makeCommunityPath(communityPubkey, "admin") : "")
+  const accessPath = $derived(
+    $activeExactCommunityPointer
+      ? makeExactCommunityPath($activeExactCommunityPointer, "access")
+      : "",
+  )
+  const adminPath = $derived(
+    $activeExactCommunityPointer
+      ? makeExactCommunityPath($activeExactCommunityPointer, "admin")
+      : "",
+  )
   const currentUserAdmin = $derived(
     Boolean(
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       $pubkey &&
-      isCommunityAdmin($activeCommunityDefinition, $pubkey),
+      isCommunityAdmin($activeExactCommunityDefinition, $pubkey),
     ),
   )
   const currentUserModerator = $derived(
     Boolean(
       !currentUserAdmin &&
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       $pubkey &&
-      $activeCommunityDefinition.sections.some(
+      $activeExactCommunityDefinition.sections.some(
         section =>
           getGrantCapability({
-            definition: $activeCommunityDefinition!,
+            definition: $activeExactCommunityDefinition!,
             userPubkey: $pubkey,
             sectionName: section.name,
             profileListEvents: $activeCommunityProfileListEvents,
@@ -194,10 +207,15 @@
     ),
   )
   const rawCurrentCommunityRef = $derived(
-    $rawActiveUserCommunityRefs.find(ref => ref.communityPubkey === communityPubkey),
+    $rawActiveUserCommunityRefs.find(
+      ref => ref.community.address === $activeExactCommunityPointer?.address,
+    ),
   )
   const currentCommunityRenounced = $derived(
-    $userRenouncedCommunityPubkeys.includes(communityPubkey),
+    Boolean(
+      $activeExactCommunityPointer &&
+      $userRenouncedCommunityAddresses.includes($activeExactCommunityPointer.address),
+    ),
   )
   const canToggleCommunityRenunciation = $derived(
     Boolean($pubkey && rawCurrentCommunityRef && !currentUserAdmin),
@@ -225,12 +243,12 @@
     responseIds.length ? [{kinds: [COMMUNITY_FORM_REVIEW_KIND], "#e": responseIds}] : [],
   )
   const reviewHistoryFilters = $derived(
-    communityBootstrapReady && $pubkey && communityPubkey
+    communityBootstrapReady && $pubkey && exactCommunityId
       ? [
           {
             kinds: [COMMUNITY_FORM_REVIEW_KIND],
             "#p": [$pubkey],
-            "#h": [communityPubkey],
+            "#h": [exactCommunityId],
             "#k": [String(FORM_RESPONSE_KIND)],
             limit: 200,
           },
@@ -248,12 +266,12 @@
   )
   const sectionItems = $derived(
     communityBootstrapReady
-      ? ($activeCommunityDefinition?.sections || []).map(section => {
-          const displayName = getCommunitySectionDisplayName(section)
+      ? ($activeExactCommunityDefinition?.sections || []).map(section => {
+          const displayName = section.name
           const form = forms[section.name] || forms[displayName]
-          const moderatorPubkeys = $activeCommunityDefinition
+          const moderatorPubkeys = $activeExactCommunityDefinition
             ? getGrantCapableSectionModeratorPubkeys({
-                definition: $activeCommunityDefinition,
+                definition: $activeExactCommunityDefinition,
                 sectionName: section.name,
                 profileListEvents: $activeCommunityProfileListEvents,
                 reportState: $activeCommunityReportState,
@@ -262,7 +280,7 @@
           const granted = Boolean(
             $pubkey &&
             userHasSectionProfileListAccess({
-              definition: $activeCommunityDefinition,
+              definition: $activeExactCommunityDefinition,
               section,
               profileListEvents: $activeCommunityProfileListEvents,
               userPubkey: $pubkey,
@@ -272,6 +290,7 @@
           const state =
             form && $pubkey
               ? getAdmissionSubmissionState({
+                  community: form.community,
                   responseEvents: $responseEvents,
                   deleteEvents: $deleteEvents,
                   reviewEvents: $reviewEvents,
@@ -285,7 +304,7 @@
             ? getAdmissionReviewHistory({
                 reviewEvents: [...$reviewEvents, ...$reviewHistoryEvents],
                 applicantPubkey: $pubkey,
-                communityPubkey,
+                community: $activeExactCommunityPointer,
                 sectionName: section.name,
                 moderatorPubkeys,
                 excludeResponseId: state.response?.event.id,
@@ -327,10 +346,10 @@
   const moderatorRequestItems = $derived.by(() => {
     if (!communityBootstrapReady) return []
 
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
 
     return (definition?.sections || []).map(section => {
-      const displayName = getCommunitySectionDisplayName(section)
+      const displayName = section.name
       const request = moderatorRequestStates.find(
         request => request.requesterPubkey === $pubkey && request.sectionName === section.name,
       )
@@ -369,9 +388,9 @@
       .join(" ")
       .toLocaleLowerCase()
   const memberItems = $derived(
-    communityBootstrapReady && $activeCommunityDefinition
+    communityBootstrapReady && $activeExactCommunityDefinition
       ? selectCommunityMemberList({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
         })
@@ -666,7 +685,12 @@
       if (Object.keys(other).length) metadata[fieldId] = {other}
     }
 
-    const template = makeAdmissionResponse({formAddress: form.address, values, metadata})
+    const template = makeAdmissionResponse({
+      community: $activeExactCommunityPointer!,
+      formAddress: form.address,
+      values,
+      metadata,
+    })
 
     try {
       await publishGovernanceEvent(
@@ -699,7 +723,7 @@
       return false
     }
 
-    if (!communityBootstrapReady || !$activeCommunityDefinition) {
+    if (!communityBootstrapReady || !$activeExactCommunityDefinition) {
       pushToast({theme: "error", message: "Community definition is not loaded."})
       return false
     }
@@ -739,13 +763,16 @@
   const submitModeratorRequest = async (sectionName: string, sectionDisplayName: string) => {
     if (!canSubmitModeratorRequest(sectionName)) return false
 
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
     const requesterPubkey = $pubkey
 
     if (!definition || !requesterPubkey) return false
 
+    const community = $activeExactCommunityPointer
+    if (!community) return false
+
     const options = {
-      communityPubkey: definition.pubkey,
+      community,
       requesterPubkey,
       sectionName,
       relays: communityPublishRelays,
@@ -759,7 +786,7 @@
 
     try {
       await publishGovernanceEvent(
-        `moderator-request:${definition.pubkey}:${sectionName}:${requesterPubkey}`,
+        `moderator-request:${definition.controllerPubkey}:${sectionName}:${requesterPubkey}`,
         communityPublishRelays,
         profileList,
       )
@@ -811,7 +838,10 @@
 
         answers = {...answers, [sectionName]: {...response.values}}
         otherAnswers = {...otherAnswers, [sectionName]: getResponseOtherAnswers(response)}
-        const template = makeAdmissionResponseDelete({responseId: response.event.id})
+        const template = makeAdmissionResponseDelete({
+          community: response.community,
+          responseId: response.event.id,
+        })
 
         try {
           await publishGovernanceEvent(
@@ -836,14 +866,14 @@
   }
 
   const hydrateModeratorRequests = async () => {
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
     if (!moderatorRequestsOpen || !communityBootstrapReady || !definition || !$pubkey) return
-    if ($activeCommunityRelays.length === 0) return
+    if ($activeExactCommunityRelays.length === 0) return
 
     try {
       await hydrateActiveCommunityUserModeratorRequests({
         definition,
-        relays: $activeCommunityRelays,
+        relays: $activeExactCommunityRelays,
         force: true,
       })
     } catch (error) {
@@ -904,7 +934,7 @@
       return false
     }
 
-    if (!communityPubkey || !rawCurrentCommunityRef) {
+    if (!communityPubkey || !rawCurrentCommunityRef || !$activeExactCommunityPointer) {
       pushToast({theme: "error", message: "This group is not available right now."})
       return false
     }
@@ -925,12 +955,12 @@
     try {
       renunciationPublishStatus.set("Saving your choice...")
       if (action === "leave") {
-        await renounceCommunity(communityPubkey, {
+        await renounceCommunity($activeExactCommunityPointer, {
           signal: controller.signal,
           onStatus: renunciationPublishStatus.set,
         })
       } else {
-        await rejoinCommunity(communityPubkey, {
+        await rejoinCommunity($activeExactCommunityPointer, {
           signal: controller.signal,
           onStatus: renunciationPublishStatus.set,
         })
@@ -1005,12 +1035,12 @@
   }
 
   $effect(() => {
-    if (!communityBootstrapReady || $activeCommunityRelays.length === 0) return
+    if (!communityBootstrapReady || $activeExactCommunityRelays.length === 0) return
     if (reviewHistoryFilters.length === 0) return
 
     const controller = new AbortController()
     request({
-      relays: $activeCommunityRelays,
+      relays: $activeExactCommunityRelays,
       autoClose: true,
       filters: reviewHistoryFilters,
       signal: controller.signal,
@@ -1057,7 +1087,7 @@
   {/snippet}
   {#snippet title()}<strong>Membership</strong>{/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={exactCommunityRoute} />
   {/snippet}
 </PageBar>
 
@@ -1066,7 +1096,7 @@
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading Membership...</Spinner>
     </p>
-  {:else if communityAccessUnavailable || !communityBootstrapReady || !$activeCommunityDefinition}
+  {:else if communityAccessUnavailable || !communityBootstrapReady || !$activeExactCommunityDefinition}
     <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
       <p>Membership unavailable.</p>
       <Button class="btn btn-neutral btn-sm" onclick={retryCommunityAccess}>Retry</Button>
@@ -1121,7 +1151,7 @@
           <div>
             <h2 class="text-xl font-semibold">Members</h2>
             <p class="mt-1 text-sm opacity-70">
-              Current non-banned members, moderator invitations, and the community owner.
+              Current non-banned members, moderator invitations, and the community controller.
             </p>
           </div>
           <div class="flex flex-wrap gap-2">

@@ -37,8 +37,10 @@
         }),
       )
       .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
+        controllerPubkey: ref.definition.controllerPubkey,
+        address: ref.community.address,
+        communityId: ref.community.communityId,
+        label: getCommunityOptionLabel(ref.definition.controllerPubkey),
         relays: ref.definition.relays,
         graspServers: ref.definition.graspServers,
       })),

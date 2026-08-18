@@ -25,7 +25,8 @@ import type {Handle, RelayStats} from "@welshman/app"
 import type {RepositoryUpdate} from "@welshman/net"
 import {DM_KIND} from "@app/core/state"
 import {GIT_USER_GRASP_LIST} from "@nostr-git/core/events"
-import {COMMUNITY_DEFINITION_KIND, FORM_TEMPLATE_KIND, PROFILE_LIST_KIND} from "@app/core/community"
+import {FORM_TEMPLATE_KIND, PROFILE_LIST_KIND} from "@app/core/community"
+import {COMMUNITY_DEFINITION_KIND_V2} from "@app/core/community-v2"
 import {COMMUNITY_REPORT_KIND} from "@app/core/community-reports"
 import {PROFILE_BADGES_KIND} from "@app/core/community-badges"
 import {EMAIL_DIGEST_STATUS_KIND, EMAIL_DIGEST_SUBSCRIPTION_KIND} from "@app/core/email-digest"
@@ -46,6 +47,7 @@ import {isMobile} from "@lib/html"
 import type {IDBTable} from "@lib/indexeddb"
 import {
   isPersistedCommunityReportDeleteEvent,
+  isPersistedCommunityDefinitionEvent,
   isPersistedMobileContentEvent,
   isPersistedGitDeleteEvent,
 } from "@app/util/storage-events"
@@ -64,7 +66,6 @@ const kinds = {
   digest: [EMAIL_DIGEST_SUBSCRIPTION_KIND, EMAIL_DIGEST_STATUS_KIND],
   content: [EVENT_TIME, THREAD, MESSAGE, ZAP_GOAL, DM_KIND],
   community: [
-    COMMUNITY_DEFINITION_KIND,
     PROFILE_LIST_KIND,
     BADGE_AWARD,
     BADGES,
@@ -78,14 +79,20 @@ const kinds = {
 const isCommunityStarReaction = (event: TrustedEvent) =>
   event.kind === REACTION &&
   event.content === "+" &&
-  getTagValue("k", event.tags) === String(COMMUNITY_DEFINITION_KIND)
+  getTagValue("k", event.tags) === String(COMMUNITY_DEFINITION_KIND_V2)
 
 const isCommunityStarDelete = (event: TrustedEvent) =>
   event.kind === DELETE && getTagValue("k", event.tags) === String(REACTION)
 
 const rankEvent = (event: TrustedEvent) => {
   if (kinds.meta.includes(event.kind)) return 9
-  if (kinds.community.includes(event.kind) || isCommunityStarReaction(event)) return 9
+  if (
+    kinds.community.includes(event.kind) ||
+    isPersistedCommunityDefinitionEvent(event) ||
+    isCommunityStarReaction(event)
+  ) {
+    return 9
+  }
   if (isPersistedCommunityReportDeleteEvent(event)) return 9
   if (isCommunityStarDelete(event)) return 8
   if (kinds.digest.includes(event.kind)) return 8

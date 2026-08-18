@@ -1,5 +1,5 @@
 import type {TrustedEvent} from "@welshman/util"
-import type {CommunityDefinition} from "@app/core/community"
+import type {CommunityDefinitionV2} from "@app/core/community"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 
 export type WidgetButtonType = "redirect" | "nostr" | "zap" | "post" | "app"
@@ -84,12 +84,21 @@ export type CommunitySectionContext = {
   kinds: Array<{kind: number; subtype?: string}>
 }
 
+export type CommunityWidgetProfile = {
+  name?: string
+  display_name?: string
+  picture?: string
+  about?: string
+}
+
 export type CommunityWidgetContext = {
-  version: 1
+  version: 2
   contextSessionId: string
   contextVersion: number
-  pubkey: string
-  ncommunity: string
+  communityId: import("@app/core/community").CommunityId
+  controllerPubkey: import("@app/core/community").ControllerPubkey
+  definitionAddress: string
+  naddr: string
   relays: string[]
   relayHints: string[]
   blossomServers: string[]
@@ -108,7 +117,8 @@ export type CommunityWidgetContext = {
 }
 
 export type CommunityWidgetRuntimeContext = {
-  definition: CommunityDefinition
+  community: import("@app/core/community").CommunityPointer
+  definition: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   authorityEvidenceSettled?: boolean
   reportState?: EffectiveCommunityReportState

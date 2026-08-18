@@ -2,18 +2,20 @@ import {publishThunk, repository} from "@welshman/app"
 import {randomId} from "@welshman/lib"
 import {makeEvent, type EventTemplate, type TrustedEvent} from "@welshman/util"
 import {
-  TARGETED_PUBLICATION_KIND,
-  buildTargetedPublication,
+  TARGETED_PUBLICATION_KIND_V2,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
   normalizePubkey,
   normalizeRelays,
-  parseTargetedPublication,
+  parseTargetedPublicationV2,
 } from "@app/core/community"
+import type {CommunityPointer} from "@app/core/community"
 import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import {makeAddressablePublicationRef} from "@app/core/community-targeting"
 import type {SmartWidgetEvent} from "@app/extensions/types"
 
 export type WidgetCommunityOption = {
-  pubkey: string
+  community: CommunityPointer
   label?: string
   relay?: string
   relays?: string[]
@@ -35,35 +37,35 @@ export const getWidgetCommunityOptionRelayHints = (option?: WidgetCommunityOptio
 
 export const getWidgetCommunityTargets = (
   communityOptions: WidgetCommunityOption[],
-  communityPubkeys: string[],
+  communityAddresses: string[],
 ) => {
-  const byPubkey = new Map(communityOptions.map(option => [normalizePubkey(option.pubkey), option]))
+  const byAddress = new Map(communityOptions.map(option => [option.community.address, option]))
 
-  return Array.from(new Set(communityPubkeys.map(normalizePubkey).filter(Boolean)))
-    .map(pubkey => byPubkey.get(pubkey))
+  return Array.from(new Set(communityAddresses.map(address => address.trim()).filter(Boolean)))
+    .map(address => byAddress.get(address))
     .filter((option): option is WidgetCommunityOption => Boolean(option))
 }
 
-const getNormalizedTargetPubkeys = (communityPubkeys: string[]) =>
-  Array.from(new Set(communityPubkeys.map(normalizePubkey).filter(Boolean)))
+const getNormalizedTargetAddresses = (communityAddresses: string[]) =>
+  Array.from(new Set(communityAddresses.map(address => address.trim()).filter(Boolean)))
 
 export const getWidgetTargetsMissingCommunityRelays = (
   communityOptions: WidgetCommunityOption[],
-  communityPubkeys: string[],
+  communityAddresses: string[],
 ) =>
-  getWidgetCommunityTargets(communityOptions, communityPubkeys).filter(
+  getWidgetCommunityTargets(communityOptions, communityAddresses).filter(
     option => getWidgetCommunityOptionRelays(option).length === 0,
   )
 
 const assertWidgetTargetCommunityRelays = (
   communityOptions: WidgetCommunityOption[],
-  communityPubkeys: string[],
+  communityAddresses: string[],
 ) => {
-  const byPubkey = new Map(communityOptions.map(option => [normalizePubkey(option.pubkey), option]))
-  const missingTargets = getNormalizedTargetPubkeys(communityPubkeys).filter(
-    pubkey => !byPubkey.has(pubkey),
+  const byAddress = new Map(communityOptions.map(option => [option.community.address, option]))
+  const missingTargets = getNormalizedTargetAddresses(communityAddresses).filter(
+    address => !byAddress.has(address),
   )
-  const missing = getWidgetTargetsMissingCommunityRelays(communityOptions, communityPubkeys)
+  const missing = getWidgetTargetsMissingCommunityRelays(communityOptions, communityAddresses)
 
   if (missingTargets.length > 0) {
     throw new Error(
@@ -72,7 +74,7 @@ const assertWidgetTargetCommunityRelays = (
   }
 
   if (missing.length > 0) {
-    const labels = missing.map(option => option.label || option.pubkey).join(", ")
+    const labels = missing.map(option => option.label || option.community.address).join(", ")
     throw new Error(`Target communities must declare relays before publishing widgets: ${labels}`)
   }
 }
@@ -80,28 +82,28 @@ const assertWidgetTargetCommunityRelays = (
 export const getWidgetTargetPublishRelays = ({
   baseRelays = [],
   communityOptions,
-  communityPubkeys,
+  communityAddresses,
 }: {
   baseRelays?: string[]
   communityOptions: WidgetCommunityOption[]
-  communityPubkeys: string[]
+  communityAddresses: string[]
 }) => {
-  assertWidgetTargetCommunityRelays(communityOptions, communityPubkeys)
+  assertWidgetTargetCommunityRelays(communityOptions, communityAddresses)
 
   return normalizeRelays([
     ...baseRelays,
-    ...getWidgetCommunityTargets(communityOptions, communityPubkeys).flatMap(option =>
+    ...getWidgetCommunityTargets(communityOptions, communityAddresses).flatMap(option =>
       getWidgetCommunityOptionRelays(option),
     ),
   ])
 }
 
 export const getWidgetTargetEventRelayHints = (event: TrustedEvent) => {
-  const targeting = parseTargetedPublication(event)
+  const targeting = parseTargetedPublicationV2(event)
 
   return normalizeRelays([
-    targeting?.ref?.relay || "",
-    ...(targeting?.communities || []).map(community => community.relay || ""),
+    targeting?.source?.relay || "",
+    ...(targeting?.communities || []).flatMap(community => community.relayHints),
   ])
 }
 
@@ -109,14 +111,14 @@ export const publishWidgetEventToTargets = ({
   event,
   baseRelays = [],
   communityOptions,
-  communityPubkeys,
+  communityAddresses,
 }: {
   event: EventTemplate | TrustedEvent
   baseRelays?: string[]
   communityOptions: WidgetCommunityOption[]
-  communityPubkeys: string[]
+  communityAddresses: string[]
 }) => {
-  const relays = getWidgetTargetPublishRelays({baseRelays, communityOptions, communityPubkeys})
+  const relays = getWidgetTargetPublishRelays({baseRelays, communityOptions, communityAddresses})
   const thunk = publishThunk({event, relays})
 
   if (thunk?.event) repository.publish(thunk.event as TrustedEvent)
@@ -130,7 +132,7 @@ export const publishWidgetTargetingEvent = ({
   widgetIdentifier = widget.identifier,
   baseRelays = [],
   communityOptions,
-  communityPubkeys,
+  communityAddresses,
   originalRelay,
   createdAt = Math.floor(Date.now() / 1000),
   targetingId = randomId(),
@@ -140,32 +142,36 @@ export const publishWidgetTargetingEvent = ({
   widgetIdentifier?: string
   baseRelays?: string[]
   communityOptions: WidgetCommunityOption[]
-  communityPubkeys: string[]
+  communityAddresses: string[]
   originalRelay?: string
   createdAt?: number
   targetingId?: string
 }) => {
   const pubkey = normalizePubkey(widgetPubkey || "")
   const identifier = widgetIdentifier?.trim()
-  const communities = getWidgetCommunityTargets(communityOptions, communityPubkeys)
-  const relays = getWidgetTargetPublishRelays({baseRelays, communityOptions, communityPubkeys})
+  const communities = getWidgetCommunityTargets(communityOptions, communityAddresses)
+  const relays = getWidgetTargetPublishRelays({baseRelays, communityOptions, communityAddresses})
 
   if (!pubkey || !identifier || communities.length === 0 || relays.length === 0) return undefined
 
-  const event = makeEvent(TARGETED_PUBLICATION_KIND, {
-    ...buildTargetedPublication({
+  const event = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
+    ...buildTargetedPublicationV2({
       id: targetingId,
       kind: SMART_WIDGET_KIND,
-      ref: makeAddressablePublicationRef({
+      source: makeAddressablePublicationRef({
         kind: SMART_WIDGET_KIND,
         pubkey,
         identifier,
         relay: originalRelay || relays[0],
       }),
-      communities: communities.map(option => ({
-        pubkey: option.pubkey,
-        relay: getWidgetCommunityOptionRelays(option)[0],
-      })),
+      communities: communities.map(
+        option =>
+          makeCommunityPointer({
+            controllerPubkey: option.community.controllerPubkey,
+            communityId: option.community.communityId,
+            relayHints: [getWidgetCommunityOptionRelays(option)[0]],
+          })!,
+      ),
     }),
     created_at: createdAt,
   })

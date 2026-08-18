@@ -33,10 +33,11 @@ import {
 } from "@welshman/util"
 import {makeChatId, entityLink, DM_KIND} from "@app/core/state"
 import {
-  TARGETED_PUBLICATION_KIND,
-  makeCommunityNcommunity,
-  parseCommunityInput,
-  parseTargetedPublication,
+  TARGETED_PUBLICATION_KIND_V2,
+  type CommunityPointer,
+  makeCommunityPointer,
+  parseCommunityNaddr,
+  parseTargetedPublicationV2,
 } from "@app/core/community"
 import {GIT_PERMALINK_KIND, SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import {COMMIT_COMMENT_KIND} from "@app/core/commit-comments"
@@ -45,56 +46,140 @@ import {getEventRelayHints, makeEventNevent, normalizeRelayHints} from "@app/uti
 
 export const COMMUNITY_EXPLAINER_PATH = "/community-guide"
 
-export const parseCommunityRouteParam = (community: string | undefined) => {
+export const parseExactCommunityRouteParam = (community: string | undefined) => {
   if (!community) return undefined
-
   try {
-    return parseCommunityInput(decodeURIComponent(community))
+    return parseCommunityNaddr(decodeURIComponent(community))
   } catch {
-    return parseCommunityInput(community)
+    return undefined
   }
 }
 
-export const encodeCommunityRouteParam = (community: string) => {
-  const parsed = parseCommunityInput(community)
-  const value = parsed
-    ? parsed.relays.length > 0
-      ? makeCommunityNcommunity({pubkey: parsed.pubkey, relayHints: parsed.relays})
-      : nip19.npubEncode(parsed.pubkey)
-    : community
+export const encodeExactCommunityRouteParam = (community: CommunityPointer) =>
+  encodeURIComponent(community.naddr)
 
-  return encodeURIComponent(value)
-}
-
-export const makeCommunityPath = (community: string, ...extra: (string | undefined)[]) => {
-  let path = `/c/${encodeCommunityRouteParam(community)}`
-
-  if (extra.length > 0) {
-    path +=
-      "/" +
-      extra
-        .filter(identity)
-        .map(s => encodeURIComponent(s as string))
-        .join("/")
-  }
-
+export const makeExactCommunityPath = (
+  community: CommunityPointer,
+  ...extra: (string | undefined)[]
+) => {
+  let path = `/c/${encodeExactCommunityRouteParam(community)}`
+  const suffix = extra.filter(identity).map(item => encodeURIComponent(item as string))
+  if (suffix.length > 0) path += `/${suffix.join("/")}`
   return path
 }
 
-export const makeCommunityRoomPath = (community: string, roomId: string) =>
-  makeCommunityPath(community, "rooms", roomId)
+export const makeExactCommunityRoomPath = (community: CommunityPointer, roomId: string) =>
+  makeExactCommunityPath(community, "rooms", roomId)
 
-export const makeCommunityThreadPath = (community: string, eventId?: string) =>
-  makeCommunityPath(community, "threads", eventId)
+export const makeExactCommunityThreadPath = (community: CommunityPointer, eventId?: string) =>
+  makeExactCommunityPath(community, "threads", eventId)
 
-export const makeCommunityCalendarPath = (community: string, eventId?: string) =>
-  makeCommunityPath(community, "calendar", eventId)
+export const makeExactCommunityCalendarPath = (community: CommunityPointer, eventId?: string) =>
+  makeExactCommunityPath(community, "calendar", eventId)
 
-export const makeCommunityGoalPath = (community: string, eventId?: string) =>
-  makeCommunityPath(community, "goals", eventId)
+export const makeExactCommunityGoalPath = (community: CommunityPointer, eventId?: string) =>
+  makeExactCommunityPath(community, "goals", eventId)
 
-export const makeCommunityGitPath = (community: string, eventId?: string) =>
-  makeCommunityPath(community, "git", eventId)
+export const makeExactCommunityGitPath = (community: CommunityPointer, eventId?: string) =>
+  makeExactCommunityPath(community, "git", eventId)
+
+export const makeExactCommunityPermalinkPath = (community: CommunityPointer, eventId?: string) =>
+  makeExactCommunityPath(community, "permalinks", eventId)
+
+export const makeExactCommunityWidgetPath = (community: CommunityPointer, eventId?: string) =>
+  makeExactCommunityPath(community, "widgets", eventId)
+
+export const makeExactGitCommunityPath = (community: CommunityPointer) => {
+  const params = new URLSearchParams({[GIT_COMMUNITY_PARAM]: community.naddr})
+  return `${makeGitPath()}?${params}`
+}
+
+const getCoherentCommunityPointer = (value: CommunityPointer | undefined) => {
+  if (!value) return undefined
+  const pointer = makeCommunityPointer({
+    controllerPubkey: value.controllerPubkey,
+    communityId: value.communityId,
+    relayHints: value.relayHints,
+  })
+  return pointer?.address === value.address ? pointer : undefined
+}
+
+export const getExactCommunityRouteContext = (url: URL) => {
+  const segments = url.pathname.split("/").filter(Boolean)
+  if (segments[0] !== "c" || !segments[1]) return undefined
+  const pointer = parseExactCommunityRouteParam(segments[1])
+  if (!pointer) return undefined
+  const section = segments
+    .slice(2)
+    .map(segment => decodeURIComponent(segment))
+    .join(":")
+  return `community:${pointer.address}:${section}:${url.search}`
+}
+
+export const makeCanonicalExactCommunityUrl = (url: URL, pointer: CommunityPointer) => {
+  const segments = url.pathname.split("/").filter(Boolean)
+  const suffix = segments.slice(2).join("/")
+  const pathname = `${makeExactCommunityPath(pointer)}${suffix ? `/${suffix}` : ""}`
+  return `${pathname}${url.search}${url.hash}`
+}
+
+export const getExactCommunityEventPath = (
+  event: TrustedEvent,
+  selectedCommunity?: CommunityPointer,
+) => {
+  const targeted =
+    event.kind === TARGETED_PUBLICATION_KIND_V2 ? parseTargetedPublicationV2(event) : undefined
+  const targetedPointer = targeted
+    ? selectedCommunity
+      ? targeted.communities.find(item => item.address === selectedCommunity.address)
+      : targeted.communities.length === 1
+        ? targeted.communities[0]
+        : undefined
+    : undefined
+  const pointer = getCoherentCommunityPointer(
+    targetedPointer ||
+      (getTagValue("h", event.tags) === selectedCommunity?.communityId
+        ? selectedCommunity
+        : undefined),
+  )
+  if (!pointer) return undefined
+
+  if (event.kind === THREAD) {
+    return isRoomRootEvent(event)
+      ? makeExactCommunityRoomPath(pointer, event.id)
+      : makeExactCommunityThreadPath(pointer, event.id)
+  }
+  if (event.kind === MESSAGE) {
+    const roomId = getEventRootId(event)
+    return roomId ? makeExactCommunityRoomPath(pointer, roomId) : undefined
+  }
+  if (event.kind === COMMENT) {
+    const rootKind = Number.parseInt(getTagValue("K", event.tags) || "", 10)
+    const rootId = getEventRootId(event)
+    if (!rootId) return undefined
+    if (rootKind === THREAD) return makeExactCommunityThreadPath(pointer, rootId)
+    if (rootKind === MESSAGE) return makeExactCommunityRoomPath(pointer, rootId)
+    if (rootKind === EVENT_DATE || rootKind === EVENT_TIME) {
+      const address = getTagValue("A", event.tags) || getTagValue("a", event.tags) || ""
+      const identifier = getAddressIdentifierForKind(address, rootKind)
+      return makeExactCommunityCalendarPath(pointer, identifier || rootId)
+    }
+    if (rootKind === ZAP_GOAL) return makeExactCommunityGoalPath(pointer, rootId)
+  }
+  if (event.kind === EVENT_DATE || event.kind === EVENT_TIME) {
+    return makeExactCommunityCalendarPath(pointer, getTagValue("d", event.tags) || undefined)
+  }
+  if (event.kind === ZAP_GOAL) return makeExactCommunityGoalPath(pointer, event.id)
+  if (event.kind === SMART_WIDGET_KIND) return makeExactCommunityWidgetPath(pointer)
+  if (targeted) {
+    if (targeted.kind === EVENT_DATE || targeted.kind === EVENT_TIME) {
+      return makeExactCommunityCalendarPath(pointer)
+    }
+    if (targeted.kind === ZAP_GOAL) return makeExactCommunityGoalPath(pointer)
+    if (targeted.kind === SMART_WIDGET_KIND) return makeExactCommunityWidgetPath(pointer)
+  }
+  return undefined
+}
 
 export const GIT_COMMUNITY_PARAM = "community"
 
@@ -202,12 +287,6 @@ export const getGitParentTarget = (
 export const getGitParentPath = (pathname: string, searchParams: URLSearchParams | string = "") =>
   getGitParentTarget(pathname, searchParams).path
 
-export const makeCommunityPermalinkPath = (community: string, eventId?: string) =>
-  makeCommunityPath(community, "permalinks", eventId)
-
-export const makeCommunityWidgetPath = (community: string, eventId?: string) =>
-  makeCommunityPath(community, "widgets", eventId)
-
 export type CommunityReportTargetPathInput = {
   targetEventId?: string
   targetEventKind?: number
@@ -217,34 +296,7 @@ export type CommunityReportTargetPathInput = {
   targetIdentifier?: string
 }
 
-export const makeSpacePath = (community: string, ...extra: (string | undefined)[]) =>
-  makeCommunityPath(community, ...extra)
-
-export const makeRoomPath = (community: string, roomId?: string) =>
-  makeCommunityPath(community, "rooms", roomId)
-
-export const makeThreadPath = (community: string, eventId?: string) =>
-  makeCommunityThreadPath(community, eventId)
-
-export const makeCalendarPath = (community: string, eventId?: string) =>
-  makeCommunityCalendarPath(community, eventId)
-
-export const makeGoalPath = (community: string, eventId?: string) =>
-  makeCommunityGoalPath(community, eventId)
-
-export const getRoomItemPath = (community: string, event: TrustedEvent) => {
-  const roomId = getTagValue("E", event.tags) || getTagValue("e", event.tags) || event.id
-
-  return makeCommunityPath(community, "rooms", roomId)
-}
-
 const isRoomRootEvent = (event: TrustedEvent) => event.tags.some(tag => tag[0] === "room")
-
-const getCommunityPubkeyForEvent = (event: TrustedEvent) => {
-  const scopedCommunity = getTagValue("h", event.tags)
-
-  return scopedCommunity ? parseCommunityInput(scopedCommunity)?.pubkey : undefined
-}
 
 const getEventRootId = (event: TrustedEvent) =>
   getTagValue("E", event.tags) || getTagValue("e", event.tags)
@@ -258,56 +310,53 @@ const getAddressIdentifierForKind = (address: string, kind: number) => {
   return addressKind === kind ? identifier : ""
 }
 
-const getCommunityPathForKind = ({
+const getExactCommunityPathForKind = ({
   community,
   kind,
   id,
   subtype = "",
 }: {
-  community: string
+  community: CommunityPointer
   kind?: number
   id?: string
   subtype?: string
 }) => {
   if (!kind || !id) return undefined
-
   if (kind === THREAD) {
     return subtype === "room"
-      ? makeCommunityRoomPath(community, id)
-      : makeCommunityThreadPath(community, id)
+      ? makeExactCommunityRoomPath(community, id)
+      : makeExactCommunityThreadPath(community, id)
   }
-  if (kind === MESSAGE) return makeCommunityRoomPath(community, id)
-  if (kind === EVENT_DATE || kind === EVENT_TIME) return makeCommunityCalendarPath(community, id)
-  if (kind === ZAP_GOAL) return makeCommunityGoalPath(community, id)
-  if (kind === SMART_WIDGET_KIND) return makeCommunityWidgetPath(community, id)
-
-  return undefined
+  if (kind === MESSAGE) return makeExactCommunityRoomPath(community, id)
+  if (kind === EVENT_DATE || kind === EVENT_TIME) {
+    return makeExactCommunityCalendarPath(community, id)
+  }
+  if (kind === ZAP_GOAL) return makeExactCommunityGoalPath(community, id)
+  if (kind === SMART_WIDGET_KIND) return makeExactCommunityWidgetPath(community, id)
 }
 
-export const getCommunityReportTargetPath = (
-  community: string,
+export const getExactCommunityReportTargetPath = (
+  community: CommunityPointer,
   target: CommunityReportTargetPathInput,
 ) => {
   const targetId = target.targetIdentifier || target.targetEventId || ""
   const rootId = target.targetRootId || ""
 
   if (target.targetEventKind === COMMENT) {
-    return getCommunityPathForKind({
+    return getExactCommunityPathForKind({
       community,
       kind: target.targetRootKind,
       id: rootId,
     })
   }
-
   if (target.targetEventKind === MESSAGE) {
-    return getCommunityPathForKind({
+    return getExactCommunityPathForKind({
       community,
       kind: MESSAGE,
       id: rootId || target.targetEventId,
     })
   }
-
-  return getCommunityPathForKind({
+  return getExactCommunityPathForKind({
     community,
     kind: target.targetEventKind,
     id: targetId,
@@ -319,15 +368,15 @@ const TARGETED_PUBLICATION_ROUTE_KINDS = [EVENT_DATE, EVENT_TIME, ZAP_GOAL, SMAR
 
 const hasTargetedPublicationPath = (kind: number) => TARGETED_PUBLICATION_ROUTE_KINDS.includes(kind)
 
-const makeTargetedPublicationPath = (communityPubkey: string, kind: number) => {
+const makeTargetedPublicationPath = (community: CommunityPointer, kind: number) => {
   switch (kind) {
     case EVENT_DATE:
     case EVENT_TIME:
-      return makeCommunityCalendarPath(communityPubkey)
+      return makeExactCommunityCalendarPath(community)
     case ZAP_GOAL:
-      return makeCommunityGoalPath(communityPubkey)
+      return makeExactCommunityGoalPath(community)
     case SMART_WIDGET_KIND:
-      return makeCommunityWidgetPath(communityPubkey)
+      return makeExactCommunityWidgetPath(community)
     default:
       return undefined
   }
@@ -335,10 +384,10 @@ const makeTargetedPublicationPath = (communityPubkey: string, kind: number) => {
 
 const getFirstTargetedPublicationCommunity = (events: TrustedEvent[]) => {
   for (const event of events) {
-    const targeting = parseTargetedPublication(event)
-    const communityPubkey = targeting?.communities[0]?.pubkey
+    const targeting = parseTargetedPublicationV2(event)
+    const community = targeting?.communities.length === 1 ? targeting.communities[0] : undefined
 
-    if (communityPubkey) return communityPubkey
+    if (community) return community
   }
 
   return undefined
@@ -353,7 +402,7 @@ const getTargetedPublicationFiltersForOriginal = (event: TrustedEvent): Filter[]
 
   if (targetingId) {
     filters.push({
-      kinds: [TARGETED_PUBLICATION_KIND],
+      kinds: [TARGETED_PUBLICATION_KIND_V2],
       "#d": [targetingId],
       "#k": [String(event.kind)],
     })
@@ -361,14 +410,14 @@ const getTargetedPublicationFiltersForOriginal = (event: TrustedEvent): Filter[]
 
   if (identifier) {
     filters.push({
-      kinds: [TARGETED_PUBLICATION_KIND],
+      kinds: [TARGETED_PUBLICATION_KIND_V2],
       "#a": [`${event.kind}:${event.pubkey}:${identifier}`],
       "#k": [String(event.kind)],
     })
   }
 
   filters.push({
-    kinds: [TARGETED_PUBLICATION_KIND],
+    kinds: [TARGETED_PUBLICATION_KIND_V2],
     "#e": [event.id],
     "#k": [String(event.kind)],
   })
@@ -387,21 +436,20 @@ const getTargetedPublicationCommunityForOriginal = (event: TrustedEvent) => {
 }
 
 const getTargetedPublicationEventPath = (event: TrustedEvent) => {
-  if (event.kind === TARGETED_PUBLICATION_KIND) {
-    const targeting = parseTargetedPublication(event)
-    const communityPubkey = targeting?.communities[0]?.pubkey
+  if (event.kind === TARGETED_PUBLICATION_KIND_V2) {
+    const targeting = parseTargetedPublicationV2(event)
+    const community = targeting?.communities.length === 1 ? targeting.communities[0] : undefined
 
-    return communityPubkey && targeting
-      ? makeTargetedPublicationPath(communityPubkey, targeting.kind)
+    return community && targeting
+      ? makeTargetedPublicationPath(community, targeting.kind)
       : undefined
   }
 
   if (!hasTargetedPublicationPath(event.kind)) return undefined
 
-  const directCommunityPubkey = getCommunityPubkeyForEvent(event)
-  const communityPubkey = directCommunityPubkey || getTargetedPublicationCommunityForOriginal(event)
+  const community = getTargetedPublicationCommunityForOriginal(event)
 
-  return communityPubkey ? makeTargetedPublicationPath(communityPubkey, event.kind) : undefined
+  return community ? makeTargetedPublicationPath(community, event.kind) : undefined
 }
 
 const getTargetedPublicationDetailPath = (event: TrustedEvent) => {
@@ -430,57 +478,13 @@ const loadTargetedPublicationEventPath = async (event: TrustedEvent, urls: strin
 }
 
 export const getCommunityEventPath = (event: TrustedEvent) => {
-  const communityPubkey = getCommunityPubkeyForEvent(event)
-
+  const selectedCommunity =
+    typeof window === "undefined"
+      ? undefined
+      : parseExactCommunityRouteParam(window.location.pathname.split("/").filter(Boolean)[1])
+  const exactCommunityPath = getExactCommunityEventPath(event, selectedCommunity)
   const targetedPublicationPath = getTargetedPublicationDetailPath(event)
-
-  if (targetedPublicationPath) return targetedPublicationPath
-
-  if (!communityPubkey) return undefined
-
-  if (event.kind === THREAD) {
-    return isRoomRootEvent(event)
-      ? makeCommunityRoomPath(communityPubkey, event.id)
-      : makeCommunityThreadPath(communityPubkey, event.id)
-  }
-
-  if (event.kind === MESSAGE) {
-    const roomId = getEventRootId(event)
-
-    return roomId ? makeCommunityRoomPath(communityPubkey, roomId) : undefined
-  }
-
-  if (event.kind === COMMENT) {
-    const rootKind = Number.parseInt(getTagValue("K", event.tags) || "", 10)
-
-    if (rootKind === THREAD) {
-      const threadId = getEventRootId(event)
-
-      return threadId ? makeCommunityThreadPath(communityPubkey, threadId) : undefined
-    }
-
-    if (rootKind === EVENT_DATE || rootKind === EVENT_TIME) {
-      const calendarAddress = getTagValue("A", event.tags) || getTagValue("a", event.tags) || ""
-      const rootId = getEventRootId(event)
-      const rootEvent = rootId
-        ? (repository.getEvent(rootId) as TrustedEvent | undefined)
-        : undefined
-      const calendarId =
-        getAddressIdentifierForKind(calendarAddress, rootKind) ||
-        (rootEvent?.kind === rootKind ? getTagValue("d", rootEvent.tags) : "") ||
-        rootId
-
-      return calendarId ? makeCommunityCalendarPath(communityPubkey, calendarId) : undefined
-    }
-
-    if (rootKind === ZAP_GOAL) {
-      const goalId = getEventRootId(event)
-
-      return goalId ? makeCommunityGoalPath(communityPubkey, goalId) : undefined
-    }
-  }
-
-  return undefined
+  return exactCommunityPath || targetedPublicationPath || undefined
 }
 
 const GIT_STATUS_KINDS = new Set([
@@ -667,9 +671,6 @@ export const getGitEventPath = async (event: TrustedEvent, relays: string[]) => 
   return undefined
 }
 
-export const goToSpace = (community: string, options: Record<string, any> = {}) =>
-  goto(makeSpacePath(community), options)
-
 export const makeChatPath = (recipient: string) => {
   const id = makeChatId(recipient)
 
@@ -704,12 +705,12 @@ const getCanonicalRouteContext = (url: URL) => {
   const segments = url.pathname.split("/").filter(Boolean)
 
   if (segments[0] === "c" && segments[1]) {
-    const community = parseCommunityRouteParam(segments[1])
+    const community = parseExactCommunityRouteParam(segments[1])
     const section = segments
       .slice(2)
       .map(segment => decodeURIComponent(segment))
       .join(":")
-    if (community) return `community:${community.pubkey}:${section}`
+    if (community) return `community:${community.address}:${section}:${url.search}`
   }
 
   if (segments[0] === "git" && segments[1]) {

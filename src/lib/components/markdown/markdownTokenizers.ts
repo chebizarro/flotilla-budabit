@@ -6,8 +6,8 @@ import type {TokenizerAndRendererExtension, Tokens} from "marked"
 import {nip19} from "nostr-tools"
 import type {TrustedEvent} from "@welshman/util"
 import {shortenNostrUri} from "./markdownUtils.js"
-import {findNcommunityLinkStart, getNcommunityLinkAtStart} from "@app/util/community-links"
-import type {ParsedCommunityInput} from "@app/core/community"
+import {findCommunityLinkStart, getCommunityLinkAtStart} from "@app/util/community-links"
+import type {CommunityPointer} from "@app/core/community"
 import {findCashuTokenStart, getCashuTokenAtStart} from "@app/util/cashu-token"
 
 export interface NostrTokenizerOptions {
@@ -122,7 +122,7 @@ const findStandaloneNostrStart = (src: string) => {
 
 const findNostrStart = (src: string) => {
   const nostrStart = findStandaloneNostrStart(src)
-  const communityStart = findNcommunityLinkStart(src)
+  const communityStart = findCommunityLinkStart(src)
 
   if (nostrStart === -1) return communityStart
   if (communityStart === -1) return nostrStart
@@ -145,7 +145,7 @@ export function createNostrTokenizer(
       return findNostrStart(src)
     },
     tokenizer(src: string) {
-      const community = getNcommunityLinkAtStart(src)
+      const community = getCommunityLinkAtStart(src)
       if (community) {
         return {
           type: "nostr",
@@ -182,7 +182,7 @@ export function createNostrTokenizer(
       let external = false
 
       if (community) {
-        return createCommunityPlaceholder(community as ParsedCommunityInput)
+        return createCommunityPlaceholder(community as CommunityPointer)
       }
 
       try {
@@ -282,10 +282,8 @@ export function createNostrTokenizer(
   }
 }
 
-function createCommunityPlaceholder(community: ParsedCommunityInput): string {
-  const relaysAttr = JSON.stringify(community.relays || []).replace(/"/g, "&quot;")
-
-  return `<span class="markdown-community-placeholder" data-pubkey="${community.pubkey}" data-relays="${relaysAttr}"></span>`
+function createCommunityPlaceholder(community: CommunityPointer): string {
+  return `<span class="markdown-community-placeholder" data-naddr="${community.naddr}"></span>`
 }
 
 /**

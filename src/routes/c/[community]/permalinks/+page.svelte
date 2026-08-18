@@ -17,13 +17,13 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
-    activeCommunityRelays,
+    activeExactCommunityPointer,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND_V2} from "@app/core/community"
   import {
     GIT_PERMALINK_KIND,
     makeCommunityContentFilterPlan,
@@ -32,7 +32,7 @@
     makeTargetedPublicationOriginalRelayHintPlans,
   } from "@app/core/community-feeds"
   import {
-    makeTargetedPublicationForCommunity,
+    makeTargetedPublicationForCommunityV2,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -44,14 +44,22 @@
   } from "@app/core/community-permissions"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {loadBoundedCommunityHistory} from "@app/core/requests"
-  import {parseCommunityRouteParam} from "@app/util/routes"
+  import {parseExactCommunityRouteParam} from "@app/util/routes"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress &&
+      $activeExactCommunityDefinition.controllerPubkey === communityPubkey
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -75,14 +83,18 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const targetingFilters = $derived(
-    communityAuthorityReady && communityPubkey
-      ? [makeCommunityTargetingFilter(communityPubkey, [GIT_PERMALINK_KIND])]
+    communityAuthorityReady && $activeExactCommunityPointer
+      ? [
+          makeCommunityTargetingFilter($activeExactCommunityPointer.communityId, [
+            GIT_PERMALINK_KIND,
+          ]),
+        ]
       : [],
   )
   const permalinkAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.permalink,
           reportState: $activeCommunityReportState,
@@ -98,9 +110,10 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition && $activeExactCommunityPointer
       ? filterAuthorizedCommunityTargetingEvents({
-          definition: $activeCommunityDefinition,
+          community: $activeExactCommunityPointer,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           events: $targetingEvents,
           reportState: $activeCommunityReportState,
@@ -115,9 +128,9 @@
     makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
   )
   const directPermalinkFilterPlan = $derived(
-    communityAuthorityReady && communityPubkey
+    communityAuthorityReady && communityId
       ? makeCommunityContentFilterPlan(
-          [{kinds: [GIT_PERMALINK_KIND], "#h": [communityPubkey]}],
+          [{kinds: [GIT_PERMALINK_KIND], "#h": [communityId]}],
           permalinkAuthorPubkeys,
         )
       : {relayFilters: [], localFilters: []},
@@ -141,9 +154,9 @@
     Boolean(
       $pubkey &&
       communityAuthorityReady &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.permalink,
@@ -153,7 +166,7 @@
   )
   const permalinkSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.permalink,
     ),
   )
@@ -162,12 +175,12 @@
   )
 
   const createPermalink = () => {
-    if (!$pubkey || !communityPubkey || !repo.trim() || !file.trim() || !commit.trim()) return
+    if (!$pubkey || !communityId || !repo.trim() || !file.trim() || !commit.trim()) return
     if (!canCreatePermalink) {
       pushToast({theme: "error", message: permalinkAccessMessage})
       return
     }
-    const relays = $activeCommunityPublishRelays
+    const relays = $activeExactCommunityRelays
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return
@@ -195,13 +208,12 @@
     publishThunk({
       relays,
       event: makeEvent(
-        TARGETED_PUBLICATION_KIND,
-        makeTargetedPublicationForCommunity({
+        TARGETED_PUBLICATION_KIND_V2,
+        makeTargetedPublicationForCommunityV2({
           targetingId,
           originalKind: GIT_PERMALINK_KIND,
           originalRef: undefined,
-          communityPubkey,
-          communityRelay: relays[0],
+          community: $activeExactCommunityPointer!,
         }),
       ),
     })
@@ -253,7 +265,7 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
     const relayFilters = targetingFilterPlan.relayFilters
     const localFilters = targetingFilterPlan.localFilters
 
@@ -349,7 +361,7 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
 
     if (!communityBootstrapReady) {
       loadingPermalinks = false
@@ -402,7 +414,7 @@
   {/snippet}
   {#snippet title()}<strong>Permalinks</strong>{/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={routeCommunity?.naddr} />
   {/snippet}
 </PageBar>
 

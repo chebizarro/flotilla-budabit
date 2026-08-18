@@ -1,5 +1,11 @@
 import {describe, expect, it} from "vitest"
-import {COMMUNITY_DEFINITION_KIND, PROFILE_LIST_KIND} from "@app/core/community"
+import {getPublicKey} from "nostr-tools/pure"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  PROFILE_LIST_KIND,
+  buildCommunityDefinitionV2,
+  parseCommunityDefinitionV2,
+} from "@app/core/community"
 import {
   buildPeopleSearchCandidates,
   buildPeopleSearchResults,
@@ -8,6 +14,36 @@ import {
 } from "./people-search"
 
 describe("people-search", () => {
+  const makeDefinition = ({
+    controllerPubkey,
+    communityId,
+    listOwner,
+  }: {
+    controllerPubkey: string
+    communityId: string
+    listOwner: string
+  }) =>
+    parseCommunityDefinitionV2({
+      id: communityId,
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      pubkey: controllerPubkey,
+      created_at: 1,
+      content: "",
+      sig: "f".repeat(128),
+      tags: buildCommunityDefinitionV2({
+        communityId,
+        name: "Builders",
+        relays: ["wss://relay.example"],
+        sections: [
+          {
+            name: "General",
+            kinds: [{kind: 1111}],
+            profileLists: [{address: `${PROFILE_LIST_KIND}:${listOwner}:members`}],
+          },
+        ],
+      }).tags,
+    } as any)!
+
   it("orders community matches ahead of direct follows", () => {
     const communityMember = "a".repeat(64)
     const directFollow = "b".repeat(64)
@@ -202,45 +238,36 @@ describe("people-search", () => {
     expect(pubkeys).toEqual([listOwner, member])
   })
 
-  it("skips people from renounced community profile-list evidence", () => {
-    const allowedCommunity = "1".repeat(64)
-    const renouncedCommunity = "2".repeat(64)
-    const allowedListOwner = "3".repeat(64)
-    const renouncedListOwner = "4".repeat(64)
-    const allowedMember = "5".repeat(64)
-    const renouncedMember = "6".repeat(64)
+  it("uses V2 controllers and profile lists as people without admitting community IDs", () => {
+    const allowedController = getPublicKey(new Uint8Array(32).fill(1))
+    const renouncedController = getPublicKey(new Uint8Array(32).fill(2))
+    const allowedCommunityId = getPublicKey(new Uint8Array(32).fill(3))
+    const renouncedCommunityId = getPublicKey(new Uint8Array(32).fill(4))
+    const allowedListOwner = getPublicKey(new Uint8Array(32).fill(5))
+    const renouncedListOwner = getPublicKey(new Uint8Array(32).fill(6))
+    const allowedMember = getPublicKey(new Uint8Array(32).fill(7))
+    const renouncedMember = getPublicKey(new Uint8Array(32).fill(8))
+    const allowedDefinition = makeDefinition({
+      controllerPubkey: allowedController,
+      communityId: allowedCommunityId,
+      listOwner: allowedListOwner,
+    })
+    const renouncedDefinition = makeDefinition({
+      controllerPubkey: renouncedController,
+      communityId: renouncedCommunityId,
+      listOwner: renouncedListOwner,
+    })
 
     const pubkeys = getCommunityPeoplePubkeys({
-      excludedCommunityPubkeys: [renouncedCommunity],
-      definitionEvents: [
-        {
-          id: "allowed-definition",
-          kind: COMMUNITY_DEFINITION_KIND,
-          pubkey: allowedCommunity,
-          tags: [
-            ["content", "Repositories"],
-            ["k", "30617"],
-            ["a", `${PROFILE_LIST_KIND}:${allowedListOwner}:Repositories`],
-          ],
-        } as any,
-        {
-          id: "renounced-definition",
-          kind: COMMUNITY_DEFINITION_KIND,
-          pubkey: renouncedCommunity,
-          tags: [
-            ["content", "Repositories"],
-            ["k", "30617"],
-            ["a", `${PROFILE_LIST_KIND}:${renouncedListOwner}:Repositories`],
-          ],
-        } as any,
-      ],
+      excludedCommunityAddresses: [renouncedDefinition.pointer.address],
+      definitions: [allowedDefinition, renouncedDefinition],
       profileListEvents: [
         {
           id: "allowed-profile-list",
           kind: PROFILE_LIST_KIND,
           pubkey: allowedListOwner,
           tags: [
-            ["d", "Repositories"],
+            ["d", "members"],
             ["p", allowedMember],
           ],
         } as any,
@@ -249,14 +276,64 @@ describe("people-search", () => {
           kind: PROFILE_LIST_KIND,
           pubkey: renouncedListOwner,
           tags: [
-            ["d", "Repositories"],
+            ["d", "members"],
             ["p", renouncedMember],
           ],
         } as any,
       ],
     })
 
-    expect(pubkeys).toEqual([allowedCommunity, allowedListOwner, allowedMember])
+    expect(pubkeys).toEqual([allowedController, allowedListOwner, allowedMember])
+    expect(pubkeys).not.toContain(allowedCommunityId)
+    expect(pubkeys).not.toContain(renouncedCommunityId)
+  })
+
+  it("keeps people with evidence from another branch when one exact branch is excluded", () => {
+    const sharedController = getPublicKey(new Uint8Array(32).fill(10))
+    const allowedCommunityId = getPublicKey(new Uint8Array(32).fill(11))
+    const excludedCommunityId = getPublicKey(new Uint8Array(32).fill(12))
+    const allowedListOwner = getPublicKey(new Uint8Array(32).fill(13))
+    const excludedListOwner = getPublicKey(new Uint8Array(32).fill(14))
+    const sharedMember = getPublicKey(new Uint8Array(32).fill(15))
+    const allowedDefinition = makeDefinition({
+      controllerPubkey: sharedController,
+      communityId: allowedCommunityId,
+      listOwner: allowedListOwner,
+    })
+    const excludedDefinition = makeDefinition({
+      controllerPubkey: sharedController,
+      communityId: excludedCommunityId,
+      listOwner: excludedListOwner,
+    })
+
+    const pubkeys = getCommunityPeoplePubkeys({
+      excludedCommunityAddresses: [excludedDefinition.pointer.address],
+      definitions: [allowedDefinition, excludedDefinition],
+      profileListEvents: [
+        {
+          id: "allowed-profile-list",
+          kind: PROFILE_LIST_KIND,
+          pubkey: allowedListOwner,
+          tags: [
+            ["d", "members"],
+            ["p", sharedMember],
+          ],
+        } as any,
+        {
+          id: "excluded-profile-list",
+          kind: PROFILE_LIST_KIND,
+          pubkey: excludedListOwner,
+          tags: [
+            ["d", "members"],
+            ["p", sharedMember],
+          ],
+        } as any,
+      ],
+    })
+
+    expect(pubkeys).toEqual([sharedController, allowedListOwner, sharedMember])
+    expect(pubkeys).not.toContain(allowedCommunityId)
+    expect(pubkeys).not.toContain(excludedCommunityId)
   })
 
   it("returns bounded batches with a resumable cursor", () => {

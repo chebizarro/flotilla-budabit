@@ -1,29 +1,36 @@
 import {expect, test} from "@playwright/test"
-import {finalizeEvent} from "nostr-tools"
+import {finalizeEvent, getPublicKey, nip19} from "nostr-tools"
 import {DEV_PUBKEY, DEV_SECRET, seedDevSession} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
 
-const relayUrl = "wss://community-room-publishing.example/"
+const relayUrl = "wss://community-room-publishing.example"
 const communitySecret = Uint8Array.from(
   DEV_SECRET.match(/.{2}/g)?.map(byte => Number.parseInt(byte, 16)) || [],
 )
+const communityId = getPublicKey(new Uint8Array(32).fill(2))
+const profileListAddress = `30000:${DEV_PUBKEY}:general`
+const messageFixtureStart = Math.floor(Date.now() / 1000) - 100
 
 const definition = finalizeEvent(
   {
-    kind: 10222,
+    kind: 32222,
     created_at: 1,
     content: "",
     tags: [
-      ["alt", "BudaBit community definition"],
+      ["d", communityId],
+      ["name", "Room Publishing Community"],
+      ["description", "Community room publishing test fixture"],
       ["r", relayUrl],
-      ["content", "rooms"],
+      ["content", "Room-creator"],
       ["k", "11", "room"],
-      ["content", "general"],
       ["k", "9", "room-message"],
+      ["a", profileListAddress, relayUrl],
+      ["content", "General"],
       ["k", "1111"],
       ["k", "7"],
       ["k", "1984"],
       ["k", "1985"],
+      ["a", profileListAddress, relayUrl],
     ],
   },
   communitySecret,
@@ -34,7 +41,7 @@ const room = finalizeEvent(
     kind: 11,
     created_at: 2,
     content: "Publishing regression room",
-    tags: [["h", DEV_PUBKEY], ["room"], ["title", "Publishing Room"]],
+    tags: [["h", communityId], ["room"], ["title", "Publishing Room"]],
   },
   communitySecret,
 )
@@ -42,10 +49,10 @@ const room = finalizeEvent(
 const seededMessage = finalizeEvent(
   {
     kind: 9,
-    created_at: 3,
+    created_at: messageFixtureStart,
     content: "Message with a reaction",
     tags: [
-      ["h", DEV_PUBKEY],
+      ["h", communityId],
       ["E", room.id, relayUrl, DEV_PUBKEY],
       ["K", "11"],
     ],
@@ -56,10 +63,10 @@ const seededMessage = finalizeEvent(
 const seededReaction = finalizeEvent(
   {
     kind: 7,
-    created_at: 4,
+    created_at: messageFixtureStart + 1,
     content: "🔥",
     tags: [
-      ["h", DEV_PUBKEY],
+      ["h", communityId],
       ["k", "9"],
       ["e", seededMessage.id, relayUrl],
     ],
@@ -70,10 +77,10 @@ const scrollMessages = Array.from({length: 30}, (_, index) =>
   finalizeEvent(
     {
       kind: 9,
-      created_at: index + 5,
+      created_at: messageFixtureStart + index + 2,
       content: `Publishing scroll fixture ${index + 1}`,
       tags: [
-        ["h", DEV_PUBKEY],
+        ["h", communityId],
         ["E", room.id, relayUrl, DEV_PUBKEY],
         ["K", "11"],
       ],
@@ -82,8 +89,13 @@ const scrollMessages = Array.from({length: 30}, (_, index) =>
   ),
 )
 
-const communityInput = `ncommunity://${DEV_PUBKEY}?relay=${encodeURIComponent(relayUrl)}`
-const roomPath = `/c/${encodeURIComponent(communityInput)}/rooms/${room.id}`
+const communityNaddr = nip19.naddrEncode({
+  kind: 32222,
+  pubkey: DEV_PUBKEY,
+  identifier: communityId,
+  relays: [relayUrl],
+})
+const roomPath = `/c/${communityNaddr}/rooms/${room.id}`
 
 const openRoom = async (page: Parameters<typeof seedDevSession>[0], mockRelay: MockRelay) => {
   await seedDevSession(page)
@@ -195,7 +207,7 @@ test("keeps a failed room message visible with retry and discard actions", async
   await expect(notificationIndicator).toBeVisible()
 
   await page.getByRole("link", {name: "Home", exact: true}).first().click()
-  await expect(page).toHaveURL(/\/c\/npub/)
+  await expect(page).toHaveURL(`/c/${communityNaddr}`)
   await page.goBack()
   await expect(
     page.locator('[data-component="PageBar"]').getByText("Publishing Room", {exact: true}),

@@ -32,7 +32,7 @@ export function createTokenWalker(_options: TokenWalkerOptions) {
 async function enrichNostrToken(token: Token): Promise<void> {
   const fullId = (token as any).fullId
   if (!fullId) return
-  if ((token as any).community || fullId.startsWith("ncommunity://")) return
+  if ((token as any).community) return
 
   try {
     const result: any = nip19.decode(fullId)

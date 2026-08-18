@@ -7,7 +7,8 @@
   import Confirm from "@lib/components/Confirm.svelte"
   import Icon from "@lib/components/Icon.svelte"
   import {
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
   } from "@app/core/community-state"
@@ -45,7 +46,7 @@
   type GovernanceThunk = ReturnType<typeof publishThunk>
   const failedReportThunks = new Map<string, GovernanceThunk>()
   const reportRelays = $derived.by(() =>
-    getCommunityScopedPublishRelays($activeCommunityDefinition),
+    getCommunityScopedPublishRelays($activeExactCommunityDefinition),
   )
   type CommunityReportAction = "content" | "event" | "person"
 
@@ -57,12 +58,12 @@
   })
   const canModerateEvent = $derived.by(() =>
     Boolean(
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       reporterPubkey &&
       sectionName &&
       reportRelays.length > 0 &&
       canPublishCommunityEventReport({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         reporterPubkey,
         targetPubkey: event.pubkey,
         sectionName,
@@ -73,13 +74,13 @@
   )
   const canReportContent = $derived.by(() =>
     Boolean(
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       reporterPubkey &&
       sectionName &&
       reportRelays.length > 0 &&
       !canModerateEvent &&
       canPublishCommunityContentReport({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         reporterPubkey,
         targetPubkey: event.pubkey,
@@ -89,11 +90,11 @@
   )
   const canModeratePerson = $derived.by(() =>
     Boolean(
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       reporterPubkey &&
       reportRelays.length > 0 &&
       canPublishCommunityPersonReport({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         reporterPubkey,
         targetPubkey: event.pubkey,
         profileListEvents: $activeCommunityProfileListEvents,
@@ -103,7 +104,13 @@
   )
 
   const publishCommunityReport = async (target: CommunityReportAction) => {
-    if (!$activeCommunityDefinition || publishStatus === "publishing") return
+    if (
+      !$activeExactCommunityDefinition ||
+      !$activeExactCommunityPointer ||
+      $activeExactCommunityDefinition.pointer.address !== $activeExactCommunityPointer.address ||
+      publishStatus === "publishing"
+    )
+      return
     if (target === "content" && !canReportContent) return
     if (target === "event" && !canModerateEvent) return
     if (target === "person" && !canModeratePerson) return
@@ -117,7 +124,7 @@
     const template =
       target === "event" || target === "content"
         ? makeCommunityEventReport({
-            communityPubkey: $activeCommunityDefinition.pubkey,
+            community: $activeExactCommunityPointer,
             sectionName,
             eventId: event.id,
             eventPubkey: event.pubkey,
@@ -128,12 +135,12 @@
             ...targetContext,
           })
         : makeCommunityPersonReport({
-            communityPubkey: $activeCommunityDefinition.pubkey,
+            community: $activeExactCommunityPointer,
             pubkey: event.pubkey,
           })
 
     publishStatus = "publishing"
-    const operation = `community-report:${$activeCommunityDefinition.pubkey}:${target}:${sectionName}:${target === "person" ? event.pubkey : event.id}`
+    const operation = `community-report:${$activeExactCommunityDefinition.pointer.address}:${target}:${sectionName}:${target === "person" ? event.pubkey : event.id}`
     const failedThunk = failedReportThunks.get(operation)
     let thunk: GovernanceThunk | undefined
 

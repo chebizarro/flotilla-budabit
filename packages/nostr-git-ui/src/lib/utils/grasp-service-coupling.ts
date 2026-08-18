@@ -8,7 +8,7 @@ import {
 
 export type GraspServiceSource =
   | "user-10317"
-  | "community-10222"
+  | "community-definition"
   | "selected-target"
   | "clone-url"
   | "nip11";

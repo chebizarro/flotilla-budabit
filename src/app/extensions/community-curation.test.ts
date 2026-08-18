@@ -1,11 +1,14 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {DELETE, matchFilters, type Filter, type TrustedEvent} from "@welshman/util"
 import {repository} from "@welshman/app"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildTargetedPublication,
+  buildCommunityDefinitionV2,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
 } from "@app/core/community"
 import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -41,11 +44,17 @@ import {
   makeCommunityWidgetRuntimeContext,
 } from "./recommendation-context"
 
-const communityPubkey = "a".repeat(64)
-const managerPubkey = "b".repeat(64)
-const memberPubkey = "c".repeat(64)
-const outsiderPubkey = "d".repeat(64)
-const widgetPubkey = "e".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = key(121)
+const managerPubkey = key(122)
+const memberPubkey = key(123)
+const outsiderPubkey = key(124)
+const widgetPubkey = key(125)
+const community = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: communityPubkey,
+  relayHints: ["wss://community.example"],
+})!
 
 const loadResult = (events: TrustedEvent[], complete = true) => ({
   events,
@@ -78,15 +87,15 @@ const makeTargetingEvent = ({
     id,
     pubkey,
     kind: TARGETED_PUBLICATION_KIND,
-    tags: buildTargetedPublication({
+    tags: buildTargetedPublicationV2({
       id,
       kind: SMART_WIDGET_KIND,
-      ref: {
+      source: {
         type: "a",
         value: `${SMART_WIDGET_KIND}:${widgetPubkey}:${identifier}`,
         relay: "wss://widgets.example",
       },
-      communities: [{pubkey: communityPubkey, relay: "wss://community.example"}],
+      communities: [community],
     }).tags,
   })
 
@@ -101,6 +110,26 @@ const makeWidgetEvent = (identifier: string, pubkey = widgetPubkey) =>
       ["l", "basic"],
       ["button", "Open", "app", "https://widgets.example/app"],
     ],
+  })
+
+const makeDefinition = () =>
+  makeEvent({
+    id: "community-definition",
+    pubkey: communityPubkey,
+    kind: COMMUNITY_DEFINITION_KIND_V2,
+    content: "",
+    tags: buildCommunityDefinitionV2({
+      communityId: community.communityId,
+      name: "Test community",
+      relays: ["wss://community.example"],
+      sections: [
+        {
+          name: "Apps",
+          kinds: [{kind: SMART_WIDGET_KIND}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`}],
+        },
+      ],
+    }).tags,
   })
 
 describe("community curated widgets", () => {
@@ -126,25 +155,25 @@ describe("community curated widgets", () => {
     const definition = makeEvent({
       id: "community-definition",
       pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
+      kind: COMMUNITY_DEFINITION_KIND_V2,
       tags: [],
     })
     mocks.loadCommunityEventsWithStatus.mockResolvedValue(loadResult([definition]))
 
-    await loadCommunityCuratedWidgets(communityPubkey)
+    await loadCommunityCuratedWidgets(community.naddr)
 
-    expect(mocks.loadCommunityEventsWithStatus).toHaveBeenLastCalledWith(
+    expect(mocks.loadCommunityEventsWithStatus).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Array),
       expect.objectContaining({priority: RELAY_REQUEST_PRIORITY.interactive}),
     )
 
     mocks.loadCommunityEventsWithStatus.mockClear()
-    await loadCommunityCuratedWidgets(communityPubkey, {
+    await loadCommunityCuratedWidgets(community.naddr, {
       priority: RELAY_REQUEST_PRIORITY.background,
     })
 
-    expect(mocks.loadCommunityEventsWithStatus).toHaveBeenLastCalledWith(
+    expect(mocks.loadCommunityEventsWithStatus).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Array),
       expect.objectContaining({priority: RELAY_REQUEST_PRIORITY.background}),
@@ -152,17 +181,7 @@ describe("community curated widgets", () => {
   })
 
   it("loads only widgets targeted by valid, undeleted community writers", async () => {
-    const definition = makeEvent({
-      id: "community-definition",
-      pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://community.example"],
-        ["content", "Apps"],
-        ["k", String(SMART_WIDGET_KIND)],
-        ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`],
-      ],
-    })
+    const definition = makeDefinition()
     const profileList = makeEvent({
       id: "apps-profile-list",
       pubkey: managerPubkey,
@@ -213,11 +232,11 @@ describe("community curated widgets", () => {
       },
     )
 
-    const result = await loadCommunityCuratedWidgets(communityPubkey)
+    const result = await loadCommunityCuratedWidgets(community.naddr)
 
     expect(result).toMatchObject({
       status: "community",
-      communityPubkey,
+      community: {address: community.address, naddr: community.naddr},
       relayHints: ["wss://community.example/"],
       trustedWidgetAuthorPubkeys: [communityPubkey, managerPubkey],
     })
@@ -227,14 +246,14 @@ describe("community curated widgets", () => {
     )
     expect(contexts).toHaveLength(1)
     expect(contexts[0]).toMatchObject({
-      communityPubkey,
+      community: {address: community.address},
       relays: ["wss://community.example/"],
       relayHints: ["wss://community.example/", "wss://widgets.example/"],
       trustedWidgetAuthorPubkeys: [communityPubkey, managerPubkey],
       targetingEventIds: ["target-valid"],
       targetingRelayHints: ["wss://widgets.example/"],
     })
-    expect(contexts[0].definition.pubkey).toBe(communityPubkey)
+    expect(contexts[0].definition.controllerPubkey).toBe(communityPubkey)
     expect(contexts[0].profileListEvents).toEqual([profileList])
     expect(contexts[0].widgetTargetAuthorPubkeys).toContain(memberPubkey)
     expect(
@@ -242,7 +261,9 @@ describe("community curated widgets", () => {
     ).toMatchObject({
       relays: ["wss://community.example/"],
       communityContext: {
-        pubkey: communityPubkey,
+        version: 2,
+        definitionAddress: community.address,
+        naddr: community.naddr,
         relayHints: ["wss://community.example/", "wss://widgets.example/"],
         viewer: {pubkey: memberPubkey},
       },
@@ -251,16 +272,21 @@ describe("community curated widgets", () => {
       makeCommunityWidgetPreviewContextOptions({
         widgetLineId: `${SMART_WIDGET_KIND}:${widgetPubkey}:valid-widget`,
         userPubkey: memberPubkey,
-        getLabel: context => `Community ${context.communityPubkey.slice(0, 4)}`,
+        getLabel: context => `Community ${context.community.controllerPubkey.slice(0, 4)}`,
       }),
     ).toMatchObject([
       {
-        id: communityPubkey,
-        communityPubkey,
-        label: "Community aaaa",
+        id: community.address,
+        community: {address: community.address},
+        label: `Community ${communityPubkey.slice(0, 4)}`,
         runtimeContext: {
           relays: ["wss://community.example/"],
-          communityContext: {pubkey: communityPubkey, viewer: {pubkey: memberPubkey}},
+          communityContext: {
+            version: 2,
+            definitionAddress: community.address,
+            naddr: community.naddr,
+            viewer: {pubkey: memberPubkey},
+          },
         },
       },
     ])
@@ -280,17 +306,7 @@ describe("community curated widgets", () => {
   })
 
   it("keeps pending widget-list owners as writers without trusting them as moderators", async () => {
-    const definition = makeEvent({
-      id: "community-definition",
-      pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://community.example"],
-        ["content", "Apps"],
-        ["k", String(SMART_WIDGET_KIND)],
-        ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`],
-      ],
-    })
+    const definition = makeDefinition()
     const validTarget = makeTargetingEvent({
       id: "target-valid",
       pubkey: managerPubkey,
@@ -316,7 +332,7 @@ describe("community curated widgets", () => {
       },
     )
 
-    const result = await loadCommunityCuratedWidgets(communityPubkey)
+    const result = await loadCommunityCuratedWidgets(community.naddr)
 
     expect(result.widgets.map(item => item.identifier)).toEqual(["valid-widget"])
     expect(result.trustedWidgetAuthorPubkeys).not.toContain(managerPubkey)
@@ -324,17 +340,7 @@ describe("community curated widgets", () => {
   })
 
   it("rejects a broad implicit widget result signed by someone other than the wrapper", async () => {
-    const definition = makeEvent({
-      id: "community-definition",
-      pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://community.example"],
-        ["content", "Apps"],
-        ["k", String(SMART_WIDGET_KIND)],
-        ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`],
-      ],
-    })
+    const definition = makeDefinition()
     const profileList = makeEvent({
       id: "apps-profile-list",
       pubkey: managerPubkey,
@@ -348,10 +354,10 @@ describe("community curated widgets", () => {
       id: "implicit-target",
       pubkey: memberPubkey,
       kind: TARGETED_PUBLICATION_KIND,
-      tags: buildTargetedPublication({
+      tags: buildTargetedPublicationV2({
         id: "implicit-widget-id",
         kind: SMART_WIDGET_KIND,
-        communities: [{pubkey: communityPubkey}],
+        communities: [community],
       }).tags,
     })
     const wrongSignerWidget = makeWidgetEvent("implicit-widget", widgetPubkey)
@@ -368,7 +374,7 @@ describe("community curated widgets", () => {
       return loadResult([wrongSignerWidget])
     })
 
-    const result = await loadCommunityCuratedWidgets(communityPubkey)
+    const result = await loadCommunityCuratedWidgets(community.naddr)
 
     expect(result.widgets).toEqual([])
     expect(mocks.loadCommunityEventsWithStatus.mock.calls[4][1]).toEqual([
@@ -382,17 +388,7 @@ describe("community curated widgets", () => {
   })
 
   it("returns incomplete targets for a background slot retry", async () => {
-    const definition = makeEvent({
-      id: "community-definition",
-      pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://community.example"],
-        ["content", "Apps"],
-        ["k", String(SMART_WIDGET_KIND)],
-        ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`],
-      ],
-    })
+    const definition = makeDefinition()
     const profileList = makeEvent({
       id: "apps-profile-list",
       pubkey: managerPubkey,
@@ -406,7 +402,7 @@ describe("community curated widgets", () => {
 
     mocks.loadCommunityEventsWithStatus.mockImplementation(
       async (_relays: string[], filters: Filter[]) => {
-        if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND))) {
+        if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2))) {
           return loadResult([definition])
         }
         if (filters.some(filter => filter.kinds?.includes(PROFILE_LIST_KIND))) {
@@ -423,7 +419,7 @@ describe("community curated widgets", () => {
       },
     )
 
-    const result = await loadCommunityCuratedWidgets(communityPubkey)
+    const result = await loadCommunityCuratedWidgets(community.naddr)
 
     expect(targetingLoads).toBe(1)
     expect(result.complete).toBe(false)
@@ -431,17 +427,7 @@ describe("community curated widgets", () => {
   })
 
   it("does not let a cached outsider wrapper complete the admitted wrapper load", async () => {
-    const definition = makeEvent({
-      id: "community-definition",
-      pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://community.example"],
-        ["content", "Apps"],
-        ["k", String(SMART_WIDGET_KIND)],
-        ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`],
-      ],
-    })
+    const definition = makeDefinition()
     const profileList = makeEvent({
       id: "apps-profile-list",
       pubkey: managerPubkey,
@@ -462,7 +448,7 @@ describe("community curated widgets", () => {
     try {
       mocks.loadCommunityEventsWithStatus.mockImplementation(
         async (_relays: string[], filters: Filter[]) => {
-          if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND))) {
+          if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2))) {
             return loadResult([definition])
           }
           if (filters.some(filter => filter.kinds?.includes(PROFILE_LIST_KIND))) {
@@ -477,7 +463,7 @@ describe("community curated widgets", () => {
         },
       )
 
-      const result = await loadCommunityCuratedWidgets(communityPubkey)
+      const result = await loadCommunityCuratedWidgets(community.naddr)
 
       expect(targetingLoads).toBe(1)
       expect(result.complete).toBe(false)

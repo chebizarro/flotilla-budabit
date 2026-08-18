@@ -82,7 +82,7 @@
 
   function searchMaintainerProfiles(query: string) {
     if (!searchProfiles) return Promise.resolve([]);
-    return searchProfiles(query, { communityPubkey: communityPubkey || undefined });
+    return searchProfiles(query, { communityAddress: communityPubkey || undefined });
   }
 
   // Autocomplete state for relays

@@ -167,8 +167,8 @@ describe("reaction publication source contracts", () => {
     const eventActions = readProjectFile("../components/EventActions.svelte")
 
     for (const route of [listRoute, detailRoute]) {
-      expect(route).toContain("reactionRelays={$activeCommunityPublishRelays}")
-      expect(route).toContain("$activeCommunityPublishRelays.length > 0")
+      expect(route).toContain("reactionRelays={$activeExactCommunityRelays}")
+      expect(route).toContain("$activeExactCommunityRelays.length > 0")
       expect(route).toContain("reactionAllowedAuthors={reactionAuthorPubkeys}")
     }
     expect(item).toContain("{reactionRelays}")

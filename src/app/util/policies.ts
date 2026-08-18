@@ -26,7 +26,7 @@ import {
   INDEXER_RELAYS,
   SIGNER_RELAYS,
 } from "@app/core/state"
-import {activeCommunityRelays} from "@app/core/community-state"
+import {activeExactCommunityRelays} from "@app/core/community-state"
 import {getRelayPolicy, isSignerPolicyRelay} from "@app/core/relay-policy"
 import {isEmailDigestAuthRelay} from "@app/core/email-digest-auth"
 import {isOperationScopedProviderAuthSocket} from "@app/core/provider-relay-auth"
@@ -73,7 +73,7 @@ const isUserOwnedRelay = (url: string) => {
   const trusted = get(userSettingsValues).trusted_relays || []
   if (trusted.some(r => safeNormalizeUrl(r) === normalized)) return true
 
-  const communityRelays = get(activeCommunityRelays)
+  const communityRelays = get(activeExactCommunityRelays)
   if (communityRelays.some(r => safeNormalizeUrl(r) === normalized)) return true
 
   const graspRelays = get(graspServersStore)
@@ -214,7 +214,7 @@ export const authPolicy = (socket: Socket) => {
     userMessagingRelayList.subscribe(() => {
       attemptAuth()
     }),
-    activeCommunityRelays.subscribe(() => {
+    activeExactCommunityRelays.subscribe(() => {
       attemptAuth()
     }),
     graspServersStore.subscribe(() => {

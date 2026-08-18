@@ -1,11 +1,14 @@
 import {describe, expect, it} from "vitest"
-import type {TrustedEvent} from "@welshman/util"
+import {getPublicKey} from "nostr-tools/pure"
+import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   COMMUNITY_SECTION_THREADS,
   PROFILE_LIST_KIND,
   RENOUNCED_COMMUNITIES_DTAG,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  parseCommunityDefinitionV2,
+  type CommunityDefinitionV2,
 } from "./community"
 import type {EffectiveCommunityReportState} from "./community-reports"
 import {
@@ -18,7 +21,7 @@ import {
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
     id: "event-id",
-    pubkey: "a".repeat(64),
+    pubkey: key(1),
     created_at: 1,
     kind: 1,
     tags: [],
@@ -26,6 +29,16 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     sig: "sig",
     ...overrides,
   }) as TrustedEvent
+
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityIds = new Map<string, string>()
+const getCommunityId = (id: string) => {
+  const existing = communityIds.get(id)
+  if (existing) return existing
+  const communityId = key(communityIds.size + 100)
+  communityIds.set(id, communityId)
+  return communityId
+}
 
 const makeDefinition = ({
   id,
@@ -40,17 +53,25 @@ const makeDefinition = ({
   profileListAddress?: string
   relays?: string[]
 }) =>
-  parseCommunityDefinition(
+  parseCommunityDefinitionV2(
     makeEvent({
       id,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ...relays.map(relay => ["r", relay]),
-        ["content", sectionName],
-        ["k", "1111"],
-        ...(profileListAddress ? [["a", profileListAddress]] : []),
-      ],
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      tags: buildCommunityDefinitionV2({
+        communityId: getCommunityId(id),
+        name: id,
+        relays,
+        sections: [
+          {
+            name: sectionName,
+            kinds: [{kind: 1111}],
+            profileLists: [
+              {address: profileListAddress || `${PROFILE_LIST_KIND}:${pubkey}:${sectionName}`},
+            ],
+          },
+        ],
+      }).tags,
     }),
   )!
 
@@ -63,16 +84,21 @@ const makeMultiSectionDefinition = ({
   pubkey: string
   sections: Array<{name: string; profileListAddresses: string[]}>
 }) =>
-  parseCommunityDefinition(
+  parseCommunityDefinitionV2(
     makeEvent({
       id,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: sections.flatMap(section => [
-        ["content", section.name],
-        ["k", "1111"],
-        ...section.profileListAddresses.map(address => ["a", address]),
-      ]),
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      tags: buildCommunityDefinitionV2({
+        communityId: getCommunityId(id),
+        name: id,
+        relays: ["wss://relay.example.com"],
+        sections: sections.map((section, index) => ({
+          name: section.name,
+          kinds: [{kind: 1111 + index}],
+          profileLists: section.profileListAddresses.map(address => ({address})),
+        })),
+      }).tags,
     }),
   )!
 
@@ -105,13 +131,13 @@ const makePersonBanState = (pubkey: string): EffectiveCommunityReportState =>
 
 describe("community membership", () => {
   it("selects sorted non-banned owner, moderator, and member list items", () => {
-    const ownerPubkey = "a".repeat(64)
-    const moderatorManyPubkey = "b".repeat(64)
-    const moderatorFewPubkey = "c".repeat(64)
-    const memberManyPubkey = "d".repeat(64)
-    const memberFewPubkey = "e".repeat(64)
-    const bannedPubkey = "f".repeat(64)
-    const removedPubkey = "9".repeat(64)
+    const ownerPubkey = key(1)
+    const moderatorManyPubkey = key(2)
+    const moderatorFewPubkey = key(3)
+    const memberManyPubkey = key(4)
+    const memberFewPubkey = key(5)
+    const bannedPubkey = key(6)
+    const removedPubkey = key(9)
     const generalAddress = `${PROFILE_LIST_KIND}:${moderatorManyPubkey}:General`
     const generalExtraAddress = `${PROFILE_LIST_KIND}:${moderatorFewPubkey}:GeneralExtra`
     const threadsAddress = `${PROFILE_LIST_KIND}:${moderatorManyPubkey}:${COMMUNITY_SECTION_THREADS}`
@@ -190,10 +216,10 @@ describe("community membership", () => {
   })
 
   it("selects admin, moderator, and member community refs", () => {
-    const userPubkey = "b".repeat(64)
-    const moderatorCommunityPubkey = "d".repeat(64)
-    const memberCommunityPubkey = "e".repeat(64)
-    const memberListOwner = "f".repeat(64)
+    const userPubkey = key(2)
+    const moderatorCommunityPubkey = key(4)
+    const memberCommunityPubkey = key(5)
+    const memberListOwner = key(6)
     const moderatorListAddress = `${PROFILE_LIST_KIND}:${userPubkey}:Moderators`
     const memberListAddress = `${PROFILE_LIST_KIND}:${memberListOwner}:Members`
 
@@ -225,31 +251,156 @@ describe("community membership", () => {
       ],
     })
 
-    expect(refs.map(ref => ({pubkey: ref.communityPubkey, roles: ref.roles}))).toEqual([
-      {pubkey: userPubkey, roles: ["admin"]},
-      {pubkey: moderatorCommunityPubkey, roles: ["moderator", "member"]},
-      {pubkey: memberCommunityPubkey, roles: ["member"]},
-    ])
-    expect(refs.map(ref => ref.writableSections)).toEqual([["General"], ["Moderated"], ["Members"]])
+    expect(
+      Object.fromEntries(refs.map(ref => [ref.community.controllerPubkey, ref.roles])),
+    ).toEqual({
+      [userPubkey]: ["admin"],
+      [moderatorCommunityPubkey]: ["moderator", "member"],
+      [memberCommunityPubkey]: ["member"],
+    })
+    expect(refs.map(ref => ref.community.address)).toEqual(
+      refs.map(ref => ref.community.address).toSorted(),
+    )
   })
 
-  it("excludes renounced non-admin community refs but keeps admin refs", () => {
-    const userPubkey = "b".repeat(64)
-    const memberCommunityPubkey = "d".repeat(64)
-    const memberListOwner = "f".repeat(64)
-    const memberListAddress = `${PROFILE_LIST_KIND}:${memberListOwner}:Members`
+  it("derives membership only from current non-deleted profile lists", () => {
+    const userPubkey = key(2)
+    const controller = key(4)
+    const listOwner = key(6)
+    const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:Members`
+    const definition = makeDefinition({
+      id: "authority",
+      pubkey: controller,
+      profileListAddress: listAddress,
+    })
+    const list = makeProfileList({
+      id: "members",
+      pubkey: listOwner,
+      identifier: "Members",
+      members: [userPubkey],
+      createdAt: 2,
+    })
+    const malformed = {
+      ...list,
+      id: "malformed",
+      created_at: 4,
+      tags: [
+        ["d", "Members"],
+        ["d", "Other"],
+        ["p", userPubkey],
+      ],
+    }
+    const deletion = makeEvent({
+      id: "delete-members",
+      pubkey: listOwner,
+      created_at: 2,
+      kind: DELETE,
+      tags: [["a", listAddress]],
+    })
+    const recreated = {...list, id: "recreated", created_at: 3}
+    const foreignDelete = {...deletion, id: "foreign-delete", pubkey: controller}
+    const multiDelete = {
+      ...deletion,
+      id: "multi-delete",
+      tags: [
+        ["a", listAddress],
+        ["a", `${PROFILE_LIST_KIND}:${listOwner}:Other`],
+      ],
+    }
+    const roles = (events: TrustedEvent[]) =>
+      selectUserCommunityRefs({
+        author: userPubkey,
+        definitions: [definition],
+        profileListEvents: events,
+      })
+
+    expect(roles([list, malformed])).toHaveLength(1)
+    expect(roles([list, deletion])).toEqual([])
+    expect(roles([list, deletion, recreated])).toHaveLength(1)
+    expect(roles([list, foreignDelete])).toHaveLength(1)
+    expect(roles([list, multiDelete])).toHaveLength(1)
+  })
+
+  it("keeps same-controller community definitions independent", () => {
+    const userPubkey = key(2)
+
+    expect(
+      selectUserCommunityRefs({
+        author: userPubkey,
+        definitions: [
+          makeDefinition({id: "first", pubkey: userPubkey}),
+          makeDefinition({id: "second", pubkey: userPubkey}),
+        ],
+      }).map(ref => ref.definition.event.id),
+    ).toEqual(["first", "second"])
+  })
+
+  it("keeps same-ID branches under different controllers independent", () => {
+    const userPubkey = key(2)
+    const otherController = key(3)
+    const sharedId = "shared-community-id"
+    const userDefinition = makeDefinition({id: sharedId, pubkey: userPubkey})
+    const otherDefinition = makeDefinition({id: sharedId, pubkey: otherController})
+
+    expect(
+      selectUserCommunityRefs({
+        author: userPubkey,
+        definitions: [userDefinition, otherDefinition],
+      }).map(ref => ref.community.address),
+    ).toEqual([userDefinition.pointer.address])
+    expect(userDefinition.communityId).toBe(otherDefinition.communityId)
+    expect(userDefinition.pointer.address).not.toBe(otherDefinition.pointer.address)
+  })
+
+  it("uses report state from the exact community address", () => {
+    const userPubkey = key(2)
+    const controller = key(4)
+    const listOwner = key(6)
+    const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:Members`
+    const bannedBranch = makeDefinition({
+      id: "banned-branch",
+      pubkey: controller,
+      profileListAddress: listAddress,
+    })
+    const activeBranch = makeDefinition({
+      id: "active-branch",
+      pubkey: controller,
+      profileListAddress: listAddress,
+    })
 
     const refs = selectUserCommunityRefs({
       author: userPubkey,
-      definitions: [
-        makeDefinition({id: "admin-definition", pubkey: userPubkey}),
-        makeDefinition({
-          id: "member-definition",
-          pubkey: memberCommunityPubkey,
-          sectionName: "Members",
-          profileListAddress: memberListAddress,
+      definitions: [bannedBranch, activeBranch],
+      profileListEvents: [
+        makeProfileList({
+          id: "members",
+          pubkey: listOwner,
+          identifier: "Members",
+          members: [userPubkey],
         }),
       ],
+      reportStates: new Map([[bannedBranch.pointer.address, makePersonBanState(userPubkey)]]),
+    })
+
+    expect(refs.map(ref => ref.community.address)).toEqual([activeBranch.pointer.address])
+  })
+
+  it("excludes renounced non-admin community refs but keeps admin refs", () => {
+    const userPubkey = key(2)
+    const memberCommunityPubkey = key(4)
+    const memberListOwner = key(6)
+    const memberListAddress = `${PROFILE_LIST_KIND}:${memberListOwner}:Members`
+
+    const adminDefinition = makeDefinition({id: "admin-definition", pubkey: userPubkey})
+    const memberDefinition = makeDefinition({
+      id: "member-definition",
+      pubkey: memberCommunityPubkey,
+      sectionName: "Members",
+      profileListAddress: memberListAddress,
+    })
+    const refs = selectUserCommunityRefs({
+      author: userPubkey,
+      definitions: [adminDefinition, memberDefinition],
       profileListEvents: [
         makeProfileList({
           id: "member-list",
@@ -258,23 +409,26 @@ describe("community membership", () => {
           members: [userPubkey],
         }),
       ],
-      excludedCommunityPubkeys: [userPubkey, memberCommunityPubkey],
+      excludedCommunityAddresses: [
+        adminDefinition.pointer.address,
+        memberDefinition.pointer.address,
+      ],
     })
 
-    expect(refs.map(ref => ref.communityPubkey)).toEqual([userPubkey])
+    expect(refs.map(ref => ref.community.address)).toEqual([adminDefinition.pointer.address])
   })
 
   it("filters existing refs by renounced non-admin communities", () => {
-    const definition = makeDefinition({id: "definition", pubkey: "a".repeat(64)})
+    const definition = makeDefinition({id: "definition", pubkey: key(1)})
     const adminRef: ActiveUserCommunityRef = {
-      communityPubkey: "a".repeat(64),
+      community: definition.pointer,
       definition,
       relayHints: [],
       roles: ["admin" as const],
       writableSections: [],
     }
     const memberRef: ActiveUserCommunityRef = {
-      communityPubkey: "b".repeat(64),
+      community: definition.pointer,
       definition,
       relayHints: [],
       roles: ["member" as const],
@@ -282,17 +436,36 @@ describe("community membership", () => {
     }
 
     expect(
+      filterExcludedCommunityRefs([adminRef, memberRef], [definition.pointer.address]).map(
+        ref => ref.roles,
+      ),
+    ).toEqual([["admin"]])
+  })
+
+  it("does not exclude a sibling definition owned by the same controller", () => {
+    const pubkey = key(1)
+    const renounced = makeDefinition({id: "renounced", pubkey})
+    const sibling = makeDefinition({id: "sibling", pubkey})
+    const makeRef = (definition: CommunityDefinitionV2): ActiveUserCommunityRef => ({
+      community: definition.pointer,
+      definition,
+      relayHints: [],
+      roles: ["member"],
+      writableSections: [],
+    })
+
+    expect(
       filterExcludedCommunityRefs(
-        [adminRef, memberRef],
-        [adminRef.communityPubkey, memberRef.communityPubkey],
-      ).map(ref => ref.communityPubkey),
-    ).toEqual([adminRef.communityPubkey])
+        [makeRef(renounced), makeRef(sibling)],
+        [renounced.pointer.address],
+      ).map(ref => ref.definition.event.id),
+    ).toEqual(["sibling"])
   })
 
   it("ignores the renounced communities list as profile-list membership evidence", () => {
-    const userPubkey = "b".repeat(64)
-    const communityPubkey = "d".repeat(64)
-    const listOwner = "f".repeat(64)
+    const userPubkey = key(2)
+    const communityPubkey = key(4)
+    const listOwner = key(6)
     const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:${RENOUNCED_COMMUNITIES_DTAG}`
 
     expect(
@@ -321,21 +494,15 @@ describe("community membership", () => {
   })
 
   it("uses stored section names for member grant display", () => {
-    const ownerPubkey = "a".repeat(64)
-    const moderatorPubkey = "b".repeat(64)
-    const memberPubkey = "c".repeat(64)
-    const definition = parseCommunityDefinition(
-      makeEvent({
-        id: "goals-community-definition",
-        pubkey: ownerPubkey,
-        kind: COMMUNITY_DEFINITION_KIND,
-        tags: [
-          ["content", "Goals"],
-          ["k", "9041"],
-          ["a", `${PROFILE_LIST_KIND}:${moderatorPubkey}:Goals`],
-        ],
-      }),
-    )!
+    const ownerPubkey = key(1)
+    const moderatorPubkey = key(2)
+    const memberPubkey = key(3)
+    const definition = makeDefinition({
+      id: "goals-community-definition",
+      pubkey: ownerPubkey,
+      sectionName: "Goals",
+      profileListAddress: `${PROFILE_LIST_KIND}:${moderatorPubkey}:Goals`,
+    })
 
     const members = selectCommunityMemberList({
       definition,
@@ -354,8 +521,8 @@ describe("community membership", () => {
   })
 
   it("treats missing moderator profile-list evidence as member access only", () => {
-    const userPubkey = "b".repeat(64)
-    const communityPubkey = "d".repeat(64)
+    const userPubkey = key(2)
+    const communityPubkey = key(4)
 
     expect(
       selectUserCommunityRefs({
@@ -370,7 +537,7 @@ describe("community membership", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey,
+        community: expect.objectContaining({controllerPubkey: communityPubkey}),
         roles: ["member"],
         writableSections: ["General"],
       }),
@@ -378,8 +545,8 @@ describe("community membership", () => {
   })
 
   it("marks missing moderator profile-list refs as pending moderation invites", () => {
-    const userPubkey = "b".repeat(64)
-    const communityPubkey = "d".repeat(64)
+    const userPubkey = key(2)
+    const communityPubkey = key(4)
     const definition = makeDefinition({
       id: "moderator-definition",
       pubkey: communityPubkey,
@@ -405,8 +572,8 @@ describe("community membership", () => {
   })
 
   it("marks existing empty moderator profile-list refs as active moderators", () => {
-    const userPubkey = "b".repeat(64)
-    const communityPubkey = "d".repeat(64)
+    const userPubkey = key(2)
+    const communityPubkey = key(4)
     const definition = makeDefinition({
       id: "moderator-definition",
       pubkey: communityPubkey,
@@ -433,8 +600,8 @@ describe("community membership", () => {
   })
 
   it("treats declined moderator refs as member access only", () => {
-    const userPubkey = "b".repeat(64)
-    const communityPubkey = "d".repeat(64)
+    const userPubkey = key(2)
+    const communityPubkey = key(4)
     const definition = makeDefinition({
       id: "moderator-definition",
       pubkey: communityPubkey,
@@ -455,7 +622,7 @@ describe("community membership", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey,
+        community: expect.objectContaining({controllerPubkey: communityPubkey}),
         roles: ["member"],
         writableSections: ["General"],
       }),
@@ -474,20 +641,19 @@ describe("community membership", () => {
   })
 
   it("excludes person-banned non-admin refs but keeps admin refs", () => {
-    const userPubkey = "b".repeat(64)
-    const memberCommunityPubkey = "d".repeat(64)
-    const memberListOwner = "f".repeat(64)
+    const userPubkey = key(2)
+    const memberCommunityPubkey = key(4)
+    const memberListOwner = key(6)
 
+    const adminDefinition = makeDefinition({id: "admin-definition", pubkey: userPubkey})
+    const memberDefinition = makeDefinition({
+      id: "member-definition",
+      pubkey: memberCommunityPubkey,
+      profileListAddress: `${PROFILE_LIST_KIND}:${memberListOwner}:General`,
+    })
     const refs = selectUserCommunityRefs({
       author: userPubkey,
-      definitions: [
-        makeDefinition({id: "admin-definition", pubkey: userPubkey}),
-        makeDefinition({
-          id: "member-definition",
-          pubkey: memberCommunityPubkey,
-          profileListAddress: `${PROFILE_LIST_KIND}:${memberListOwner}:General`,
-        }),
-      ],
+      definitions: [adminDefinition, memberDefinition],
       profileListEvents: [
         makeProfileList({
           id: "member-list",
@@ -497,42 +663,45 @@ describe("community membership", () => {
         }),
       ],
       reportStates: new Map([
-        [userPubkey, makePersonBanState(userPubkey)],
-        [memberCommunityPubkey, makePersonBanState(userPubkey)],
+        [adminDefinition.pointer.address, makePersonBanState(userPubkey)],
+        [memberDefinition.pointer.address, makePersonBanState(userPubkey)],
       ]),
     })
 
-    expect(refs.map(ref => ref.communityPubkey)).toEqual([userPubkey])
+    expect(refs.map(ref => ref.community.address)).toEqual([adminDefinition.pointer.address])
   })
 
   it("returns relay hints only for eligible active community refs", () => {
-    const userPubkey = "b".repeat(64)
-    const memberCommunityPubkey = "d".repeat(64)
-    const bannedCommunityPubkey = "e".repeat(64)
-    const unrelatedCommunityPubkey = "f".repeat(64)
-    const memberListOwner = "7".repeat(64)
-    const bannedListOwner = "8".repeat(64)
+    const userPubkey = key(2)
+    const memberCommunityPubkey = key(4)
+    const bannedCommunityPubkey = key(5)
+    const unrelatedCommunityPubkey = key(6)
+    const memberListOwner = key(7)
+    const bannedListOwner = key(8)
 
+    const adminDefinition = makeDefinition({
+      id: "admin-definition",
+      pubkey: userPubkey,
+      relays: ["wss://admin-relay.example.com"],
+    })
+    const memberDefinition = makeDefinition({
+      id: "member-definition",
+      pubkey: memberCommunityPubkey,
+      profileListAddress: `${PROFILE_LIST_KIND}:${memberListOwner}:General`,
+      relays: ["wss://member-relay.example.com"],
+    })
+    const bannedDefinition = makeDefinition({
+      id: "banned-definition",
+      pubkey: bannedCommunityPubkey,
+      profileListAddress: `${PROFILE_LIST_KIND}:${bannedListOwner}:General`,
+      relays: ["wss://banned-relay.example.com"],
+    })
     const refs = selectUserCommunityRefs({
       author: userPubkey,
       definitions: [
-        makeDefinition({
-          id: "admin-definition",
-          pubkey: userPubkey,
-          relays: ["wss://admin-relay.example.com", "bad-relay"],
-        }),
-        makeDefinition({
-          id: "member-definition",
-          pubkey: memberCommunityPubkey,
-          profileListAddress: `${PROFILE_LIST_KIND}:${memberListOwner}:General`,
-          relays: ["wss://member-relay.example.com", "wss://member-relay.example.com/"],
-        }),
-        makeDefinition({
-          id: "banned-definition",
-          pubkey: bannedCommunityPubkey,
-          profileListAddress: `${PROFILE_LIST_KIND}:${bannedListOwner}:General`,
-          relays: ["wss://banned-relay.example.com"],
-        }),
+        adminDefinition,
+        memberDefinition,
+        bannedDefinition,
         makeDefinition({
           id: "unrelated-definition",
           pubkey: unrelatedCommunityPubkey,
@@ -553,12 +722,14 @@ describe("community membership", () => {
           members: [userPubkey],
         }),
       ],
-      reportStates: new Map([[bannedCommunityPubkey, makePersonBanState(userPubkey)]]),
+      reportStates: new Map([[bannedDefinition.pointer.address, makePersonBanState(userPubkey)]]),
     })
 
-    expect(refs.map(ref => ({pubkey: ref.communityPubkey, relayHints: ref.relayHints}))).toEqual([
-      {pubkey: userPubkey, relayHints: ["wss://admin-relay.example.com/"]},
-      {pubkey: memberCommunityPubkey, relayHints: ["wss://member-relay.example.com/"]},
-    ])
+    expect(
+      Object.fromEntries(refs.map(ref => [ref.community.controllerPubkey, ref.relayHints])),
+    ).toEqual({
+      [userPubkey]: ["wss://admin-relay.example.com"],
+      [memberCommunityPubkey]: ["wss://member-relay.example.com"],
+    })
   })
 })

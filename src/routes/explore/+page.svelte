@@ -1,820 +1,159 @@
 <script lang="ts">
-  import {onMount, tick} from "svelte"
-  import {goto} from "$app/navigation"
-  import {loadUserRelayList, profilesByPubkey, pubkey, userRelayList} from "@welshman/app"
-  import {getRelaysFromList, type TrustedEvent} from "@welshman/util"
+  import {pubkey} from "@welshman/app"
   import AddCircle from "@assets/icons/add-circle.svg?dataurl"
+  import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
+  import PageBar from "@lib/components/PageBar.svelte"
+  import PageContent from "@lib/components/PageContent.svelte"
   import LogIn from "@app/components/LogIn.svelte"
-  import {pushToast} from "@app/util/toast"
-  import {pushModal} from "@app/util/modal"
+  import CommunityLinkCard from "@app/components/community/CommunityLinkCard.svelte"
+  import type {CommunitySearchResult} from "@app/core/community-discovery-search"
+  import {searchCommunities} from "@app/core/community-discovery-search"
   import {
-    makeCommunityNcommunity,
-    normalizeRelays,
-    parseCommunityInput,
-    type CommunityDefinition,
-  } from "@app/core/community"
-  import {
-    DEFAULT_COMMUNITY_INPUT,
-    activeCommunityDefinition,
-    activeCommunitySession,
+    DEFAULT_COMMUNITY_POINTER,
+    activeExactCommunityPointer,
     activePreferredCommunities,
-    communityAdminDefinitionEvents,
-    communityMemberDefinitionEvents,
-    communityModeratorDefinitionEvents,
-    communityPreferencesLoading,
-    communityStarsLoading,
-    getCommunityDefinitionRelayHints,
-    hydrateCommunityPreferences,
-    hydratePreferredCommunityList,
-    loadCommunityDefinitionWithOutboxFallback,
-    selectLatestCommunityDefinition,
-    setActiveCommunityDefinition,
-    setActiveCommunityInput,
   } from "@app/core/community-state"
-  import CommunityPreviewCard from "@app/components/community/CommunityPreviewCard.svelte"
-  import CommunitySelectorCard from "@app/components/community/CommunitySelectorCard.svelte"
-  import {makeCommunityPath} from "@app/util/routes"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
-  import {peopleDiscoverySearch} from "@app/core/people-discovery-search"
-  import {PEOPLE_SEARCH_QUICK_SCAN_LIMIT} from "@app/util/people-search"
 
-  const COMMUNITY_INPUT_SEARCH_LIMIT = 8
+  let query = $state("")
+  let results = $state<CommunitySearchResult[]>([])
+  let searched = $state(false)
+  let loading = $state(false)
+  let incomplete = $state(false)
+  let error = $state("")
+  let searchController: AbortController | undefined
 
-  type SelectorCommunity = {
-    pubkey: string
-    relayHints: string[]
-    publishRelayHints: string[]
-    isCurrent: boolean
-    isAdmin: boolean
-    isModerator: boolean
-    isMember: boolean
-  }
+  const findCommunities = async () => {
+    const value = query.trim()
+    searchController?.abort()
+    const controller = new AbortController()
+    searchController = controller
+    searched = Boolean(value)
+    error = ""
+    incomplete = false
+    if (!value) {
+      results = []
+      loading = false
+      return
+    }
 
-  let communitySearchInput = $state("")
-  let communityInput = $state("")
-  let previewRequestId = 0
-  let previewRequestKey = ""
-  let previewLookupState = $state<"idle" | "loading" | "found" | "not-found" | "unavailable">(
-    "idle",
-  )
-  let defaultRequestId = 0
-  let defaultRequestKey = ""
-  let defaultLookupState = $state<"idle" | "loading" | "found" | "not-found" | "unavailable">(
-    "idle",
-  )
-  let loadedDefaultRelayHints = $state<string[]>([])
-  let enteringCommunityKey = $state("")
-  let selectorRelayHints = $state<Record<string, string[]>>({})
-  let relayResumeVersion = $state(0)
-  let preferredHydrationKey = ""
-  let preferredHydrationLoadingKey = $state("")
-  let preferredFullHydrationKey = ""
-  let preferredFullHydrationTimer: ReturnType<typeof setTimeout> | undefined
-  let exploreBackgroundHydrationReady = $state(false)
-  let userRelayListHydrationKey = $state("")
-  let userRelayListHydrationLoadingKey = $state("")
-  const selectorRelayLoadAttempts = new Map<string, number>()
-  const SELECTOR_RELAY_RETRY_MS = 30_000
-  const PREFERRED_FULL_HYDRATION_DELAY_MS = 1_500
-  const USER_RELAY_LIST_LOAD_TIMEOUT_MS = 3_000
-  const preferredListHydrationLoading = $derived(Boolean(preferredHydrationLoadingKey))
-
-  const loadUserRelayListWithTimeout = async () => {
-    let timeout: ReturnType<typeof setTimeout> | undefined
-
+    loading = true
     try {
-      await Promise.race([
-        loadUserRelayList(),
-        new Promise<void>(resolve => {
-          timeout = setTimeout(resolve, USER_RELAY_LIST_LOAD_TIMEOUT_MS)
-        }),
-      ])
+      const batch = await searchCommunities(value, {
+        signal: controller.signal,
+        preferredAddresses: $activePreferredCommunities.map(item => item.communityAddress),
+      })
+      if (controller.signal.aborted) return
+      results = batch.results
+      incomplete = batch.incomplete
+    } catch {
+      if (!controller.signal.aborted) error = "Community search is temporarily unavailable."
     } finally {
-      if (timeout) clearTimeout(timeout)
+      if (!controller.signal.aborted) loading = false
     }
   }
-
-  const waitForPostPaintHydration = async () => {
-    await tick()
-    if (typeof requestAnimationFrame !== "function") return
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-  }
-
-  const clearPreferredFullHydrationTimer = () => {
-    if (!preferredFullHydrationTimer) return
-
-    clearTimeout(preferredFullHydrationTimer)
-    preferredFullHydrationTimer = undefined
-  }
-
-  const schedulePreferredFullHydration = (key: string, relayHints: string[]) => {
-    if (preferredFullHydrationKey === key) return
-
-    clearPreferredFullHydrationTimer()
-    preferredFullHydrationKey = key
-    preferredFullHydrationTimer = setTimeout(() => {
-      preferredFullHydrationTimer = undefined
-      if (preferredHydrationKey !== key) return
-
-      hydrateCommunityPreferences({relayHints}).catch(() => {})
-    }, PREFERRED_FULL_HYDRATION_DELAY_MS)
-  }
-
-  const login = () => pushModal(LogIn)
-
-  const createCommunity = () => {
-    if ($pubkey) goto("/explore/create-community")
-    else login()
-  }
-
-  const editOwnCommunity = () => {
-    const definition = ownCommunityDefinition
-    if (!definition) return
-
-    const communityInput = makeCommunityNcommunity({
-      pubkey: definition.pubkey,
-      relayHints: definition.relays,
-    })
-    goto(makeCommunityPath(communityInput, "admin"))
-  }
-
-  const rememberCommunityDefinitionRelays = (
-    definition: CommunityDefinition,
-    fallbackRelays: string[] = [],
-  ) => {
-    const relayHints = getCommunityDefinitionRelayHints(definition, fallbackRelays)
-    if (relayHints.length > 0) {
-      selectorRelayHints = {...selectorRelayHints, [definition.pubkey]: relayHints}
-    }
-
-    return relayHints
-  }
-
-  const loadCommunityDefinition = async (communityPubkey: string, relayHints: string[]) => {
-    const cachedDefinition = selectLatestCommunityDefinition(
-      communityDefinitionEvents,
-      communityPubkey,
-    )
-    if (cachedDefinition) return cachedDefinition
-
-    return loadCommunityDefinitionWithOutboxFallback(communityPubkey, {
-      relayHints,
-      onOutboxDefinition: definition => rememberCommunityDefinitionRelays(definition, relayHints),
-    })
-  }
-
-  const makeEnteringCommunityKey = (parsed: NonNullable<ReturnType<typeof parseCommunityInput>>) =>
-    `${parsed.pubkey}:${parsed.relays.join(",")}`
-
-  const getEnteringCommunityKey = (input: string) => {
-    const parsed = parseCommunityInput(input)
-
-    return parsed ? makeEnteringCommunityKey(parsed) : ""
-  }
-
-  const enterCommunity = async (input: string) => {
-    const parsed = parseCommunityInput(input)
-
-    if (!parsed) {
-      pushToast({
-        theme: "error",
-        message: "Enter a valid community npub, hex pubkey, or ncommunity.",
-      })
-      return
-    }
-
-    if (enteringCommunityKey) return
-    const requestKey = makeEnteringCommunityKey(parsed)
-    enteringCommunityKey = requestKey
-
-    try {
-      const definition = await loadCommunityDefinition(parsed.pubkey, parsed.relays)
-
-      if (!definition) {
-        if (parsed.pubkey === previewPubkey) previewLookupState = "unavailable"
-        pushToast({theme: "error", message: "Community unavailable. Try again."})
-        return
-      }
-
-      const relayHints = rememberCommunityDefinitionRelays(definition, parsed.relays)
-      const communityValue = makeCommunityInputValue({pubkey: parsed.pubkey, relayHints}) || input
-      const session = setActiveCommunityInput(communityValue)
-
-      if (!session) {
-        pushToast({
-          theme: "error",
-          message: "Enter a valid community npub, hex pubkey, or ncommunity.",
-        })
-        return
-      }
-
-      setActiveCommunityDefinition(definition)
-      await goto(makeCommunityPath(communityValue))
-      communitySearchInput = ""
-      communityInput = ""
-    } catch (error) {
-      if (parsed.pubkey === previewPubkey) previewLookupState = "unavailable"
-      pushToast({theme: "error", message: "Community unavailable. Try again."})
-    } finally {
-      if (enteringCommunityKey === requestKey) enteringCommunityKey = ""
-    }
-  }
-
-  const submitCommunityInput = () => {
-    const input = communitySearchInput.trim()
-    if (!input) return
-
-    communityInput = input
-    enterCommunity(input)
-  }
-
-  const openPreviewCommunity = () => {
-    const parsed = parseCommunityInput(communityInput)
-    const pubkey = parsed?.pubkey || ""
-    const relayHints = previewRelayHints
-
-    if (!pubkey) return
-
-    enterCommunity(makeCommunityInputValue({pubkey, relayHints}) || pubkey)
-  }
-
-  const openDefaultCommunity = () => {
-    if (!defaultOpenInput) return
-
-    enterCommunity(defaultOpenInput)
-  }
-
-  const selectCommunityInputProfile = (selectedPubkey: string) => {
-    const definition = selectLatestCommunityDefinition(communityDefinitionEvents, selectedPubkey)
-    const relayHints = getCommunityDefinitionRelayHints(definition, [
-      ...(selectorRelayHints[selectedPubkey] || []),
-      ...(selectedPubkey === $activeCommunitySession?.communityPubkey ? currentRelayHints : []),
-      ...(selectedPubkey === $pubkey ? userRelayHints : []),
-    ])
-
-    const input = makeCommunityInputValue({pubkey: selectedPubkey, relayHints}) || selectedPubkey
-
-    communitySearchInput = input
-    communityInput = input
-  }
-
-  const searchLocalProfiles = (query: string) => {
-    const normalizedQuery = query.trim().toLocaleLowerCase()
-    if (!normalizedQuery) return []
-
-    return Array.from($profilesByPubkey.entries())
-      .map(([candidatePubkey, profile]) => {
-        const fields = [profile?.display_name, profile?.name, profile?.nip05]
-          .map(value => String(value || "").toLocaleLowerCase())
-          .filter(Boolean)
-        const score = fields.some(value => value === normalizedQuery)
-          ? 3
-          : fields.some(value => value.startsWith(normalizedQuery))
-            ? 2
-            : fields.some(value => value.includes(normalizedQuery))
-              ? 1
-              : 0
-
-        return {pubkey: candidatePubkey, score}
-      })
-      .filter(match => match.score > 0)
-      .sort((a, b) => b.score - a.score || a.pubkey.localeCompare(b.pubkey))
-      .slice(0, COMMUNITY_INPUT_SEARCH_LIMIT)
-      .map(match => match.pubkey)
-  }
-
-  const searchCommunityInputProfiles = (term: string) => {
-    const query = term.trim()
-    if (!query) return []
-    if (parseCommunityInput(query)) return []
-
-    return $peopleDiscoverySearch.searchValues(query, {
-      knownPubkeys: selectorCommunities.map(community => community.pubkey),
-      additionalProfileMatches: searchLocalProfiles(query),
-      scanLimit: PEOPLE_SEARCH_QUICK_SCAN_LIMIT,
-      resultLimit: COMMUNITY_INPUT_SEARCH_LIMIT,
-    })
-  }
-
-  const loadCommunityDefinitionRelays = async (communityPubkey: string, relayHints: string[]) => {
-    const definition = await loadCommunityDefinition(communityPubkey, relayHints)
-
-    if (!definition) return []
-
-    return rememberCommunityDefinitionRelays(definition, relayHints)
-  }
-
-  const loadSelectorRelayHints = async (item: SelectorCommunity) => {
-    const relays = await loadCommunityDefinitionRelays(item.pubkey, item.relayHints)
-    if (relays.length > 0) {
-      selectorRelayHints = {...selectorRelayHints, [item.pubkey]: relays}
-    }
-
-    return relays.length > 0
-  }
-
-  const hasCommunityInput = $derived(Boolean(communityInput.trim()))
-  const previewInput = $derived(parseCommunityInput(communityInput))
-  const previewPubkey = $derived(hasCommunityInput ? previewInput?.pubkey || "" : "")
-  const preferredCommunities = $derived($activePreferredCommunities)
-  const communityDefinitionEvents = $derived([
-    ...$communityAdminDefinitionEvents,
-    ...$communityMemberDefinitionEvents,
-    ...$communityModeratorDefinitionEvents,
-  ] as TrustedEvent[])
-  const preferredCommunityByPubkey = $derived.by(
-    () => new Map(preferredCommunities.map(community => [community.communityPubkey, community])),
-  )
-  const ownCommunityDefinition = $derived.by(() =>
-    $pubkey ? selectLatestCommunityDefinition($communityAdminDefinitionEvents, $pubkey) : undefined,
-  )
-  const hasOwnCommunity = $derived(Boolean(ownCommunityDefinition))
-  const getLoadedCommunityPublishRelays = (communityPubkey: string) =>
-    normalizeRelays(
-      ($activeCommunityDefinition?.pubkey === communityPubkey
-        ? $activeCommunityDefinition
-        : selectLatestCommunityDefinition(communityDefinitionEvents, communityPubkey)
-      )?.relays || [],
-    )
-  const currentRelayHints = $derived.by(() => {
-    const session = $activeCommunitySession
-    if (!session) return []
-
-    const definitionRelays =
-      $activeCommunityDefinition?.pubkey === session.communityPubkey
-        ? $activeCommunityDefinition.relays
-        : []
-
-    return normalizeRelays([
-      ...session.communityRelayHints,
-      ...(selectorRelayHints[session.communityPubkey] || []),
-      ...definitionRelays,
-    ])
-  })
-  const userRelayHints = $derived.by(() => normalizeRelays(getRelaysFromList($userRelayList)))
-  const preferredHydrationRelayHints = $derived.by(() =>
-    normalizeRelays([...currentRelayHints, ...userRelayHints]),
-  )
-  const userRelayListKey = $derived($userRelayList?.event?.id || userRelayHints.join(","))
-  const selectorCommunities = $derived.by((): SelectorCommunity[] => {
-    const session = $activeCommunitySession
-    const currentPreference = session
-      ? preferredCommunityByPubkey.get(session.communityPubkey)
-      : undefined
-    const current = session
-      ? [
-          {
-            pubkey: session.communityPubkey,
-            relayHints: currentRelayHints,
-            publishRelayHints: getLoadedCommunityPublishRelays(session.communityPubkey),
-            isCurrent: true,
-            isAdmin: Boolean(currentPreference?.isAdmin),
-            isModerator: Boolean(currentPreference?.isModerator),
-            isMember: Boolean(currentPreference?.isMember),
-          },
-        ]
-      : []
-    const preferred = preferredCommunities
-      .filter(community => community.communityPubkey !== session?.communityPubkey)
-      .map(community => ({
-        pubkey: community.communityPubkey,
-        relayHints: normalizeRelays([
-          ...community.relayHints,
-          ...(selectorRelayHints[community.communityPubkey] || []),
-        ]),
-        publishRelayHints: getLoadedCommunityPublishRelays(community.communityPubkey),
-        isCurrent: false,
-        isAdmin: community.isAdmin,
-        isModerator: community.isModerator,
-        isMember: community.isMember,
-      }))
-
-    return [...current, ...preferred]
-  })
-  const previewRelayHints = $derived.by(() => {
-    if (!previewPubkey) return []
-
-    return normalizeRelays([
-      ...(previewInput?.relays || []),
-      ...(previewPubkey === $activeCommunitySession?.communityPubkey ? currentRelayHints : []),
-      ...(previewPubkey === $pubkey ? userRelayHints : []),
-      ...(selectorRelayHints[previewPubkey] || []),
-    ])
-  })
-  const previewPublishRelayHints = $derived(getLoadedCommunityPublishRelays(previewPubkey))
-  const previewOpenInput = $derived(
-    previewPubkey
-      ? makeCommunityInputValue({pubkey: previewPubkey, relayHints: previewRelayHints}) ||
-          previewPubkey
-      : "",
-  )
-  const previewOpening = $derived(
-    Boolean(previewOpenInput && enteringCommunityKey === getEnteringCommunityKey(previewOpenInput)),
-  )
-  const previewHasCommunityDefinition = $derived(
-    Boolean(
-      previewPubkey &&
-      ($activeCommunityDefinition?.pubkey === previewPubkey ||
-        selectLatestCommunityDefinition(communityDefinitionEvents, previewPubkey) ||
-        selectorRelayHints[previewPubkey]?.length),
-    ),
-  )
-  const previewLoading = $derived(
-    Boolean(previewPubkey && !previewHasCommunityDefinition && previewLookupState === "loading"),
-  )
-  const previewCommunityNotFound = $derived(
-    Boolean(previewPubkey && !previewHasCommunityDefinition && previewLookupState === "not-found"),
-  )
-  const previewCommunityUnavailable = $derived(
-    Boolean(
-      previewPubkey && !previewHasCommunityDefinition && previewLookupState === "unavailable",
-    ),
-  )
-  const previewLabel = $derived(hasCommunityInput ? "Preview community" : "Find community")
-  const previewEmptyInfo = $derived(
-    hasCommunityInput
-      ? "Enter a valid npub, hex pubkey, or ncommunity."
-      : "Paste a community to preview it.",
-  )
-  const defaultCommunityInput = $derived(parseCommunityInput(DEFAULT_COMMUNITY_INPUT))
-  const defaultCommunityPubkey = $derived(defaultCommunityInput?.pubkey || "")
-  const defaultRelayHints = $derived.by(() => {
-    if (!defaultCommunityPubkey) return []
-
-    return normalizeRelays([
-      ...(defaultCommunityInput?.relays || []),
-      ...loadedDefaultRelayHints,
-      ...(defaultCommunityPubkey === $activeCommunitySession?.communityPubkey
-        ? currentRelayHints
-        : []),
-    ])
-  })
-  const defaultPublishRelayHints = $derived(getLoadedCommunityPublishRelays(defaultCommunityPubkey))
-  const defaultOpenInput = $derived(
-    defaultCommunityPubkey
-      ? makeCommunityInputValue({pubkey: defaultCommunityPubkey, relayHints: defaultRelayHints}) ||
-          DEFAULT_COMMUNITY_INPUT ||
-          defaultCommunityPubkey
-      : "",
-  )
-  const defaultOpening = $derived(
-    Boolean(defaultOpenInput && enteringCommunityKey === getEnteringCommunityKey(defaultOpenInput)),
-  )
-  const defaultHasCommunityDefinition = $derived(
-    Boolean(
-      defaultCommunityPubkey &&
-      ($activeCommunityDefinition?.pubkey === defaultCommunityPubkey ||
-        selectLatestCommunityDefinition(communityDefinitionEvents, defaultCommunityPubkey) ||
-        loadedDefaultRelayHints.length ||
-        selectorRelayHints[defaultCommunityPubkey]?.length),
-    ),
-  )
-  const defaultLoading = $derived(
-    Boolean(
-      defaultCommunityPubkey && !defaultHasCommunityDefinition && defaultLookupState === "loading",
-    ),
-  )
-  const defaultCommunityNotFound = $derived(
-    Boolean(
-      defaultCommunityPubkey &&
-      !defaultHasCommunityDefinition &&
-      defaultLookupState === "not-found",
-    ),
-  )
-  const defaultCommunityUnavailable = $derived(
-    Boolean(
-      defaultCommunityPubkey &&
-      !defaultHasCommunityDefinition &&
-      defaultLookupState === "unavailable",
-    ),
-  )
-  const preferredCommunitiesLoading = $derived(
-    preferredListHydrationLoading || $communityStarsLoading || $communityPreferencesLoading,
-  )
-  const showPreferredCommunities = $derived(
-    selectorCommunities.length > 0 || preferredCommunitiesLoading,
-  )
-
-  onMount(() => {
-    let cancelled = false
-
-    void waitForPostPaintHydration().then(() => {
-      if (!cancelled) exploreBackgroundHydrationReady = true
-    })
-
-    return () => {
-      cancelled = true
-      exploreBackgroundHydrationReady = false
-      clearPreferredFullHydrationTimer()
-    }
-  })
-
-  $effect(() => {
-    const onRelayResume = () => {
-      defaultRequestKey = ""
-      previewRequestKey = ""
-      preferredHydrationKey = ""
-      preferredHydrationLoadingKey = ""
-      preferredFullHydrationKey = ""
-      clearPreferredFullHydrationTimer()
-      selectorRelayLoadAttempts.clear()
-      relayResumeVersion += 1
-    }
-
-    window.addEventListener("budabit:relay-resume", onRelayResume)
-
-    return () => window.removeEventListener("budabit:relay-resume", onRelayResume)
-  })
-
-  $effect(() => {
-    const searchInput = communitySearchInput
-
-    if (communityInput && searchInput !== communityInput) {
-      communityInput = ""
-      previewRequestKey = ""
-      previewLookupState = "idle"
-    }
-  })
-
-  $effect(() => {
-    const user = $pubkey || ""
-
-    if (!user) {
-      userRelayListHydrationKey = ""
-      userRelayListHydrationLoadingKey = ""
-      return
-    }
-
-    if (!exploreBackgroundHydrationReady || preferredListHydrationLoading) return
-
-    if (userRelayListHydrationKey === user || userRelayListHydrationLoadingKey === user) return
-
-    userRelayListHydrationLoadingKey = user
-    loadUserRelayListWithTimeout()
-      .catch(() => {})
-      .finally(() => {
-        if (userRelayListHydrationLoadingKey !== user) return
-
-        userRelayListHydrationKey = user
-        userRelayListHydrationLoadingKey = ""
-      })
-  })
-
-  $effect(() => {
-    const relayHints = preferredHydrationRelayHints
-    const key = $pubkey
-      ? `${$pubkey}:${relayHints.join(",")}:${userRelayListKey}:${relayResumeVersion}`
-      : ""
-
-    if (!$pubkey || !key) {
-      preferredHydrationKey = ""
-      preferredHydrationLoadingKey = ""
-      preferredFullHydrationKey = ""
-      clearPreferredFullHydrationTimer()
-      return
-    }
-
-    if (preferredHydrationKey === key || preferredHydrationLoadingKey === key) return
-
-    preferredHydrationKey = key
-    preferredHydrationLoadingKey = key
-    preferredFullHydrationKey = ""
-    clearPreferredFullHydrationTimer()
-    hydratePreferredCommunityList({relayHints})
-      .catch(() => {})
-      .finally(() => {
-        if (preferredHydrationKey !== key) return
-
-        preferredHydrationLoadingKey = ""
-        schedulePreferredFullHydration(key, relayHints)
-      })
-  })
-
-  $effect(() => {
-    const items = selectorCommunities
-    const resumeVersion = relayResumeVersion
-
-    if (!exploreBackgroundHydrationReady || preferredListHydrationLoading) return
-
-    for (const item of items) {
-      const key = `${resumeVersion}:${item.pubkey}:${item.relayHints.join(",")}`
-      const lastAttempt = selectorRelayLoadAttempts.get(key) || 0
-      if (!item.pubkey || selectorRelayHints[item.pubkey]?.length) continue
-      if (lastAttempt && Date.now() - lastAttempt < SELECTOR_RELAY_RETRY_MS) continue
-
-      selectorRelayLoadAttempts.set(key, Date.now())
-      loadSelectorRelayHints(item)
-        .then(loaded => {
-          if (!loaded) selectorRelayLoadAttempts.delete(key)
-        })
-        .catch(() => {
-          selectorRelayLoadAttempts.delete(key)
-        })
-    }
-  })
-
-  $effect(() => {
-    const parsed = defaultCommunityInput
-
-    if (!exploreBackgroundHydrationReady || preferredListHydrationLoading) return
-
-    if (!parsed) {
-      defaultRequestKey = ""
-      defaultLookupState = "idle"
-      loadedDefaultRelayHints = []
-      return
-    }
-
-    const requestKey = [parsed.pubkey, ...parsed.relays, relayResumeVersion].join("|")
-    if (defaultRequestKey === requestKey) return
-
-    defaultRequestKey = requestKey
-    defaultLookupState = "loading"
-    loadedDefaultRelayHints = []
-
-    const requestId = ++defaultRequestId
-
-    loadCommunityDefinitionRelays(parsed.pubkey, parsed.relays)
-      .then(relays => {
-        if (requestId !== defaultRequestId) return
-        if (relays.length === 0) {
-          defaultLookupState = "unavailable"
-          return
-        }
-
-        loadedDefaultRelayHints = relays
-        selectorRelayHints = {...selectorRelayHints, [parsed.pubkey]: relays}
-        defaultLookupState = "found"
-      })
-      .catch(() => {
-        if (requestId === defaultRequestId) defaultLookupState = "unavailable"
-      })
-  })
-
-  $effect(() => {
-    const parsed = previewInput
-    const targetPubkey = previewPubkey
-
-    if (!targetPubkey) {
-      previewRequestKey = ""
-      previewLookupState = "idle"
-      return
-    }
-
-    const relayHints = parsed?.relays || $activeCommunitySession?.communityRelayHints || []
-    const activeDefinitionRelays =
-      !parsed || parsed.pubkey === $activeCommunitySession?.communityPubkey
-        ? $activeCommunityDefinition?.relays || []
-        : []
-    const signedInPubkeyRelays = targetPubkey === $pubkey ? userRelayHints : []
-    const requestKey = [
-      targetPubkey,
-      ...relayHints,
-      ...activeDefinitionRelays,
-      ...signedInPubkeyRelays,
-      targetPubkey === $pubkey ? userRelayListKey : "",
-      relayResumeVersion,
-    ].join("|")
-
-    if (previewRequestKey === requestKey) return
-    previewRequestKey = requestKey
-    previewLookupState = "loading"
-
-    const requestId = ++previewRequestId
-
-    loadCommunityDefinitionRelays(targetPubkey, [
-      ...relayHints,
-      ...activeDefinitionRelays,
-      ...signedInPubkeyRelays,
-    ])
-      .then(relays => {
-        if (requestId !== previewRequestId) return
-        if (relays.length === 0) {
-          previewLookupState = "unavailable"
-          return
-        }
-
-        selectorRelayHints = {...selectorRelayHints, [targetPubkey]: relays}
-        previewLookupState = "found"
-      })
-      .catch(() => {
-        if (requestId === previewRequestId) previewLookupState = "unavailable"
-      })
-  })
 </script>
 
-<div class="hero min-h-screen w-full min-w-0 overflow-y-auto overflow-x-hidden pb-20 sm:pb-12">
-  <div class="hero-content w-full min-w-0 p-2 sm:p-4">
-    <div
-      class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-2 py-4 sm:px-8 sm:py-8 md:px-12 md:py-12">
-      <h1 class="mb-3 text-center text-3xl font-bold leading-tight sm:mb-4 sm:text-5xl">
-        Explore Communities
-      </h1>
-      {#if !$pubkey}
-        <Button onclick={login} class="btn btn-primary self-center">Log in</Button>
-      {/if}
-      <div
-        class="grid min-w-0 gap-4 lg:items-start {showPreferredCommunities
-          ? 'lg:grid-cols-[minmax(0,1fr)_minmax(24rem,28rem)]'
-          : 'lg:grid-cols-[minmax(24rem,28rem)] lg:justify-center'}">
-        <div
-          class="flex min-w-0 flex-col gap-4 lg:row-start-1 {showPreferredCommunities
-            ? 'lg:col-start-2'
-            : ''}">
-          <CommunityPreviewCard
-            pubkey={previewPubkey}
-            relayHints={previewRelayHints}
-            shareRelayHints={selectorRelayHints[previewPubkey] || previewRelayHints}
-            publishRelayHints={previewPublishRelayHints}
-            label={previewLabel}
-            emptyInfo={previewEmptyInfo}
-            onOpen={openPreviewCommunity}
-            bind:inputValue={communitySearchInput}
-            showInput
-            inputLabel="Search or paste a community"
-            inputPlaceholder="Search profiles, npub1..., or ncommunity://..."
-            showActions={previewHasCommunityDefinition}
-            loading={previewLoading}
-            opening={previewOpening}
-            notFound={previewCommunityNotFound}
-            unavailable={previewCommunityUnavailable}
-            inputSearch={searchCommunityInputProfiles}
-            onInputSelect={selectCommunityInputProfile}
-            onSubmit={submitCommunityInput} />
+<PageBar>
+  {#snippet icon()}<div class="center"><Icon icon={HomeSmile} /></div>{/snippet}
+  {#snippet title()}<strong>Explore communities</strong>{/snippet}
+</PageBar>
 
-          {#if defaultCommunityPubkey}
-            <CommunityPreviewCard
-              pubkey={defaultCommunityPubkey}
-              relayHints={defaultRelayHints}
-              shareRelayHints={selectorRelayHints[defaultCommunityPubkey] || defaultRelayHints}
-              publishRelayHints={defaultPublishRelayHints}
-              label="Brand new? Start here:"
-              emptyInfo="Start with the recommended community."
-              onOpen={openDefaultCommunity}
-              showActions={defaultHasCommunityDefinition}
-              loading={defaultLoading}
-              opening={defaultOpening}
-              notFound={defaultCommunityNotFound}
-              unavailable={defaultCommunityUnavailable} />
-          {/if}
-
-          <div class="flex min-w-0 flex-col gap-2 sm:flex-row">
-            <Button
-              onclick={createCommunity}
-              class="btn btn-neutral min-h-10 min-w-0 flex-1 items-center justify-start gap-2 rounded-box px-3 py-2 text-sm sm:min-h-16 sm:gap-4 sm:px-6 sm:py-4 sm:text-base">
-              <Icon icon={AddCircle} size={7} />
-              <span class="min-w-0 truncate font-bold leading-none">Create Community</span>
-            </Button>
-            {#if hasOwnCommunity}
-              <Button
-                onclick={editOwnCommunity}
-                class="btn btn-primary min-h-10 rounded-box px-4 py-2 text-sm font-bold sm:min-h-16 sm:px-6 sm:py-4 sm:text-base">
-                Edit
-              </Button>
-            {/if}
-          </div>
-        </div>
-
-        {#if showPreferredCommunities}
-          <div class="card2 card2-sm bg-alt col-3 min-w-0 shadow-md lg:col-start-1 lg:row-start-1">
-            <div class="flex flex-col gap-2">
-              <div class="flex items-center justify-between gap-2">
-                <p class="text-xs font-semibold uppercase tracking-wide opacity-60">
-                  Preferred Communities
-                </p>
-                {#if preferredCommunitiesLoading}
-                  <span class="loading loading-spinner loading-xs opacity-60"></span>
-                {/if}
-              </div>
-              {#if preferredCommunitiesLoading && selectorCommunities.length === 0}
-                <div class="rounded-box bg-base-100/60 px-3 py-2 text-sm opacity-70">
-                  Loading your communities...
-                </div>
-              {/if}
-              {#each selectorCommunities as item (item.pubkey)}
-                {@const selectorInput =
-                  makeCommunityInputValue({pubkey: item.pubkey, relayHints: item.relayHints}) ||
-                  item.pubkey}
-                <CommunitySelectorCard
-                  pubkey={item.pubkey}
-                  relayHints={item.relayHints}
-                  shareRelayHints={selectorRelayHints[item.pubkey] || item.relayHints}
-                  publishRelayHints={item.publishRelayHints}
-                  isCurrent={item.isCurrent}
-                  isAdmin={item.isAdmin}
-                  isModerator={item.isModerator}
-                  isMember={item.isMember}
-                  loading={enteringCommunityKey === getEnteringCommunityKey(selectorInput)}
-                  disabled={Boolean(enteringCommunityKey)}
-                  onOpen={() => enterCommunity(selectorInput)} />
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </div>
+<PageContent class="mx-auto flex w-full max-w-3xl flex-col gap-5 p-4 sm:p-6">
+  <section class="card2 overflow-hidden p-0">
+    <div class="bg-primary px-5 py-6 text-primary-content sm:px-7">
+      <p class="text-xs font-semibold uppercase tracking-[0.2em] opacity-70">Find your people</p>
+      <h1 class="mt-2 text-2xl font-bold sm:text-3xl">Discover communities</h1>
+      <p class="mt-2 max-w-2xl opacity-80">
+        Search by community name, community link, creator profile, or NIP-05 address.
+      </p>
     </div>
-  </div>
-</div>
+    <form
+      class="flex flex-col gap-3 p-5 sm:flex-row sm:p-7"
+      onsubmit={event => {
+        event.preventDefault()
+        void findCommunities()
+      }}>
+      <label class="min-w-0 flex-1">
+        <span class="mb-1 block text-sm font-medium">Search communities</span>
+        <input
+          class="input input-bordered w-full text-sm"
+          bind:value={query}
+          placeholder="Name, community link, npub, or name@example.com"
+          autocomplete="off" />
+      </label>
+      <Button class="btn btn-primary self-end" type="submit" disabled={loading}>
+        {#if loading}<span class="loading loading-spinner loading-sm"></span>{/if}
+        Search
+      </Button>
+    </form>
+    {#if error}<p class="px-5 pb-5 text-sm text-error sm:px-7">{error}</p>{/if}
+  </section>
+
+  {#if searched}
+    <section class="flex flex-col gap-3" aria-live="polite">
+      <div class="flex items-end justify-between gap-3">
+        <h2 class="font-semibold">Search results</h2>
+        {#if incomplete}<p class="text-xs opacity-60">Showing the strongest matches</p>{/if}
+      </div>
+      {#if !loading && results.length === 0 && !error}
+        <div class="card2 p-5 text-sm opacity-70">No matching communities found.</div>
+      {/if}
+      {#each results as result (result.definition.pointer.address)}
+        <div class="relative">
+          {#if result.preferred}
+            <span class="z-10 badge badge-neutral badge-sm absolute right-3 top-3">Yours</span>
+          {/if}
+          <CommunityLinkCard
+            value={result.definition.pointer}
+            initialDefinition={result.definition} />
+        </div>
+      {/each}
+    </section>
+  {:else if DEFAULT_COMMUNITY_POINTER}
+    <section class="flex flex-col gap-2">
+      <p class="text-sm font-semibold">Recommended starting community</p>
+      <CommunityLinkCard value={DEFAULT_COMMUNITY_POINTER} />
+    </section>
+  {/if}
+
+  {#if $activeExactCommunityPointer}
+    <section class="flex flex-col gap-2">
+      <p class="text-sm font-semibold">Last visited</p>
+      <CommunityLinkCard value={$activeExactCommunityPointer} />
+    </section>
+  {/if}
+
+  {#if $activePreferredCommunities.length > 0}
+    <section class="flex flex-col gap-3">
+      <h2 class="font-semibold">Your communities</h2>
+      {#each $activePreferredCommunities as community (community.communityAddress)}
+        <div class="relative">
+          <div class="z-10 absolute right-3 top-3 flex gap-1">
+            {#if community.isAdmin}<span class="badge badge-neutral badge-sm">Admin</span>{/if}
+            {#if community.isModerator}<span class="badge badge-neutral badge-sm">Moderator</span
+              >{/if}
+            {#if community.isMember}<span class="badge badge-neutral badge-sm">Member</span>{/if}
+            {#if community.isStarred}<span class="badge badge-neutral badge-sm">Starred</span>{/if}
+          </div>
+          <CommunityLinkCard value={community.pointer} />
+        </div>
+      {/each}
+    </section>
+  {/if}
+
+  <section class="card2 flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h2 class="font-semibold">Create a community</h2>
+      <p class="text-sm opacity-70">Start a new community with its own name and spaces.</p>
+    </div>
+    {#if $pubkey}
+      <a class="btn btn-neutral gap-2" href="/explore/create-community">
+        <Icon icon={AddCircle} size={5} /> Create
+      </a>
+    {:else}
+      <LogIn />
+    {/if}
+  </section>
+</PageContent>

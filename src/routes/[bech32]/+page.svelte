@@ -9,7 +9,8 @@
   import {page} from "$app/stores"
   import {goto} from "$app/navigation"
   import Spinner from "@lib/components/Spinner.svelte"
-  import {goToEvent} from "@app/util/routes"
+  import {goToEvent, makeExactCommunityPath} from "@app/util/routes"
+  import {parseCommunityNaddr} from "@app/core/community"
   import {INDEXER_RELAYS} from "@app/core/state"
   import {getRepoAnnouncementRelays} from "@app/core/git-state"
   import {refreshPubkeyOutboxRelays} from "@app/core/community-state"
@@ -57,6 +58,8 @@
     normalizePathname(window.location.pathname) === normalizePathname(`/${bech32}`)
 
   const attemptToNavigate = async () => {
+    const community = parseCommunityNaddr(bech32)
+    if (community) return goto(makeExactCommunityPath(community), {replaceState: true})
     const {type, data} = nip19.decode(bech32) as any
 
     if (!["nevent", "naddr"].includes(type)) {

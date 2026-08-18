@@ -7,15 +7,30 @@ vi.mock("@app/core/storage", () => ({
 }))
 
 describe("notification center read state", () => {
+  it("uses a V2 clean-break persisted schema", async () => {
+    const {defaultNotificationReadState, normalizeNotificationReadState} =
+      await import("./notification-center")
+
+    expect(defaultNotificationReadState()).toEqual({
+      version: 2,
+      lastReadTimestamp: 0,
+      latestNotificationTimestamp: 0,
+    })
+    expect(
+      normalizeNotificationReadState({lastReadTimestamp: 10, latestNotificationTimestamp: 20}),
+    ).toEqual(defaultNotificationReadState())
+  })
   it("normalizes persisted timestamps", async () => {
     const {normalizeNotificationReadState} = await import("./notification-center")
 
     expect(
       normalizeNotificationReadState({
+        version: 2,
         lastReadTimestamp: 20_000_000_000,
         latestNotificationTimestamp: 1000,
       }),
     ).toEqual({
+      version: 2,
       lastReadTimestamp: 20_000_000,
       latestNotificationTimestamp: 1000,
     })
@@ -26,27 +41,27 @@ describe("notification center read state", () => {
 
     expect(
       rememberLatestNotificationTimestampState(
-        {lastReadTimestamp: 50, latestNotificationTimestamp: 100},
+        {version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 100},
         80,
       ),
-    ).toEqual({lastReadTimestamp: 50, latestNotificationTimestamp: 100})
+    ).toEqual({version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 100})
 
     expect(
       rememberLatestNotificationTimestampState(
-        {lastReadTimestamp: 50, latestNotificationTimestamp: 100},
+        {version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 100},
         120,
       ),
-    ).toEqual({lastReadTimestamp: 50, latestNotificationTimestamp: 120})
+    ).toEqual({version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 120})
   })
 
   it("marks the global notification timestamp read", async () => {
     const {hasUnreadNotificationsState, markNotificationsReadState} =
       await import("./notification-center")
-    const unread = {lastReadTimestamp: 50, latestNotificationTimestamp: 120}
+    const unread = {version: 2 as const, lastReadTimestamp: 50, latestNotificationTimestamp: 120}
     const read = markNotificationsReadState(unread)
 
     expect(hasUnreadNotificationsState(unread)).toBe(true)
-    expect(read).toEqual({lastReadTimestamp: 120, latestNotificationTimestamp: 120})
+    expect(read).toEqual({version: 2, lastReadTimestamp: 120, latestNotificationTimestamp: 120})
     expect(hasUnreadNotificationsState(read)).toBe(false)
   })
 })

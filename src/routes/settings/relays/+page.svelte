@@ -10,7 +10,13 @@
   import RelayAdd from "@app/components/RelayAdd.svelte"
   import {pushModal} from "@app/util/modal"
   import {discoverRelays} from "@app/core/requests"
-  import {normalizePubkey, type CommunityDefinition} from "@app/core/community"
+  import {
+    COMMUNITY_DEFINITION_KIND_V2,
+    normalizePubkey,
+    parseCommunityDefinitionV2,
+    selectCurrentCommunityDefinitionV2,
+    type CommunityDefinitionV2,
+  } from "@app/core/community"
   import {
     activeCommunityStars,
     activeUserCommunityRefs,
@@ -21,8 +27,6 @@
     getCommunityBootstrapRelays,
     hydrateCommunityStars,
     loadCommunityEvents,
-    makeCommunityDefinitionFilter,
-    selectLatestCommunityDefinition,
   } from "@app/core/community-state"
   import {setRelayPolicy, setMessagingRelayPolicy} from "@app/core/commands"
   import {
@@ -35,7 +39,6 @@
     type DmRelayRecommendationSource,
     type DmRelayRecommendationSourceKind,
   } from "@app/core/dm"
-  import {getGrantCapability} from "@app/core/community-permissions"
   import type {CommunityStarRef} from "@app/util/community-stars"
   import ProfileCircle from "@app/components/ProfileCircle.svelte"
   import ProfileDetail from "@app/components/ProfileDetail.svelte"
@@ -100,7 +103,7 @@
     pushModal(ProfileDetail, {pubkey})
   }
 
-  let recommendedCommunityDefinitions = $state<Record<string, CommunityDefinition>>({})
+  let recommendedCommunityDefinitions = $state<Record<string, CommunityDefinitionV2>>({})
   let recommendedDefinitionLoadKeys = $state<Record<string, string>>({})
   let recommendedDefinitionLoads = $state<Record<string, boolean>>({})
   let recommendationLoadKey = $state("")
@@ -121,32 +124,41 @@
     ...$communityModeratorProfileListEvents,
   ])
 
-  const setRecommendedCommunityDefinition = (definition: CommunityDefinition | undefined) => {
+  const setRecommendedCommunityDefinition = (
+    communityAddress: string,
+    definition: CommunityDefinitionV2 | undefined,
+  ) => {
     if (!definition) return
 
     recommendedCommunityDefinitions = {
       ...recommendedCommunityDefinitions,
-      [definition.pubkey]: definition,
+      [communityAddress]: definition,
     }
   }
 
   const loadRecommendedCommunityDefinition = async (star: CommunityStarRef) => {
+    const filter = {
+      kinds: [COMMUNITY_DEFINITION_KIND_V2],
+      authors: [star.community.controllerPubkey],
+      "#d": [star.community.communityId],
+      limit: 1,
+    }
+    const selectDefinition = (events: ReturnType<typeof repository.query>) => {
+      const event = selectCurrentCommunityDefinitionV2(events, star.community.address)
+      return event ? parseCommunityDefinitionV2(event) : undefined
+    }
     setRecommendedCommunityDefinition(
-      selectLatestCommunityDefinition(
-        repository.query([makeCommunityDefinitionFilter(star.communityPubkey)]),
-        star.communityPubkey,
-      ),
+      star.community.address,
+      selectDefinition(repository.query([filter])),
     )
 
     const relayHints = Array.from(
-      new Set([...star.relayHints, ...Array.from(tracker.getRelays(star.reaction.id))]),
+      new Set([...star.community.relayHints, ...Array.from(tracker.getRelays(star.reaction.id))]),
     )
-    const events = await loadCommunityEvents(getCommunityBootstrapRelays(relayHints), [
-      makeCommunityDefinitionFilter(star.communityPubkey),
-    ])
-    const definition = selectLatestCommunityDefinition(events, star.communityPubkey)
+    const events = await loadCommunityEvents(getCommunityBootstrapRelays(relayHints), [filter])
+    const definition = selectDefinition(events)
 
-    setRecommendedCommunityDefinition(definition)
+    setRecommendedCommunityDefinition(star.community.address, definition)
   }
 
   const recommendationDefinitionLoading = $derived(
@@ -154,23 +166,23 @@
   )
   const recommendationSources = $derived.by<DmRelayRecommendationSource[]>(() =>
     $activeCommunityStars.flatMap(star => {
-      const definition = recommendedCommunityDefinitions[star.communityPubkey]
+      const definition = recommendedCommunityDefinitions[star.community.address]
       if (!definition) return []
 
       const userPubkey = normalizePubkey($pubkey || "")
-      const isAdmin = Boolean(userPubkey && userPubkey === definition.pubkey)
+      const isAdmin = Boolean(userPubkey && userPubkey === definition.controllerPubkey)
+      const matchingRef = $activeUserCommunityRefs.find(ref => {
+        const candidate = parseCommunityDefinitionV2(ref.definition.event)
+        return candidate?.pointer.address === star.community.address
+      })
       const isModerator = Boolean(
-        userPubkey &&
-        definition.sections.some(
-          section =>
-            getGrantCapability({definition, userPubkey, sectionName: section.name}).canGrant,
-        ),
+        userPubkey && matchingRef?.roles.some(role => role === "admin" || role === "moderator"),
       )
 
       return [
         {
           source: "starred_community_relay",
-          communityPubkey: star.communityPubkey,
+          communityPubkey: star.community.controllerPubkey,
           relays: definition.relays,
           starredAt: star.reaction.created_at,
           isStarred: true,
@@ -184,7 +196,9 @@
     recommendedMessagingRelays.filter(recommendation => recommendation.isConfigured).length,
   )
   const recommendationLoading = $derived(
-    $communityStarsLoading || recommendationDefinitionLoading || recommendationState.status === "loading",
+    $communityStarsLoading ||
+      recommendationDefinitionLoading ||
+      recommendationState.status === "loading",
   )
   const recommendationStatus = $derived.by(() => {
     if (recommendationLoading) {
@@ -326,24 +340,24 @@
     if (!$pubkey) return
 
     for (const star of $activeCommunityStars) {
-      const loadKey = `${star.communityPubkey}:${star.relayHints.join(",")}`
+      const loadKey = `${star.community.address}:${star.community.relayHints.join(",")}`
 
-      if (recommendedDefinitionLoadKeys[star.communityPubkey] === loadKey) continue
-      if (recommendedDefinitionLoads[star.communityPubkey]) continue
+      if (recommendedDefinitionLoadKeys[star.community.address] === loadKey) continue
+      if (recommendedDefinitionLoads[star.community.address]) continue
 
       recommendedDefinitionLoadKeys = {
         ...recommendedDefinitionLoadKeys,
-        [star.communityPubkey]: loadKey,
+        [star.community.address]: loadKey,
       }
       recommendedDefinitionLoads = {
         ...recommendedDefinitionLoads,
-        [star.communityPubkey]: true,
+        [star.community.address]: true,
       }
 
       loadRecommendedCommunityDefinition(star).finally(() => {
         recommendedDefinitionLoads = {
           ...recommendedDefinitionLoads,
-          [star.communityPubkey]: false,
+          [star.community.address]: false,
         }
       })
     }
@@ -356,7 +370,7 @@
       pubkey: $pubkey,
       currentRelays: $messagingRelayUrls,
       communities: $activeUserCommunityRefs.map(
-        ref => `${ref.communityPubkey}:${ref.definition.event.id}`,
+        ref => `${ref.community.address}:${ref.definition.event.id}`,
       ),
       profileLists: profileListEvents.map(event => `${event.id}:${event.created_at}`),
       reports: Array.from($communityMemberReportStates.entries()).map(([community, state]) => [
@@ -365,7 +379,7 @@
         state.eventReports.length,
       ]),
       starredCommunities: $activeCommunityStars.map(
-        star => `${star.communityPubkey}:${star.reaction.created_at}`,
+        star => `${star.community.address}:${star.reaction.created_at}`,
       ),
       starSources: recommendationSources.map(
         source => `${source.communityPubkey}:${source.starredAt || 0}:${source.relays.join(",")}`,
@@ -381,7 +395,7 @@
       profileListEvents,
       reportStates: $communityMemberReportStates,
       extraSources: recommendationSources,
-      starredCommunityPubkeys: $activeCommunityStars.map(star => star.communityPubkey),
+      starredCommunityPubkeys: $activeCommunityStars.map(star => star.community.controllerPubkey),
     }).catch(() => undefined)
   })
 
@@ -568,10 +582,14 @@
 
                               <div class="flex flex-col gap-2">
                                 {#each group.evidence as source (getRecommendationEvidenceKey(source))}
-                                  {@const profilePubkey = getRecommendationEvidenceProfilePubkey(source)}
-                                  {@const communityPubkey = getRecommendationEvidenceCommunityPubkey(source)}
+                                  {@const profilePubkey =
+                                    getRecommendationEvidenceProfilePubkey(source)}
+                                  {@const communityPubkey =
+                                    getRecommendationEvidenceCommunityPubkey(source)}
                                   {@const roleLabel = getRecommendationEvidenceRoleLabel(source)}
-                                  {@const sourceLabel = getDmRelayRecommendationSourceLabel(source.source)}
+                                  {@const sourceLabel = getDmRelayRecommendationSourceLabel(
+                                    source.source,
+                                  )}
                                   <div class="rounded-box bg-base-200/60 p-3">
                                     <div class="flex min-w-0 items-center gap-2">
                                       {#if profilePubkey}

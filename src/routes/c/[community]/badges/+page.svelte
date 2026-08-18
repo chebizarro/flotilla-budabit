@@ -24,10 +24,10 @@
   import type {BlossomUploadStage} from "@app/core/blossom"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityRelays,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
-    activeCommunityRelays,
     activeCommunityReportState,
     getCommunityBadgeRelays,
   } from "@app/core/community-state"
@@ -55,7 +55,7 @@
     type CommunityBadgeDefinition,
     type PendingCommunityBadgeAward,
   } from "@app/core/community-badges"
-  import {parseCommunityRouteParam} from "@app/util/routes"
+  import {parseExactCommunityRouteParam} from "@app/util/routes"
 
   type BadgePageTab = "awarded" | "mine"
   type MyBadgePanel = "awarded" | "studio" | "retired"
@@ -64,24 +64,30 @@
     revoked: boolean
   }
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      routeCommunity &&
+      $activeExactCommunityDefinition?.pointer.address === routeCommunity.address &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(routeCommunity && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const badgeRelays = $derived(
-    normalizeRelays(getCommunityBadgeRelays(communityBootstrapReady ? $activeCommunityRelays : [])),
+    normalizeRelays(
+      getCommunityBadgeRelays(communityBootstrapReady ? $activeExactCommunityRelays : []),
+    ),
   )
-  const badgePublishRelays = $derived(communityBootstrapReady ? $activeCommunityPublishRelays : [])
-  const communityProfileRelays = $derived(communityBootstrapReady ? $activeCommunityRelays : [])
+  const badgePublishRelays = $derived(
+    communityBootstrapReady ? normalizeRelays($activeExactCommunityDefinition?.relays || []) : [],
+  )
+  const communityProfileRelays = $derived(
+    communityBootstrapReady ? $activeExactCommunityRelays : [],
+  )
 
   let pageTab = $state<BadgePageTab>("awarded")
   let myBadgePanel = $state<MyBadgePanel>("awarded")
@@ -100,10 +106,11 @@
   const canManageBadges = $derived(
     Boolean(
       communityBootstrapReady &&
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
+      $activeExactCommunityPointer &&
       $pubkey &&
       canCreateCommunityBadge({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         pubkey: $pubkey,
         profileListEvents: $activeCommunityProfileListEvents,
         reportState: $activeCommunityReportState,
@@ -111,9 +118,9 @@
     ),
   )
   const badgeDefinitionFilters = $derived(
-    communityBootstrapReady && $activeCommunityDefinition
+    communityBootstrapReady && $activeExactCommunityDefinition
       ? makeCommunityBadgeDefinitionFilters({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
         })
@@ -123,9 +130,9 @@
     deriveEventsAsc(deriveEventsById({repository, filters: badgeDefinitionFilters})),
   )
   const badgeDefinitions = $derived.by((): CommunityBadgeDefinition[] =>
-    $activeCommunityDefinition
+    $activeExactCommunityDefinition
       ? selectCommunityBadgeDefinitions({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
@@ -167,9 +174,9 @@
     deriveEventsAsc(deriveEventsById({repository, filters: profileBadgeFilters})),
   )
   const acceptedBadges = $derived.by(() =>
-    $activeCommunityDefinition && $pubkey
+    $activeExactCommunityDefinition && $pubkey
       ? getAcceptedCommunityBadges({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
           profileListEvents: $activeCommunityProfileListEvents,
           badgeAwardEvents: $badgeAwardEvents,
@@ -181,9 +188,9 @@
       : [],
   )
   const pendingAwards = $derived.by((): PendingCommunityBadgeAward[] =>
-    $activeCommunityDefinition && $pubkey
+    $activeExactCommunityDefinition && $pubkey
       ? getPendingCommunityBadgeAwards({
-          definition: $activeCommunityDefinition,
+          definition: $activeExactCommunityDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
           profileListEvents: $activeCommunityProfileListEvents,
           badgeAwardEvents: $badgeAwardEvents,
@@ -198,7 +205,13 @@
     operation: string,
     template: {kind: number; content: string; tags: string[][]},
   ) => {
-    const intent = JSON.stringify({operation, relays: badgePublishRelays})
+    const communityAddress = routeCommunity?.address
+    if (!communityAddress) throw new Error("Community is not ready.")
+    const intent = JSON.stringify({
+      communityAddress,
+      operation,
+      relays: badgePublishRelays,
+    })
     const failedThunk = failedGovernanceThunks.get(intent)
     if (!failedThunk && badgePublishRelays.length === 0) {
       throw new Error("No badge relays are available.")
@@ -228,7 +241,9 @@
     template: {kind: number; content: string; tags: string[][]},
   ) => {
     const relays = getUserDataPublishRelays([...getPubkeyOutboxRelays($pubkey), ...badgeRelays])
-    const intent = JSON.stringify({operation, relays})
+    const communityAddress = routeCommunity?.address
+    if (!communityAddress) throw new Error("Community is not ready.")
+    const intent = JSON.stringify({communityAddress, operation, relays})
     const failedThunk = failedGovernanceThunks.get(intent)
     if (!failedThunk && relays.length === 0) {
       throw new Error("No profile badge relays are available.")
@@ -306,13 +321,14 @@
   }
 
   const buildBadgeDefinitionTemplate = (deprecated = false) => {
-    if (!$activeCommunityDefinition) throw new Error("Community definition is not loaded.")
+    if (!$activeExactCommunityDefinition) throw new Error("Community definition is not loaded.")
+    if (!routeCommunity) throw new Error("Community is not ready.")
 
     const identifier = editingDefinition?.identifier || `badge-${crypto.randomUUID()}`
     if (!badgeName.trim()) throw new Error("Add a badge name first.")
 
     return makeCommunityBadgeDefinitionEvent({
-      communityPubkey: $activeCommunityDefinition.pubkey,
+      community: routeCommunity,
       identifier,
       name: badgeName,
       description: badgeDescription,
@@ -330,7 +346,7 @@
     const operation = JSON.stringify({
       type: editingDefinition ? "badge-definition-update" : "badge-definition-create",
       address: editingDefinition?.address || "",
-      communityPubkey,
+      controllerPubkey: communityControllerPubkey,
       pubkey: $pubkey,
       badgeName,
       badgeDescription,
@@ -365,7 +381,7 @@
             publishTemplate(
               `badge-definition:retire:${definition.address}`,
               makeCommunityBadgeDefinitionEvent({
-                communityPubkey: $activeCommunityDefinition!.pubkey,
+                community: definition.community,
                 identifier: definition.identifier,
                 name: definition.name,
                 description: definition.description,
@@ -390,7 +406,7 @@
             publishTemplate(
               `badge-definition:resurrect:${definition.address}`,
               makeCommunityBadgeDefinitionEvent({
-                communityPubkey: $activeCommunityDefinition!.pubkey,
+                community: definition.community,
                 identifier: definition.identifier,
                 name: definition.name,
                 description: definition.description,
@@ -412,7 +428,7 @@
     }
 
     const currentEvent = selectProfileBadgesEvent($profileBadgeEvents, $pubkey)
-    const relayHint = $activeCommunityRelays[0] || badgeRelays[0]
+    const relayHint = $activeExactCommunityRelays[0] || badgeRelays[0]
 
     await runPublish(
       () =>
@@ -460,7 +476,10 @@
           () =>
             publishTemplate(
               `badge-award:delete:${award.event.id}`,
-              makeCommunityBadgeAwardDelete({awardId: award.event.id}),
+              makeCommunityBadgeAwardDelete({
+                community: award.community,
+                awardId: award.event.id,
+              }),
             ),
           "Badge revocation request acknowledged by a relay.",
         ),
@@ -487,6 +506,8 @@
     const input = event.currentTarget as HTMLInputElement
     const file = input.files?.[0]
     if (!file) return
+    const communityAddress = routeCommunity?.address
+    if (!communityAddress) return
 
     uploadingImage = true
     imageUploadStage = "preparing"
@@ -509,7 +530,7 @@
       }
 
       const {error, result, uploadId} = await uploadFile(file, {
-        blossomContext: {type: "badge", communityPubkey},
+        blossomContext: {type: "badge", communityAddress},
         maxWidth: 1024,
         maxHeight: 1024,
         onStage: stage => (imageUploadStage = stage),
@@ -540,7 +561,7 @@
     options: {includeRevoked?: boolean} = {},
   ): AwardItem[] =>
     $badgeAwardEvents
-      .map(parseCommunityBadgeAward)
+      .map(event => parseCommunityBadgeAward(event, routeCommunity))
       .filter((award): award is CommunityBadgeAward => Boolean(award))
       .filter(award => award.definitionAddress === definition.address)
       .filter(award => award.event.pubkey === definition.pubkey)
@@ -591,7 +612,7 @@
   {/snippet}
   {#snippet title()}<strong>Community Badges</strong>{/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    {#if routeCommunity}<CommunityMenuButton community={routeCommunity.naddr} />{/if}
   {/snippet}
 </PageBar>
 
@@ -600,7 +621,7 @@
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading community badge state...</Spinner>
     </p>
-  {:else if !communityBootstrapReady || !$activeCommunityDefinition}
+  {:else if !communityBootstrapReady || !$activeExactCommunityDefinition}
     <p class="py-8 text-center opacity-70">Community definition is not loaded.</p>
   {:else if !$pubkey}
     <section class="card2 bg-alt p-4 text-center shadow-md">
@@ -910,7 +931,7 @@
             </form>
 
             <div class="flex flex-col gap-4">
-              <CommunityBadgeAwardForm />
+              {#if routeCommunity}<CommunityBadgeAwardForm community={routeCommunity} />{/if}
 
               <div class="flex flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4">
                 <h3 class="font-semibold">Your active badges</h3>

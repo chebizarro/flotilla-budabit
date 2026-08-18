@@ -1,16 +1,20 @@
 import {describe, expect, it} from "vitest"
 import {EVENT_DATE, EVENT_TIME, THREAD, type TrustedEvent} from "@welshman/util"
+import {getPublicKey} from "nostr-tools/pure"
 import {
   COMMUNITY_SUBTYPE_ROOM,
   COMMUNITY_SUBTYPE_THREADS,
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+  type CommunitySectionInputV2,
 } from "@app/core/community"
 import {
   makeAddressablePublicationRef,
-  makeTargetedPublicationForCommunity,
+  makeTargetedPublicationForCommunityV2,
 } from "@app/core/community-targeting"
 import {
   filterAuthorizedCommunityDescriptorEvents,
@@ -20,10 +24,16 @@ import {
   resolveCommunityEventDescriptors,
 } from "./community-context"
 
-const communityPubkey = "a".repeat(64)
-const calendarWriterPubkey = "b".repeat(64)
-const outsiderPubkey = "c".repeat(64)
-const calendarMemberPubkey = "d".repeat(64)
+const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = testPubkey(41)
+const communityPointer = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: communityPubkey,
+  relayHints: ["wss://relay.example.com/"],
+})!
+const calendarWriterPubkey = testPubkey(42)
+const outsiderPubkey = testPubkey(43)
+const calendarMemberPubkey = testPubkey(44)
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -37,30 +47,37 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const definition = parseCommunityDefinition(
-  makeEvent({
-    kind: COMMUNITY_DEFINITION_KIND,
-    pubkey: communityPubkey,
-    tags: [
-      ["content", "Events and meetups"],
-      ["k", String(EVENT_TIME)],
-      ["k", String(EVENT_DATE)],
-      ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
-    ],
-  }),
-)!
+const makeDefinition = (sections: CommunitySectionInputV2[]) =>
+  parseCommunityDefinitionV2(
+    makeEvent({
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      content: "",
+      tags: buildCommunityDefinitionV2({
+        communityId: communityPubkey,
+        name: "Test community",
+        description: "Definition description",
+        picture: "https://community.example/picture.png",
+        relays: ["wss://relay.example"],
+        sections,
+      }).tags,
+    }),
+  )!
 
-const dateOnlyCalendarDefinition = parseCommunityDefinition(
-  makeEvent({
-    kind: COMMUNITY_DEFINITION_KIND,
-    pubkey: communityPubkey,
-    tags: [
-      ["content", "Calendar"],
-      ["k", String(EVENT_DATE)],
-      ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Calendar`],
-    ],
-  }),
-)!
+const definition = makeDefinition([
+  {
+    name: "Events and meetups",
+    kinds: [{kind: EVENT_TIME}, {kind: EVENT_DATE}],
+    profileLists: [{address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`}],
+  },
+])
+
+const dateOnlyCalendarDefinition = makeDefinition([
+  {
+    name: "Calendar",
+    kinds: [{kind: EVENT_DATE}],
+    profileLists: [{address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Calendar`}],
+  },
+])
 
 const calendarProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
@@ -99,7 +116,7 @@ const makeCalendarTargetingEvent = ({
     id,
     pubkey,
     kind: TARGETED_PUBLICATION_KIND,
-    tags: makeTargetedPublicationForCommunity({
+    tags: makeTargetedPublicationForCommunityV2({
       targetingId: id,
       originalKind: EVENT_TIME,
       originalRef: implicit
@@ -110,8 +127,7 @@ const makeCalendarTargetingEvent = ({
             identifier,
             relay: "wss://relay.example.com/",
           }),
-      communityPubkey,
-      communityRelay: "wss://relay.example.com/",
+      community: communityPointer,
     }).tags,
   })
 
@@ -131,7 +147,31 @@ describe("community widget context", () => {
     })
     expect(context.contextSessionId).toMatch(/^community-context-/)
     expect(context.contextVersion).toBe(0)
+    expect(context).toMatchObject({
+      version: 2,
+      communityId: communityPointer.communityId,
+      controllerPubkey: communityPointer.controllerPubkey,
+      definitionAddress: communityPointer.address,
+      naddr: definition.pointer.naddr,
+    })
+    expect(context).not.toHaveProperty("pubkey")
+    expect(context).not.toHaveProperty("ncommunity")
     expect(context).not.toHaveProperty("writeTargets")
+  })
+
+  it("sources its community profile exclusively from definition metadata", () => {
+    const context = makeCommunityWidgetContext({
+      definition,
+      profileListEvents: [],
+      relays: ["wss://relay.example.com/"],
+    })
+
+    expect(context.profile).toEqual({
+      name: definition.metadata.name,
+      displayName: definition.metadata.name,
+      picture: definition.metadata.picture,
+      about: definition.metadata.description,
+    })
   })
 
   it("resolves descriptor write capabilities from active sections without defaults", () => {
@@ -260,6 +300,7 @@ describe("community widget context", () => {
       identifier: "event-2",
     })
     const plan = makeCommunityDescriptorQueryPlan({
+      community: communityPointer,
       definition,
       profileListEvents: [calendarProfileList],
       descriptors: [{kind: EVENT_TIME}],
@@ -272,14 +313,14 @@ describe("community widget context", () => {
     expect(plan.relayTargetingFilters).toEqual([
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#p": [communityPubkey],
+        "#h": [communityPubkey],
         "#k": [String(EVENT_TIME)],
       },
     ])
     expect(plan.localTargetingFilters).toEqual([
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#p": [communityPubkey],
+        "#h": [communityPubkey],
         "#k": [String(EVENT_TIME)],
         authors: [communityPubkey, calendarWriterPubkey, calendarMemberPubkey],
       },
@@ -307,6 +348,7 @@ describe("community widget context", () => {
       implicit: true,
     })
     const plan = makeCommunityDescriptorQueryPlan({
+      community: communityPointer,
       definition,
       profileListEvents: [calendarProfileList],
       descriptors: [{kind: EVENT_TIME}],
@@ -333,6 +375,7 @@ describe("community widget context", () => {
       identifier: "timed-event-1",
     })
     const plan = makeCommunityDescriptorQueryPlan({
+      community: communityPointer,
       definition: dateOnlyCalendarDefinition,
       profileListEvents: [dateOnlyCalendarProfileList],
       descriptors: [{kind: EVENT_TIME}, {kind: EVENT_DATE}],
@@ -345,12 +388,12 @@ describe("community widget context", () => {
     expect(plan.relayTargetingFilters).toEqual([
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#p": [communityPubkey],
+        "#h": [communityPubkey],
         "#k": [String(EVENT_TIME)],
       },
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#p": [communityPubkey],
+        "#h": [communityPubkey],
         "#k": [String(EVENT_DATE)],
       },
     ])
@@ -369,18 +412,17 @@ describe("community widget context", () => {
   })
 
   it("uses structural relay filters and author-qualified local filters for direct descriptors", () => {
-    const directDefinition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: [
-          ["content", "Events and meetups"],
-          ["k", "1"],
-          ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
+    const directDefinition = makeDefinition([
+      {
+        name: "Events and meetups",
+        kinds: [{kind: 1}],
+        profileLists: [
+          {address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`},
         ],
-      }),
-    )!
+      },
+    ])
     const plan = makeCommunityDescriptorQueryPlan({
+      community: communityPointer,
       definition: directDefinition,
       profileListEvents: [calendarProfileList],
       descriptors: [{kind: 1}],
@@ -426,20 +468,18 @@ describe("community widget context", () => {
     const profileListOwner = calendarWriterPubkey
     const roomWriter = outsiderPubkey
     const threadWriter = calendarMemberPubkey
-    const mixedDefinition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: [
-          ["content", "Rooms"],
-          ["k", String(THREAD), COMMUNITY_SUBTYPE_ROOM],
-          ["a", `${PROFILE_LIST_KIND}:${profileListOwner}:Rooms`],
-          ["content", "Threads"],
-          ["k", String(THREAD), COMMUNITY_SUBTYPE_THREADS],
-          ["a", `${PROFILE_LIST_KIND}:${profileListOwner}:Threads`],
-        ],
-      }),
-    )!
+    const mixedDefinition = makeDefinition([
+      {
+        name: "Rooms",
+        kinds: [{kind: THREAD, subtype: COMMUNITY_SUBTYPE_ROOM}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${profileListOwner}:Rooms`}],
+      },
+      {
+        name: "Threads",
+        kinds: [{kind: THREAD, subtype: COMMUNITY_SUBTYPE_THREADS}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${profileListOwner}:Threads`}],
+      },
+    ])
     const roomWriters = makeEvent({
       kind: PROFILE_LIST_KIND,
       pubkey: profileListOwner,

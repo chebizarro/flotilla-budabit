@@ -8,24 +8,25 @@ import {parseArgs} from "node:util"
 import {parse as parseDotenv} from "dotenv"
 import {verifyEvent} from "nostr-tools"
 import * as nip19 from "nostr-tools/nip19"
+import {schnorr} from "@noble/curves/secp256k1"
 
 export const DEFAULT_SEED = "npub16p8v7varqwjes5hak6q7mz6pygqm4pwc6gve4mrned3xs8tz42gq7kfhdw"
 export const DEFAULT_BOOTSTRAP_RELAYS = ["wss://nos.lol/", "wss://purplepag.es/"]
-export const COMMUNITY_DEFINITION_KIND = 10222
+export const COMMUNITY_DEFINITION_KIND_V2 = 32222
 export const PROFILE_LIST_KIND = 30000
 export const DEFAULT_OUTPUT_DIR = "relay-discovery-output"
 
 const ROLE_NAMES = ["indexer", "search", "git", "widget", "signer", "blossom"]
 const AUTHOR_LIST_KINDS = [0, 10002, 10007, 10019, 10050, 10063, 10317, 30078, 30617, 30033, 30222]
 const INDEXER_REFERENCE_KINDS = new Set([
-  0, 3, 10000, 10002, 10007, 10019, 10050, 10063, 10222, 10317, 30000,
+  0, 3, 10000, 10002, 10007, 10019, 10050, 10063, 10317, 30000, 32222,
 ])
 const GIT_REFERENCE_KINDS = new Set([10317, 30078, 30617, 30618])
 const WIDGET_REFERENCE_KINDS = new Set([5, 30033, 30222])
 const SOURCE_POLICY = {
   community_definition: {priority: 5, score: 100, label: "community definition"},
   seed_own: {priority: 4, score: 90, label: "seed's own list"},
-  community_pubkey: {priority: 3, score: 80, label: "community pubkey list"},
+  community_controller: {priority: 3, score: 80, label: "community controller list"},
   moderator: {priority: 3, score: 32, label: "community moderator list"},
   member: {priority: 3, score: 18, label: "community member list"},
   default_community_fallback: {priority: 2, score: 36, label: "default community hint"},
@@ -128,30 +129,51 @@ export const normalizeBlossomUrl = value => {
   }
 }
 
+const normalizeCommunityRelayUrl = value => {
+  const relay = normalizeRelayUrl(value)
+  if (
+    !relay ||
+    !String(value || "")
+      .trim()
+      .startsWith("wss://")
+  )
+    return ""
+  return relay.endsWith("/") && new URL(relay).pathname === "/" ? relay.slice(0, -1) : relay
+}
+
 export const parseCommunityInput = value => {
   const trimmed = String(value || "").trim()
   if (!trimmed) return undefined
 
-  if (trimmed.startsWith("ncommunity://")) {
-    try {
-      const url = new URL(trimmed)
-      const rawPubkey = decodeURIComponent(url.hostname || url.pathname.replace(/^\//, ""))
-      const pubkey = normalizePubkey(rawPubkey)
-      if (!pubkey) return undefined
-      return {
-        input: trimmed,
-        pubkey,
-        relays: unique(url.searchParams.getAll("relay").map(normalizeRelayUrl)),
-        source: "ncommunity",
-      }
-    } catch {
+  try {
+    const decoded = nip19.decode(trimmed.replace(/^nostr:/, ""))
+    if (decoded.type !== "naddr" || decoded.data.kind !== COMMUNITY_DEFINITION_KIND_V2) {
       return undefined
     }
+    const controllerPubkey = String(decoded.data.pubkey || "")
+    const communityId = String(decoded.data.identifier || "")
+    if (!isLiftableXOnlyKey(controllerPubkey) || !isLiftableXOnlyKey(communityId)) return undefined
+    return {
+      input: trimmed,
+      address: `${COMMUNITY_DEFINITION_KIND_V2}:${controllerPubkey}:${communityId}`,
+      controllerPubkey,
+      communityId,
+      relays: unique((decoded.data.relays || []).map(normalizeCommunityRelayUrl)).slice(0, 3),
+      source: "naddr",
+    }
+  } catch {
+    return undefined
   }
+}
 
-  const pubkey = normalizePubkey(trimmed)
-  if (!pubkey) return undefined
-  return {input: trimmed, pubkey, relays: [], source: trimmed.startsWith("npub") ? "npub" : "hex"}
+const isLiftableXOnlyKey = value => {
+  if (!/^[0-9a-f]{64}$/.test(value)) return false
+  try {
+    schnorr.utils.lift_x(BigInt(`0x${value}`))
+    return true
+  } catch {
+    return false
+  }
 }
 
 const parseCsv = value =>
@@ -460,13 +482,117 @@ const parseProfileList = event => {
   }
 }
 
-export const parseCommunityDefinition = event => {
-  if (!event || event.kind !== COMMUNITY_DEFINITION_KIND) return undefined
-  const pubkey = normalizePubkey(event.pubkey)
-  if (!pubkey) return undefined
+export const parseCommunityDefinitionV2 = event => {
+  if (!event || event.kind !== COMMUNITY_DEFINITION_KIND_V2 || event.content !== "")
+    return undefined
+  const controllerPubkey = String(event.pubkey || "")
+  const dTags = (event.tags || []).filter(tag => tag[0] === "d")
+  const nameTags = (event.tags || []).filter(tag => tag[0] === "name")
+  if (
+    !isLiftableXOnlyKey(controllerPubkey) ||
+    dTags.length !== 1 ||
+    dTags[0].length !== 2 ||
+    !isLiftableXOnlyKey(dTags[0][1]) ||
+    nameTags.length !== 1 ||
+    nameTags[0].length !== 2 ||
+    !String(nameTags[0][1] || "").trim()
+  ) {
+    return undefined
+  }
+  const communityId = dTags[0][1]
+  const tags = event.tags || []
+  const singletonTags = [
+    "name",
+    "description",
+    "picture",
+    "banner",
+    "website",
+    "location",
+    "g",
+    "tos",
+  ]
+  if (singletonTags.some(name => tags.filter(tag => tag[0] === name).length > 1)) return undefined
+  if (tags.filter(tag => tag[0] === "r").length > 20) return undefined
+  if (tags.filter(tag => tag[0] === "blossom").length > 20) return undefined
+  if (tags.filter(tag => tag[0] === "grasp").length > 20) return undefined
+  if (tags.filter(tag => tag[0] === "mint").length > 20) return undefined
+  if (tags.filter(tag => tag[0] === "service").length > 50) return undefined
+
+  for (const tag of tags) {
+    if (
+      ["d", "name", "description", "picture", "banner", "website", "location", "g"].includes(
+        tag[0],
+      ) &&
+      tag.length !== 2
+    )
+      return undefined
+    if (
+      ["r", "grasp"].includes(tag[0]) &&
+      (tag.length !== 2 || !String(tag[1] || "").startsWith("wss://") || !normalizeRelayUrl(tag[1]))
+    )
+      return undefined
+    if (
+      tag[0] === "blossom" &&
+      (tag.length !== 2 ||
+        !String(tag[1] || "").startsWith("https://") ||
+        !normalizeBlossomUrl(tag[1]))
+    )
+      return undefined
+    if (
+      ["picture", "banner"].includes(tag[0]) &&
+      (!String(tag[1] || "").startsWith("https://") || !normalizeBlossomUrl(tag[1]))
+    )
+      return undefined
+    if (tag[0] === "website" && !normalizeBlossomUrl(tag[1])) return undefined
+    if (tag[0] === "g" && !/^[0123456789bcdefghjkmnpqrstuvwxyz]{1,12}$/.test(tag[1] || ""))
+      return undefined
+    if (
+      tag[0] === "mint" &&
+      (![2, 3].includes(tag.length) ||
+        !String(tag[1] || "").startsWith("https://") ||
+        !normalizeBlossomUrl(tag[1]))
+    )
+      return undefined
+    if (tag[0] === "tos") {
+      const reference = String(tag[1] || "")
+      const [referenceKind, referencePubkey, ...referenceIdentifier] = reference.split(":")
+      const validAddress =
+        /^(3[0-9]{4})$/.test(referenceKind) &&
+        isLiftableXOnlyKey(referencePubkey || "") &&
+        Boolean(referenceIdentifier.join(":"))
+      if (
+        ![2, 3].includes(tag.length) ||
+        (!/^[0-9a-f]{64}$/.test(reference) && !validAddress) ||
+        (tag[2] && (!String(tag[2]).startsWith("wss://") || !normalizeRelayUrl(tag[2])))
+      )
+        return undefined
+    }
+    if (tag[0] === "service") {
+      const [name, pubkey, requestRelay, handlerAddress, handlerRelay] = tag.slice(1)
+      const [handlerKind, handlerPubkey, ...handlerIdentifier] = String(handlerAddress || "").split(
+        ":",
+      )
+      if (
+        tag.length !== 6 ||
+        !/^[a-z0-9][a-z0-9-]{0,31}$/.test(name || "") ||
+        !isLiftableXOnlyKey(pubkey || "") ||
+        !String(requestRelay || "").startsWith("wss://") ||
+        !normalizeRelayUrl(requestRelay) ||
+        !/^(3[0-9]{4})$/.test(handlerKind || "") ||
+        !isLiftableXOnlyKey(handlerPubkey || "") ||
+        !handlerIdentifier.join(":") ||
+        !String(handlerRelay || "").startsWith("wss://") ||
+        !normalizeRelayUrl(handlerRelay)
+      )
+        return undefined
+    }
+  }
   const definition = {
     event,
-    pubkey,
+    address: `${COMMUNITY_DEFINITION_KIND_V2}:${controllerPubkey}:${communityId}`,
+    controllerPubkey,
+    communityId,
+    name: nameTags[0][1],
     relays: [],
     blossomServers: [],
     graspServers: [],
@@ -474,11 +600,45 @@ export const parseCommunityDefinition = event => {
     sections: [],
   }
   let currentSection
-  for (const tag of event.tags || []) {
-    if (tag[0] === "content" && tag[1]) {
-      currentSection = {name: tag[1].trim(), profileLists: []}
+  const topLevelTags = new Set([
+    "d",
+    "name",
+    "description",
+    "picture",
+    "banner",
+    "website",
+    "r",
+    "blossom",
+    "grasp",
+    "mint",
+    "location",
+    "g",
+    "tos",
+    "service",
+  ])
+  const sectionNames = new Set()
+  const sectionKinds = new Set()
+  for (const tag of tags) {
+    if (currentSection && topLevelTags.has(tag[0])) return undefined
+    if (tag[0] === "content" && tag.length === 2 && tag[1]?.trim()) {
+      const sectionName = tag[1].trim()
+      const sectionKey = sectionName.replace(/[A-Z]/g, value => value.toLowerCase())
+      if (sectionNames.has(sectionKey)) return undefined
+      sectionNames.add(sectionKey)
+      currentSection = {name: sectionName, kinds: [], profileLists: []}
       definition.sections.push(currentSection)
+    } else if (tag[0] === "k" && currentSection) {
+      if (![2, 3].includes(tag.length) || !/^(0|[1-9][0-9]*)$/.test(tag[1] || "")) return undefined
+      const kind = Number(tag[1])
+      const subtype = tag.length === 3 ? String(tag[2] || "") : ""
+      if (kind > 65535 || (tag.length === 3 && (!subtype || Buffer.byteLength(subtype) > 64)))
+        return undefined
+      const kindKey = `${kind}:${subtype}`
+      if (sectionKinds.has(kindKey)) return undefined
+      sectionKinds.add(kindKey)
+      currentSection.kinds.push(kind)
     } else if (tag[0] === "a" && currentSection) {
+      if (![2, 3].includes(tag.length)) return undefined
       const [kind, owner, ...identifierParts] = String(tag[1] || "").split(":")
       const normalizedOwner = normalizePubkey(owner)
       const identifier = identifierParts.join(":")
@@ -487,9 +647,30 @@ export const parseCommunityDefinition = event => {
           address: `${PROFILE_LIST_KIND}:${normalizedOwner}:${identifier}`,
           pubkey: normalizedOwner,
           identifier,
-          relay: normalizeRelayUrl(tag[2]),
+          relay: tag[2] ? normalizeRelayUrl(tag[2]) : "",
         })
+        if (tag[2] && (!String(tag[2]).startsWith("wss://") || !normalizeRelayUrl(tag[2])))
+          return undefined
       }
+    } else if (tag[0] === "badge" && currentSection) {
+      if (![2, 3].includes(tag.length)) return undefined
+      const [kind, owner, ...identifierParts] = String(tag[1] || "").split(":")
+      if (
+        kind !== "30009" ||
+        !isLiftableXOnlyKey(owner || "") ||
+        !identifierParts.join(":") ||
+        (tag[2] && (!String(tag[2]).startsWith("wss://") || !normalizeRelayUrl(tag[2])))
+      )
+        return undefined
+    } else if (tag[0] === "retention" && currentSection) {
+      if (
+        tag.length !== 4 ||
+        !/^(0|[1-9][0-9]*)$/.test(tag[1] || "") ||
+        Number(tag[1]) > 65535 ||
+        !/^[1-9][0-9]*$/.test(tag[2] || "") ||
+        !["time", "count"].includes(tag[3])
+      )
+        return undefined
     } else if (tag[0] === "r") {
       definition.relays.push(normalizeRelayUrl(tag[1]))
     } else if (tag[0] === "blossom") {
@@ -503,7 +684,55 @@ export const parseCommunityDefinition = event => {
   definition.relays = unique(definition.relays)
   definition.blossomServers = unique(definition.blossomServers)
   definition.graspServers = unique(definition.graspServers)
+  if (
+    definition.relays.length === 0 ||
+    definition.sections.length === 0 ||
+    definition.sections.some(
+      section => section.kinds.length === 0 || section.profileLists.length === 0,
+    )
+  ) {
+    return undefined
+  }
   return definition
+}
+
+export const selectCurrentCommunityDefinitionsV2 = events => {
+  const definitions = events.map(parseCommunityDefinitionV2).filter(Boolean)
+  const byAddress = new Map()
+
+  for (const definition of definitions) {
+    const address = definition.address
+    const addressDeletion = events
+      .filter(event => {
+        if (event.kind !== 5 || event.pubkey !== definition.controllerPubkey) return false
+        const addresses = (event.tags || []).filter(tag => tag[0] === "a")
+        return addresses.length === 1 && addresses[0].length === 2 && addresses[0][1] === address
+      })
+      .sort(
+        (first, second) =>
+          second.created_at - first.created_at || first.id.localeCompare(second.id),
+      )[0]
+    if (addressDeletion && definition.event.created_at <= addressDeletion.created_at) continue
+    const eventDeleted = events.some(
+      deletion =>
+        deletion.kind === 5 &&
+        deletion.pubkey === definition.controllerPubkey &&
+        deletion.created_at >= definition.event.created_at &&
+        (deletion.tags || []).some(
+          tag => tag.length === 2 && tag[0] === "e" && tag[1] === definition.event.id,
+        ),
+    )
+    if (eventDeleted) continue
+
+    const current = byAddress.get(address)
+    if (!current || isPreferredEvent(definition.event, current.event)) {
+      byAddress.set(address, definition)
+    }
+  }
+
+  return Array.from(byAddress.values()).sort((first, second) =>
+    first.address.localeCompare(second.address),
+  )
 }
 
 const latestByKindAndAuthor = (events, kind) => {
@@ -530,7 +759,7 @@ const latestByAddress = (events, kind) => {
 
 const makeSeedFilters = seeds => [
   {
-    kinds: [0, 3, 10000, 10002, 10007, 10019, 10050, 10063, 10317, 30000, 10222],
+    kinds: [0, 3, 5, 10000, 10002, 10007, 10019, 10050, 10063, 10317, 30000, 32222],
     authors: seeds,
     limit: 1000,
   },
@@ -542,7 +771,8 @@ const getDefinitionRefsFromProfileLists = events =>
     events.flatMap(event =>
       (event.tags || [])
         .filter(
-          tag => tag[0] === "a" && String(tag[1] || "").startsWith(`${COMMUNITY_DEFINITION_KIND}:`),
+          tag =>
+            tag[0] === "a" && String(tag[1] || "").startsWith(`${COMMUNITY_DEFINITION_KIND_V2}:`),
         )
         .map(tag => tag[1]),
     ),
@@ -554,7 +784,7 @@ const getProfileListAddresses = events =>
 const getDefinitionProfileListRefs = definitions =>
   definitions.flatMap(definition => definition.sections.flatMap(section => section.profileLists))
 
-const addRole = (roleMap, author, seed, role, communityPubkey) => {
+const addRole = (roleMap, author, seed, role, communityAddress) => {
   if (!author) return
   const entry = roleMap.get(author) || {
     pubkey: author,
@@ -565,11 +795,11 @@ const addRole = (roleMap, author, seed, role, communityPubkey) => {
   const seedRoles = entry.seeds.get(seed) || new Set()
   seedRoles.add(role)
   entry.seeds.set(seed, seedRoles)
-  if (communityPubkey) {
-    const communityRoles = entry.communities.get(communityPubkey) || new Set()
+  if (communityAddress) {
+    const communityRoles = entry.communities.get(communityAddress) || new Set()
     communityRoles.add(role)
-    entry.communities.set(communityPubkey, communityRoles)
-    const communitySeedKey = `${communityPubkey}:${seed}`
+    entry.communities.set(communityAddress, communityRoles)
+    const communitySeedKey = `${communityAddress}:${seed}`
     const communitySeedRoles = entry.communitySeeds.get(communitySeedKey) || new Set()
     communitySeedRoles.add(role)
     entry.communitySeeds.set(communitySeedKey, communitySeedRoles)
@@ -581,7 +811,7 @@ export const buildCommunityGraph = ({
   seeds,
   events,
   definitions,
-  defaultCommunityPubkey,
+  defaultCommunityAddress,
   maxFollows = 250,
   maxAuthors = 500,
 }) => {
@@ -591,7 +821,9 @@ export const buildCommunityGraph = ({
   const relationships = new Map()
   const seedStates = []
   const defaultCommunityAuthors = []
-  const activeDefinitionPubkeys = new Set(defaultCommunityPubkey ? [defaultCommunityPubkey] : [])
+  const activeDefinitionAddresses = new Set(
+    defaultCommunityAddress ? [defaultCommunityAddress] : [],
+  )
 
   for (const seed of seeds) {
     addRole(relationships, seed, seed, "seed")
@@ -608,11 +840,11 @@ export const buildCommunityGraph = ({
       ),
     )
     const activeCommunities = []
-    const seedCommunityPubkeys = new Set()
+    const seedCommunityAddresses = new Set()
 
     for (const definition of definitions) {
       const roles = new Set()
-      if (definition.pubkey === seed) roles.add("admin")
+      if (definition.controllerPubkey === seed) roles.add("admin")
       for (const section of definition.sections) {
         for (const ref of section.profileLists) {
           const listEvent = profileLists.get(ref.address)
@@ -622,30 +854,30 @@ export const buildCommunityGraph = ({
         }
       }
       if (roles.size > 0) {
-        activeDefinitionPubkeys.add(definition.pubkey)
-        seedCommunityPubkeys.add(definition.pubkey)
+        activeDefinitionAddresses.add(definition.address)
+        seedCommunityAddresses.add(definition.address)
         activeCommunities.push({
-          communityPubkey: definition.pubkey,
+          communityAddress: definition.address,
           roles: Array.from(roles).sort(),
         })
       }
     }
 
     let authorOrder = [seed]
-    for (const definition of definitions.filter(item => seedCommunityPubkeys.has(item.pubkey))) {
-      authorOrder.push(definition.pubkey)
-      addRole(relationships, definition.pubkey, seed, "community", definition.pubkey)
+    for (const definition of definitions.filter(item => seedCommunityAddresses.has(item.address))) {
+      authorOrder.push(definition.controllerPubkey)
+      addRole(relationships, definition.controllerPubkey, seed, "community", definition.address)
       for (const section of definition.sections) {
         for (const ref of section.profileLists) {
           const listEvent = profileLists.get(ref.address)
           const list = parseProfileList(listEvent)
           if (listEvent && !list.declined) {
             authorOrder.push(ref.pubkey)
-            addRole(relationships, ref.pubkey, seed, "moderator", definition.pubkey)
+            addRole(relationships, ref.pubkey, seed, "moderator", definition.address)
           }
           for (const member of list.members) {
             authorOrder.push(member)
-            addRole(relationships, member, seed, "member", definition.pubkey)
+            addRole(relationships, member, seed, "member", definition.address)
           }
         }
       }
@@ -665,16 +897,16 @@ export const buildCommunityGraph = ({
     })
   }
 
-  if (defaultCommunityPubkey) {
-    const definition = definitions.find(item => item.pubkey === defaultCommunityPubkey)
+  if (defaultCommunityAddress) {
+    const definition = definitions.find(item => item.address === defaultCommunityAddress)
     if (definition) {
-      defaultCommunityAuthors.push(definition.pubkey)
+      defaultCommunityAuthors.push(definition.controllerPubkey)
       addRole(
         relationships,
-        definition.pubkey,
+        definition.controllerPubkey,
         "vite_default_community",
         "community",
-        definition.pubkey,
+        definition.address,
       )
       for (const section of definition.sections) {
         for (const ref of section.profileLists) {
@@ -687,12 +919,12 @@ export const buildCommunityGraph = ({
               ref.pubkey,
               "vite_default_community",
               "moderator",
-              definition.pubkey,
+              definition.address,
             )
           }
           for (const member of list.members) {
             defaultCommunityAuthors.push(member)
-            addRole(relationships, member, "vite_default_community", "member", definition.pubkey)
+            addRole(relationships, member, "vite_default_community", "member", definition.address)
           }
         }
       }
@@ -701,7 +933,7 @@ export const buildCommunityGraph = ({
 
   return {
     seedStates,
-    activeDefinitionPubkeys,
+    activeDefinitionAddresses,
     relationships,
     authors: unique([
       ...seedStates.flatMap(state => state.selectedAuthors),
@@ -713,7 +945,7 @@ export const buildCommunityGraph = ({
 const sourceForRelationship = (relationship, seed) => {
   const roles = relationship?.seeds.get(seed) || new Set()
   if (roles.has("seed")) return "seed_own"
-  if (roles.has("community")) return "community_pubkey"
+  if (roles.has("community")) return "community_controller"
   if (roles.has("moderator")) return "moderator"
   if (roles.has("member")) return "member"
   if (roles.has("follow")) return "direct_follow"
@@ -725,7 +957,7 @@ const candidateKey = (role, url) => `${role}:${url}`
 
 const addCandidateEvidence = (
   store,
-  {role, url, source, seed, author, communityPubkey, eventId, detail},
+  {role, url, source, seed, author, communityAddress, eventId, detail},
 ) => {
   const normalizedUrl = role === "blossom" ? normalizeBlossomUrl(url) : normalizeRelayUrl(url)
   const policy = SOURCE_POLICY[source]
@@ -746,7 +978,7 @@ const addCandidateEvidence = (
     source,
     seed || "",
     author || "",
-    communityPubkey || "",
+    communityAddress || "",
     eventId || "",
     detail || "",
   ].join(":")
@@ -754,7 +986,7 @@ const addCandidateEvidence = (
   candidate.priority = Math.max(candidate.priority, policy.priority)
   candidate.trustScore += policy.score
   if (seed && seed !== "vite_default_community") candidate.seeds.add(seed)
-  if (communityPubkey) candidate.communities.add(communityPubkey)
+  if (communityAddress) candidate.communities.add(communityAddress)
   if (author) candidate.authors.add(author)
   candidate.configured ||= source === "configured"
   candidate.evidence.push({
@@ -765,7 +997,7 @@ const addCandidateEvidence = (
     priority: policy.priority,
     seed,
     author,
-    communityPubkey,
+    communityAddress,
     eventId,
     detail,
   })
@@ -783,14 +1015,14 @@ const addAuthorListEvidence = ({store, events, graph, seeds}) => {
     for (const seed of [...seeds, "vite_default_community"]) {
       const source = sourceForRelationship(relationship, seed)
       if (!source) continue
-      const communityPubkeys = ["community_pubkey", "moderator", "member"].includes(source)
+      const communityAddresses = ["community_controller", "moderator", "member"].includes(source)
         ? Array.from(relationship.communitySeeds.keys())
             .filter(key => key.endsWith(`:${seed}`))
             .map(key => key.slice(0, -(seed.length + 1)))
         : [undefined]
-      const evidenceContexts = communityPubkeys.length ? communityPubkeys : [undefined]
-      for (const communityPubkey of evidenceContexts) {
-        const common = {source, seed, author: event.pubkey, communityPubkey, eventId: event.id}
+      const evidenceContexts = communityAddresses.length ? communityAddresses : [undefined]
+      for (const communityAddress of evidenceContexts) {
+        const common = {source, seed, author: event.pubkey, communityAddress, eventId: event.id}
         if (event.kind === 10002) {
           for (const url of getTagUrls(event, ["r"], normalizeRelayUrl)) {
             addCandidateEvidence(store, {role: "indexer", url, ...common})
@@ -817,12 +1049,12 @@ const addAuthorListEvidence = ({store, events, graph, seeds}) => {
 const addDefinitionEvidence = ({store, definitions, defaultCommunity}) => {
   for (const definition of definitions) {
     const seed =
-      definition.pubkey === defaultCommunity?.pubkey ? "vite_default_community" : undefined
+      definition.address === defaultCommunity?.address ? "vite_default_community" : undefined
     const common = {
       source: "community_definition",
       seed,
-      author: definition.pubkey,
-      communityPubkey: definition.pubkey,
+      author: definition.controllerPubkey,
+      communityAddress: definition.address,
       eventId: definition.event.id,
     }
     for (const url of definition.relays) {
@@ -838,7 +1070,7 @@ const addDefinitionEvidence = ({store, definitions, defaultCommunity}) => {
   }
   if (
     defaultCommunity &&
-    !definitions.some(definition => definition.pubkey === defaultCommunity.pubkey)
+    !definitions.some(definition => definition.address === defaultCommunity.address)
   ) {
     for (const url of defaultCommunity.relays) {
       addCandidateEvidence(store, {
@@ -846,8 +1078,8 @@ const addDefinitionEvidence = ({store, definitions, defaultCommunity}) => {
         url,
         source: "default_community_fallback",
         seed: "vite_default_community",
-        communityPubkey: defaultCommunity.pubkey,
-        detail: "unresolved ncommunity relay hint",
+        communityAddress: defaultCommunity.address,
+        detail: "unresolved definition naddr relay hint",
       })
     }
   }
@@ -1152,7 +1384,7 @@ export const renderRecommendationTable = evidence => {
   ]
   if (evidence.defaultCommunity?.pubkey) {
     lines.push(
-      `Default community: \`${evidence.defaultCommunity.pubkey}\` (${evidence.defaultCommunity.definitionResolved ? "resolved" : "unresolved"})`,
+      `Default community: \`${evidence.defaultCommunity.address}\` (${evidence.defaultCommunity.definitionResolved ? "resolved" : "unresolved"})`,
       "",
     )
   }
@@ -1282,12 +1514,18 @@ export const discoverRelayDefaults = async (cli, dependencies = {}) => {
 
   if (defaultCommunity) {
     progress("default-community", "resolving VITE_DEFAULT_COMMUNITY", {
-      pubkey: defaultCommunity.pubkey,
+      address: defaultCommunity.address,
     })
     const defaultLoad = await queryAcrossRelays({
       relays: unique([...defaultCommunity.relays, ...bootstrapRelays]),
       filters: [
-        {kinds: [COMMUNITY_DEFINITION_KIND, 10002], authors: [defaultCommunity.pubkey], limit: 20},
+        {
+          kinds: [COMMUNITY_DEFINITION_KIND_V2],
+          authors: [defaultCommunity.controllerPubkey],
+          "#d": [defaultCommunity.communityId],
+        },
+        {kinds: [5], authors: [defaultCommunity.controllerPubkey]},
+        {kinds: [10002], authors: [defaultCommunity.controllerPubkey], limit: 1},
       ],
       timeoutMs: cli.timeoutMs,
       concurrency: cli.concurrency,
@@ -1302,13 +1540,21 @@ export const discoverRelayDefaults = async (cli, dependencies = {}) => {
   const definitionRefs = getDefinitionRefsFromProfileLists(initialProfileLists)
   const reverseDefinitionFilters = [
     ...chunk(profileListAddresses, 80).map(addresses => ({
-      kinds: [COMMUNITY_DEFINITION_KIND],
+      kinds: [COMMUNITY_DEFINITION_KIND_V2],
       "#a": addresses,
       limit: 200,
     })),
     ...definitionRefs.map(address => {
+      const [, pubkey, ...identifierParts] = address.split(":")
+      return {
+        kinds: [COMMUNITY_DEFINITION_KIND_V2],
+        authors: [pubkey],
+        "#d": [identifierParts.join(":")],
+      }
+    }),
+    ...definitionRefs.map(address => {
       const [, pubkey] = address.split(":")
-      return {kinds: [COMMUNITY_DEFINITION_KIND], authors: [pubkey], limit: 10}
+      return {kinds: [5], authors: [pubkey]}
     }),
   ]
   progress("communities", "resolving community definitions", {
@@ -1323,10 +1569,24 @@ export const discoverRelayDefaults = async (cli, dependencies = {}) => {
     phase: "communities",
   })
   corpus = mergeEvents(corpus, definitionLoad.events)
-  let definitions = selectLatestEvents(corpus)
-    .filter(event => event.kind === COMMUNITY_DEFINITION_KIND)
-    .map(parseCommunityDefinition)
-    .filter(Boolean)
+  const provisionalDefinitions = corpus.map(parseCommunityDefinitionV2).filter(Boolean)
+  const definitionControllers = unique(
+    provisionalDefinitions.map(definition => definition.controllerPubkey),
+  )
+  let definitionDeleteObservations = []
+  if (definitionControllers.length > 0) {
+    const deletionLoad = await queryAcrossRelays({
+      relays: bootstrapRelays,
+      filters: chunk(definitionControllers, 80).map(authors => ({kinds: [5], authors})),
+      timeoutMs: cli.timeoutMs,
+      concurrency: cli.concurrency,
+      progress,
+      phase: "community-deletions",
+    })
+    corpus = mergeEvents(corpus, deletionLoad.events)
+    definitionDeleteObservations = deletionLoad.observations
+  }
+  let definitions = selectCurrentCommunityDefinitionsV2(corpus)
 
   const profileListRefs = getDefinitionProfileListRefs(definitions)
   if (profileListRefs.length > 0) {
@@ -1372,28 +1632,25 @@ export const discoverRelayDefaults = async (cli, dependencies = {}) => {
     )
   }
 
-  definitions = selectLatestEvents(corpus)
-    .filter(event => event.kind === COMMUNITY_DEFINITION_KIND)
-    .map(parseCommunityDefinition)
-    .filter(Boolean)
+  definitions = selectCurrentCommunityDefinitionsV2(corpus)
   const graph = buildCommunityGraph({
     seeds: cli.seeds,
     events: corpus,
     definitions,
-    defaultCommunityPubkey: defaultCommunity?.pubkey,
+    defaultCommunityAddress: defaultCommunity?.address,
     maxFollows: cli.maxFollows,
     maxAuthors: cli.maxAuthors,
   })
   progress("graph", "community-first graph built", {
     authors: graph.authors.length,
-    activeCommunities: graph.activeDefinitionPubkeys.size,
+    activeCommunities: graph.activeDefinitionAddresses.size,
     directFollows: graph.seedStates.reduce((sum, seed) => sum + seed.directFollows.length, 0),
   })
 
   const activeDefinitions = definitions.filter(
     definition =>
-      graph.activeDefinitionPubkeys.has(definition.pubkey) ||
-      definition.pubkey === defaultCommunity?.pubkey,
+      graph.activeDefinitionAddresses.has(definition.address) ||
+      definition.address === defaultCommunity?.address,
   )
   const discoveryRelays = unique([
     ...bootstrapRelays,
@@ -1468,6 +1725,7 @@ export const discoverRelayDefaults = async (cli, dependencies = {}) => {
   for (const observation of [
     ...seedLoad.observations,
     ...definitionLoad.observations,
+    ...definitionDeleteObservations,
     ...authorLoad.observations,
   ]) {
     if (observation.events.length === 0) continue
@@ -1537,7 +1795,7 @@ export const discoverRelayDefaults = async (cli, dependencies = {}) => {
   assignRanks(roles)
   const generatedAt = new Date().toISOString()
   const defaultDefinition = activeDefinitions.find(
-    definition => definition.pubkey === defaultCommunity?.pubkey,
+    definition => definition.address === defaultCommunity?.address,
   )
   const evidence = {
     schemaVersion: 1,
@@ -1571,7 +1829,7 @@ export const discoverRelayDefaults = async (cli, dependencies = {}) => {
     graph: {
       seedStates: graph.seedStates,
       authorCount: graph.authors.length,
-      activeCommunityPubkeys: Array.from(graph.activeDefinitionPubkeys).sort(),
+      activeCommunityAddresses: Array.from(graph.activeDefinitionAddresses).sort(),
       relationships: Array.from(graph.relationships.values()).map(serializeRelationship),
     },
     configured,

@@ -5,6 +5,7 @@ import {
   createNostrTokenizer,
 } from "./markdownTokenizers"
 import {nip19} from "nostr-tools"
+import {naddrEncode} from "nostr-tools/nip19"
 import {getEncodedToken} from "@cashu/cashu-ts"
 
 vi.mock("nostr-tools", () => ({
@@ -122,10 +123,14 @@ describe("markdownTokenizers", () => {
 
   describe("createNostrTokenizer", () => {
     const getTokenizer = () => createNostrTokenizer() as InlineTokenizerExtension
-    const communityPubkey = "a".repeat(64)
-    const ncommunity = `ncommunity://${communityPubkey}?relay=${encodeURIComponent(
-      "wss://relay.example.com",
-    )}`
+    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+    const communityNaddr = naddrEncode({
+      kind: 32222,
+      pubkey: controller,
+      identifier: communityId,
+      relays: ["wss://relay.example"],
+    })
 
     beforeEach(() => {
       vi.mocked(nip19.decode).mockReset()
@@ -143,9 +148,9 @@ describe("markdownTokenizers", () => {
       expect(tokenizer.start("plain text")).toBe(-1)
     })
 
-    it("finds ncommunity URI start index", () => {
+    it("finds community naddr start index", () => {
       const tokenizer = getTokenizer()
-      expect(tokenizer.start(`share ${ncommunity}`)).toBe(6)
+      expect(tokenizer.start(`share ${communityNaddr}`)).toBe(6)
     })
 
     it("does not find nostr identifiers embedded in URL paths", () => {
@@ -186,16 +191,16 @@ describe("markdownTokenizers", () => {
       expect((token as any).fullId).toContain("npub1")
     })
 
-    it("tokenizes ncommunity URIs", () => {
+    it("tokenizes community naddrs", () => {
       const tokenizer = getTokenizer()
-      const token = tokenizer.tokenizer(`${ncommunity}.`)
+      const token = tokenizer.tokenizer(`${communityNaddr}.`)
       expect(token).toMatchObject({
         type: "nostr",
-        raw: ncommunity,
+        raw: communityNaddr,
         community: {
-          pubkey: communityPubkey,
-          relays: ["wss://relay.example.com/"],
-          source: "ncommunity",
+          controllerPubkey: controller,
+          communityId,
+          relayHints: ["wss://relay.example"],
         },
       })
     })
@@ -226,21 +231,19 @@ describe("markdownTokenizers", () => {
       expect(html).toContain('data-pubkey="' + "b".repeat(64) + '"')
     })
 
-    it("renders ncommunity as community placeholder", () => {
+    it("renders community naddr as an exact pointer placeholder", () => {
       const tokenizer = getTokenizer()
       const html = tokenizer.renderer({
         type: "nostr",
-        fullId: ncommunity,
+        fullId: communityNaddr,
         community: {
-          pubkey: communityPubkey,
-          relays: ["wss://relay.example.com/"],
-          source: "ncommunity",
+          naddr: communityNaddr,
         },
       } as any)
 
       expect(html).toContain("markdown-community-placeholder")
-      expect(html).toContain(`data-pubkey="${communityPubkey}"`)
-      expect(html).toContain("wss://relay.example.com/")
+      expect(html).toContain(`data-naddr="${communityNaddr}"`)
+      expect(html).not.toContain("data-pubkey")
     })
 
     it("renders note as quote placeholder when event provided", () => {

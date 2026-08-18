@@ -20,31 +20,28 @@
   import Content from "@app/components/Content.svelte"
   import CommunityExtensionsPrompt from "@app/components/community/CommunityExtensionsPrompt.svelte"
   import CommunityHomeWidgetSlot from "@app/components/community/CommunityHomeWidgetSlot.svelte"
-  import CommunityMenuButton from "@app/components/CommunityMenuButton.svelte"
   import CommunityRoomCreate from "@app/components/community/CommunityRoomCreate.svelte"
-  import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
+  import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
   import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {fade} from "@lib/transition"
-  import {normalizePubkey, normalizeRelays} from "@app/core/community"
+  import {normalizeRelays, parseAddressRef} from "@app/core/community"
   import {
-    activeCommunitySession,
     activeCommunityAuthorityReadiness,
-    activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
     activeCommunityPermissionStatus,
-    activeCommunityProfile,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
     activeCommunityReportState,
-    activeCommunityRelays,
-    getCommunityBootstrapKey,
-    getCommunityDefinitionRelayHints,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
+    activeExactCommunityRelays,
     hasCommunityHydrationCompleted,
+    hydratePubkeyOutboxRelays,
+    loadCommunityEvents,
     loadCommunityEventsWithStatus,
-    makeCommunitySession,
     markCommunityHydrationCompleted,
-    recoverCommunityBootstrap,
+    resolveExactCommunityDefinition,
+    setActiveExactCommunityDefinition,
+    COMMUNITY_DISCOVERY_RELAYS,
   } from "@app/core/community-state"
   import {
     makeCommunityContentFilterPlan,
@@ -68,8 +65,6 @@
   import {assertReplaceablePublicationIsCurrent} from "@app/core/replaceable-publication"
   import {getModeratorInviteResponseSemanticKey} from "@app/core/governance-publication-operations"
   import {
-    isCommunityHomeCoreReady,
-    isCommunityHomeExtensionReady,
     isCompleteCommunityModeratorEvidence,
     type CommunityModeratorEvidenceStatus,
   } from "@app/extensions/community-home-readiness"
@@ -78,82 +73,61 @@
   import {pushModal} from "@app/util/modal"
   import {pushToast} from "@app/util/toast"
   import {formatShortNpub} from "@app/util/pubkeys"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
   import {
-    makeCommunityCalendarPath,
-    makeGitCommunityPath,
-    makeCommunityGoalPath,
-    makeCommunityRoomPath,
-    makeCommunityThreadPath,
-    parseCommunityRouteParam,
+    makeExactCommunityCalendarPath,
+    makeExactCommunityGitPath,
+    makeExactCommunityGoalPath,
+    makeExactCommunityRoomPath,
+    makeExactCommunityThreadPath,
   } from "@app/util/routes"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityId = $derived(parsedCommunity?.pubkey || $activeCommunityDefinition?.pubkey || "")
-  const shortCommunity = $derived(formatShortNpub(communityId) || "Unknown community")
-  const communityName = $derived(
-    $activeCommunityProfile?.display_name || $activeCommunityProfile?.name || shortCommunity,
+  const communityPointer = $derived($activeExactCommunityPointer)
+  const routeCommunityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityPointer?.address
+      ? $activeExactCommunityDefinition
+      : undefined,
   )
-  const communityDescription = $derived(
-    $activeCommunityProfile?.about || $activeCommunityDefinition?.description || "",
-  )
+  const controllerPubkey = $derived(communityPointer?.controllerPubkey || "")
+  const communityId = $derived(communityPointer?.communityId || "")
+  const shortCommunity = $derived(formatShortNpub(controllerPubkey) || "Unknown community")
+  const communityName = $derived(routeCommunityDefinition?.metadata.name || shortCommunity)
+  const communityDescription = $derived(routeCommunityDefinition?.metadata.description || "")
   const communityDescriptionEvent = $derived({content: communityDescription, tags: []})
-  const communityPicture = $derived($activeCommunityProfile?.picture || "")
+  const communityPicture = $derived(routeCommunityDefinition?.metadata.picture || "")
   let failedPicture = $state("")
   let retryingCommunityBootstrap = $state(false)
   const showCommunityPicture = $derived(
     Boolean(communityPicture && failedPicture !== communityPicture),
   )
   const mainRelay = $derived(
-    $activeCommunityDefinition?.relays[0] || parsedCommunity?.relays[0] || "",
+    routeCommunityDefinition?.relays[0] || communityPointer?.relayHints[0] || "",
   )
-  const communityShareRelays = $derived(
-    $activeCommunityDefinition?.pubkey === communityId
-      ? getCommunityDefinitionRelayHints($activeCommunityDefinition, parsedCommunity?.relays || [])
-      : parsedCommunity?.relays || [],
+  const homeWidgetRelayHints = $derived($activeExactCommunityRelays)
+  const threadsPath = $derived(
+    communityPointer ? makeExactCommunityThreadPath(communityPointer) : "",
   )
-  const communityActionRelays = $derived(
-    communityShareRelays.length > 0 ? communityShareRelays : $activeCommunityRelays,
+  const calendarPath = $derived(
+    communityPointer ? makeExactCommunityCalendarPath(communityPointer) : "",
   )
-  const homeWidgetRelayHints = $derived(
-    $activeCommunityDefinition?.pubkey === communityId && $activeCommunityRelays.length > 0
-      ? $activeCommunityRelays
-      : communityShareRelays,
-  )
-  const threadsPath = $derived(communityId ? makeCommunityThreadPath(communityId) : "")
-  const calendarPath = $derived(communityId ? makeCommunityCalendarPath(communityId) : "")
-  const goalsPath = $derived(communityId ? makeCommunityGoalPath(communityId) : "")
-  const gitCommunityInput = $derived(
-    communityId
-      ? makeCommunityInputValue({pubkey: communityId, relayHints: communityShareRelays}) ||
-          communityId
-      : "",
-  )
-  const gitPath = $derived(makeGitCommunityPath(gitCommunityInput))
-  const routeCommunityDefinition = $derived(
-    $activeCommunityDefinition?.pubkey === communityId ? $activeCommunityDefinition : undefined,
-  )
-  const communityDefinitionReady = $derived(Boolean(communityId && routeCommunityDefinition))
-  const expectedCommunityBootstrapKey = $derived.by(() => {
-    const session = $activeCommunitySession
-
-    return communityId &&
-      session &&
-      normalizePubkey(session.communityPubkey) === normalizePubkey(communityId)
-      ? getCommunityBootstrapKey(session, $pubkey || "")
-      : ""
-  })
+  const goalsPath = $derived(communityPointer ? makeExactCommunityGoalPath(communityPointer) : "")
+  const gitPath = $derived(communityPointer ? makeExactCommunityGitPath(communityPointer) : "")
+  const communityDefinitionReady = $derived(Boolean(communityPointer && routeCommunityDefinition))
+  const expectedCommunityBootstrapKey = $derived(communityPointer?.address || "")
   const retryCommunityBootstrap = async () => {
-    const session =
-      $activeCommunitySession || (parsedCommunity && makeCommunitySession(parsedCommunity))
-    if (!session || retryingCommunityBootstrap) return
+    const pointer = $activeExactCommunityPointer
+    if (!pointer || retryingCommunityBootstrap) return
 
     retryingCommunityBootstrap = true
 
     try {
-      await recoverCommunityBootstrap(session, {
-        recoverAuth: true,
+      const definition = await resolveExactCommunityDefinition(pointer, {
+        discoveryRelays: COMMUNITY_DISCOVERY_RELAYS,
+        hydrateControllerOutbox: hydratePubkeyOutboxRelays,
+        loadEvents: (relays, filters) => loadCommunityEvents(relays, filters, {timeout: 3000}),
       })
+      if (definition && $activeExactCommunityPointer?.address === pointer.address) {
+        setActiveExactCommunityDefinition(definition)
+      }
     } catch (error) {
       console.warn("[community-home] Failed to retry community bootstrap", error)
     } finally {
@@ -170,19 +144,9 @@
         })
       : [],
   )
-  const communityBootstrapReady = $derived(
-    Boolean(
-      communityId &&
-      routeCommunityDefinition &&
-      expectedCommunityBootstrapKey &&
-      $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
-      $activeCommunityBootstrapStatus.loaded &&
-      !$activeCommunityBootstrapStatus.loading &&
-      !$activeCommunityBootstrapStatus.error,
-    ),
-  )
+  const communityBootstrapReady = $derived(Boolean(communityPointer && routeCommunityDefinition))
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityId
+    $activeCommunityAuthorityReadiness.communityPubkey === controllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -193,11 +157,6 @@
     communityBootstrapReady && communityAuthorityReadiness === "ready",
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
-  const communityBootstrapError = $derived(
-    $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey
-      ? $activeCommunityBootstrapStatus.error || ""
-      : "",
-  )
   // Short settle window: hide the "Community unavailable" banner for a brief
   // moment after entering a community so a fast bootstrap or an incoming
   // cached definition never causes an error flash.
@@ -205,7 +164,7 @@
   let communityUnavailableSettleReady = $state(false)
   $effect(() => {
     // Reset the settle gate whenever the community changes.
-    void communityId
+    void communityPointer?.address
     communityUnavailableSettleReady = false
 
     const timer = setTimeout(() => {
@@ -214,18 +173,8 @@
 
     return () => clearTimeout(timer)
   })
-  // Only show the unavailable banner when:
-  // 1. The bootstrap reported an error
-  // 2. The bootstrap is not currently retrying
-  // 3. No cached definition is present in the store
-  // 4. The settle gate has elapsed
   const showCommunityUnavailable = $derived(
-    Boolean(
-      communityBootstrapError &&
-      !$activeCommunityBootstrapStatus.loading &&
-      !routeCommunityDefinition &&
-      communityUnavailableSettleReady,
-    ),
+    Boolean(communityPointer && communityAuthorityUnavailable && communityUnavailableSettleReady),
   )
   const roomFilterPlan = $derived(
     communityDefinitionReady && communityAuthorityReady && communityId
@@ -249,9 +198,9 @@
     Boolean(
       $pubkey &&
       communityAuthorityReady &&
-      $activeCommunityDefinition &&
+      routeCommunityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: routeCommunityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.roomRoot,
@@ -261,13 +210,7 @@
   )
   const createRoomPermissionLoading = $derived(Boolean(communityAuthorityLoading && !canCreateRoom))
   const communityHomeCoreReady = $derived(
-    isCommunityHomeCoreReady({
-      communityPubkey: communityId,
-      definitionPubkey: routeCommunityDefinition?.pubkey || "",
-      expectedBootstrapKey: expectedCommunityBootstrapKey,
-      permissionReadiness: communityAuthorityReadiness,
-      bootstrapStatus: $activeCommunityBootstrapStatus,
-    }),
+    Boolean(communityPointer && routeCommunityDefinition && communityAuthorityReady),
   )
   let moderatorInviteEvidenceState = $state<{
     key: string
@@ -285,7 +228,7 @@
   ])
   const pendingModeratorInvites = $derived.by(() => {
     return getPendingCommunityModeratorInvites({
-      definition: routeCommunityDefinition,
+      definition: routeCommunityDefinition as any,
       moderatorPubkey: $pubkey || undefined,
       profileListEvents: moderatorInviteProfileListEvents,
     })
@@ -314,7 +257,7 @@
   )
   const moderatorInviteProfileListRefs = $derived.by(() =>
     getCommunityModeratorInviteProfileListRefs({
-      definition: routeCommunityDefinition,
+      definition: routeCommunityDefinition as any,
       moderatorPubkey: $pubkey || undefined,
     }),
   )
@@ -322,14 +265,14 @@
     const definition = routeCommunityDefinition
     const user = $pubkey || ""
     const refs = Array.from(new Set(moderatorInviteProfileListRefs.map(ref => ref.address))).sort()
-    const relays = normalizeRelays($activeCommunityRelays)
+    const relays = normalizeRelays($activeExactCommunityRelays)
 
     return communityHomeCoreReady && definition && user && refs.length > 0 && relays.length > 0
       ? JSON.stringify({
           bootstrapKey: expectedCommunityBootstrapKey,
           permissionKey: $activeCommunityPermissionStatus.key,
           viewer: user,
-          community: communityId,
+          communityAddress: communityPointer!.address,
           definition: definition.event.id,
           relays,
           addresses: refs,
@@ -364,37 +307,34 @@
   const roomCatalogReadinessKey = $derived(
     communityHomeCoreReady
       ? JSON.stringify({
+          communityAddress: communityPointer!.address,
           bootstrapKey: expectedCommunityBootstrapKey,
           permissionKey: $activeCommunityPermissionStatus.key,
-          relays: normalizeRelays($activeCommunityRelays),
+          relays: normalizeRelays($activeExactCommunityRelays),
           filters: roomFilters,
           relayFilters: roomRelayFilters,
         })
       : "",
   )
   const communityHomeExtensionsReady = $derived(
-    isCommunityHomeExtensionReady({
-      communityPubkey: communityId,
-      definitionPubkey: routeCommunityDefinition?.pubkey || "",
-      expectedBootstrapKey: expectedCommunityBootstrapKey,
-      permissionReadiness: communityAuthorityReadiness,
-      bootstrapStatus: $activeCommunityBootstrapStatus,
-      roomsPresent: rooms.length > 0,
-      expectedRoomCatalogKey: roomCatalogReadinessKey,
-      firstRoomCatalogKey: roomRootsFirstAttemptKey,
-      firstRoomCatalogTerminal: roomRootsFirstAttemptTerminal,
-    }),
+    Boolean(
+      communityHomeCoreReady &&
+      (rooms.length > 0 ||
+        (roomCatalogReadinessKey &&
+          roomRootsFirstAttemptKey === roomCatalogReadinessKey &&
+          roomRootsFirstAttemptTerminal)),
+    ),
   )
   const roomsWaitingForDefinition = $derived(
     Boolean(
-      communityId &&
+      communityPointer &&
       (!communityDefinitionReady || !communityBootstrapReady) &&
       !showCommunityUnavailable,
     ),
   )
   const roomsUnavailable = $derived(
     Boolean(
-      communityId &&
+      communityPointer &&
       ((!communityDefinitionReady && showCommunityUnavailable) || communityAuthorityUnavailable),
     ),
   )
@@ -419,7 +359,7 @@
   let roomsSkeletonDelayElapsed = $state(false)
   $effect(() => {
     // Reset whenever the community changes.
-    void communityId
+    void communityPointer?.address
     roomsSkeletonDelayElapsed = false
     const timer = setTimeout(() => {
       roomsSkeletonDelayElapsed = true
@@ -428,7 +368,7 @@
   })
   const roomsSettledEmpty = $derived(
     Boolean(
-      communityId &&
+      communityPointer &&
       rooms.length === 0 &&
       roomFilters.length > 0 &&
       roomRootsLoaded &&
@@ -487,7 +427,7 @@
   }
 
   const createRoom = () => {
-    if (communityId) pushModal(CommunityRoomCreate, {communityPubkey: communityId})
+    if (communityPointer) pushModal(CommunityRoomCreate, {community: communityPointer})
   }
 
   const respondToModeratorInvite = (declined: boolean) => {
@@ -498,7 +438,7 @@
     )
     if (invites.length === 0) return
 
-    const relays = $activeCommunityPublishRelays
+    const relays = routeCommunityDefinition?.relays || []
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community definition must declare at least one relay."})
       return
@@ -554,7 +494,7 @@
     const refs = Array.from(
       new Map(moderatorInviteProfileListRefs.map(ref => [ref.address, ref])).values(),
     ).sort((a, b) => a.address.localeCompare(b.address))
-    const relays = normalizeRelays($activeCommunityRelays)
+    const relays = normalizeRelays($activeExactCommunityRelays)
     const key = moderatorInviteEvidenceExpectedKey
 
     if (!key) {
@@ -579,15 +519,19 @@
     moderatorInviteEvidenceState = {key, status: "loading", events: []}
     const controller = new AbortController()
 
-    const filters = refs.map(
-      ref =>
-        ({
-          kinds: [ref.kind],
-          authors: [ref.pubkey],
-          "#d": [ref.identifier],
-          limit: 1,
-        }) satisfies Filter,
-    )
+    const filters = refs.flatMap(ref => {
+      const address = parseAddressRef(ref.address)
+      return address
+        ? [
+            {
+              kinds: [address.kind],
+              authors: [address.pubkey],
+              "#d": [address.identifier],
+              limit: 1,
+            } satisfies Filter,
+          ]
+        : []
+    })
 
     loadCommunityEventsWithStatus(relays, filters, {
       authenticate: true,
@@ -644,6 +588,7 @@
     }
 
     const catalog = JSON.parse(key) as {
+      communityAddress: string
       relays: string[]
       filters: Filter[]
       relayFilters: Filter[]
@@ -729,7 +674,7 @@
       relayFilters,
       localFilters: filters,
       priority: RELAY_REQUEST_PRIORITY.community,
-      owner: `community-home-rooms:${communityId}`,
+      owner: `community-home-rooms:${catalog.communityAddress}`,
       timeoutMs: ROOM_ROOT_LOAD_TIMEOUT_MS,
       signal: controller.signal,
     })
@@ -757,22 +702,21 @@
     <strong>Home</strong>
   {/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityId} />
+    {#if communityPointer}
+      <CommunityStarButton
+        community={communityPointer}
+        publishRelayHints={routeCommunityDefinition?.relays || communityPointer.relayHints} />
+      <CommunityShareButton
+        value={communityPointer}
+        definitionRelays={routeCommunityDefinition?.relays || []} />
+    {/if}
   {/snippet}
 </PageBar>
 
 <PageContent class="flex flex-col gap-2 p-2 pt-4">
   <div class="card2 bg-alt relative flex flex-col items-center gap-4 text-left">
-    {#if communityId}
-      <div class="flex w-full justify-end gap-2">
-        {#if $activeCommunityDefinition?.pubkey === communityId}
-          <CommunityShareButton communityPubkey={communityId} relayHints={communityShareRelays} />
-        {/if}
-        <CommunityStarButton
-          communityPubkey={communityId}
-          relayHints={communityActionRelays}
-          publishRelayHints={$activeCommunityPublishRelays} />
-      </div>
+    {#if communityPointer}
+      <div class="flex w-full justify-end gap-2"></div>
     {/if}
     <div class="relative flex gap-4">
       <div class="relative">
@@ -801,11 +745,11 @@
         <Content event={communityDescriptionEvent} showEntire />
       </div>
     {/if}
-    {#if $activeCommunityDefinition?.tos}
+    {#if routeCommunityDefinition?.terms}
       <div class="flex flex-wrap justify-center gap-3">
-        {#if $activeCommunityDefinition?.tos}
+        {#if routeCommunityDefinition?.terms}
           <Link
-            href={$activeCommunityDefinition.tos.relay || "#"}
+            href={routeCommunityDefinition.terms.reference}
             class="badge badge-neutral flex gap-2">
             <Icon icon={BillList} size={4} />
             Terms
@@ -876,12 +820,13 @@
     </section>
   {/if}
 
-  {#if communityId && communityHomeExtensionsReady}
+  {#if communityPointer && communityHomeExtensionsReady}
     {#key roomCatalogReadinessKey}
-      <CommunityExtensionsPrompt communityPubkey={communityId} relayHints={homeWidgetRelayHints} />
+      <CommunityExtensionsPrompt relayHints={homeWidgetRelayHints} />
 
       <CommunityHomeWidgetSlot
-        communityPubkey={communityId}
+        communityPubkey={controllerPubkey}
+        communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
         slotType="community-home-before-quicklinks" />
     {/key}
@@ -945,7 +890,7 @@
       </Link>
     {/if}
     {#each rooms as room (room.id)}
-      {@const roomPath = makeCommunityRoomPath(communityId, room.id)}
+      {@const roomPath = makeExactCommunityRoomPath(communityPointer!, room.id)}
       <Link href={roomPath} class="btn btn-neutral relative">
         <div class="flex min-w-0 items-center gap-2 overflow-hidden text-nowrap md:text-lg">
           <Icon icon={Hashtag} />
@@ -956,7 +901,7 @@
         {/if}
       </Link>
     {/each}
-    {#if communityId && rooms.length === 0 && (roomsSkeletonDelayElapsed || !roomsLoading)}
+    {#if communityPointer && rooms.length === 0 && (roomsSkeletonDelayElapsed || !roomsLoading)}
       <div class="card2 bg-alt col-span-full flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
           <h3 class="flex items-center gap-2 text-lg font-semibold">
@@ -997,10 +942,11 @@
     {/if}
   </div>
 
-  {#if communityId && communityHomeExtensionsReady}
+  {#if communityPointer && communityHomeExtensionsReady}
     {#key roomCatalogReadinessKey}
       <CommunityHomeWidgetSlot
-        communityPubkey={communityId}
+        communityPubkey={controllerPubkey}
+        communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
         slotType="community-home-after-quicklinks" />
     {/key}

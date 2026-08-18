@@ -33,9 +33,11 @@
   import CommunityWidgetSlotLaunchers from "@app/components/community/CommunityWidgetSlotLaunchers.svelte"
   import {isKnownEventKind, isKnownUnknown, Template, EventRenderer} from "@nostr-git/ui"
   import {getEventShareRelayHints} from "@app/util/event-share"
+  import type {CommunityPointer} from "@app/core/community"
 
   interface Props {
     url: string
+    community?: CommunityPointer
     event: TrustedEvent
     replyTo?: (event: TrustedEvent) => void
     showPubkey?: boolean
@@ -58,6 +60,7 @@
 
   const {
     url,
+    community = undefined,
     event,
     replyTo = undefined,
     showPubkey = false,
@@ -121,6 +124,7 @@
   const profileDisplay = $derived(
     deriveBudabitProfileDisplay(event.pubkey, {relays: profileRelayHints}),
   )
+  const communityContextUrl = $derived(community?.address || url)
   const scopedTags = $derived.by(() => {
     if (!scopeH || getTag("h", event.tags)?.[1] === scopeH) {
       return [] as string[][]
@@ -150,7 +154,8 @@
 
   const openMobileMenu = () =>
     pushModal(ChannelMessageMenuMobile, {
-      url,
+      url: communityContextUrl,
+      community,
       event,
       reply,
       edit,
@@ -350,7 +355,7 @@
           </Button>
         {/if}
         <ChannelMessageMenuButton
-          {url}
+          url={communityContextUrl}
           {event}
           relays={actionRelayTargets}
           {communitySectionName}
@@ -362,7 +367,12 @@
           relayHints={relayTargets}
           slotType="chat-message-actions"
           variant="message-actions"
-          context={{message: event, scopeH, communitySectionName}} />
+          context={{
+            message: event,
+            communityAddress: community?.address,
+            scopeH,
+            communitySectionName,
+          }} />
       {/if}
     </div>
   {/if}

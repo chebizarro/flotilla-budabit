@@ -23,7 +23,10 @@ describe("repository collection button reads", () => {
     expect(source).toContain("userCommunityStarTargetFilterPlan.localFilters")
     expect(source).toContain("userCommunityStarReactionFilterPlan.relayFilters")
     expect(source).toContain("userCommunityStarReactionFilterPlan.localFilters")
-    expect(source).toContain("parseTargetedPublication(event)?.ref?.relay")
+    expect(source).toContain("parseTargetedPublicationV2(event)?.source?.relay")
+    expect(source).toContain("makeTargetedPublicationForCommunityV2({")
+    expect(source).toContain("originalRef: starThunk?.event?.id")
+    expect(source).not.toContain('"#p": communityIds')
     expect(source).toContain("loadBoundedCommunityHistory({")
     expect(source).toContain("localFilters,")
   })
@@ -42,8 +45,8 @@ describe("repository collection button reads", () => {
     expect(source).toContain("data-collection-status={collectionStatus}")
     expect(source).toContain("Manage repository collections")
     expect(source).not.toContain("history is incomplete")
-    expect(source).toContain("lockedCommunityPubkeys: communityHistoryCompleteAtOpen")
-    expect(modalSource).toContain("lockedCommunities.has(option.pubkey)")
+    expect(source).toContain("lockedCommunityAddresses: communityHistoryCompleteAtOpen")
+    expect(modalSource).toContain("lockedCommunities.has(option.address)")
   })
 
   it("passes global target and original completion through the shared read state", () => {

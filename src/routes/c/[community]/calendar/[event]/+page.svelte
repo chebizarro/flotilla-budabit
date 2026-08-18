@@ -42,11 +42,10 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
-    activeCommunityRelays,
     getUserOutboxRelays,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
@@ -84,34 +83,41 @@
   import {pushToast} from "@app/util/toast"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {loadBoundedCommunityHistory} from "@app/core/requests"
-  import {makeCommunityCalendarPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityCalendarPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const REQUEST_HARD_TIMEOUT_MS = 10_000
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
   const eventParam = $derived($page.params.event || "")
   const calendarPath = $derived(
-    communityPubkey ? makeCommunityCalendarPath(communityPubkey) : $page.url.pathname,
+    routeCommunity ? makeExactCommunityCalendarPath(routeCommunity) : $page.url.pathname,
   )
   const eventPath = $derived(
-    communityPubkey && eventParam
-      ? makeCommunityCalendarPath(communityPubkey, eventParam)
+    routeCommunity && eventParam
+      ? makeExactCommunityCalendarPath(routeCommunity, eventParam)
       : calendarPath,
   )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -123,37 +129,37 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const calendarSectionName = $derived(
     getCommunityCalendarWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
     ),
   )
   const getCalendarEventSectionName = (_kind: number) =>
     getCommunityCalendarWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
     )
   const commentSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.comment,
     ),
   )
   const commentAccessMessage = $derived(`Request ${commentSectionName} access to comment.`)
   const calendarWriterPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityCalendarTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
         })
       : [],
   )
   const commentAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.comment,
           reportState: $activeCommunityReportState,
@@ -161,9 +167,9 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.reaction,
           reportState: $activeCommunityReportState,
@@ -171,9 +177,9 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
@@ -181,17 +187,17 @@
       : [],
   )
   const calendarEditPublishRelays = $derived(
-    normalizeRelays([...getUserOutboxRelays(), ...$activeCommunityPublishRelays]),
+    normalizeRelays([...getUserOutboxRelays(), ...$activeExactCommunityRelays]),
   )
   const isEventIdParam = $derived(/^[0-9a-f]{64}$/i.test(eventParam))
   const targetingFilterPlan = $derived.by(() => {
     const relayFilters: Filter[] = []
     const localFilters: Filter[] = []
-    if (!communityAuthorityReady || !communityPubkey) return {relayFilters, localFilters}
+    if (!communityAuthorityReady || !routeCommunity) return {relayFilters, localFilters}
 
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
-        [makeCommunityTargetingFilter(communityPubkey, [target.kind])],
+        [makeCommunityTargetingFilter(communityId, [target.kind])],
         calendarWriterPubkeys,
       )
       relayFilters.push(...plan.relayFilters)
@@ -205,9 +211,10 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition && routeCommunity
       ? filterAuthorizedCommunityTargetingEvents({
-          definition: $activeCommunityDefinition,
+          community: routeCommunity,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           events: $targetingEvents,
           reportState: $activeCommunityReportState,
@@ -224,19 +231,19 @@
   const directEventFilterPlan = $derived.by(() => {
     const relayFilters: Filter[] = []
     const localFilters: Filter[] = []
-    if (!communityAuthorityReady || !communityPubkey || !eventParam) {
+    if (!communityAuthorityReady || !communityId || !eventParam) {
       return {relayFilters, localFilters}
     }
 
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const structuralFilters: Filter[] = [
-        {kinds: [target.kind], "#d": [eventParam], "#h": [communityPubkey]},
+        {kinds: [target.kind], "#d": [eventParam], "#h": [communityId]},
       ]
       if (isEventIdParam) {
         structuralFilters.unshift({
           kinds: [target.kind],
           ids: [eventParam],
-          "#h": [communityPubkey],
+          "#h": [communityId],
         })
       }
       const plan = makeCommunityContentFilterPlan(structuralFilters, calendarWriterPubkeys)
@@ -309,7 +316,7 @@
               kinds: [COMMENT],
               "#E": [approvedEvent.id],
               "#K": [String(approvedEvent.kind)],
-              "#h": [communityPubkey],
+              "#h": [communityId],
             },
             ...(eventAddress
               ? [
@@ -317,13 +324,13 @@
                     kinds: [COMMENT],
                     "#A": [eventAddress],
                     "#K": [String(approvedEvent.kind)],
-                    "#h": [communityPubkey],
+                    "#h": [communityId],
                   },
                   {
                     kinds: [COMMENT],
                     "#a": [eventAddress],
                     "#K": [String(approvedEvent.kind)],
-                    "#h": [communityPubkey],
+                    "#h": [communityId],
                   },
                 ]
               : []),
@@ -345,7 +352,7 @@
       matches: event =>
         matchFilters(replyFilters, event) &&
         Boolean(
-          readCommunityCalendarEventReply(event, communityPubkey, approvedEvent?.id, eventAddress),
+          readCommunityCalendarEventReply(event, communityId, approvedEvent?.id, eventAddress),
         ),
     }),
   )
@@ -354,12 +361,7 @@
       reply => reply.event.created_at,
       filterVisibleAfterDeletesAndEdits(replyProjection.events, $editedTargetIds)
         .map(replyEvent =>
-          readCommunityCalendarEventReply(
-            replyEvent,
-            communityPubkey,
-            approvedEvent?.id,
-            eventAddress,
-          ),
+          readCommunityCalendarEventReply(replyEvent, communityId, approvedEvent?.id, eventAddress),
         )
         .filter((reply): reply is NonNullable<ReturnType<typeof readCommunityCalendarEventReply>> =>
           Boolean(reply),
@@ -388,10 +390,10 @@
       communityAuthorityReady &&
       !approvedEventCensorReason &&
       $pubkey &&
-      $activeCommunityPublishRelays.length > 0 &&
-      $activeCommunityDefinition &&
+      $activeExactCommunityRelays.length > 0 &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.comment,
@@ -406,9 +408,9 @@
       communityAuthorityReady &&
       !approvedEventCensorReason &&
       $pubkey &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.reaction,
@@ -452,7 +454,7 @@
       pushToast({theme: "error", message: commentAccessMessage})
       return false
     }
-    const relays = $activeCommunityPublishRelays
+    const relays = $activeExactCommunityRelays
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return false
@@ -465,7 +467,7 @@
           content: trimmed,
           tags,
           relays,
-          url: communityPubkey,
+          url: communityId,
         })
       } catch (error) {
         pushToast({
@@ -479,7 +481,7 @@
     }
 
     const template = makeCommunityCalendarEventReply({
-      communityPubkey,
+      communityPubkey: communityId,
       calendarEvent: approvedEvent,
       relay: relays[0],
       content: trimmed,
@@ -550,19 +552,19 @@
   $effect(() => {
     void historicalLoadRetryVersion
 
-    if (!communityPubkey || !event || !isEventIdParam) return
+    if (!routeCommunity || !event || !isEventIdParam) return
 
     const identifier = getTagValue("d", event.tags)
     if (!identifier || identifier === eventParam) return
 
-    goto(`${makeCommunityCalendarPath(communityPubkey, identifier)}${window.location.hash}`, {
+    goto(`${makeExactCommunityCalendarPath(routeCommunity, identifier)}${window.location.hash}`, {
       replaceState: true,
     })
   })
 
   $effect(() => {
     void historicalLoadRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
 
     if (!communityBootstrapReady) {
       loadingEvent = false
@@ -590,7 +592,7 @@
       localFilters: eventFilters,
       timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `community-calendar-event:${communityPubkey}:${eventParam}`,
+      owner: `community-calendar-event:${communityAddress}:${eventParam}`,
       signal: controller.signal,
     })
       .then(result => {
@@ -633,7 +635,7 @@
           ...plan,
           timeoutMs: REQUEST_HARD_TIMEOUT_MS,
           priority: RELAY_REQUEST_PRIORITY.interactive,
-          owner: `community-calendar-event-originals:${communityPubkey}:${eventParam}`,
+          owner: `community-calendar-event-originals:${communityAddress}:${eventParam}`,
           signal: controller.signal,
         }),
       ),
@@ -659,7 +661,7 @@
   $effect(() => {
     void historicalLoadRetryVersion
 
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
     const relayFilters = targetingFilterPlan.relayFilters
     const localFilters = targetingFilterPlan.localFilters
 
@@ -689,7 +691,7 @@
       localFilters,
       timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `community-calendar-event-targets:${communityPubkey}:${eventParam}`,
+      owner: `community-calendar-event-targets:${communityAddress}:${eventParam}`,
       signal: controller.signal,
     })
       .then(result => {
@@ -711,7 +713,7 @@
   $effect(() => {
     void historicalLoadRetryVersion
 
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
 
     if (!communityBootstrapReady) {
       loadingReplies = false
@@ -739,7 +741,7 @@
       localFilters: replyFilters,
       timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `community-calendar-replies:${communityPubkey}:${eventParam}`,
+      owner: `community-calendar-replies:${communityAddress}:${eventParam}`,
       signal: controller.signal,
     })
       .then(result => {
@@ -813,7 +815,7 @@
           : "Calendar event"}</strong>
   {/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={routeCommunity?.naddr} />
   {/snippet}
 </PageBar>
 
@@ -827,11 +829,11 @@
           <CalendarEventDate event={approvedEvent} />
           <div class="flex min-w-0 flex-grow flex-col gap-1">
             <CalendarEventHeader event={approvedEvent} />
-            <CalendarEventMeta event={approvedEvent} relays={$activeCommunityRelays} />
+            <CalendarEventMeta event={approvedEvent} relays={$activeExactCommunityRelays} />
             <CalendarEventDescription
               event={approvedEvent}
-              url={communityPubkey}
-              relays={$activeCommunityRelays}
+              url={communityId}
+              relays={$activeExactCommunityRelays}
               communitySectionName={approvedEventSectionName} />
             {#if eventOperationId}
               <PublicationStatus operationId={eventOperationId} />
@@ -841,11 +843,12 @@
         {#if !eventOperationId}
           <div class="flex w-full flex-col justify-end sm:flex-row">
             <CalendarEventActions
-              url={communityPubkey}
-              relays={$activeCommunityRelays}
+              url={communityId}
+              community={routeCommunity}
+              relays={$activeExactCommunityRelays}
               publishRelays={calendarEditPublishRelays}
-              reactionRelays={$activeCommunityPublishRelays}
-              scopeH={communityPubkey}
+              reactionRelays={$activeExactCommunityRelays}
+              scopeH={communityId}
               communitySectionName={approvedEventSectionName}
               allowedAuthors={commentAuthorPubkeys}
               reactionAllowedAuthors={reactionAuthorPubkeys}
@@ -876,18 +879,18 @@
             class="card2 bg-alt z-feature w-full shadow-sm"
             data-latest-reply={item.id === latestReplyId ? "true" : undefined}>
             <ChannelMessage
-              url={communityPubkey}
+              url={communityId}
               event={item.event}
               operationId={replyProjection.operationIds.get(item.id)}
               showPubkey
               readOnly={!canReact}
-              interactionRelays={$activeCommunityRelays}
-              actionRelays={$activeCommunityPublishRelays}
-              profileRelays={$activeCommunityRelays}
+              interactionRelays={$activeExactCommunityRelays}
+              actionRelays={$activeExactCommunityRelays}
+              profileRelays={$activeExactCommunityRelays}
               allowedAuthors={commentAuthorPubkeys}
               reactionAllowedAuthors={reactionAuthorPubkeys}
               reportAllowedAuthors={reportAuthorPubkeys}
-              scopeH={communityPubkey}
+              scopeH={communityId}
               communitySectionName={commentSectionName}
               {replyParent}
               onReplyParentOpen={scrollToReplyParent}
@@ -927,9 +930,14 @@
         {/if}
         {#key eventToEdit}
           <RoomCompose
-            url={$activeCommunityRelays[0] || communityPubkey}
-            h={communityPubkey}
-            blossomContext={{type: "community", communityPubkey}}
+            url={$activeExactCommunityRelays[0] || communityId}
+            h={communityId}
+            blossomContext={communityDefinition
+              ? {
+                  type: "community",
+                  communityAddress: communityDefinition.pointer.address,
+                }
+              : undefined}
             showMenu={false}
             onSubmit={sendReply}
             onEscape={closeCommentPrompt}

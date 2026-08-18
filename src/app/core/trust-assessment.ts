@@ -62,6 +62,8 @@ export type RepoAssociationValidation = "strong" | "valid" | "weak" | "invalid" 
 export type RepoCommunityContext = {
   repoAddress: string
   communityPubkey?: string
+  communityAddress?: string
+  communityId?: string
   associationEventId?: string
   associationAuthorPubkey?: string
   relayHints: string[]
@@ -120,6 +122,8 @@ export const suppressTrustAssessment = (
 export const makeRepoCommunityContext = ({
   repoAddress,
   communityPubkey,
+  communityAddress,
+  communityId,
   associationEventId,
   associationAuthorPubkey,
   relayHints = [],
@@ -130,6 +134,8 @@ export const makeRepoCommunityContext = ({
 }: Partial<RepoCommunityContext> & {repoAddress: string}): RepoCommunityContext => ({
   repoAddress,
   communityPubkey,
+  communityAddress,
+  communityId,
   associationEventId,
   associationAuthorPubkey,
   relayHints: unique(relayHints.filter(Boolean)),

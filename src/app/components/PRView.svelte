@@ -222,7 +222,7 @@
     () => ((repoClass as any)?.repoEvent?.pubkey || (repoClass as any)?.owner || "") as string,
   )
   const repoCommunityScope = $derived(
-    repoClass.community?.pubkey ||
+    repoClass.community?.communityId ||
       getTagValue("h", ((repoClass as any)?.repoEvent?.tags || []) as string[][]) ||
       "",
   )

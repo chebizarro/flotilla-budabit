@@ -2,18 +2,21 @@
 
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {EVENT_TIME, THREAD, type TrustedEvent} from "@welshman/util"
-import {finalizeEvent} from "nostr-tools/pure"
+import {finalizeEvent, getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   COMMUNITY_SUBTYPE_ROOM,
   COMMUNITY_SUBTYPE_THREADS,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+  type CommunitySectionInputV2,
 } from "@app/core/community"
 import {
   makeAddressablePublicationRef,
-  makeTargetedPublicationForCommunity,
+  makeTargetedPublicationForCommunityV2,
 } from "@app/core/community-targeting"
 
 const mocks = vi.hoisted(() => {
@@ -70,7 +73,8 @@ const mocks = vi.hoisted(() => {
     pubkey: createStore(undefined as string | undefined),
     goto: vi.fn(),
     activeRepoClass: createStore(null),
-    activeCommunityDefinition: createStore(undefined as any),
+    activeExactCommunityDefinition: createStore(undefined as any),
+    activeExactCommunityPointer: createStore(undefined as any),
     activeCommunityPermissionStatus: createStore<{
       communityPubkey: string
       key: string
@@ -87,18 +91,22 @@ const mocks = vi.hoisted(() => {
       hasCachedEvents: false,
     }),
     activeCommunityProfileListEvents: createStore([] as any[]),
-    activeCommunityRelayHints: createStore([] as string[]),
     activeCommunityRelays: createStore([] as string[]),
-    activeCommunityPublishRelays: createStore([] as string[]),
     activeCommunityReportState: createStore(undefined as any),
   }
 })
 
-const communityPubkey = "a".repeat(64)
-const calendarWriterPubkey = "b".repeat(64)
-const calendarMemberPubkey = "c".repeat(64)
-const outsiderPubkey = "d".repeat(64)
-const streamManagerPubkey = "e".repeat(64)
+const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = testPubkey(51)
+const communityPointer = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: communityPubkey,
+  relayHints: ["wss://relay.example.com/"],
+})!
+const calendarWriterPubkey = testPubkey(52)
+const calendarMemberPubkey = testPubkey(53)
+const outsiderPubkey = testPubkey(54)
+const streamManagerPubkey = testPubkey(55)
 const zapStreamProviderPubkey = "cf45a6ba1363ad7ed213a078e710d24115ae721c9b47bd1ebf4458eaefb4c2a5"
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
@@ -113,29 +121,29 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const communityDefinition = parseCommunityDefinition(
-  makeEvent({
-    kind: COMMUNITY_DEFINITION_KIND,
-    pubkey: communityPubkey,
-    tags: [
-      ["content", "Events and meetups"],
-      ["k", String(EVENT_TIME)],
-      ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
-    ],
-  }),
-)!
-const communityDefinitionWithRelays = parseCommunityDefinition(
-  makeEvent({
-    kind: COMMUNITY_DEFINITION_KIND,
-    pubkey: communityPubkey,
-    tags: [
-      ["r", "wss://relay.example.com/"],
-      ["content", "Events and meetups"],
-      ["k", String(EVENT_TIME)],
-      ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
-    ],
-  }),
-)!
+const makeDefinition = (sections: CommunitySectionInputV2[], id = "community-definition") =>
+  parseCommunityDefinitionV2(
+    makeEvent({
+      id,
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      content: "",
+      tags: buildCommunityDefinitionV2({
+        communityId: communityPointer.communityId,
+        name: "Test community",
+        relays: ["wss://relay.example.com"],
+        sections,
+      }).tags,
+    }),
+  )!
+
+const communityDefinition = makeDefinition([
+  {
+    name: "Events and meetups",
+    kinds: [{kind: EVENT_TIME}],
+    profileLists: [{address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`}],
+  },
+])
+const communityDefinitionWithRelays = communityDefinition
 
 const calendarProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
@@ -147,25 +155,26 @@ const calendarProfileList = makeEvent({
   ],
 })
 
-const partialCommunityDefinition = parseCommunityDefinition(
-  makeEvent({
-    id: "partial-community-definition",
-    kind: COMMUNITY_DEFINITION_KIND,
-    pubkey: communityPubkey,
-    tags: [
-      ["r", "wss://relay.example.com/"],
-      ["content", "Calendar"],
-      ["k", String(EVENT_TIME)],
-      ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Calendar`],
-      ["content", "Calls"],
-      ["k", String(THREAD), COMMUNITY_SUBTYPE_ROOM],
-      ["a", `${PROFILE_LIST_KIND}:${outsiderPubkey}:Calls`],
-      ["content", "Streams"],
-      ["k", "30311"],
-      ["a", `${PROFILE_LIST_KIND}:${streamManagerPubkey}:Streams`],
-    ],
-  }),
-)!
+const partialCommunityDefinition = makeDefinition(
+  [
+    {
+      name: "Calendar",
+      kinds: [{kind: EVENT_TIME}],
+      profileLists: [{address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Calendar`}],
+    },
+    {
+      name: "Calls",
+      kinds: [{kind: THREAD, subtype: COMMUNITY_SUBTYPE_ROOM}],
+      profileLists: [{address: `${PROFILE_LIST_KIND}:${outsiderPubkey}:Calls`}],
+    },
+    {
+      name: "Streams",
+      kinds: [{kind: 30311}],
+      profileLists: [{address: `${PROFILE_LIST_KIND}:${streamManagerPubkey}:Streams`}],
+    },
+  ],
+  "partial-community-definition",
+)
 
 const partialCalendarProfileList = makeEvent({
   id: "partial-calendar-profile-list",
@@ -179,17 +188,20 @@ const partialCalendarProfileList = makeEvent({
 })
 
 const makePartialRuntimeContext = (userPubkey: string, authorityEvidenceSettled: boolean) => ({
+  community: communityPointer,
   definition: partialCommunityDefinition,
   profileListEvents: [partialCalendarProfileList],
   ...(authorityEvidenceSettled ? {authorityEvidenceSettled: true} : {}),
   relays: ["wss://relay.example.com/"],
   relayHints: ["wss://relay.example.com/"],
   communityContext: {
-    version: 1 as const,
+    version: 2 as const,
     contextSessionId: "partial-community-context",
     contextVersion: 1,
-    pubkey: communityPubkey,
-    ncommunity: "",
+    communityId: communityPointer.communityId,
+    controllerPubkey: communityPointer.controllerPubkey,
+    definitionAddress: communityPointer.address,
+    naddr: communityPointer.naddr,
     relays: ["wss://relay.example.com/"],
     relayHints: ["wss://relay.example.com/"],
     blossomServers: [],
@@ -202,7 +214,7 @@ const calendarTargetingEvent = makeEvent({
   id: "target-1",
   pubkey: calendarWriterPubkey,
   kind: TARGETED_PUBLICATION_KIND,
-  tags: makeTargetedPublicationForCommunity({
+  tags: makeTargetedPublicationForCommunityV2({
     targetingId: "target-1",
     originalKind: EVENT_TIME,
     originalRef: makeAddressablePublicationRef({
@@ -211,8 +223,7 @@ const calendarTargetingEvent = makeEvent({
       identifier: "event-1",
       relay: "wss://relay.example.com/",
     }),
-    communityPubkey,
-    communityRelay: "wss://relay.example.com/",
+    community: communityPointer,
   }).tags,
 })
 
@@ -243,12 +254,11 @@ vi.mock("@app/core/git-state", () => ({
 }))
 
 vi.mock("@app/core/community-state", () => ({
-  activeCommunityDefinition: mocks.activeCommunityDefinition,
+  activeExactCommunityDefinition: mocks.activeExactCommunityDefinition,
+  activeExactCommunityPointer: mocks.activeExactCommunityPointer,
   activeCommunityPermissionStatus: mocks.activeCommunityPermissionStatus,
   activeCommunityProfileListEvents: mocks.activeCommunityProfileListEvents,
-  activeCommunityRelayHints: mocks.activeCommunityRelayHints,
-  activeCommunityRelays: mocks.activeCommunityRelays,
-  activeCommunityPublishRelays: mocks.activeCommunityPublishRelays,
+  activeExactCommunityRelays: mocks.activeCommunityRelays,
   activeCommunityReportState: mocks.activeCommunityReportState,
   authenticateCommunityRelays: mocks.authenticateCommunityRelays,
   getCommunityBootstrapRelays: vi.fn((relays: string[] = []) => relays),
@@ -374,7 +384,8 @@ beforeEach(() => {
   mocks.goto.mockResolvedValue(undefined)
   mocks.pubkey.set(undefined)
   mocks.activeRepoClass.set(null)
-  mocks.activeCommunityDefinition.set(undefined)
+  mocks.activeExactCommunityDefinition.set(undefined)
+  mocks.activeExactCommunityPointer.set(communityPointer)
   mocks.activeCommunityPermissionStatus.set({
     communityPubkey: "",
     key: "",
@@ -384,9 +395,7 @@ beforeEach(() => {
     hasCachedEvents: false,
   })
   mocks.activeCommunityProfileListEvents.set([])
-  mocks.activeCommunityRelayHints.set([])
   mocks.activeCommunityRelays.set([])
-  mocks.activeCommunityPublishRelays.set([])
   mocks.activeCommunityReportState.set(undefined)
 })
 
@@ -421,9 +430,8 @@ describe("ExtensionBridge", () => {
     const {ExtensionBridge} = await import("./bridge")
     const communityRelay = "wss://community.example.com/"
     const publicRelay = "wss://public.example.com/"
+    mocks.activeExactCommunityPointer.set({...communityPointer, relayHints: [communityRelay]})
     mocks.activeCommunityRelays.set([communityRelay])
-    mocks.activeCommunityPublishRelays.set([communityRelay])
-    mocks.activeCommunityRelayHints.set([communityRelay])
     mocks.publishThunk.mockReturnValue({
       complete: Promise.resolve(),
       results: {
@@ -905,7 +913,7 @@ describe("ExtensionBridge", () => {
 
   it("checks descriptor write capabilities through active section mappings", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarWriterPubkey)
@@ -949,16 +957,19 @@ describe("ExtensionBridge", () => {
         permissions: ["community:checkWriteCapabilities"],
       },
       communityRuntimeContext: {
+        community: communityPointer,
         definition: communityDefinition,
         profileListEvents: [calendarProfileList],
         relays: ["wss://preview.example.com/"],
         relayHints: ["wss://preview.example.com/"],
         communityContext: {
-          version: 1,
+          version: 2,
           contextSessionId: "preview-community-context",
           contextVersion: 3,
-          pubkey: communityPubkey,
-          ncommunity: "",
+          communityId: communityPointer.communityId,
+          controllerPubkey: communityPointer.controllerPubkey,
+          definitionAddress: communityPointer.address,
+          naddr: communityPointer.naddr,
           relays: ["wss://preview.example.com/"],
           relayHints: ["wss://preview.example.com/"],
           blossomServers: [],
@@ -1000,11 +1011,12 @@ describe("ExtensionBridge", () => {
       tags: [
         [
           "d",
-          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+          `budabit-community-config:${communityPointer.address}:budabit-calendar-widget:featured-calendar-event`,
         ],
+        ["descriptor", String(EVENT_TIME)],
       ],
     })
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockReturnValue([cachedConfig])
@@ -1040,11 +1052,12 @@ describe("ExtensionBridge", () => {
       tags: [
         [
           "d",
-          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+          `budabit-community-config:${communityPointer.address}:budabit-calendar-widget:featured-calendar-event`,
         ],
+        ["descriptor", String(EVENT_TIME)],
       ],
     })
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockReturnValue([cachedConfig])
@@ -1083,14 +1096,17 @@ describe("ExtensionBridge", () => {
 
   it("makes a newer background-refreshed shared config visible", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    const identifier = `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`
+    const identifier = `budabit-community-config:${communityPointer.address}:budabit-calendar-widget:featured-calendar-event`
     const cachedConfig = makeEvent({
       id: "cached-config",
       kind: 30078,
       pubkey: calendarWriterPubkey,
       created_at: 100,
       content: JSON.stringify({header: "Cached"}),
-      tags: [["d", identifier]],
+      tags: [
+        ["d", identifier],
+        ["descriptor", String(EVENT_TIME)],
+      ],
     })
     const refreshedConfig = makeEvent({
       id: "refreshed-config",
@@ -1098,9 +1114,12 @@ describe("ExtensionBridge", () => {
       pubkey: calendarWriterPubkey,
       created_at: 200,
       content: JSON.stringify({header: "Refreshed"}),
-      tags: [["d", identifier]],
+      tags: [
+        ["d", identifier],
+        ["descriptor", String(EVENT_TIME)],
+      ],
     })
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockReturnValue([cachedConfig])
@@ -1138,7 +1157,7 @@ describe("ExtensionBridge", () => {
 
   it("keeps background refresh freshness scoped by shared-config address", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockImplementation((filters: any[] = []) => {
@@ -1151,7 +1170,10 @@ describe("ExtensionBridge", () => {
               pubkey: calendarWriterPubkey,
               created_at: 100,
               content: "{}",
-              tags: [["d", identifier]],
+              tags: [
+                ["d", identifier],
+                ["descriptor", String(EVENT_TIME)],
+              ],
             }),
           ]
         : []
@@ -1188,16 +1210,19 @@ describe("ExtensionBridge", () => {
       ],
     })
     const makeRuntimeContext = (profileListEvents: TrustedEvent[], contextVersion: number) => ({
+      community: communityPointer,
       definition: communityDefinition,
       profileListEvents,
       relays: ["wss://preview.example.com/"],
       relayHints: ["wss://preview.example.com/"],
       communityContext: {
-        version: 1 as const,
+        version: 2 as const,
         contextSessionId: "live-community-context",
         contextVersion,
-        pubkey: communityPubkey,
-        ncommunity: "",
+        communityId: communityPointer.communityId,
+        controllerPubkey: communityPointer.controllerPubkey,
+        definitionAddress: communityPointer.address,
+        naddr: communityPointer.naddr,
         relays: ["wss://preview.example.com/"],
         relayHints: ["wss://preview.example.com/"],
         blossomServers: [],
@@ -1212,7 +1237,7 @@ describe("ExtensionBridge", () => {
     const runtimeContextProvider = vi.fn(() => runtimeContext)
 
     // These stale fallbacks must not win over the provider or its fail-closed result.
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://stale.example.com/"])
     mocks.pubkey.set(calendarMemberPubkey)
@@ -1262,7 +1287,7 @@ describe("ExtensionBridge", () => {
 
   it("recognizes descriptor writers without treating them as section moderators", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarMemberPubkey)
@@ -1295,7 +1320,7 @@ describe("ExtensionBridge", () => {
 
   it("treats a settled missing profile list as pending member-only authority", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarWriterPubkey)
@@ -1336,7 +1361,7 @@ describe("ExtensionBridge", () => {
 
   it("uses settled partial runtime evidence without granting missing-list authority", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    const sharedConfigIdentifier = `budabit-community-config:${communityPubkey}:budabit-call-widget:featured-call`
+    const sharedConfigIdentifier = `budabit-community-config:${communityPointer.address}:budabit-call-widget:featured-call`
     const missingManagerConfig = makeEvent({
       id: "missing-manager-config",
       kind: 30078,
@@ -1501,7 +1526,7 @@ describe("ExtensionBridge", () => {
 
   it("hydrates profile-list events before resolving descriptor capabilities", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarMemberPubkey)
@@ -1547,7 +1572,7 @@ describe("ExtensionBridge", () => {
 
   it("returns the latest moderator-authored shared config", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarMemberPubkey)
@@ -1561,7 +1586,10 @@ describe("ExtensionBridge", () => {
             pubkey: outsiderPubkey,
             created_at: 100 + index,
             content: JSON.stringify({header: "Invalid", eventRefs: ["invalid"]}),
-            tags: [["d", filters[0]["#d"][0]]],
+            tags: [
+              ["d", filters[0]["#d"][0]],
+              ["descriptor", String(EVENT_TIME)],
+            ],
           }),
         )
       }
@@ -1572,7 +1600,10 @@ describe("ExtensionBridge", () => {
           pubkey: calendarWriterPubkey,
           created_at: 90,
           content: JSON.stringify({header: "Featured", eventRefs: [calendarEventRef]}),
-          tags: [["d", filters[0]["#d"][0]]],
+          tags: [
+            ["d", filters[0]["#d"][0]],
+            ["descriptor", String(EVENT_TIME)],
+          ],
         }),
       )
     })
@@ -1614,12 +1645,13 @@ describe("ExtensionBridge", () => {
       tags: [
         [
           "d",
-          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+          `budabit-community-config:${communityPointer.address}:budabit-calendar-widget:featured-calendar-event`,
         ],
+        ["descriptor", String(EVENT_TIME)],
       ],
     })
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockReturnValue([cachedConfig])
@@ -1673,12 +1705,12 @@ describe("ExtensionBridge", () => {
       tags: [
         [
           "d",
-          `budabit-community-config:${communityPubkey}:budabit-calendar-widget:featured-calendar-event`,
+          `budabit-community-config:${communityPointer.address}:budabit-calendar-widget:featured-calendar-event`,
         ],
       ],
     })
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockReturnValue([cachedConfig])
@@ -1706,7 +1738,7 @@ describe("ExtensionBridge", () => {
 
   it("returns not-ready for shared config while cached permission evidence is refreshing", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.activeCommunityPermissionStatus.set({
@@ -1741,10 +1773,9 @@ describe("ExtensionBridge", () => {
 
   it("only lets descriptor moderators publish shared config", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinitionWithRelays)
+    mocks.activeExactCommunityDefinition.set(communityDefinitionWithRelays)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
-    mocks.activeCommunityPublishRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarMemberPubkey)
 
     const extension = makeWidgetStorageExtension({
@@ -1791,25 +1822,32 @@ describe("ExtensionBridge", () => {
         event: expect.objectContaining({kind: 30078}),
       }),
     )
+    const publishedTags = mocks.publishThunk.mock.calls.at(-1)?.[0].event.tags
+    expect(publishedTags).toEqual(
+      expect.arrayContaining([
+        ["a", communityPointer.address],
+        ["descriptor", String(EVENT_TIME)],
+      ]),
+    )
+    expect(publishedTags).not.toContainEqual(["p", communityPubkey])
   })
 
   it("lets a moderator of any requested descriptor publish shared config", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    const mixedDefinition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: [
-          ["r", "wss://relay.example.com/"],
-          ["content", "Events and meetups"],
-          ["k", String(EVENT_TIME)],
-          ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
-          ["content", "Threads"],
-          ["k", String(THREAD), COMMUNITY_SUBTYPE_THREADS],
-          ["a", `${PROFILE_LIST_KIND}:${outsiderPubkey}:Threads`],
+    const mixedDefinition = makeDefinition([
+      {
+        name: "Events and meetups",
+        kinds: [{kind: EVENT_TIME}],
+        profileLists: [
+          {address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`},
         ],
-      }),
-    )!
+      },
+      {
+        name: "Threads",
+        kinds: [{kind: THREAD, subtype: COMMUNITY_SUBTYPE_THREADS}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${outsiderPubkey}:Threads`}],
+      },
+    ])
     const threadProfileList = makeEvent({
       id: "thread-profile-list",
       kind: PROFILE_LIST_KIND,
@@ -1819,10 +1857,9 @@ describe("ExtensionBridge", () => {
         ["p", outsiderPubkey],
       ],
     })
-    mocks.activeCommunityDefinition.set(mixedDefinition)
+    mocks.activeExactCommunityDefinition.set(mixedDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList, threadProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
-    mocks.activeCommunityPublishRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarWriterPubkey)
     mocks.publishThunk.mockReturnValue({
       complete: Promise.resolve(),
@@ -1858,13 +1895,17 @@ describe("ExtensionBridge", () => {
     )
   })
 
-  it("does not use runtime relay hints for dedicated community publishing", async () => {
+  it("uses exact definition relays instead of runtime relay hints for publishing", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
-    mocks.activeCommunityRelayHints.set(["wss://hint.example.com/"])
     mocks.activeCommunityRelays.set(["wss://hint.example.com/"])
     mocks.pubkey.set(calendarWriterPubkey)
+    mocks.publishThunk.mockReturnValue({
+      complete: Promise.resolve(),
+      results: {"wss://relay.example.com/": {status: "success"}},
+      event: {id: "published-config"},
+    })
 
     const extension = makeWidgetStorageExtension({
       widget: {
@@ -1881,19 +1922,20 @@ describe("ExtensionBridge", () => {
         descriptors: [{kind: EVENT_TIME}],
         config: {header: "Featured", eventRefs: [calendarEventRef]},
       }),
-    ).resolves.toEqual({
-      error: "Community definition must declare relays before publishing",
-      code: "COMMUNITY_CONTEXT_NOT_READY",
-    })
-    expect(mocks.authenticateCommunityRelays).not.toHaveBeenCalled()
-    expect(mocks.publishThunk).not.toHaveBeenCalled()
+    ).resolves.toMatchObject({status: "ok", eventId: "published-config"})
+    expect(mocks.authenticateCommunityRelays).toHaveBeenCalledWith(
+      ["wss://relay.example.com/"],
+      expect.any(Object),
+    )
+    expect(mocks.publishThunk).toHaveBeenCalledWith(
+      expect.objectContaining({relays: ["wss://relay.example.com/"]}),
+    )
   })
 
   it("uses widget relay hints when community definition relays are empty", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
-    mocks.activeCommunityRelayHints.set(["wss://hint.example.com/"])
     mocks.activeCommunityRelays.set([])
     mocks.pubkey.set(calendarWriterPubkey)
 
@@ -1903,11 +1945,13 @@ describe("ExtensionBridge", () => {
         permissions: ["community:checkWriteCapabilities"],
       },
       communityContext: {
-        version: 1,
+        version: 2,
         contextSessionId: "community-context-test",
         contextVersion: 0,
-        pubkey: communityPubkey,
-        ncommunity: "",
+        communityId: communityPointer.communityId,
+        controllerPubkey: communityPointer.controllerPubkey,
+        definitionAddress: communityPointer.address,
+        naddr: communityPointer.naddr,
         relays: ["wss://hint.example.com/"],
         relayHints: ["wss://hint.example.com/"],
         blossomServers: [],
@@ -1935,7 +1979,7 @@ describe("ExtensionBridge", () => {
 
   it("returns descriptor errors instead of falling back to default sections", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
 
@@ -1956,7 +2000,7 @@ describe("ExtensionBridge", () => {
 
   it("queries community events through descriptor section mappings", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -1996,7 +2040,7 @@ describe("ExtensionBridge", () => {
         filters: [
           expect.objectContaining({
             kinds: [TARGETED_PUBLICATION_KIND],
-            "#p": [communityPubkey],
+            "#h": [communityPubkey],
             "#k": [String(EVENT_TIME)],
           }),
         ],
@@ -2018,7 +2062,7 @@ describe("ExtensionBridge", () => {
 
   it("returns cached community events when relay event queries are empty", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockImplementation(((filters: any[]) => {
@@ -2053,7 +2097,7 @@ describe("ExtensionBridge", () => {
     const {ExtensionBridge} = await import("./bridge")
     let targetingPage = 0
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2067,7 +2111,7 @@ describe("ExtensionBridge", () => {
           pubkey: outsiderPubkey,
           created_at: pageCreatedAt - index,
           kind: TARGETED_PUBLICATION_KIND,
-          tags: makeTargetedPublicationForCommunity({
+          tags: makeTargetedPublicationForCommunityV2({
             targetingId: `outsider-target-${targetingPage}-${index}`,
             originalKind: EVENT_TIME,
             originalRef: makeAddressablePublicationRef({
@@ -2075,7 +2119,7 @@ describe("ExtensionBridge", () => {
               pubkey: outsiderPubkey,
               identifier: `outsider-event-${targetingPage}-${index}`,
             }),
-            communityPubkey,
+            community: communityPointer,
           }).tags,
         }),
       ).forEach(onEvent)
@@ -2105,7 +2149,7 @@ describe("ExtensionBridge", () => {
     expect(targetingLoads).toHaveLength(3)
     expect(targetingLoads[0][1][0]).toEqual({
       kinds: [TARGETED_PUBLICATION_KIND],
-      "#p": [communityPubkey],
+      "#h": [communityPubkey],
       "#k": [String(EVENT_TIME)],
       limit: 100,
     })
@@ -2121,20 +2165,18 @@ describe("ExtensionBridge", () => {
 
   it("reports timeout when a saturated direct-event scan admits fewer than the limit", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    const directDefinition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: [
-          ["content", "Events and meetups"],
-          ["k", "1"],
-          ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
+    const directDefinition = makeDefinition([
+      {
+        name: "Events and meetups",
+        kinds: [{kind: 1}],
+        profileLists: [
+          {address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`},
         ],
-      }),
-    )!
+      },
+    ])
     let directPage = 0
 
-    mocks.activeCommunityDefinition.set(directDefinition)
+    mocks.activeExactCommunityDefinition.set(directDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2181,20 +2223,18 @@ describe("ExtensionBridge", () => {
 
   it("returns enough authorized events from an incomplete saturated scan", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    const directDefinition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: [
-          ["content", "Events and meetups"],
-          ["k", "1"],
-          ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
+    const directDefinition = makeDefinition([
+      {
+        name: "Events and meetups",
+        kinds: [{kind: 1}],
+        profileLists: [
+          {address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`},
         ],
-      }),
-    )!
+      },
+    ])
     let directPage = 0
 
-    mocks.activeCommunityDefinition.set(directDefinition)
+    mocks.activeExactCommunityDefinition.set(directDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2245,7 +2285,7 @@ describe("ExtensionBridge", () => {
         pubkey: outsiderPubkey,
         created_at: 300 - index,
         kind: TARGETED_PUBLICATION_KIND,
-        tags: makeTargetedPublicationForCommunity({
+        tags: makeTargetedPublicationForCommunityV2({
           targetingId: `later-outsider-target-${index}`,
           originalKind: EVENT_TIME,
           originalRef: makeAddressablePublicationRef({
@@ -2253,12 +2293,12 @@ describe("ExtensionBridge", () => {
             pubkey: outsiderPubkey,
             identifier: `later-outsider-event-${index}`,
           }),
-          communityPubkey,
+          community: communityPointer,
         }).tags,
       }),
     )
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2299,7 +2339,7 @@ describe("ExtensionBridge", () => {
       id: "external-target",
       pubkey: calendarWriterPubkey,
       kind: TARGETED_PUBLICATION_KIND,
-      tags: makeTargetedPublicationForCommunity({
+      tags: makeTargetedPublicationForCommunityV2({
         targetingId: "external-target",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -2308,14 +2348,14 @@ describe("ExtensionBridge", () => {
           identifier: "external-event",
           relay: "wss://external.example.com/",
         }),
-        communityPubkey,
+        community: communityPointer,
       }).tags,
     })
     const unauthorizedTargeting = makeEvent({
       id: "unauthorized-target",
       pubkey: outsiderPubkey,
       kind: TARGETED_PUBLICATION_KIND,
-      tags: makeTargetedPublicationForCommunity({
+      tags: makeTargetedPublicationForCommunityV2({
         targetingId: "unauthorized-target",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -2323,7 +2363,7 @@ describe("ExtensionBridge", () => {
           pubkey: outsiderPubkey,
           identifier: "unauthorized-event",
         }),
-        communityPubkey,
+        community: communityPointer,
       }).tags,
     })
     const externalEvent = makeEvent({
@@ -2339,7 +2379,7 @@ describe("ExtensionBridge", () => {
       tags: [["d", "unauthorized-event"]],
     })
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockImplementation(((filters: any[]) => {
@@ -2385,7 +2425,7 @@ describe("ExtensionBridge", () => {
     )
     expect(mocks.authenticateCommunityRelays).toHaveBeenCalledWith(
       ["wss://relay.example.com/", "wss://external.example.com/"],
-      {priorityRelays: []},
+      {priorityRelays: communityPointer.relayHints},
     )
     expect(mocks.loadCommunityEvents.mock.calls.flatMap(call => call[1])).not.toContainEqual(
       expect.objectContaining({"#d": ["unauthorized-event"]}),
@@ -2394,17 +2434,15 @@ describe("ExtensionBridge", () => {
 
   it("uses structural relay filters and locally rejects unauthorized direct descriptor events", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    const directDefinition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: [
-          ["content", "Events and meetups"],
-          ["k", "1"],
-          ["a", `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`],
+    const directDefinition = makeDefinition([
+      {
+        name: "Events and meetups",
+        kinds: [{kind: 1}],
+        profileLists: [
+          {address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`},
         ],
-      }),
-    )!
+      },
+    ])
     const authorizedEvent = makeEvent({
       id: "authorized-direct",
       pubkey: calendarMemberPubkey,
@@ -2418,7 +2456,7 @@ describe("ExtensionBridge", () => {
       tags: [["h", communityPubkey]],
     })
 
-    mocks.activeCommunityDefinition.set(directDefinition)
+    mocks.activeExactCommunityDefinition.set(directDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockImplementation(((filters: any[]) =>
@@ -2463,20 +2501,18 @@ describe("ExtensionBridge", () => {
     const profileListOwner = calendarWriterPubkey
     const roomWriter = calendarMemberPubkey
     const threadWriter = outsiderPubkey
-    const mixedDefinition = parseCommunityDefinition(
-      makeEvent({
-        kind: COMMUNITY_DEFINITION_KIND,
-        pubkey: communityPubkey,
-        tags: [
-          ["content", "Rooms"],
-          ["k", String(THREAD), COMMUNITY_SUBTYPE_ROOM],
-          ["a", `${PROFILE_LIST_KIND}:${profileListOwner}:Rooms`],
-          ["content", "Threads"],
-          ["k", String(THREAD), COMMUNITY_SUBTYPE_THREADS],
-          ["a", `${PROFILE_LIST_KIND}:${profileListOwner}:Threads`],
-        ],
-      }),
-    )!
+    const mixedDefinition = makeDefinition([
+      {
+        name: "Rooms",
+        kinds: [{kind: THREAD, subtype: COMMUNITY_SUBTYPE_ROOM}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${profileListOwner}:Rooms`}],
+      },
+      {
+        name: "Threads",
+        kinds: [{kind: THREAD, subtype: COMMUNITY_SUBTYPE_THREADS}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${profileListOwner}:Threads`}],
+      },
+    ])
     const roomWriters = makeEvent({
       id: "room-writers",
       kind: PROFILE_LIST_KIND,
@@ -2540,7 +2576,7 @@ describe("ExtensionBridge", () => {
       {kind: THREAD, subtype: COMMUNITY_SUBTYPE_THREADS},
     ]
 
-    mocks.activeCommunityDefinition.set(mixedDefinition)
+    mocks.activeExactCommunityDefinition.set(mixedDefinition)
     mocks.activeCommunityProfileListEvents.set([roomWriters, threadWriters])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2581,7 +2617,7 @@ describe("ExtensionBridge", () => {
 
   it("returns descriptor calendar events from authorized writers without targeting events", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2617,7 +2653,7 @@ describe("ExtensionBridge", () => {
 
   it("returns exact referenced community events from writer outboxes without targeting events", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.getPubkeyOutboxRelays.mockReturnValue(["wss://writer-outbox.example.com/"])
@@ -2661,7 +2697,7 @@ describe("ExtensionBridge", () => {
 
   it("returns fully cached exact refs without waiting for relay refresh", async () => {
     const {ExtensionBridge} = await import("./bridge")
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockImplementation(((filters: any[]) =>
@@ -2743,7 +2779,7 @@ describe("ExtensionBridge", () => {
       ],
     })
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2801,7 +2837,7 @@ describe("ExtensionBridge", () => {
         ["status", "live"],
       ],
     })
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.repository.query.mockImplementation(((filters: any[]) =>
@@ -2842,7 +2878,7 @@ describe("ExtensionBridge", () => {
         ],
       })
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
@@ -2891,7 +2927,7 @@ describe("ExtensionBridge", () => {
       ],
     })
 
-    mocks.activeCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {

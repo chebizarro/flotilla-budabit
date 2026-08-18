@@ -1,18 +1,23 @@
 import type {RepoAnnouncementEvent} from "@nostr-git/core/events"
 import type {TrustedEvent} from "@welshman/util"
-import {normalizePubkey, type CommunityDefinition} from "@app/core/community"
-import type {EffectiveCommunityReportState} from "@app/core/community-reports"
-import {getRepoDeclaredMaintainers} from "@app/core/repo-authority"
 import {
-  getPrimaryRepoCommunityContext,
-  getRepoAddress,
-  isEndorsedRepoCommunityContext,
-} from "@app/core/repo-community-context"
+  getProfileListPubkeys,
+  normalizePubkey,
+  parseTargetedPublicationV2,
+  type CommunityDefinitionV2,
+} from "@app/core/community"
+import {
+  isCommunityPersonBanned,
+  type EffectiveCommunityReportState,
+} from "@app/core/community-reports"
+import {getRepoDeclaredMaintainers} from "@app/core/repo-authority"
+import {getRepoAddress} from "@app/core/repo-community-context"
 import type {TrustContext} from "@app/core/trust-assessment"
 
 export type CommunityPeopleDiscoveryContext = {
   scope: "community"
   communityPubkey: string
+  communityAddress: string
 }
 
 export type RepoAuthorityContext =
@@ -40,14 +45,15 @@ export type PeopleDiscoveryContext =
   | RepoPeopleDiscoveryContext
 
 export type PeopleDiscoveryContextEvidence = {
-  definitions: CommunityDefinition[]
+  definitions: Map<string, CommunityDefinitionV2>
   profileListEvents: TrustedEvent[]
   reportStates: Map<string, EffectiveCommunityReportState>
 }
 
 export type ResolvedPeopleDiscoveryContext = {
-  trustContext: TrustContext
+  trustContext: TrustContext & {communityAddress?: string}
   communityPubkey: string
+  communityAddress: string
   repoOwnerPubkeys: string[]
   repoMaintainerPubkeys: string[]
 }
@@ -55,11 +61,79 @@ export type ResolvedPeopleDiscoveryContext = {
 const normalizePubkeys = (pubkeys: string[]) =>
   Array.from(new Set(pubkeys.map(normalizePubkey).filter(Boolean)))
 
+const getEventAddress = (event: TrustedEvent) => {
+  const identifier = event.tags.find(tag => tag[0] === "d")?.[1] || ""
+  return identifier ? `${event.kind}:${event.pubkey}:${identifier}` : ""
+}
+
+const getReportState = (
+  reportStates: Map<string, EffectiveCommunityReportState>,
+  communityAddress: string,
+) => reportStates.get(communityAddress)
+
+const getEndorsedRepoCommunity = ({
+  context,
+  evidence,
+  announcement,
+  repoAddress,
+}: {
+  context: RepoPeopleDiscoveryContext
+  evidence: PeopleDiscoveryContextEvidence
+  announcement: RepoAnnouncementEvent
+  repoAddress: string
+}) => {
+  const definitions = evidence.definitions
+  const profileLists = new Map(
+    evidence.profileListEvents.map(event => [getEventAddress(event), event]),
+  )
+
+  for (const event of [...(context.associationEvents || [])].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  )) {
+    const targeting = parseTargetedPublicationV2(event)
+    if (targeting?.kind !== announcement.kind) continue
+    if (targeting.source?.type === "a" && targeting.source.value !== repoAddress) continue
+    if (targeting.source?.type === "e" && targeting.source.value !== announcement.id) continue
+    if (!targeting.source) continue
+
+    const associationAuthor = normalizePubkey(event.pubkey)
+    const repoOwner = normalizePubkey(announcement.pubkey)
+    for (const community of targeting.communities) {
+      const definition = definitions.get(community.address)
+      if (!definition) continue
+
+      const reportState = getReportState(evidence.reportStates, community.address)
+      if (
+        isCommunityPersonBanned(reportState, associationAuthor) ||
+        isCommunityPersonBanned(reportState, repoOwner)
+      ) {
+        continue
+      }
+
+      const authorityPubkeys = new Set<string>([normalizePubkey(definition.controllerPubkey)])
+      for (const section of definition.sections) {
+        if (!section.kinds.some(item => item.kind === announcement.kind)) continue
+        for (const ref of section.profileLists) {
+          const profileList = profileLists.get(ref.address)
+          if (!profileList) continue
+          authorityPubkeys.add(normalizePubkey(profileList.pubkey))
+          for (const pubkey of getProfileListPubkeys(profileList)) authorityPubkeys.add(pubkey)
+        }
+      }
+
+      if (authorityPubkeys.has(associationAuthor)) return definition.pointer
+    }
+  }
+
+  return undefined
+}
+
 export const resolveCommunityPeopleDiscoveryContext = (
   context: CommunityPeopleDiscoveryContext,
   viewerPubkey = "",
 ): ResolvedPeopleDiscoveryContext => {
   const communityPubkey = normalizePubkey(context.communityPubkey)
+  const communityAddress = context.communityAddress?.trim() || ""
   const normalizedViewer = normalizePubkey(viewerPubkey)
 
   return {
@@ -67,8 +141,10 @@ export const resolveCommunityPeopleDiscoveryContext = (
       scope: "community",
       viewerPubkey: normalizedViewer || undefined,
       communityPubkey: communityPubkey || undefined,
+      communityAddress: communityAddress || undefined,
     },
     communityPubkey,
+    communityAddress,
     repoOwnerPubkeys: [],
     repoMaintainerPubkeys: [],
   }
@@ -94,19 +170,13 @@ export const resolveRepoPeopleDiscoveryContext = (
   const repoAddress =
     context.repoAddress || (announcement ? getRepoAddress(announcement as TrustedEvent) : "")
   let communityPubkey = normalizePubkey(context.community?.communityPubkey || "")
+  let communityAddress = context.community?.communityAddress?.trim() || ""
 
   if (!communityPubkey && announcement) {
-    const repoCommunityContext = getPrimaryRepoCommunityContext({
-      repoEvent: announcement as TrustedEvent,
-      repoAddress,
-      associationEvents: context.associationEvents,
-      definitions: evidence.definitions,
-      profileListEvents: evidence.profileListEvents,
-      reportStates: evidence.reportStates,
-    })
-
-    if (isEndorsedRepoCommunityContext(repoCommunityContext)) {
-      communityPubkey = normalizePubkey(repoCommunityContext?.communityPubkey || "")
+    const community = getEndorsedRepoCommunity({context, evidence, announcement, repoAddress})
+    if (community) {
+      communityPubkey = normalizePubkey(community.controllerPubkey)
+      communityAddress = community.address
     }
   }
 
@@ -116,8 +186,10 @@ export const resolveRepoPeopleDiscoveryContext = (
       viewerPubkey: normalizedViewer || undefined,
       repoAddress: repoAddress || undefined,
       communityPubkey: communityPubkey || undefined,
+      communityAddress: communityAddress || undefined,
     },
     communityPubkey,
+    communityAddress,
     repoOwnerPubkeys,
     repoMaintainerPubkeys,
   }
@@ -134,6 +206,7 @@ export const resolvePeopleDiscoveryContext = (
     return {
       trustContext: {scope: "global_discovery", viewerPubkey: normalizedViewer || undefined},
       communityPubkey: "",
+      communityAddress: "",
       repoOwnerPubkeys: [],
       repoMaintainerPubkeys: [],
     }

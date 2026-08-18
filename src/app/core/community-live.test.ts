@@ -1,22 +1,34 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {EVENT_DATE, EVENT_TIME, THREAD, ZAP_GOAL, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildTargetedPublication,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
 } from "./community"
 import {
   buildCommunityFiniteFollowUpFilters,
   buildCommunityFiniteFollowUpRelayPlans,
   buildCommunityHistoricalDiscoveryFilters,
   buildCommunityLiveFilters,
+  getCommunityLiveOwnershipKey,
 } from "./community-live"
 
-const communityPubkey = "a".repeat(64)
-const listPubkey = "b".repeat(64)
-const authorPubkey = "c".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = key(101)
+const communityId = key(104)
+const listPubkey = key(102)
+const authorPubkey = key(103)
+const community = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId,
+})!
+const goalEventId = "1".repeat(64)
+const otherGoalEventId = "2".repeat(64)
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -30,33 +42,42 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const definition = parseCommunityDefinition(
+const authorityDefinition = parseCommunityDefinitionV2(
   makeEvent({
-    id: "definition",
-    kind: COMMUNITY_DEFINITION_KIND,
-    tags: [
-      ["r", "wss://relay.budabit.club/"],
-      ["content", "General"],
-      ["k", "1111"],
-      ["a", `${PROFILE_LIST_KIND}:${listPubkey}:General`],
-      ["content", "Projects"],
-      ["k", "30617"],
-      ["a", `${PROFILE_LIST_KIND}:${listPubkey}:Projects`],
-      ["content", "Calendar"],
-      ["k", String(EVENT_TIME)],
-      ["a", `${PROFILE_LIST_KIND}:${listPubkey}:Calendar`],
-    ],
+    kind: 32222,
+    tags: buildCommunityDefinitionV2({
+      communityId: community.communityId,
+      name: "Community",
+      relays: ["wss://relay.budabit.club"],
+      sections: [
+        {
+          name: "General",
+          kinds: [{kind: 1111}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:General`}],
+        },
+        {
+          name: "Projects",
+          kinds: [{kind: 30617}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:Projects`}],
+        },
+        {
+          name: "Calendar",
+          kinds: [{kind: EVENT_TIME}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:Calendar`}],
+        },
+      ],
+    }).tags,
   }),
 )!
 
 const targetingEvent = makeEvent({
   id: "targeting-event",
   kind: TARGETED_PUBLICATION_KIND,
-  tags: buildTargetedPublication({
+  tags: buildTargetedPublicationV2({
     id: "calendar-target",
     kind: EVENT_TIME,
-    ref: {type: "a", value: `${EVENT_TIME}:${authorPubkey}:calendar-event`},
-    communities: [{pubkey: communityPubkey}],
+    source: {type: "a", value: `${EVENT_TIME}:${authorPubkey}:calendar-event`},
+    communities: [community],
   }).tags,
 })
 
@@ -64,37 +85,51 @@ const implicitTargetingEvent = makeEvent({
   id: "implicit-targeting-event",
   pubkey: authorPubkey,
   kind: TARGETED_PUBLICATION_KIND,
-  tags: buildTargetedPublication({
+  tags: buildTargetedPublicationV2({
     id: "implicit-goal-target",
     kind: ZAP_GOAL,
-    communities: [{pubkey: communityPubkey}],
+    communities: [community],
   }).tags,
 })
 
 const goalTargetingEvent = makeEvent({
   id: "goal-targeting-event",
   kind: TARGETED_PUBLICATION_KIND,
-  tags: buildTargetedPublication({
+  tags: buildTargetedPublicationV2({
     id: "goal-target",
     kind: ZAP_GOAL,
-    ref: {
+    source: {
       type: "e",
-      value: "goal-event-id",
+      value: goalEventId,
       relay: "wss://goal-hint.example.com/",
     },
-    communities: [{pubkey: communityPubkey}],
+    communities: [community],
   }).tags,
 })
 
 describe("community live filters", () => {
+  it("keys same-controller sibling ownership by exact address", () => {
+    const sibling = makeCommunityPointer({
+      controllerPubkey: community.controllerPubkey,
+      communityId: key(105),
+    })!
+
+    expect(getCommunityLiveOwnershipKey(community.address, "wss://relay.example.com")).not.toBe(
+      getCommunityLiveOwnershipKey(sibling.address, "wss://relay.example.com"),
+    )
+    expect(getCommunityLiveOwnershipKey(community.address, "wss://relay.example.com")).toBe(
+      `${community.address}\nwss://relay.example.com/`,
+    )
+  })
+
   it("discovers historical roots and calendar/goal targeting wrappers", () => {
-    const filters = buildCommunityHistoricalDiscoveryFilters(communityPubkey)
+    const filters = buildCommunityHistoricalDiscoveryFilters(community)
 
     expect(filters).toEqual([
-      {kinds: [THREAD], "#h": [communityPubkey]},
+      {kinds: [THREAD], "#h": [communityId]},
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#p": [communityPubkey],
+        "#h": [communityId],
         "#k": [String(EVENT_DATE), String(EVENT_TIME), String(ZAP_GOAL)],
       },
     ])
@@ -102,12 +137,12 @@ describe("community live filters", () => {
 
   it("keeps the permanent subscription small and stable", () => {
     const filters = buildCommunityLiveFilters({
-      definition,
+      authorityDefinition,
       admissionFormAddresses: ["30168:moderator:admission"],
     })
     const profileFilters = filters.filter(filter => filter.kinds?.includes(PROFILE_LIST_KIND))
 
-    expect(filters.length).toBeLessThanOrEqual(8)
+    expect(filters.length).toBeLessThanOrEqual(10)
     expect(filters.every(filter => filter.limit === 0)).toBe(true)
     expect(profileFilters).toHaveLength(2)
     expect(
@@ -120,11 +155,18 @@ describe("community live filters", () => {
       ),
     ).toBe(true)
     expect(filters.some(filter => filter.ids?.includes("calendar-event"))).toBe(false)
+    expect(filters).toContainEqual({
+      kinds: [COMMUNITY_DEFINITION_KIND_V2],
+      authors: [community.controllerPubkey],
+      "#d": [community.communityId],
+      limit: 0,
+    })
+    expect(filters).toContainEqual({kinds: expect.any(Array), "#h": [communityId], limit: 0})
   })
 
   it("moves exact originals and growing response ids to finite filters", () => {
     const filters = buildCommunityFiniteFollowUpFilters({
-      definition,
+      authorityDefinition,
       targetingEvents: [targetingEvent],
       admissionResponseIds: ["response-id"],
       reportEvents: [],
@@ -142,9 +184,29 @@ describe("community live filters", () => {
     expect(filters.every(filter => filter.limit !== 0)).toBe(true)
   })
 
+  it("keeps report review discovery on the exact branch", () => {
+    const filters = buildCommunityFiniteFollowUpFilters({
+      authorityDefinition,
+      targetingEvents: [],
+      admissionResponseIds: [],
+      reportEvents: [makeEvent({id: "report-id"})],
+      moderatorRequests: [],
+      moderatorRequestReactionEvents: [],
+    })
+
+    expect(filters).toContainEqual({
+      kinds: [1985],
+      "#h": [communityId],
+      "#a": [community.address],
+      "#e": ["report-id"],
+      "#L": ["budabit:community-report"],
+      limit: 500,
+    })
+  })
+
   it("binds implicit finite originals to the authorized wrapper signer", () => {
     const filters = buildCommunityFiniteFollowUpFilters({
-      definition,
+      authorityDefinition,
       targetingEvents: [implicitTargetingEvent],
       admissionResponseIds: [],
       reportEvents: [],
@@ -164,19 +226,19 @@ describe("community live filters", () => {
     const otherTargetingEvent = makeEvent({
       id: "other-targeting-event",
       kind: TARGETED_PUBLICATION_KIND,
-      tags: buildTargetedPublication({
+      tags: buildTargetedPublicationV2({
         id: "other-goal-target",
         kind: ZAP_GOAL,
-        ref: {
+        source: {
           type: "e",
-          value: "other-goal-event-id",
+          value: otherGoalEventId,
           relay: "wss://other-goal-hint.example.com/",
         },
-        communities: [{pubkey: communityPubkey}],
+        communities: [community],
       }).tags,
     })
     const plans = buildCommunityFiniteFollowUpRelayPlans({
-      definition,
+      authorityDefinition,
       relays: ["wss://relay.budabit.club/"],
       targetingEvents: [goalTargetingEvent, otherTargetingEvent],
       admissionResponseIds: ["response-id"],
@@ -195,13 +257,13 @@ describe("community live filters", () => {
       "wss://other-goal-hint.example.com/",
       "wss://relay.budabit.club/",
     ])
-    expect(externalPlan?.filters).toEqual([{kinds: [ZAP_GOAL], ids: ["goal-event-id"], limit: 1}])
+    expect(externalPlan?.filters).toEqual([{kinds: [ZAP_GOAL], ids: [goalEventId], limit: 1}])
     expect(otherExternalPlan?.filters).toEqual([
-      {kinds: [ZAP_GOAL], ids: ["other-goal-event-id"], limit: 1},
+      {kinds: [ZAP_GOAL], ids: [otherGoalEventId], limit: 1},
     ])
     expect(communityPlan?.filters).toContainEqual({
       kinds: [ZAP_GOAL],
-      ids: ["goal-event-id"],
+      ids: [goalEventId],
       limit: 1,
     })
     expect(communityPlan?.filters.some(filter => filter["#e"]?.includes("response-id"))).toBe(true)
@@ -210,7 +272,7 @@ describe("community live filters", () => {
 
   it("chunks growing response ids into bounded finite filters", () => {
     const filters = buildCommunityFiniteFollowUpFilters({
-      definition,
+      authorityDefinition,
       targetingEvents: [],
       admissionResponseIds: Array.from({length: 201}, (_, index) => `response-${index}`),
       reportEvents: [],

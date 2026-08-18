@@ -1,6 +1,11 @@
 import type {EventContent, TrustedEvent} from "@welshman/util"
 import {THREAD, getTag, getTagValue} from "@welshman/util"
-import {COMMUNITY_SUBTYPE_ROOM, normalizePubkey} from "@app/core/community"
+import {
+  COMMUNITY_SUBTYPE_ROOM,
+  makeCommunityScopeTagsV2,
+  normalizePubkey,
+  parseCommunityId,
+} from "@app/core/community"
 import {eventTargetsCommunity} from "@app/core/community-feeds"
 
 export const COMMUNITY_ROOM_LABEL_KIND = 1985
@@ -46,12 +51,11 @@ export const makeCommunityRoomRoot = ({
   tags?: string[][]
 }): EventContent => ({
   content: about,
-  tags: [
-    ["h", normalizePubkey(communityPubkey)],
+  tags: makeCommunityScopeTagsV2(communityPubkey, [
     [COMMUNITY_SUBTYPE_ROOM],
     ["title", name],
     ...tags,
-  ],
+  ]),
 })
 
 export const readCommunityRoomRoot = (
@@ -63,7 +67,7 @@ export const readCommunityRoomRoot = (
   if (communityPubkey && !eventTargetsCommunity(event, communityPubkey)) return undefined
 
   const scopedCommunity = getTagValue("h", event.tags)
-  const normalizedCommunity = normalizePubkey(scopedCommunity || "")
+  const normalizedCommunity = parseCommunityId(scopedCommunity || "")
   const name = getTagValue("title", event.tags) || "Room"
 
   if (!normalizedCommunity) return undefined

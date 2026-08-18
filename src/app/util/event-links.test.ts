@@ -1,5 +1,6 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
 import * as nip19 from "nostr-tools/nip19"
+import {getPublicKey} from "nostr-tools/pure"
 
 const relayMocks = vi.hoisted(() => ({
   trackerRelays: new Set<string>(),
@@ -161,17 +162,28 @@ describe("event link utilities", () => {
   })
 
   it("adds community relays from matching targeted publication events", async () => {
-    const communityPubkey = "a".repeat(64)
+    const communityId = getPublicKey(new Uint8Array(32).fill(111))
+    const controller = getPublicKey(new Uint8Array(32).fill(112))
     const event = makeEvent({kind: EVENT_TIME, tags: [["h", "target-1"]]})
     relayMocks.repositoryQuery.mockReturnValue([
       makeEvent({
         kind: 30222,
         tags: [
           ["d", "target-1"],
-          ["a", `${EVENT_TIME}:${event.pubkey}:calendar-1`, "wss://author-relay.example.com"],
+          [
+            "a",
+            `${EVENT_TIME}:${event.pubkey}:calendar-1`,
+            "wss://author-relay.example.com",
+            "source",
+          ],
           ["k", String(EVENT_TIME)],
-          ["p", communityPubkey],
-          ["r", "wss://community-relay.example.com"],
+          ["h", communityId],
+          [
+            "a",
+            `32222:${controller}:${communityId}`,
+            "wss://community-relay.example.com",
+            "community",
+          ],
         ],
       }),
     ])
@@ -189,6 +201,8 @@ describe("event link utilities", () => {
   })
 
   it("prefers targeted publication relays over seen relays", async () => {
+    const communityId = getPublicKey(new Uint8Array(32).fill(113))
+    const controller = getPublicKey(new Uint8Array(32).fill(114))
     relayMocks.trackerRelays = new Set(["wss://seen.example.com"])
     relayMocks.repositoryQuery.mockReturnValue([
       makeEvent({
@@ -196,8 +210,8 @@ describe("event link utilities", () => {
         tags: [
           ["d", "target-2"],
           ["k", "9041"],
-          ["p", "b".repeat(64)],
-          ["r", "wss://community.example.com"],
+          ["h", communityId],
+          ["a", `32222:${controller}:${communityId}`, "wss://community.example.com", "community"],
         ],
       }),
     ])
@@ -224,14 +238,16 @@ describe("event link utilities", () => {
   })
 
   it("encodes targeted community relays in permalink share links", async () => {
+    const communityId = getPublicKey(new Uint8Array(32).fill(115))
+    const controller = getPublicKey(new Uint8Array(32).fill(116))
     relayMocks.repositoryQuery.mockReturnValue([
       makeEvent({
         kind: 30222,
         tags: [
           ["d", "permalink-target"],
           ["k", "1623"],
-          ["p", "a".repeat(64)],
-          ["r", "wss://community.example.com"],
+          ["h", communityId],
+          ["a", `32222:${controller}:${communityId}`, "wss://community.example.com", "community"],
         ],
       }),
     ])

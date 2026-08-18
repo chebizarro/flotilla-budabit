@@ -1,6 +1,15 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {BADGE_AWARD, BADGE_DEFINITION, BADGES, DELETE, type TrustedEvent} from "@welshman/util"
-import {COMMUNITY_DEFINITION_KIND, PROFILE_LIST_KIND, parseCommunityDefinition} from "./community"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  PROFILE_LIST_KIND,
+  buildCommunityDefinitionV2,
+  makeCommunityAuthorityTagsV2,
+  makeCommunityProfileListIdentifier,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+} from "./community"
 import {
   PROFILE_BADGES_KIND,
   canCreateCommunityBadge,
@@ -9,26 +18,36 @@ import {
   getCommunityBadgeImageUrl,
   getCommunityBadgeCreatorPubkeys,
   getPendingCommunityBadgeAwards,
+  isCommunityBadgeAwardDeleted,
   makeCommunityBadgeAwardDelete,
   makeCommunityBadgeAwardEvent,
   makeCommunityBadgeDefinitionEvent,
+  makeCommunityBadgeIdentifier,
   makeProfileBadgeAcceptanceEvent,
   makeProfileBadgeRemovalEvent,
   parseCommunityBadgeAward,
   parseCommunityBadgeDefinition,
   parseProfileBadgePairs,
+  selectCommunityBadgeDefinitions,
 } from "./community-badges"
 
-const communityPubkey = "a".repeat(64)
-const moderatorPubkey = "b".repeat(64)
-const bannedModeratorPubkey = "c".repeat(64)
-const recipientPubkey = "d".repeat(64)
-const outsiderPubkey = "e".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const controllerPubkey = key(1)
+const communityId = key(2)
+const moderatorPubkey = key(3)
+const bannedModeratorPubkey = key(4)
+const recipientPubkey = key(5)
+const outsiderPubkey = key(6)
+const community = makeCommunityPointer({controllerPubkey, communityId})!
+const badgeIdentifier = `budabit-${communityId}-helper`
+const badgeAddress = `${BADGE_DEFINITION}:${moderatorPubkey}:${badgeIdentifier}`
+const moderatorListIdentifier = makeCommunityProfileListIdentifier(communityId, "moderator-list")!
+const bannedListIdentifier = makeCommunityProfileListIdentifier(communityId, "banned-list")!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
     id: "event-id",
-    pubkey: communityPubkey,
+    pubkey: controllerPubkey,
     created_at: 1,
     kind: 1,
     tags: [],
@@ -38,16 +57,25 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const makeDefinition = () =>
-  parseCommunityDefinition(
+  parseCommunityDefinitionV2(
     makeEvent({
-      kind: COMMUNITY_DEFINITION_KIND,
-      pubkey: communityPubkey,
-      tags: [
-        ["content", "General"],
-        ["k", "1111"],
-        ["a", `${PROFILE_LIST_KIND}:${moderatorPubkey}:General`],
-        ["a", `${PROFILE_LIST_KIND}:${bannedModeratorPubkey}:General`],
-      ],
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      pubkey: controllerPubkey,
+      tags: buildCommunityDefinitionV2({
+        communityId,
+        name: "Community",
+        relays: ["wss://relay.example.com"],
+        sections: [
+          {
+            name: "General",
+            kinds: [{kind: 1111}],
+            profileLists: [
+              {address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${moderatorListIdentifier}`},
+              {address: `${PROFILE_LIST_KIND}:${bannedModeratorPubkey}:${bannedListIdentifier}`},
+            ],
+          },
+        ],
+      }).tags,
     }),
   )!
 
@@ -57,8 +85,8 @@ const makeBadgeDefinitionEvent = (overrides: Partial<TrustedEvent> = {}) =>
     kind: BADGE_DEFINITION,
     pubkey: moderatorPubkey,
     tags: makeCommunityBadgeDefinitionEvent({
-      communityPubkey,
-      identifier: "helper",
+      community,
+      identifier: badgeIdentifier,
       name: "Community helper",
       description: "Helped the community",
       image: "https://example.com/helper.png",
@@ -72,14 +100,17 @@ const makeProfileListEvent = (pubkey: string, tags: string[][] = []) =>
     id: `profile-list-${pubkey[0]}`,
     kind: PROFILE_LIST_KIND,
     pubkey,
-    tags: [["d", "General"], ...tags],
+    tags: makeCommunityAuthorityTagsV2(community, undefined, [
+      ["d", pubkey === moderatorPubkey ? moderatorListIdentifier : bannedListIdentifier],
+      ...tags,
+    ]),
   })
 
 describe("community badges", () => {
   it("builds and parses community badge definitions", () => {
     const template = makeCommunityBadgeDefinitionEvent({
-      communityPubkey,
-      identifier: "helper",
+      community,
+      identifier: badgeIdentifier,
       name: "Community helper",
       description: "Helped the community",
       image: "https://example.com/helper.png",
@@ -88,22 +119,130 @@ describe("community badges", () => {
     })
     const parsed = parseCommunityBadgeDefinition(
       makeEvent({kind: BADGE_DEFINITION, pubkey: moderatorPubkey, tags: template.tags}),
-      communityPubkey,
+      community,
     )!
 
     expect(template.kind).toBe(BADGE_DEFINITION)
-    expect(template.tags).toContainEqual(["a", `${COMMUNITY_DEFINITION_KIND}:${communityPubkey}:`])
+    expect(template.tags).toContainEqual(["a", community.address, "", "community"])
     expect(parsed).toMatchObject({
       pubkey: moderatorPubkey,
-      identifier: "helper",
+      identifier: badgeIdentifier,
       name: "Community helper",
       description: "Helped the community",
       image: "https://example.com/helper.png",
       imageDimensions: "1024x1024",
       deprecated: false,
-      communityPubkey,
+      community,
     })
     expect(parsed.thumbs).toEqual([{url: "https://example.com/helper-64.png", dimensions: "64x64"}])
+  })
+
+  it("rejects the same community ID on a different controller branch", () => {
+    const sameIdBranch = makeCommunityPointer({controllerPubkey: key(7), communityId})!
+    const definition = makeEvent({
+      kind: BADGE_DEFINITION,
+      pubkey: moderatorPubkey,
+      tags: makeCommunityBadgeDefinitionEvent({community, identifier: "helper"}).tags,
+    })
+    const award = makeEvent({
+      id: "branch-award",
+      kind: BADGE_AWARD,
+      pubkey: moderatorPubkey,
+      tags: makeCommunityBadgeAwardEvent({
+        community,
+        definitionAddress: badgeAddress,
+        recipientPubkey,
+      }).tags,
+    })
+
+    expect(parseCommunityBadgeDefinition(definition, sameIdBranch)).toBeUndefined()
+    expect(parseCommunityBadgeAward(award, sameIdBranch)).toBeUndefined()
+    expect(
+      isCommunityBadgeAwardDeleted(award, [
+        makeEvent({
+          kind: DELETE,
+          pubkey: moderatorPubkey,
+          tags: makeCommunityBadgeAwardDelete({
+            community: sameIdBranch,
+            awardId: award.id,
+          }).tags,
+        }),
+      ]),
+    ).toBe(false)
+  })
+
+  it("isolates badge definitions and awards between same-controller sibling communities", () => {
+    const sibling = makeCommunityPointer({controllerPubkey, communityId: key(7)})!
+    const definition = makeDefinition()
+    const siblingDefinition = parseCommunityDefinitionV2(
+      makeEvent({
+        id: "sibling-community-definition",
+        kind: COMMUNITY_DEFINITION_KIND_V2,
+        pubkey: controllerPubkey,
+        tags: buildCommunityDefinitionV2({
+          communityId: sibling.communityId,
+          name: "Sibling community",
+          relays: ["wss://relay.example.com"],
+          sections: [
+            {
+              name: "General",
+              kinds: [{kind: 1111}],
+              profileLists: [
+                {address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${moderatorListIdentifier}`},
+              ],
+            },
+          ],
+        }).tags,
+      }),
+    )!
+    const firstBadge = makeBadgeDefinitionEvent()
+    const siblingBadge = makeEvent({
+      id: "sibling-badge-definition",
+      kind: BADGE_DEFINITION,
+      pubkey: controllerPubkey,
+      tags: makeCommunityBadgeDefinitionEvent({
+        community: sibling,
+        identifier: "helper",
+        name: "Sibling helper",
+      }).tags,
+    })
+    const siblingBadgeAddress = `${BADGE_DEFINITION}:${controllerPubkey}:${makeCommunityBadgeIdentifier(sibling, "helper")}`
+    const siblingAward = makeEvent({
+      id: "sibling-award",
+      kind: BADGE_AWARD,
+      pubkey: controllerPubkey,
+      tags: makeCommunityBadgeAwardEvent({
+        community: sibling,
+        definitionAddress: siblingBadgeAddress,
+        recipientPubkey,
+      }).tags,
+    })
+
+    expect(
+      selectCommunityBadgeDefinitions({
+        definition,
+        badgeDefinitionEvents: [firstBadge, siblingBadge],
+        profileListEvents: [makeProfileListEvent(moderatorPubkey)],
+      }).map(item => item.event.id),
+    ).toEqual([firstBadge.id])
+    expect(
+      selectCommunityBadgeDefinitions({
+        definition: siblingDefinition,
+        badgeDefinitionEvents: [firstBadge, siblingBadge],
+      }).map(item => item.event.id),
+    ).toEqual([siblingBadge.id])
+    expect(parseCommunityBadgeAward(siblingAward, community)).toBeUndefined()
+    expect(parseCommunityBadgeAward(siblingAward, sibling)?.definitionAddress).toBe(
+      siblingBadgeAddress,
+    )
+  })
+
+  it("uses the full community ID in badge child identifiers", () => {
+    const other = makeCommunityPointer({controllerPubkey, communityId: key(8)})!
+
+    expect(makeCommunityBadgeIdentifier(community, "helper")).toBe(badgeIdentifier)
+    expect(makeCommunityBadgeIdentifier(other, "helper")).not.toBe(badgeIdentifier)
+    expect(makeCommunityBadgeIdentifier(other, "helper")).toContain(other.communityId)
   })
 
   it("selects the smallest useful badge thumbnail", () => {
@@ -127,14 +266,14 @@ describe("community badges", () => {
 
   it("marks badge definitions as deprecated when retired", () => {
     const template = makeCommunityBadgeDefinitionEvent({
-      communityPubkey,
+      community,
       identifier: "helper",
       name: "Community helper",
       deprecated: true,
     })
     const parsed = parseCommunityBadgeDefinition(
       makeEvent({kind: BADGE_DEFINITION, pubkey: moderatorPubkey, tags: template.tags}),
-      communityPubkey,
+      community,
     )!
 
     expect(template.tags).toContainEqual(["deprecated"])
@@ -143,7 +282,8 @@ describe("community badges", () => {
 
   it("builds and parses badge award events", () => {
     const template = makeCommunityBadgeAwardEvent({
-      definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+      community,
+      definitionAddress: badgeAddress,
       recipientPubkey,
     })
     const parsed = parseCommunityBadgeAward(makeEvent({kind: BADGE_AWARD, tags: template.tags}))!
@@ -152,7 +292,9 @@ describe("community badges", () => {
       kind: BADGE_AWARD,
       content: "",
       tags: [
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+        ["h", communityId],
+        ["a", community.address, "", "community"],
+        ["a", badgeAddress, "", "badge"],
         ["p", recipientPubkey],
       ],
     })
@@ -164,7 +306,9 @@ describe("community badges", () => {
       makeEvent({
         kind: BADGE_AWARD,
         tags: [
-          ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+          ["h", communityId],
+          ["a", community.address, "", "community"],
+          ["a", badgeAddress, "", "badge"],
           ["p", recipientPubkey],
           ["p", outsiderPubkey],
         ],
@@ -179,7 +323,7 @@ describe("community badges", () => {
       kind: PROFILE_BADGES_KIND,
       pubkey: recipientPubkey,
       tags: [
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+        ["a", badgeAddress, "", "badge"],
         ["e", "award-id", "wss://relay.example.com"],
         ["e", "ignored"],
         ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:orphaned`],
@@ -190,14 +334,14 @@ describe("community badges", () => {
       pubkey: recipientPubkey,
       tags: [
         ["d", "profile_badges"],
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+        ["a", badgeAddress, "", "badge"],
         ["e", "award-id"],
       ],
     })
 
     expect(parseProfileBadgePairs(current)).toEqual([
       {
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        definitionAddress: badgeAddress,
         definitionRelay: undefined,
         awardId: "award-id",
         awardRelay: "wss://relay.example.com",
@@ -211,7 +355,7 @@ describe("community badges", () => {
       kind: PROFILE_BADGES_KIND,
       pubkey: recipientPubkey,
       tags: [
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`],
+        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`, "", "badge"],
         ["e", "existing-award"],
         ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:set`],
       ],
@@ -219,16 +363,16 @@ describe("community badges", () => {
     const template = makeProfileBadgeAcceptanceEvent({
       currentEvent: current,
       pair: {
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        definitionAddress: badgeAddress,
         awardId: "award-id",
       },
     })
 
     expect(template.kind).toBe(PROFILE_BADGES_KIND)
     expect(template.tags).toEqual([
-      ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`],
+      ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`, "", "badge"],
       ["e", "existing-award"],
-      ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+      ["a", badgeAddress, "", "badge"],
       ["e", "award-id"],
       ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:set`],
     ])
@@ -239,9 +383,9 @@ describe("community badges", () => {
       kind: PROFILE_BADGES_KIND,
       pubkey: recipientPubkey,
       tags: [
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`],
+        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`, "", "badge"],
         ["e", "existing-award"],
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+        ["a", badgeAddress, "", "badge"],
         ["e", "award-id"],
         ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:set`],
       ],
@@ -249,13 +393,13 @@ describe("community badges", () => {
     const template = makeProfileBadgeRemovalEvent({
       currentEvent: current,
       pair: {
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        definitionAddress: badgeAddress,
         awardId: "award-id",
       },
     })
 
     expect(template.tags).toEqual([
-      ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`],
+      ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:existing`, "", "badge"],
       ["e", "existing-award"],
       ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:set`],
     ])
@@ -267,18 +411,20 @@ describe("community badges", () => {
       eventReports: [],
       personReports: [
         {
-          event: makeEvent({pubkey: communityPubkey}),
+          event: makeEvent({pubkey: controllerPubkey}),
           target: "person" as const,
-          communityAddress: `${COMMUNITY_DEFINITION_KIND}:${communityPubkey}:`,
-          communityPubkey,
+          community,
+          communityAddress: community.address,
+          communityId,
+          controllerPubkey,
           targetPubkey: bannedModeratorPubkey,
-          reporterPubkey: communityPubkey,
+          reporterPubkey: controllerPubkey,
           adminAuthored: true,
         },
       ],
     }
 
-    expect(getCommunityBadgeCreatorPubkeys({definition, reportState})).toEqual([communityPubkey])
+    expect(getCommunityBadgeCreatorPubkeys({definition, reportState})).toEqual([controllerPubkey])
     expect(canCreateCommunityBadge({definition, pubkey: moderatorPubkey, reportState})).toBe(false)
     expect(canCreateCommunityBadge({definition, pubkey: bannedModeratorPubkey, reportState})).toBe(
       false,
@@ -296,7 +442,7 @@ describe("community badges", () => {
         profileListEvents: activeProfileListEvents,
         reportState,
       }),
-    ).toEqual([communityPubkey, moderatorPubkey])
+    ).toEqual([controllerPubkey, moderatorPubkey])
     expect(
       canCreateCommunityBadge({
         definition,
@@ -319,7 +465,7 @@ describe("community badges", () => {
         profileListEvents: [makeProfileListEvent(moderatorPubkey, [["status", "declined"]])],
         reportState,
       }),
-    ).toEqual([communityPubkey])
+    ).toEqual([controllerPubkey])
   })
 
   it("requires trusted issuer, recipient award, and profile acceptance for display", () => {
@@ -330,7 +476,8 @@ describe("community badges", () => {
       kind: BADGE_AWARD,
       pubkey: moderatorPubkey,
       tags: makeCommunityBadgeAwardEvent({
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        community,
+        definitionAddress: badgeAddress,
         recipientPubkey,
       }).tags,
     })
@@ -339,7 +486,7 @@ describe("community badges", () => {
       kind: PROFILE_BADGES_KIND,
       pubkey: recipientPubkey,
       tags: [
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+        ["a", badgeAddress, "", "badge"],
         ["e", "award-id"],
       ],
     })
@@ -382,7 +529,7 @@ describe("community badges", () => {
       id: "badge-definition-retired",
       created_at: 2,
       tags: makeCommunityBadgeDefinitionEvent({
-        communityPubkey,
+        community,
         identifier: "helper",
         name: "Community helper",
         deprecated: true,
@@ -393,7 +540,8 @@ describe("community badges", () => {
       kind: BADGE_AWARD,
       pubkey: moderatorPubkey,
       tags: makeCommunityBadgeAwardEvent({
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        community,
+        definitionAddress: badgeAddress,
         recipientPubkey,
       }).tags,
     })
@@ -401,14 +549,14 @@ describe("community badges", () => {
       id: "delete-award",
       kind: DELETE,
       pubkey: moderatorPubkey,
-      tags: makeCommunityBadgeAwardDelete({awardId: award.id}).tags,
+      tags: makeCommunityBadgeAwardDelete({community, awardId: award.id}).tags,
     })
     const profileBadges = makeEvent({
       id: "profile-badges",
       kind: PROFILE_BADGES_KIND,
       pubkey: recipientPubkey,
       tags: [
-        ["a", `${BADGE_DEFINITION}:${moderatorPubkey}:helper`],
+        ["a", badgeAddress, "", "badge"],
         ["e", "award-id"],
       ],
     })
@@ -442,7 +590,8 @@ describe("community badges", () => {
       kind: BADGE_AWARD,
       pubkey: moderatorPubkey,
       tags: makeCommunityBadgeAwardEvent({
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        community,
+        definitionAddress: badgeAddress,
         recipientPubkey,
       }).tags,
     })
@@ -460,17 +609,15 @@ describe("community badges", () => {
   })
 
   it("finds an active existing award for a badge and recipient", () => {
-    const badgeDefinition = parseCommunityBadgeDefinition(
-      makeBadgeDefinitionEvent(),
-      communityPubkey,
-    )!
+    const badgeDefinition = parseCommunityBadgeDefinition(makeBadgeDefinitionEvent(), community)!
     const olderAward = makeEvent({
       id: "older-award",
       kind: BADGE_AWARD,
       created_at: 1,
       pubkey: moderatorPubkey,
       tags: makeCommunityBadgeAwardEvent({
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        community,
+        definitionAddress: badgeAddress,
         recipientPubkey,
       }).tags,
     })
@@ -480,7 +627,8 @@ describe("community badges", () => {
       created_at: 2,
       pubkey: moderatorPubkey,
       tags: makeCommunityBadgeAwardEvent({
-        definitionAddress: `${BADGE_DEFINITION}:${moderatorPubkey}:helper`,
+        community,
+        definitionAddress: badgeAddress,
         recipientPubkey,
       }).tags,
     })
@@ -502,7 +650,7 @@ describe("community badges", () => {
             id: "delete-newer-award",
             kind: DELETE,
             pubkey: moderatorPubkey,
-            tags: makeCommunityBadgeAwardDelete({awardId: newerAward.id}).tags,
+            tags: makeCommunityBadgeAwardDelete({community, awardId: newerAward.id}).tags,
           }),
         ],
         profilePubkey: recipientPubkey,

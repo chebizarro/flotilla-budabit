@@ -502,6 +502,7 @@ describe("requests", () => {
     const {createBoundedCommunityHistoryLoader} = await import("./requests")
     const relay = "wss://bounded-community-wrappers.test"
     const community = "a".repeat(64)
+    const controller = "c".repeat(64)
     const allowedAuthor = "b".repeat(64)
     const makeWrapper = (id: string, pubkey: string, createdAt: number): TrustedEvent => ({
       id,
@@ -511,7 +512,8 @@ describe("requests", () => {
       tags: [
         ["d", id],
         ["k", "9041"],
-        ["p", community],
+        ["h", community],
+        ["a", `32222:${controller}:${community}`, "", "community"],
       ],
       content: "",
       sig: "f".repeat(128),
@@ -539,8 +541,8 @@ describe("requests", () => {
 
     const result = await loadHistory({
       relays: [relay],
-      relayFilters: [{kinds: [30222], "#p": [community], "#k": ["9041"]}],
-      localFilters: [{kinds: [30222], authors: [allowedAuthor], "#p": [community], "#k": ["9041"]}],
+      relayFilters: [{kinds: [30222], "#h": [community], "#k": ["9041"]}],
+      localFilters: [{kinds: [30222], authors: [allowedAuthor], "#h": [community], "#k": ["9041"]}],
       pageSize: 100,
       maxPages: 2,
       timeoutMs: 1000,

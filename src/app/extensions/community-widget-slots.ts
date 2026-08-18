@@ -4,7 +4,11 @@ import {
 } from "@app/extensions/community-curation"
 import {LRUCache} from "@welshman/lib"
 import {pubkey} from "@welshman/app"
-import {normalizePubkey, normalizeRelays, parseCommunityInput} from "@app/core/community"
+import {
+  normalizePubkey,
+  parseCommunityDefinitionAddress,
+  parseCommunityNaddr,
+} from "@app/core/community"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 import type {TrustedEvent} from "@welshman/util"
@@ -45,18 +49,18 @@ const curatedWidgetSnapshots = new LRUCache<string, SmartWidgetEvent[]>(32)
 
 const getCurationCacheKey = (input: string, viewerPubkey: string, evidenceKey: string) => {
   const trimmed = input.trim()
-  const parsed = parseCommunityInput(trimmed)
+  const parsed = parseCommunityNaddr(trimmed)
 
   return parsed
-    ? `${normalizePubkey(viewerPubkey)}:${normalizePubkey(parsed.pubkey)}:${normalizeRelays(parsed.relays).join(",")}:${evidenceKey}`
+    ? `${normalizePubkey(viewerPubkey)}:${parsed.address}:${evidenceKey}`
     : `${normalizePubkey(viewerPubkey)}:${trimmed}:${evidenceKey}`
 }
 
 const getCurationSnapshotKey = (input: string, viewerPubkey: string, evidenceKey: string) => {
   const trimmed = input.trim()
-  const parsed = parseCommunityInput(trimmed)
+  const parsed = parseCommunityNaddr(trimmed)
 
-  return `${normalizePubkey(viewerPubkey)}:${parsed ? normalizePubkey(parsed.pubkey) : trimmed}:${evidenceKey}`
+  return `${normalizePubkey(viewerPubkey)}:${parsed?.address || trimmed}:${evidenceKey}`
 }
 
 export const getCommunityWidgetCurationEvidenceKey = ({
@@ -183,7 +187,7 @@ type CommunitySharedConfigEvent = {
 }
 
 type CommunitySharedConfigRef = {
-  communityPubkey: string
+  communityAddress: string
   namespace: string
   key: string
 }
@@ -304,22 +308,15 @@ const parseCommunitySharedConfigRef = (
 ): CommunitySharedConfigRef | undefined => {
   if (!event || event.kind !== COMMUNITY_SHARED_CONFIG_KIND) return undefined
 
-  const d = getTagValue(event.tags, "d")
-  let communityPubkey = normalizePubkey(getTagValue(event.tags, "p"))
-  let namespace = getTagValue(event.tags, "namespace")
-  let key = getTagValue(event.tags, "key")
-  const prefix = `${COMMUNITY_SHARED_CONFIG_PREFIX}:`
+  const community = parseCommunityDefinitionAddress(getTagValue(event.tags, "a"))
+  const namespace = getTagValue(event.tags, "namespace")
+  const key = getTagValue(event.tags, "key")
+  if (!community || !namespace || !key) return undefined
 
-  if (d.startsWith(prefix)) {
-    const parts = d.slice(prefix.length).split(":")
-    communityPubkey ||= normalizePubkey(parts[0] || "")
-    namespace ||= parts[1] || ""
-    key ||= parts.slice(2).join(":")
-  }
+  const expectedIdentifier = `${COMMUNITY_SHARED_CONFIG_PREFIX}:${community.address}:${namespace}:${key}`
+  if (getTagValue(event.tags, "d") !== expectedIdentifier) return undefined
 
-  if (!communityPubkey || !namespace || !key) return undefined
-
-  return {communityPubkey, namespace, key}
+  return {communityAddress: community.address, namespace, key}
 }
 
 const widgetDeclaresSharedConfigRef = (widget: SmartWidgetEvent, ref: CommunitySharedConfigRef) => {
@@ -387,25 +384,24 @@ export const getEnabledInstalledCommunitySlotWidgets = ({
 }
 
 export const getEnabledCommunitySlotWidgetsWithSharedConfig = ({
-  communityPubkey,
+  communityAddress,
   sharedConfigEvents,
   authorizedPubkeys,
   descriptorAuthorities = [],
-  legacyAuthorizedPubkeys = authorizedPubkeys,
   installedWidgets,
   enabledIds,
   slotType,
 }: {
-  communityPubkey: string
+  communityAddress: string
   sharedConfigEvents: CommunitySharedConfigEvent[]
   authorizedPubkeys: Set<string>
   descriptorAuthorities?: CommunitySharedConfigDescriptorAuthority[]
-  legacyAuthorizedPubkeys?: Set<string>
   installedWidgets: Record<string, SmartWidgetEvent>
   enabledIds: Set<string>
   slotType: WidgetCommunitySlotType
 }) => {
-  const normalizedCommunityPubkey = normalizePubkey(communityPubkey)
+  const exactCommunityAddress = parseCommunityDefinitionAddress(communityAddress)?.address
+  if (!exactCommunityAddress) return []
   const normalizedAuthorizedPubkeys = new Set(
     Array.from(authorizedPubkeys, author => normalizePubkey(author)).filter(Boolean),
   )
@@ -415,12 +411,11 @@ export const getEnabledCommunitySlotWidgetsWithSharedConfig = ({
       isAuthorizedCommunitySharedConfigEvent({
         event,
         descriptorAuthorities,
-        legacyAuthorizedPubkeys,
       }),
     )
     .map(parseCommunitySharedConfigRef)
     .filter((ref): ref is CommunitySharedConfigRef =>
-      Boolean(ref && normalizePubkey(ref.communityPubkey) === normalizedCommunityPubkey),
+      Boolean(ref && ref.communityAddress === exactCommunityAddress),
     )
 
   if (sharedConfigRefs.length === 0) return []

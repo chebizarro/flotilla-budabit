@@ -118,32 +118,130 @@ describe("routes", () => {
     window.history.replaceState(null, "", "/")
   })
 
-  it("builds and parses community paths", async () => {
-    const {
-      makeCommunityPath,
-      makeCommunityPermalinkPath,
-      makeCommunityRoomPath,
-      makeCommunityThreadPath,
-      makeCommunityWidgetPath,
-      parseCommunityRouteParam,
-    } = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
+  it("does not expose ambiguous community route APIs", async () => {
+    const routes = await import("./routes")
 
-    expect(makeCommunityPath(communityPubkey)).toBe(`/c/${communityNpub}`)
-    expect(makeCommunityRoomPath(communityPubkey, "room-id")).toBe(
-      `/c/${communityNpub}/rooms/room-id`,
-    )
-    expect(makeCommunityThreadPath(communityPubkey, "thread-id")).toBe(
-      `/c/${communityNpub}/threads/thread-id`,
-    )
-    expect(makeCommunityPermalinkPath(communityPubkey)).toBe(`/c/${communityNpub}/permalinks`)
-    expect(makeCommunityWidgetPath(communityPubkey)).toBe(`/c/${communityNpub}/widgets`)
-    expect(parseCommunityRouteParam(communityNpub)).toEqual({
-      pubkey: communityPubkey,
-      relays: [],
-      source: "npub",
+    for (const name of [
+      "parseCommunityRouteParam",
+      "encodeCommunityRouteParam",
+      "makeCommunityPath",
+      "makeCommunityRoomPath",
+      "makeCommunityThreadPath",
+      "makeCommunityCalendarPath",
+      "makeCommunityGoalPath",
+      "makeCommunityGitPath",
+      "makeCommunityPermalinkPath",
+      "makeCommunityWidgetPath",
+      "getCommunityReportTargetPath",
+    ]) {
+      expect(routes).not.toHaveProperty(name)
+    }
+  })
+
+  it("builds exact community paths only from kind-32222 definition pointers", async () => {
+    const {
+      makeExactCommunityCalendarPath,
+      makeExactCommunityPath,
+      makeExactCommunityRoomPath,
+      parseExactCommunityRouteParam,
+    } = await import("./routes")
+    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+    const naddr = nip19.naddrEncode({
+      kind: 32222,
+      pubkey: controller,
+      identifier: communityId,
+      relays: ["wss://relay.example"],
     })
+    const pointer = parseExactCommunityRouteParam(naddr)!
+
+    expect(pointer.address).toBe(`32222:${controller}:${communityId}`)
+    expect(makeExactCommunityPath(pointer)).toBe(`/c/${naddr}`)
+    expect(makeExactCommunityRoomPath(pointer, "room/id")).toBe(`/c/${naddr}/rooms/room%2Fid`)
+    expect(makeExactCommunityCalendarPath(pointer, "event-id")).toBe(
+      `/c/${naddr}/calendar/event-id`,
+    )
+    expect(parseExactCommunityRouteParam(nip19.npubEncode(controller))).toBeUndefined()
+    expect(parseExactCommunityRouteParam(controller)).toBeUndefined()
+    expect(parseExactCommunityRouteParam(`ncommunity://${communityId}`)).toBeUndefined()
+    expect(
+      parseExactCommunityRouteParam(
+        nip19.naddrEncode({kind: 30023, pubkey: controller, identifier: communityId}),
+      ),
+    ).toBeUndefined()
+  })
+
+  it("compares hint variants by exact coordinate and preserves URL suffix, query, and hash", async () => {
+    const {
+      getExactCommunityRouteContext,
+      makeCanonicalExactCommunityUrl,
+      parseExactCommunityRouteParam,
+    } = await import("./routes")
+    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+    const withoutHints = nip19.naddrEncode({
+      kind: 32222,
+      pubkey: controller,
+      identifier: communityId,
+    })
+    const withHints = nip19.naddrEncode({
+      kind: 32222,
+      pubkey: controller,
+      identifier: communityId,
+      relays: ["wss://relay.example"],
+    })
+    const pointer = parseExactCommunityRouteParam(withHints)!
+    const current = new URL(
+      `https://budabit.test/c/${withoutHints}/rooms/general?view=compact#event-id`,
+    )
+
+    expect(getExactCommunityRouteContext(current)).toBe(
+      `community:${pointer.address}:rooms:general:?view=compact`,
+    )
+    expect(makeCanonicalExactCommunityUrl(current, pointer)).toBe(
+      `/c/${withHints}/rooms/general?view=compact#event-id`,
+    )
+  })
+
+  it("requires exact selected context to route h-only community events", async () => {
+    const {getExactCommunityEventPath, parseExactCommunityRouteParam} = await import("./routes")
+    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+    const otherCommunityId = "531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337"
+    const pointer = parseExactCommunityRouteParam(
+      nip19.naddrEncode({kind: 32222, pubkey: controller, identifier: communityId}),
+    )!
+    const event = makeEvent({id: "thread-root", kind: 11, tags: [["h", communityId]]})
+
+    expect(getExactCommunityEventPath(event as any)).toBeUndefined()
+    expect(
+      getExactCommunityEventPath(event as any, {...pointer, communityId: otherCommunityId as any}),
+    ).toBeUndefined()
+    expect(getExactCommunityEventPath(event as any, pointer)).toBe(
+      `/c/${pointer.naddr}/threads/thread-root`,
+    )
+  })
+
+  it("does not choose the first target from an ambiguous multi-community wrapper", async () => {
+    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
+    const {getExactCommunityEventPath} = await import("./routes")
+    const first = makeCommunityPointer({
+      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    })!
+    const second = makeCommunityPointer({
+      controllerPubkey: "552c630b64b54bf50210c9e253d38bd4949c72e22873500f6285c2bede312a84",
+      communityId: "2f1b310f4c065331bc0d79ba4661bb9822d67d7c4a1b0a1892e1fd0cd23aa68d",
+    })!
+    const template = buildTargetedPublicationV2({
+      id: "goal-id",
+      kind: 9041,
+      communities: [first, second],
+    })
+    const wrapper = makeEvent({kind: 30222, tags: template.tags})
+
+    expect(getExactCommunityEventPath(wrapper as any)).toBeUndefined()
+    expect(getExactCommunityEventPath(wrapper as any, second)).toBe(`/c/${second.naddr}/goals`)
   })
 
   it("builds npub profile paths when no relay hints are provided", async () => {
@@ -239,178 +337,46 @@ describe("routes", () => {
     )
   })
 
-  it("parses encoded ncommunity route params", async () => {
-    const {makeCommunityPath, parseCommunityRouteParam} = await import("./routes")
-    const communityPubkey = "b".repeat(64)
-    const value = `ncommunity://${communityPubkey}?relay=${encodeURIComponent(
-      "wss://relay.example.com",
-    )}`
-    const normalizedValue = `ncommunity://${communityPubkey}?relay=${encodeURIComponent(
-      "wss://relay.example.com/",
-    )}`
-
-    expect(makeCommunityPath(value)).toBe(`/c/${encodeURIComponent(normalizedValue)}`)
-    expect(parseCommunityRouteParam(encodeURIComponent(value))).toEqual({
-      pubkey: communityPubkey,
-      relays: ["wss://relay.example.com/"],
-      source: "ncommunity",
-    })
-  })
-
-  it("routes community thread roots locally", async () => {
+  it("does not invent community routes from raw h-tag identifiers", async () => {
     const {getCommunityEventPath, getEventPath} = await import("./routes")
     const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
-    const event = makeEvent({id: "thread-root", kind: 11, tags: [["h", communityPubkey]]})
+    const event = makeEvent({kind: 11, tags: [["h", communityPubkey]]})
 
-    expect(getCommunityEventPath(event as any)).toBe(`/c/${communityNpub}/threads/thread-root`)
-    expect(await getEventPath(event as any, [])).toBe(`/c/${communityNpub}/threads/thread-root`)
+    expect(getCommunityEventPath(event as any)).toBeUndefined()
+    expect(await getEventPath(event as any, [])).toMatch(/^https:\/\/coracle\.social\/nevent1/)
   })
 
-  it("routes community room roots locally", async () => {
+  it("does not invent an exact branch route from h-only targetable events", async () => {
     const {getCommunityEventPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
-    const event = makeEvent({
-      id: "room-root",
-      kind: 11,
-      tags: [["h", communityPubkey], ["room"], ["title", "General"]],
-    })
-
-    expect(getCommunityEventPath(event as any)).toBe(`/c/${communityNpub}/rooms/room-root`)
-  })
-
-  it("routes community replies and room messages to their parent roots", async () => {
-    const {getCommunityEventPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
 
     expect(
-      getCommunityEventPath(
-        makeEvent({
-          kind: 1111,
-          tags: [
-            ["h", communityPubkey],
-            ["E", "thread-root"],
-            ["K", "11"],
-          ],
-        }) as any,
-      ),
-    ).toBe(`/c/${communityNpub}/threads/thread-root`)
+      getCommunityEventPath(makeEvent({kind: EVENT_TIME, tags: [["h", communityId]]}) as any),
+    ).toBeUndefined()
     expect(
-      getCommunityEventPath(
-        makeEvent({
-          kind: 1111,
-          tags: [
-            ["h", communityPubkey],
-            ["E", "calendar-root"],
-            ["K", "31922"],
-            ["A", `31922:${"2".repeat(64)}:calendar-d`],
-          ],
-        }) as any,
-      ),
-    ).toBe(`/c/${communityNpub}/calendar/calendar-d`)
+      getCommunityEventPath(makeEvent({kind: 9041, tags: [["h", communityId]]}) as any),
+    ).toBeUndefined()
     expect(
-      getCommunityEventPath(
-        makeEvent({
-          kind: 9,
-          tags: [
-            ["h", communityPubkey],
-            ["E", "room-root"],
-          ],
-        }) as any,
-      ),
-    ).toBe(`/c/${communityNpub}/rooms/room-root`)
-  })
-
-  it("uses a cached calendar root identifier for comment navigation", async () => {
-    const {getCommunityEventPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
-    repositoryGetEvent.mockReturnValue(
-      makeEvent({
-        id: "calendar-root",
-        kind: EVENT_TIME,
-        tags: [["d", "calendar-identifier"]],
-      }),
-    )
-    const comment = makeEvent({
-      kind: 1111,
-      tags: [
-        ["h", communityPubkey],
-        ["E", "calendar-root"],
-        ["K", String(EVENT_TIME)],
-      ],
-    })
-
-    expect(getCommunityEventPath(comment as any)).toBe(
-      `/c/${communityNpub}/calendar/calendar-identifier`,
-    )
-  })
-
-  it("routes community report targets to in-app context pages", async () => {
-    const {getCommunityReportTargetPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
-
-    expect(
-      getCommunityReportTargetPath(communityPubkey, {
-        targetEventKind: 9,
-        targetEventId: "message-id",
-        targetRootId: "room-root",
-      }),
-    ).toBe(`/c/${communityNpub}/rooms/room-root`)
-    expect(
-      getCommunityReportTargetPath(communityPubkey, {
-        targetEventKind: 1111,
-        targetRootKind: 11,
-        targetRootId: "thread-root",
-      }),
-    ).toBe(`/c/${communityNpub}/threads/thread-root`)
-    expect(
-      getCommunityReportTargetPath(communityPubkey, {
-        targetEventKind: 31922,
-        targetEventId: "calendar-id",
-        targetIdentifier: "calendar-d",
-      }),
-    ).toBe(`/c/${communityNpub}/calendar/calendar-d`)
-    expect(
-      getCommunityReportTargetPath(communityPubkey, {
-        targetEventKind: 9041,
-        targetEventId: "goal-id",
-      }),
-    ).toBe(`/c/${communityNpub}/goals/goal-id`)
-  })
-
-  it("routes targetable community events to their section pages", async () => {
-    const {getCommunityEventPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
-
-    expect(
-      getCommunityEventPath(makeEvent({kind: EVENT_TIME, tags: [["h", communityPubkey]]}) as any),
-    ).toBe(`/c/${communityNpub}/calendar`)
-    expect(
-      getCommunityEventPath(makeEvent({kind: 9041, tags: [["h", communityPubkey]]}) as any),
-    ).toBe(`/c/${communityNpub}/goals/${"1".repeat(64)}`)
-    expect(
-      getCommunityEventPath(makeEvent({kind: 30033, tags: [["h", communityPubkey]]}) as any),
-    ).toBe(`/c/${communityNpub}/widgets`)
+      getCommunityEventPath(makeEvent({kind: 30033, tags: [["h", communityId]]}) as any),
+    ).toBeUndefined()
   })
 
   it("routes targeted original events using cached targeting events", async () => {
+    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
     const {getCommunityEventPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
+    const community = makeCommunityPointer({
+      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    })!
 
     repositoryQuery.mockReturnValue([
       makeEvent({
         kind: 30222,
-        tags: [
-          ["d", "target-1"],
-          ["k", String(EVENT_TIME)],
-          ["p", communityPubkey],
-        ],
+        tags: buildTargetedPublicationV2({
+          id: "target-1",
+          kind: EVENT_TIME,
+          communities: [community],
+        }).tags,
       }),
     ] as any)
 
@@ -424,20 +390,23 @@ describe("routes", () => {
           ],
         }) as any,
       ),
-    ).toBe(`/c/${communityNpub}/calendar/calendar-1`)
+    ).toBe(`/c/${community.naddr}/calendar/calendar-1`)
   })
 
   it("loads targeting events before falling back to external links", async () => {
+    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
     const {getEventPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
+    const community = makeCommunityPointer({
+      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    })!
     const targeting = makeEvent({
       kind: 30222,
-      tags: [
-        ["d", "target-1"],
-        ["k", "9041"],
-        ["p", communityPubkey],
-      ],
+      tags: buildTargetedPublicationV2({
+        id: "target-1",
+        kind: 9041,
+        communities: [community],
+      }).tags,
     })
 
     repositoryQuery
@@ -449,48 +418,80 @@ describe("routes", () => {
       getEventPath(makeEvent({kind: 9041, tags: [["h", "target-1"]]}) as any, [
         "wss://relay.example.com",
       ]),
-    ).resolves.toBe(`/c/${communityNpub}/goals/${"1".repeat(64)}`)
+    ).resolves.toBe(`/c/${community.naddr}/goals/${"1".repeat(64)}`)
     expect(requestMock).toHaveBeenCalledWith(
       expect.objectContaining({relays: ["wss://relay.example.com/"], autoClose: true}),
     )
   })
 
   it("routes targeted publication events to their community sections", async () => {
+    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
     const {getCommunityEventPath} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
+    const community = makeCommunityPointer({
+      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    })!
 
     expect(
       getCommunityEventPath(
         makeEvent({
           kind: 30222,
+          tags: buildTargetedPublicationV2({
+            id: "target-1",
+            kind: 30033,
+            communities: [community],
+          }).tags,
+        }) as any,
+      ),
+    ).toBe(`/c/${community.naddr}/widgets`)
+  })
+
+  it("routes comments through the exact community in the current URL", async () => {
+    const {getCommunityEventPath, makeCommunityPointer} = {
+      ...(await import("./routes")),
+      ...(await import("@app/core/community")),
+    }
+    const community = makeCommunityPointer({
+      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    })!
+    window.history.replaceState(null, "", `/c/${community.naddr}/threads/root`)
+
+    expect(
+      getCommunityEventPath(
+        makeEvent({
+          kind: 1111,
           tags: [
-            ["d", "target-1"],
-            ["k", "30033"],
-            ["p", communityPubkey],
+            ["h", community.communityId],
+            ["E", "root"],
+            ["K", "11"],
           ],
         }) as any,
       ),
-    ).toBe(`/c/${communityNpub}/widgets`)
+    ).toBe(`/c/${community.naddr}/threads/root`)
   })
 
-  it("updates the hash before scrolling a same-room quoted event", async () => {
-    const {goToEvent} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
+  it("updates the hash before scrolling a quoted event in the same exact route", async () => {
+    const {goToEventPath, makeCommunityPointer} = {
+      ...(await import("./routes")),
+      ...(await import("@app/core/community")),
+    }
+    const community = makeCommunityPointer({
+      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    })!
     const event = makeEvent({
       kind: 9,
-      tags: [
-        ["h", communityPubkey],
-        ["E", "room-root"],
-      ],
+      tags: [["E", "room-root"]],
     })
-    window.history.replaceState(null, "", `/c/${nip19.npubEncode(communityPubkey)}/rooms/room-root`)
+    const path = `/c/${community.naddr}/rooms/room-root`
+    window.history.replaceState(null, "", path)
     waitAndScrollToEventMock.mockImplementationOnce(() => {
       expect(window.location.hash).toBe(`#event-${event.id}`)
       return Promise.resolve(true)
     })
 
-    await expect(goToEvent(event as any)).resolves.toBe(true)
+    await expect(goToEventPath(event as any, path)).resolves.toBe(true)
 
     expect(gotoMock).not.toHaveBeenCalled()
     expect(waitAndScrollToEventMock).toHaveBeenCalledWith(event.id, {behavior: "auto"})
@@ -498,56 +499,22 @@ describe("routes", () => {
   })
 
   it("does not let a source-page marker suppress cross-route navigation", async () => {
-    const {goToEvent} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
+    const {goToEventPath} = await import("./routes")
     const event = makeEvent({
       kind: 9,
-      tags: [
-        ["h", communityPubkey],
-        ["E", "room-root"],
-      ],
+      tags: [["E", "room-root"]],
     })
-    await expect(goToEvent(event as any)).resolves.toBe(true)
+    await expect(goToEventPath(event as any, "/c/naddr1exact/rooms/room-root")).resolves.toBe(true)
 
     expect(gotoMock).toHaveBeenCalledOnce()
     expect(gotoMock).toHaveBeenCalledWith(expect.stringMatching(/\/rooms\/room-root#event-/), {})
   })
 
-  it("treats equivalent ncommunity and npub room paths as the same context", async () => {
-    const {goToEvent} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
-    const communityInput = `ncommunity://${communityPubkey}?relay=${encodeURIComponent(
-      "wss://relay.example.com",
-    )}`
-    const event = makeEvent({
-      kind: 9,
-      tags: [
-        ["h", communityPubkey],
-        ["E", "room-root"],
-      ],
-    })
-    window.history.replaceState(
-      null,
-      "",
-      `/c/${encodeURIComponent(communityInput)}/rooms/room-root`,
-    )
-
-    await expect(goToEvent(event as any)).resolves.toBe(true)
-
-    expect(gotoMock).not.toHaveBeenCalled()
-    expect(waitAndScrollToEventMock).toHaveBeenCalledWith(event.id, {behavior: "auto"})
-    expect(window.location.hash).toBe(`#event-${event.id}`)
-  })
-
   it("awaits cross-route navigation before waiting for the event target", async () => {
-    const {goToEvent} = await import("./routes")
-    const communityPubkey = "a".repeat(64)
+    const {goToEventPath} = await import("./routes")
     const event = makeEvent({
       kind: 9,
-      tags: [
-        ["h", communityPubkey],
-        ["E", "room-root"],
-      ],
+      tags: [["E", "room-root"]],
     })
     let resolveNavigation!: () => void
     gotoMock.mockReturnValueOnce(
@@ -556,7 +523,7 @@ describe("routes", () => {
       }),
     )
 
-    const navigation = goToEvent(event as any)
+    const navigation = goToEventPath(event as any, "/c/naddr1exact/rooms/room-root")
     await vi.waitFor(() => expect(gotoMock).toHaveBeenCalledOnce())
     expect(waitAndScrollToEventMock).not.toHaveBeenCalled()
 
@@ -731,10 +698,9 @@ describe("routes", () => {
     )
   })
 
-  it("does not classify community goal comments as git comments", async () => {
+  it("does not classify raw-id community goal comments as git comments or local routes", async () => {
     const {getEventPath, getGitEventPath} = await import("./routes")
     const communityPubkey = "a".repeat(64)
-    const communityNpub = nip19.npubEncode(communityPubkey)
     const comment = makeEvent({
       kind: 1111,
       tags: [
@@ -745,8 +711,8 @@ describe("routes", () => {
     })
 
     await expect(getGitEventPath(comment as any, [])).resolves.toBeUndefined()
-    await expect(getEventPath(comment as any, [])).resolves.toBe(
-      `/c/${communityNpub}/goals/goal-id`,
+    await expect(getEventPath(comment as any, [])).resolves.toMatch(
+      /^https:\/\/coracle\.social\/nevent1/,
     )
   })
 

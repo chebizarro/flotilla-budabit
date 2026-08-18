@@ -17,16 +17,9 @@
   import Link from "@lib/components/Link.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
   import Profile from "@app/components/Profile.svelte"
-  import ProfileCircle from "@app/components/ProfileCircle.svelte"
-  import ProfileDetail from "@app/components/ProfileDetail.svelte"
-  import ProfileName from "@app/components/ProfileName.svelte"
   import CommunityAlertSettings from "@app/components/CommunityAlertSettings.svelte"
   import {publishSettings} from "@app/core/commands"
-  import {
-    activeCommunityDefinition,
-    activeUserCommunityRefs,
-    hydratePubkeyProfiles,
-  } from "@app/core/community-state"
+  import {hydratePubkeyProfiles} from "@app/core/community-state"
   import {GIT_RELAYS, repoAnnouncements} from "@app/core/git-state"
   import {userRepoWatchValues} from "@app/core/repo-watch"
   import {APP_LOGO, userSettingsValues} from "@app/core/state"
@@ -58,7 +51,6 @@
     type CommunityEmailDigestService,
   } from "@app/core/community"
   import {clearBadges} from "@app/util/notifications"
-  import {pushModal} from "@app/util/modal"
   import {makeGitPath} from "@app/util/routes"
   import {pushToast} from "@app/util/toast"
 
@@ -71,7 +63,7 @@
   let localTime = $state("09:00")
   let timezone = $state(getDefaultEmailDigestTimezone())
   let selectedProviderKey = $state("")
-  let selectedCommunityPubkey = $state("")
+  let selectedCommunityAddress = $state("")
   let digestFormSource = $state("")
   let digestFormDirty = $state(false)
   let providerSwitchConfirmed = $state(false)
@@ -96,9 +88,7 @@
     if (savedProvider && !choices.some(choice => getProviderKey(choice) === savedKey)) {
       choices.push({
         ...savedProvider,
-        endorsingCommunityPubkeys: [$userEmailDigestSettingsValues.selectedCommunityPubkey].filter(
-          Boolean,
-        ),
+        endorsingCommunities: [],
         isActiveCommunity: false,
         unavailable: true,
       })
@@ -110,7 +100,11 @@
     providerChoices.find(provider => getProviderKey(provider) === selectedProviderKey),
   )
   const selectedProviderAvailable = $derived(
-    isEmailDigestProviderAdvertised(selectedProvider, $emailDigestProviders),
+    isEmailDigestProviderAdvertised(
+      selectedProvider,
+      $emailDigestProviders,
+      selectedCommunityAddress,
+    ),
   )
   const selectedProviderIdentity = $derived(providerIdentities[selectedProviderKey])
   const selectedProviderPicture = $derived(
@@ -118,11 +112,13 @@
       ($APP_LOGO.startsWith("static/") ? `/${$APP_LOGO.slice("static/".length)}` : $APP_LOGO) ||
       Mailbox,
   )
+  const getProviderCommunityAddress = (provider?: ProviderChoice) =>
+    provider?.endorsingCommunities[0]?.pointer.address || ""
   const selectedProviderProfileRelays = $derived.by(() =>
     selectedProvider
       ? normalizeRelays([
           selectedProvider.handlerRelay,
-          ...selectedProvider.endorsingCommunityPubkeys.flatMap(getCommunityProfileRelays),
+          ...selectedProvider.endorsingCommunities.flatMap(definition => definition.relays),
         ])
       : [],
   )
@@ -153,7 +149,11 @@
     ),
   )
   const savedProviderAvailable = $derived(
-    isEmailDigestProviderAdvertised($userEmailDigestSettingsValues.provider, $emailDigestProviders),
+    isEmailDigestProviderAdvertised(
+      $userEmailDigestSettingsValues.provider,
+      $emailDigestProviders,
+      $userEmailDigestSettingsValues.selectedCommunityAddress,
+    ),
   )
   const statusState = $derived(
     !savedDigestEnabled ? "unsubscribed" : providerState.status?.state || "pending",
@@ -205,23 +205,6 @@
       return provider.requestRelay
     }
   }
-
-  function getCommunityProfileRelays(communityPubkey: string) {
-    const communityRef = $activeUserCommunityRefs.find(
-      ref => ref.communityPubkey === communityPubkey,
-    )
-    if (communityRef) return communityRef.relayHints
-    if ($activeCommunityDefinition?.pubkey === communityPubkey) {
-      return $activeCommunityDefinition.relays
-    }
-    return []
-  }
-
-  const openCommunityProfile = (communityPubkey: string) =>
-    pushModal(ProfileDetail, {
-      pubkey: communityPubkey,
-      relays: getCommunityProfileRelays(communityPubkey),
-    })
 
   const getProviderEvidenceKey = (provider: CommunityEmailDigestService) =>
     `${getProviderKey(provider)}:communities`
@@ -281,7 +264,7 @@
       savedDigestEnabled && savedProvider && getProviderKey(savedProvider) !== nextKey
     selectedProviderKey = nextKey
     const choice = providerChoices.find(provider => getProviderKey(provider) === nextKey)
-    selectedCommunityPubkey = choice?.endorsingCommunityPubkeys[0] || ""
+    selectedCommunityAddress = getProviderCommunityAddress(choice)
     digestFormDirty = true
     providerSwitchConfirmed = false
     providerState = {}
@@ -355,13 +338,13 @@
     try {
       providerState = await saveAndEnableEmailDigest({
         settings: {
-          version: 1,
+          version: 2,
           enabled: true,
           email,
           intervalDays,
           localTime,
           timezone,
-          selectedCommunityPubkey,
+          selectedCommunityAddress: selectedCommunityAddress,
           provider: selectedProvider,
         },
         watchState: $userRepoWatchValues,
@@ -418,7 +401,7 @@
     localTime = settings.localTime
     timezone = settings.timezone
     selectedProviderKey = settings.provider ? getProviderKey(settings.provider) : ""
-    selectedCommunityPubkey = settings.selectedCommunityPubkey
+    selectedCommunityAddress = settings.selectedCommunityAddress
     digestFormSource = source
   })
 
@@ -426,7 +409,7 @@
     if (selectedProviderKey || digestFormDirty || providerChoices.length === 0) return
     const provider = providerChoices[0]
     selectedProviderKey = getProviderKey(provider)
-    selectedCommunityPubkey = provider.endorsingCommunityPubkeys[0] || ""
+    selectedCommunityAddress = getProviderCommunityAddress(provider)
   })
 
   $effect(() => {
@@ -690,7 +673,7 @@
                     onclick={() =>
                       (openProviderEvidenceKey =
                         openProviderEvidenceKey === evidenceKey ? "" : evidenceKey)}>
-                    {getCommunityCountLabel(selectedProvider.endorsingCommunityPubkeys.length)}
+                    {getCommunityCountLabel(selectedProvider.endorsingCommunities.length)}
                   </button>
 
                   {#if openProviderEvidenceKey === evidenceKey}
@@ -708,28 +691,18 @@
                           </p>
                         </div>
                         <div class="flex flex-col gap-2">
-                          {#each selectedProvider.endorsingCommunityPubkeys as communityPubkey (communityPubkey)}
-                            {@const communityRelays = getCommunityProfileRelays(communityPubkey)}
+                          {#each selectedProvider.endorsingCommunities as definition (definition.pointer.address)}
                             <div
                               class="flex min-w-0 items-center gap-2 rounded-box bg-base-200/60 p-3">
-                              <button
-                                type="button"
-                                class="shrink-0"
-                                aria-label="Open community profile"
-                                onclick={() => openCommunityProfile(communityPubkey)}>
-                                <ProfileCircle
-                                  pubkey={communityPubkey}
-                                  relays={communityRelays}
-                                  size={7} />
-                              </button>
                               <div class="min-w-0 flex-1">
-                                <button
-                                  type="button"
-                                  class="max-w-full truncate text-sm font-medium hover:underline"
-                                  onclick={() => openCommunityProfile(communityPubkey)}>
-                                  <ProfileName pubkey={communityPubkey} relays={communityRelays} />
-                                </button>
-                                <div class="text-xs opacity-70">Community definition</div>
+                                <div class="truncate text-sm font-medium">
+                                  {definition.metadata.name}
+                                </div>
+                                <div
+                                  class="truncate text-xs opacity-70"
+                                  title={definition.pointer.address}>
+                                  {definition.pointer.address}
+                                </div>
                               </div>
                             </div>
                           {/each}

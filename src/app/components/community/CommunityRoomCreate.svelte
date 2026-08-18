@@ -13,13 +13,15 @@
   import Spinner from "@lib/components/Spinner.svelte"
   import {preventDefault} from "@lib/html"
   import PublishGate from "@app/components/community/PublishGate.svelte"
+  import type {CommunityPointer} from "@app/core/community"
   import {makeCommunityRoomRoot} from "@app/core/community-rooms"
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
   } from "@app/core/community-state"
   import {
     COMMUNITY_WRITE_TARGETS,
@@ -29,28 +31,34 @@
   import {getCommunityScopedPublishRelays} from "@app/core/community-relays"
   import {signEventForPublication} from "@app/core/publication"
   import {pushToast} from "@app/util/toast"
-  import {formatShortNpub} from "@app/util/pubkeys"
-  import {makeCommunityRoomPath} from "@app/util/routes"
+  import {makeExactCommunityRoomPath} from "@app/util/routes"
 
   type Props = {
-    communityPubkey: string
+    community: CommunityPointer
   }
 
-  const {communityPubkey}: Props = $props()
-  const communityLabel = $derived(formatShortNpub(communityPubkey) || "this community")
+  const {community}: Props = $props()
+  const communityLabel = $derived(
+    $activeExactCommunityDefinition?.pointer.address === community.address
+      ? $activeExactCommunityDefinition.metadata.name ||
+          `community ${community.naddr.slice(0, 12)}...`
+      : `community ${community.naddr.slice(0, 12)}...`,
+  )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      $activeExactCommunityPointer?.address === community.address &&
+      $activeExactCommunityDefinition?.pointer.address === community.address &&
+      $activeExactCommunityDefinition.controllerPubkey === community.controllerPubkey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(!communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeExactCommunityPointer?.address === community.address &&
+      $activeCommunityAuthorityReadiness.communityPubkey === community.controllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -65,9 +73,9 @@
     Boolean(
       $pubkey &&
       communityReady &&
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.roomRoot,
@@ -76,11 +84,11 @@
     ),
   )
   const communityPublishRelays = $derived(
-    getCommunityScopedPublishRelays($activeCommunityDefinition),
+    getCommunityScopedPublishRelays($activeExactCommunityDefinition),
   )
   const roomRootSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityReady ? $activeCommunityDefinition : undefined,
+      communityReady ? $activeExactCommunityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.roomRoot,
     ),
   )
@@ -113,7 +121,7 @@
 
     const about = roomDescription.trim()
     const publishKey = JSON.stringify({
-      communityPubkey,
+      communityAddress: community.address,
       name: trimmed,
       about,
       relays: [...new Set(communityPublishRelays)].sort(),
@@ -127,7 +135,10 @@
         thunk = retryThunk(thunk) as ReturnType<typeof publishThunk>
       } else {
         const event = await signEventForPublication(
-          makeEvent(THREAD, makeCommunityRoomRoot({communityPubkey, name: trimmed, about})),
+          makeEvent(
+            THREAD,
+            makeCommunityRoomRoot({communityPubkey: community.communityId, name: trimmed, about}),
+          ),
         )
 
         thunk = publishThunk({
@@ -153,7 +164,7 @@
     repository.publish(thunk.event as TrustedEvent)
 
     pushToast({message: "Room published."})
-    await goto(makeCommunityRoomPath(communityPubkey, thunk.event.id), {replaceState: true})
+    await goto(makeExactCommunityRoomPath(community, thunk.event.id), {replaceState: true})
   }
 
   let roomName = $state("")

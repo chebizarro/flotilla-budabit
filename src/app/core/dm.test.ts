@@ -1,6 +1,12 @@
 import {describe, expect, it} from "vitest"
 import {MESSAGING_RELAYS, type TrustedEvent} from "@welshman/util"
-import {PROFILE_LIST_KIND} from "./community"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  PROFILE_LIST_KIND,
+  buildCommunityDefinitionV2,
+  parseCommunityDefinitionV2,
+} from "./community"
+import {getPublicKey} from "nostr-tools/pure"
 import type {ActiveUserCommunityRef} from "./community-membership"
 import {
   buildDmRelayRecommendations,
@@ -26,34 +32,53 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     sig: overrides.sig || "sig",
   }) as TrustedEvent
 
+const communityIds = new Map<string, string>(
+  ["community", "first", "second", "shared-id"].map((id, index) => [
+    id,
+    getPublicKey(new Uint8Array(32).fill(42 + index)),
+  ]),
+)
+
 const makeCommunityRef = ({
   communityPubkey,
   moderatorPubkey,
   relay = "wss://active.relay.example.com",
+  identifier = "community",
 }: {
   communityPubkey: string
   moderatorPubkey: string
   relay?: string
+  identifier?: string
 }): ActiveUserCommunityRef => {
   const listAddress = `${PROFILE_LIST_KIND}:${moderatorPubkey}:Repositories`
 
+  const definition = parseCommunityDefinitionV2(
+    makeEvent({
+      pubkey: communityPubkey,
+      created_at: 1,
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      tags: buildCommunityDefinitionV2({
+        communityId: communityIds.get(identifier)!,
+        name: identifier,
+        relays: [relay],
+        sections: [
+          {
+            name: "Repositories",
+            kinds: [{kind: 30617}],
+            profileLists: [{address: listAddress, relay}],
+          },
+        ],
+      }).tags,
+    }),
+  )!
+
   return {
-    communityPubkey,
+    community: definition.pointer,
     relayHints: [relay],
     roles: ["member"],
     writableSections: ["Repositories"],
-    definition: {
-      pubkey: communityPubkey,
-      relays: [relay],
-      sections: [
-        {
-          name: "Repositories",
-          profileLists: [{address: listAddress, pubkey: moderatorPubkey, relay}],
-        },
-      ],
-      event: makeEvent({pubkey: communityPubkey, created_at: 1}),
-    },
-  } as ActiveUserCommunityRef
+    definition,
+  }
 }
 
 const makeProfileList = ({pubkey, members = []}: {pubkey: string; members?: string[]}) =>
@@ -427,6 +452,86 @@ describe("dm", () => {
       expect(recommendations[3].evidence[0]).toMatchObject({source: "member_messaging"})
       expect(recommendations[4].evidence[0]).toMatchObject({source: "starred_community_relay"})
       expect(recommendations[5].evidence[0]).toMatchObject({source: "follow_messaging"})
+    })
+
+    it("keeps same-controller sibling messaging evidence on exact addresses", () => {
+      const viewer = "1".repeat(64)
+      const controller = "2".repeat(64)
+      const moderatorA = "3".repeat(64)
+      const moderatorB = "4".repeat(64)
+      const recommender = "5".repeat(64)
+      const first = makeCommunityRef({
+        communityPubkey: controller,
+        moderatorPubkey: moderatorA,
+        identifier: "first",
+        relay: "wss://first.active.example.com",
+      })
+      const second = makeCommunityRef({
+        communityPubkey: controller,
+        moderatorPubkey: moderatorB,
+        identifier: "second",
+        relay: "wss://second.active.example.com",
+      })
+      const recommendations = buildDmRelayRecommendations({
+        viewerPubkey: viewer,
+        communityRefs: [first, second],
+        profileListEvents: [
+          makeProfileList({pubkey: moderatorA, members: [recommender]}),
+          makeProfileList({pubkey: moderatorB, members: [recommender]}),
+        ],
+        messagingRelayListEvents: [
+          makeMessagingRelayList({
+            pubkey: recommender,
+            relays: ["wss://shared.messaging.example.com"],
+          }),
+        ],
+      })
+      const evidence = recommendations.find(item => item.url.includes("shared.messaging"))?.evidence
+
+      expect(evidence).toHaveLength(2)
+      expect(evidence?.map(item => item.communityAddress)).toEqual(
+        expect.arrayContaining([first.community.address, second.community.address]),
+      )
+    })
+
+    it("keeps same-ID messaging branches distinct by controller address", () => {
+      const recommender = "1".repeat(64)
+      const firstController = "2".repeat(64)
+      const secondController = "3".repeat(64)
+      const firstModerator = getPublicKey(new Uint8Array(32).fill(54))
+      const secondModerator = getPublicKey(new Uint8Array(32).fill(55))
+      const recommendations = buildDmRelayRecommendations({
+        communityRefs: [
+          makeCommunityRef({
+            communityPubkey: firstController,
+            moderatorPubkey: firstModerator,
+            identifier: "shared-id",
+          }),
+          makeCommunityRef({
+            communityPubkey: secondController,
+            moderatorPubkey: secondModerator,
+            identifier: "shared-id",
+          }),
+        ],
+        profileListEvents: [
+          makeProfileList({pubkey: firstModerator, members: [recommender]}),
+          makeProfileList({pubkey: secondModerator, members: [recommender]}),
+        ],
+        messagingRelayListEvents: [
+          makeMessagingRelayList({pubkey: recommender, relays: ["wss://shared-id.example.com"]}),
+        ],
+      })
+
+      expect(
+        recommendations
+          .find(item => item.url.includes("shared-id"))
+          ?.evidence.map(item => item.communityAddress),
+      ).toEqual(
+        expect.arrayContaining([
+          `32222:${firstController}:${communityIds.get("shared-id")}`,
+          `32222:${secondController}:${communityIds.get("shared-id")}`,
+        ]),
+      )
     })
   })
 

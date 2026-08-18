@@ -24,7 +24,7 @@
     openHref: string
     openLabel?: string
     relays?: string[]
-    defaultThreadCommunityPubkey?: string
+    defaultThreadCommunityAddress?: string
   }
 
   const {
@@ -33,7 +33,7 @@
     openHref,
     openLabel = "Open",
     relays = [],
-    defaultThreadCommunityPubkey = "",
+    defaultThreadCommunityAddress = "",
   }: Props = $props()
 
   const relayTargets = $derived.by(() => (relays.length > 0 ? relays : [url]).filter(Boolean))
@@ -64,7 +64,7 @@
         event,
         url,
         relays: relayTargets,
-        defaultCommunityPubkey: defaultThreadCommunityPubkey,
+        defaultCommunityAddress: defaultThreadCommunityAddress,
       },
       {replaceState: true},
     )

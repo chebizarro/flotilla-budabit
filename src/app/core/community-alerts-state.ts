@@ -7,7 +7,7 @@ import {DELETE, makeEvent, type SignedEvent, type TrustedEvent} from "@welshman/
 import {makeOutboxLoader, makeUserData, pubkey, repository, signer} from "@welshman/app"
 import {getUserDataPublishRelays} from "@app/core/community-relays"
 import {publishRequiredCommunityEvent} from "@app/core/community-publish"
-import {activeCommunityPubkey, activeUserCommunityRefs} from "@app/core/community-state"
+import {activeExactCommunityPointer, activeUserCommunityRefs} from "@app/core/community-state"
 import {APP_BASE_URL} from "@app/core/state"
 import {
   waitForProviderRelayAuth,
@@ -50,6 +50,7 @@ import {
   getCommunityAlertServiceDescriptorKey,
   normalizeCommunityAlertService,
   normalizePubkey,
+  parseCommunityDefinitionAddress,
   type CommunityAlertService,
 } from "@app/core/community"
 import {
@@ -88,7 +89,7 @@ export type CommunityAlertProviderState = {
 }
 
 export type CommunityAlertDeliverySyncError = {
-  communityPubkey: string
+  communityAddress: string
   providerKey: string
   message: string
 }
@@ -121,11 +122,11 @@ const assertSessionActive = (session: CommunityAlertSession) => {
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 export const communityAlertProviderGroups: Readable<CommunityAlertProviderGroup[]> = derived(
-  [activeUserCommunityRefs, activeCommunityPubkey],
-  ([$communityRefs, $activeCommunityPubkey]) =>
+  [activeUserCommunityRefs, activeExactCommunityPointer],
+  ([$communityRefs, $activeCommunity]) =>
     discoverCommunityAlertProviders({
       communityRefs: $communityRefs,
-      activeCommunityPubkey: $activeCommunityPubkey,
+      activeCommunityAddress: $activeCommunity?.address,
     }),
   [] as CommunityAlertProviderGroup[],
 )
@@ -441,10 +442,10 @@ const runCommunityAlertOperation = createCommunityAlertOperationQueue()
 
 const withCommunityAlertLifecycle = <T>(
   session: CommunityAlertSession,
-  communityPubkey: string,
+  communityAddress: string,
   run: () => Promise<T>,
 ) =>
-  runCommunityAlertOperation(`${session.userPubkey}:${communityPubkey}`, async () => {
+  runCommunityAlertOperation(`${session.userPubkey}:${communityAddress}`, async () => {
     assertSessionActive(session)
     requireSettingsHydrated(session)
     await hydrateCommunityAlertSettings(session.userPubkey, {force: true})
@@ -563,14 +564,14 @@ const getCommunityAlertLocale = () =>
 
 const queryProviderStateForSession = async ({
   session,
-  communityPubkey,
+  communityAddress,
   provider,
 }: {
   session: CommunityAlertSession
-  communityPubkey: string
+  communityAddress: string
   provider: CommunityAlertService
 }): Promise<CommunityAlertProviderState> => {
-  const community = normalizePubkey(communityPubkey)
+  const community = parseCommunityDefinitionAddress(communityAddress)?.address || ""
   const normalizedProvider = normalizeCommunityAlertService(provider)
   if (!community || !normalizedProvider) throw new Error("Invalid community alert provider query.")
 
@@ -692,28 +693,28 @@ const queryProviderStateForSession = async ({
 }
 
 export const queryCommunityAlertProviderState = async ({
-  communityPubkey,
+  communityAddress,
   provider,
 }: {
-  communityPubkey: string
+  communityAddress: string
   provider: CommunityAlertService
 }) => {
   const session = captureSession()
 
-  return queryProviderStateForSession({session, communityPubkey, provider})
+  return queryProviderStateForSession({session, communityAddress, provider})
 }
 
 const buildCurrentPayload = ({
-  communityPubkey,
+  communityAddress,
   deliveryProfile,
   preferences,
 }: {
-  communityPubkey: string
+  communityAddress: string
   deliveryProfile: CommunityAlertDeliveryProfile
   preferences: CommunityAlertPreferences
 }) =>
   buildCommunityAlertPayload({
-    community: communityPubkey,
+    community: communityAddress,
     email: deliveryProfile.email,
     locale: getCommunityAlertLocale(),
     manageUrl: getCommunityAlertManageUrl(),
@@ -725,21 +726,21 @@ const buildCurrentPayload = ({
 
 const publishSubscriptionForSession = async ({
   session,
-  communityPubkey,
+  communityAddress,
   provider,
   deliveryProfile,
   preferences,
   minimumCreatedAt = 0,
 }: {
   session: CommunityAlertSession
-  communityPubkey: string
+  communityAddress: string
   provider: CommunityAlertService
   deliveryProfile: CommunityAlertDeliveryProfile
   preferences: CommunityAlertPreferences
   minimumCreatedAt?: number
 }) => {
-  const payload = buildCurrentPayload({communityPubkey, deliveryProfile, preferences})
-  const providerState = await queryProviderStateForSession({session, communityPubkey, provider})
+  const payload = buildCurrentPayload({communityAddress, deliveryProfile, preferences})
+  const providerState = await queryProviderStateForSession({session, communityAddress, provider})
   assertSessionActive(session)
   const content = await session.currentSigner.nip44.encrypt(
     provider.servicePubkey,
@@ -749,7 +750,7 @@ const publishSubscriptionForSession = async ({
   const event = await session.currentSigner.sign(
     makeEvent(COMMUNITY_ALERTS_SUBSCRIPTION_KIND, {
       content,
-      tags: getCommunityAlertSubscriptionTags(communityPubkey, provider.servicePubkey),
+      tags: getCommunityAlertSubscriptionTags(communityAddress, provider.servicePubkey),
       created_at: getNextCommunityAlertCreatedAt(
         Math.max(providerState.subscription?.created_at || 0, minimumCreatedAt),
       ),
@@ -758,28 +759,28 @@ const publishSubscriptionForSession = async ({
   assertSessionActive(session)
   await publishAcceptedEvent(session, event, provider, "Community alert registration")
 
-  return queryProviderStateForSession({session, communityPubkey, provider})
+  return queryProviderStateForSession({session, communityAddress, provider})
 }
 
 const deleteRegistrationForSession = async ({
   session,
-  communityPubkey,
+  communityAddress,
   provider,
   persistDeletionCreatedAt,
 }: {
   session: CommunityAlertSession
-  communityPubkey: string
+  communityAddress: string
   provider: CommunityAlertService
   persistDeletionCreatedAt?: (createdAt: number) => Promise<unknown>
 }) => {
-  const providerState = await queryProviderStateForSession({session, communityPubkey, provider})
+  const providerState = await queryProviderStateForSession({session, communityAddress, provider})
   if (!providerState.subscription) return undefined
   assertSessionActive(session)
   const event = await session.currentSigner.sign(
     makeEvent(DELETE, {
       created_at: getNextCommunityAlertCreatedAt(providerState.subscription.created_at),
       tags: getCommunityAlertDeletionTags({
-        communityPubkey,
+        communityAddress,
         userPubkey: session.userPubkey,
         servicePubkey: provider.servicePubkey,
       }),
@@ -795,11 +796,11 @@ const deleteRegistrationForSession = async ({
 
 const withCommunityRegistration = (
   settings: CommunityAlertSettings,
-  communityPubkey: string,
+  communityAddress: string,
   registration: CommunityAlertRegistration,
 ) => ({
   ...settings,
-  communities: {...settings.communities, [communityPubkey]: registration},
+  communities: {...settings.communities, [communityAddress]: registration},
 })
 
 const withLastDeletionCreatedAt = (
@@ -830,31 +831,31 @@ const uniqueProviders = (providers: Array<CommunityAlertService | undefined>) =>
 
 const persistRegistration = (
   session: CommunityAlertSession,
-  communityPubkey: string,
+  communityAddress: string,
   registration: CommunityAlertRegistration,
 ) =>
   updateSettingsForSession(session, settings =>
-    withCommunityRegistration(settings, communityPubkey, registration),
+    withCommunityRegistration(settings, communityAddress, registration),
   )
 
 export const saveAndEnableCommunityAlerts = async ({
-  communityPubkey,
+  communityAddress,
   provider,
   preferences,
 }: {
-  communityPubkey: string
+  communityAddress: string
   provider: CommunityAlertService
   preferences: CommunityAlertPreferences
 }) => {
   const session = captureSession()
-  const community = normalizePubkey(communityPubkey)
+  const community = parseCommunityDefinitionAddress(communityAddress)?.address || ""
   const normalizedProvider = normalizeCommunityAlertService(provider)
   if (!community || !normalizedProvider) throw new Error("Choose a valid community alert provider.")
 
   return withCommunityAlertLifecycle(session, community, async () => {
     if (
       !isCommunityAlertProviderAdvertised({
-        communityPubkey: community,
+        communityAddress: community,
         provider: normalizedProvider,
         providerGroups: get(communityAlertProviderGroups),
       })
@@ -867,7 +868,7 @@ export const saveAndEnableCommunityAlerts = async ({
     const nextProviderKey = getCommunityAlertServiceDescriptorKey(normalizedProvider)
     const normalizedPreferences = normalizeCommunityAlertPreferences(preferences)
     buildCurrentPayload({
-      communityPubkey: community,
+      communityAddress: community,
       deliveryProfile: settings.deliveryProfile,
       preferences: normalizedPreferences,
     })
@@ -925,7 +926,7 @@ export const saveAndEnableCommunityAlerts = async ({
         for (const oldProvider of providersToDelete) {
           const deletion = await deleteRegistrationForSession({
             session,
-            communityPubkey: community,
+            communityAddress: community,
             provider: oldProvider,
             persistDeletionCreatedAt: async createdAt => {
               latestDeletionCreatedAt = Math.max(latestDeletionCreatedAt, createdAt)
@@ -948,7 +949,7 @@ export const saveAndEnableCommunityAlerts = async ({
       publishNewRegistration: () =>
         publishSubscriptionForSession({
           session,
-          communityPubkey: community,
+          communityAddress: community,
           provider: normalizedProvider,
           deliveryProfile: settings.deliveryProfile,
           preferences: normalizedPreferences,
@@ -1009,15 +1010,15 @@ export const saveCommunityAlertDeliveryProfile = async (
   const errors: CommunityAlertDeliverySyncError[] = []
   const providerGroups = get(communityAlertProviderGroups)
 
-  for (const communityPubkey of Object.keys(settings.communities)) {
-    await withCommunityAlertLifecycle(session, communityPubkey, async () => {
-      const registration = get(userCommunityAlertSettingsValues).communities[communityPubkey]
+  for (const communityAddress of Object.keys(settings.communities)) {
+    await withCommunityAlertLifecycle(session, communityAddress, async () => {
+      const registration = get(userCommunityAlertSettingsValues).communities[communityAddress]
       if (
         !registration?.enabled ||
         !registration.provider ||
         registration.pendingProvider ||
         !isCommunityAlertProviderAdvertised({
-          communityPubkey,
+          communityAddress,
           provider: registration.provider,
           providerGroups,
         })
@@ -1028,7 +1029,7 @@ export const saveCommunityAlertDeliveryProfile = async (
       try {
         await publishSubscriptionForSession({
           session,
-          communityPubkey,
+          communityAddress,
           provider: registration.provider,
           deliveryProfile: normalizedProfile,
           preferences: registration.preferences,
@@ -1037,7 +1038,7 @@ export const saveCommunityAlertDeliveryProfile = async (
       } catch (error) {
         assertSessionActive(session)
         errors.push({
-          communityPubkey,
+          communityAddress,
           providerKey: getCommunityAlertServiceDescriptorKey(registration.provider),
           message: errorMessage(error),
         })
@@ -1048,9 +1049,9 @@ export const saveCommunityAlertDeliveryProfile = async (
   return {settings, errors}
 }
 
-export const disableCommunityAlerts = async (communityPubkey: string) => {
+export const disableCommunityAlerts = async (communityAddress: string) => {
   const session = captureSession()
-  const community = normalizePubkey(communityPubkey)
+  const community = parseCommunityDefinitionAddress(communityAddress)?.address || ""
   if (!community) throw new Error("No saved community alert registration was found.")
 
   return withCommunityAlertLifecycle(session, community, async () => {
@@ -1080,7 +1081,7 @@ export const disableCommunityAlerts = async (communityPubkey: string) => {
       try {
         const deletion = await deleteRegistrationForSession({
           session,
-          communityPubkey: community,
+          communityAddress: community,
           provider: candidate,
           persistDeletionCreatedAt: async createdAt => {
             latestDeletionCreatedAt = Math.max(latestDeletionCreatedAt, createdAt)
@@ -1115,9 +1116,9 @@ export const disableCommunityAlerts = async (communityPubkey: string) => {
   })
 }
 
-export const retryCommunityAlertCleanup = async (communityPubkey: string) => {
+export const retryCommunityAlertCleanup = async (communityAddress: string) => {
   const session = captureSession()
-  const community = normalizePubkey(communityPubkey)
+  const community = parseCommunityDefinitionAddress(communityAddress)?.address || ""
   if (!community) return undefined
 
   return withCommunityAlertLifecycle(session, community, async () => {
@@ -1131,7 +1132,7 @@ export const retryCommunityAlertCleanup = async (communityPubkey: string) => {
       try {
         const deletion = await deleteRegistrationForSession({
           session,
-          communityPubkey: community,
+          communityAddress: community,
           provider,
           persistDeletionCreatedAt: async createdAt => {
             latestDeletionCreatedAt = Math.max(latestDeletionCreatedAt, createdAt)
@@ -1177,23 +1178,23 @@ export const retryCommunityAlertCleanup = async (communityPubkey: string) => {
 }
 
 export const makeCommunityAlertStatusFilter = (
-  communityPubkey: string,
+  communityAddress: string,
   userPubkey: string,
   provider: CommunityAlertService,
 ) => ({
   kinds: [COMMUNITY_ALERTS_STATUS_KIND],
   authors: [provider.servicePubkey],
-  "#d": [getCommunityAlertStatusDtag(communityPubkey, userPubkey)],
+  "#d": [getCommunityAlertStatusDtag(communityAddress, userPubkey)],
   "#p": [userPubkey],
 })
 
 export const makeCommunityAlertSubscriptionFilter = (
-  communityPubkey: string,
+  communityAddress: string,
   userPubkey: string,
   provider: CommunityAlertService,
 ) => ({
   kinds: [COMMUNITY_ALERTS_SUBSCRIPTION_KIND],
   authors: [userPubkey],
-  "#d": [getCommunityAlertSubscriptionDtag(communityPubkey)],
+  "#d": [getCommunityAlertSubscriptionDtag(communityAddress)],
   "#p": [provider.servicePubkey],
 })

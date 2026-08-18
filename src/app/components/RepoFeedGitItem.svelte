@@ -39,7 +39,7 @@
     scopeH?: string
     zapScopeH?: string
     statusState?: RepoFeedStatusState
-    defaultThreadCommunityPubkey?: string
+    defaultThreadCommunityAddress?: string
     repoAddress: string
   }
 
@@ -51,7 +51,7 @@
     scopeH = "",
     zapScopeH = "",
     statusState = "open",
-    defaultThreadCommunityPubkey = "",
+    defaultThreadCommunityAddress = "",
     repoAddress,
   }: Props = $props()
 
@@ -155,7 +155,7 @@
       openHref,
       openLabel,
       relays: relayTargets,
-      defaultThreadCommunityPubkey,
+      defaultThreadCommunityAddress,
     })
 
   const handleCardClick = (event: MouseEvent) => {
@@ -189,7 +189,7 @@
       event,
       url,
       relays: relayTargets,
-      defaultCommunityPubkey: defaultThreadCommunityPubkey,
+      defaultCommunityAddress: defaultThreadCommunityAddress,
     })
   }
 

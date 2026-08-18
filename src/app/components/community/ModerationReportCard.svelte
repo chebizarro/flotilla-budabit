@@ -17,8 +17,8 @@
   import Button from "@lib/components/Button.svelte"
   import Confirm from "@lib/components/Confirm.svelte"
   import ProfileLink from "@app/components/ProfileLink.svelte"
-  import {activeCommunityDefinition, loadCommunityEvents} from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND, normalizePubkey} from "@app/core/community"
+  import {activeExactCommunityDefinition, loadCommunityEvents} from "@app/core/community-state"
+  import {TARGETED_PUBLICATION_KIND_V2, normalizePubkey} from "@app/core/community"
   import {getCommunityScopedPublishRelays} from "@app/core/community-relays"
   import {
     makeCommunityReportDelete,
@@ -41,7 +41,7 @@
   const failedReportDeleteThunks = new Map<string, GovernanceThunk>()
 
   const currentPubkey = $derived(normalizePubkey($pubkey || ""))
-  const reportRelays = $derived(getCommunityScopedPublishRelays($activeCommunityDefinition))
+  const reportRelays = $derived(getCommunityScopedPublishRelays($activeExactCommunityDefinition))
   const profileRelays = $derived(relays.length > 0 ? relays : reportRelays)
   const canRevoke = $derived(Boolean(currentPubkey && report.reporterPubkey === currentPubkey))
   const revokeLabel = "Remove report"
@@ -54,7 +54,7 @@
     if (kind === EVENT_DATE || kind === EVENT_TIME) return "Calendar event"
     if (kind === ZAP_GOAL) return "Goal"
     if (kind === NOTE) return "Note"
-    if (kind === TARGETED_PUBLICATION_KIND) return "Community targeting update"
+    if (kind === TARGETED_PUBLICATION_KIND_V2) return "Community targeting update"
 
     return `Kind ${kind}`
   }
@@ -116,7 +116,11 @@
     }
 
     revokeStatus = "publishing"
-    const template = makeCommunityReportDelete({reportId: report.event.id})
+    const template = makeCommunityReportDelete({
+      community: report.community,
+      reportId: report.event.id,
+      reporterPubkey: report.reporterPubkey,
+    })
     const operation = `community-report-delete:${report.event.id}`
     const failedThunk = failedReportDeleteThunks.get(operation)
     let thunk: GovernanceThunk | undefined

@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest"
-import * as nip19 from "nostr-tools/nip19"
+import {getPublicKey} from "nostr-tools/pure"
 import {
   DELETE,
   EVENT_DATE,
@@ -9,7 +9,12 @@ import {
   matchFilters,
   type TrustedEvent,
 } from "@welshman/util"
-import {TARGETED_PUBLICATION_KIND, buildTargetedPublication} from "./community"
+import {
+  TARGETED_PUBLICATION_KIND,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
+  type TargetedPublicationSourceV2,
+} from "./community"
 import {
   eventTargetsCommunity,
   filterRoomRoots,
@@ -28,9 +33,27 @@ import {
   makeTargetedPublicationOriginalRelayHintPlans,
 } from "./community-feeds"
 
-const communityPubkey = "a".repeat(64)
-const otherCommunityPubkey = "b".repeat(64)
-const authorPubkey = "c".repeat(64)
+const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = testPubkey(61)
+const otherCommunityPubkey = testPubkey(62)
+const authorPubkey = testPubkey(63)
+const communityPointer = makeCommunityPointer({
+  controllerPubkey: testPubkey(64),
+  communityId: communityPubkey,
+})!
+const permalinkEventId = "1".repeat(64)
+const externalEventId = "2".repeat(64)
+const relayEventId = "3".repeat(64)
+const buildTargetedPublication = ({
+  id,
+  kind,
+  ref,
+}: {
+  id: string
+  kind: number
+  ref?: TargetedPublicationSourceV2
+  communities: Array<{pubkey: string}>
+}) => buildTargetedPublicationV2({id, kind, source: ref, communities: [communityPointer]})
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -163,10 +186,41 @@ describe("community feed helpers", () => {
       makeCommunityTargetingFilter(communityPubkey, [EVENT_DATE, EVENT_TIME, 9041], {limit: 100}),
     ).toEqual({
       kinds: [TARGETED_PUBLICATION_KIND],
-      "#p": [communityPubkey],
+      "#h": [communityPubkey],
       "#k": [String(EVENT_DATE), String(EVENT_TIME), "9041"],
       limit: 100,
     })
+  })
+
+  it("admits exactly one valid h and rejects community IDs used as people", () => {
+    expect(
+      eventTargetsCommunity(makeEvent({tags: [["h", communityPubkey]]}), communityPubkey),
+    ).toBe(true)
+    expect(
+      eventTargetsCommunity(
+        makeEvent({
+          tags: [
+            ["h", communityPubkey],
+            ["h", communityPubkey],
+          ],
+        }),
+        communityPubkey,
+      ),
+    ).toBe(false)
+    expect(
+      eventTargetsCommunity(
+        makeEvent({
+          tags: [
+            ["h", communityPubkey],
+            ["p", communityPubkey],
+          ],
+        }),
+        communityPubkey,
+      ),
+    ).toBe(false)
+    expect(
+      eventTargetsCommunity(makeEvent({tags: [["h", communityPubkey, "extra"]]}), communityPubkey),
+    ).toBe(false)
   })
 
   it("separates room roots from thread roots", () => {
@@ -222,18 +276,18 @@ describe("community feed helpers", () => {
     expect(isRoomMessage(message, communityPubkey, "room-root")).toBe(true)
   })
 
-  it("accepts encoded community tags on room messages", () => {
+  it("rejects encoded person identifiers in stable community h tags", () => {
     const message = makeEvent({
       kind: 9,
       tags: [
-        ["h", nip19.npubEncode(communityPubkey)],
+        ["h", `npub1${communityPubkey}`],
         ["E", "room-root", "wss://relay.example.com", authorPubkey],
         ["K", "11"],
       ],
     })
 
-    expect(eventTargetsCommunity(message, communityPubkey)).toBe(true)
-    expect(isRoomMessage(message, communityPubkey, "room-root")).toBe(true)
+    expect(eventTargetsCommunity(message, communityPubkey)).toBe(false)
+    expect(isRoomMessage(message, communityPubkey, "room-root")).toBe(false)
   })
 
   it("builds original publication filters from targeting events", () => {
@@ -260,7 +314,7 @@ describe("community feed helpers", () => {
       tags: buildTargetedPublication({
         id: "target-permalink",
         kind: 1623,
-        ref: {type: "e", value: "permalink-event-id"},
+        ref: {type: "e", value: permalinkEventId},
         communities: [{pubkey: communityPubkey}],
       }).tags,
     })
@@ -283,7 +337,7 @@ describe("community feed helpers", () => {
     ).toEqual([
       {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
       {kinds: [EVENT_TIME], authors: [authorPubkey], "#d": ["calendar-1"], limit: 1},
-      {kinds: [1623], ids: ["permalink-event-id"], limit: 1},
+      {kinds: [1623], ids: [permalinkEventId], limit: 1},
       {kinds: [9041], "#h": ["target-goal"], limit: 1},
     ])
     expect(
@@ -294,7 +348,7 @@ describe("community feed helpers", () => {
     ).toEqual([
       {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
       {kinds: [EVENT_TIME], authors: [authorPubkey], "#d": ["calendar-1"], limit: 1},
-      {kinds: [1623], ids: ["permalink-event-id"], authors: [authorPubkey], limit: 1},
+      {kinds: [1623], ids: [permalinkEventId], authors: [authorPubkey], limit: 1},
       {kinds: [9041], "#h": ["target-goal"], authors: [authorPubkey], limit: 1},
     ])
 
@@ -307,12 +361,12 @@ describe("community feed helpers", () => {
     ).toEqual({
       relayFilters: [
         {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
-        {kinds: [1623], ids: ["permalink-event-id"], limit: 1},
+        {kinds: [1623], ids: [permalinkEventId], limit: 1},
         {kinds: [9041], authors: [authorPubkey], "#h": ["target-goal"], limit: 1},
       ],
       localFilters: [
         {kinds: [EVENT_DATE], authors: [authorPubkey], "#d": ["all-day-calendar-1"], limit: 1},
-        {kinds: [1623], ids: ["permalink-event-id"], limit: 1},
+        {kinds: [1623], ids: [permalinkEventId], limit: 1},
         {kinds: [9041], authors: [authorPubkey], "#h": ["target-goal"], limit: 1},
       ],
     })
@@ -336,8 +390,8 @@ describe("community feed helpers", () => {
   })
 
   it("binds colliding implicit originals to each wrapper signer while leaving explicit refs exact", () => {
-    const otherWrapperPubkey = "d".repeat(64)
-    const externalAuthorPubkey = "e".repeat(64)
+    const otherWrapperPubkey = testPubkey(65)
+    const externalAuthorPubkey = testPubkey(66)
     const makeTarget = ({
       id,
       pubkey,
@@ -367,7 +421,7 @@ describe("community feed helpers", () => {
         id: "explicit-event",
         pubkey: authorPubkey,
         kind: 1623,
-        ref: {type: "e", value: "external-event-id"},
+        ref: {type: "e", value: externalEventId},
       }),
       makeTarget({
         id: "explicit-address",
@@ -390,7 +444,7 @@ describe("community feed helpers", () => {
         "#h": ["shared-targeting-id"],
         limit: 1,
       },
-      {kinds: [1623], ids: ["external-event-id"], limit: 1},
+      {kinds: [1623], ids: [externalEventId], limit: 1},
       {
         kinds: [30033],
         authors: [externalAuthorPubkey],
@@ -402,14 +456,14 @@ describe("community feed helpers", () => {
   })
 
   it("builds normalized relay-hint-only plans for explicit external originals", () => {
-    const externalAuthor = "e".repeat(64)
+    const externalAuthor = testPubkey(66)
     const explicitEvent = makeEvent({
       id: "explicit-event",
       kind: TARGETED_PUBLICATION_KIND,
       tags: buildTargetedPublication({
         id: "explicit-event-target",
         kind: 1623,
-        ref: {type: "e", value: "external-event", relay: "wss://external.example"},
+        ref: {type: "e", value: relayEventId, relay: "wss://external.example"},
         communities: [{pubkey: communityPubkey}],
       }).tags,
     })
@@ -443,7 +497,7 @@ describe("community feed helpers", () => {
       {
         relays: ["wss://external.example/"],
         relayFilters: [
-          {kinds: [1623], ids: ["external-event"], limit: 1},
+          {kinds: [1623], ids: [relayEventId], limit: 1},
           {
             kinds: [30033],
             authors: [externalAuthor],
@@ -452,7 +506,7 @@ describe("community feed helpers", () => {
           },
         ],
         localFilters: [
-          {kinds: [1623], ids: ["external-event"], limit: 1},
+          {kinds: [1623], ids: [relayEventId], limit: 1},
           {
             kinds: [30033],
             authors: [externalAuthor],

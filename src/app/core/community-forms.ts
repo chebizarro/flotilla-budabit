@@ -1,12 +1,16 @@
 import {DELETE, type EventContent, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
+  type CommunityPointer,
+  makeCommunityAuthorityTagsV2,
+  makeCommunityChildIdentifier,
   normalizeCommunitySectionName,
   normalizePubkey,
   normalizeRelay,
   normalizeRelays,
+  parseCommunityAuthorityV2,
+  parseControllerPubkey,
 } from "@app/core/community"
 
 export const COMMUNITY_FORM_REVIEW_KIND = 7
@@ -70,8 +74,7 @@ export type CommunityAdmissionForm = {
   settings: Record<string, unknown>
   description?: string
   relays: string[]
-  communityAddress?: string
-  communityPubkey?: string
+  community: CommunityPointer
   sectionName?: string
   fields: Record<string, CommunityFormField>
   fieldOrder: string[]
@@ -85,6 +88,7 @@ export type CommunityFormResponseValue = {
 
 export type CommunityFormResponse = {
   event: TrustedEvent
+  community: CommunityPointer
   formAddress: string
   values: Record<string, string>
   responses: CommunityFormResponseValue[]
@@ -95,9 +99,9 @@ export type CommunityFormReviewStatus = "granted" | "rejected"
 export type CommunityFormReview = {
   event: TrustedEvent
   responseId: string
-  applicantPubkey?: string
-  formAddress?: string
-  communityPubkey?: string
+  applicantPubkey: string
+  formAddress: string
+  community: CommunityPointer
   sectionName?: string
   status: CommunityFormReviewStatus
 }
@@ -152,25 +156,6 @@ const safeJsonArray = (value: string | undefined): unknown[] => {
   }
 }
 
-const getDTag = (event: TrustedEvent) => event.tags.find(tag => tag[0] === "d")?.[1] || ""
-
-export const makeCommunityDefinitionAddress = (communityPubkey: string) => {
-  const pubkey = normalizePubkey(communityPubkey)
-
-  return pubkey ? `${COMMUNITY_DEFINITION_KIND}:${pubkey}:` : ""
-}
-
-export const parseCommunityDefinitionAddress = (address: string) => {
-  const [kindValue, pubkeyValue, ...identifierParts] = address.split(":")
-  const kind = Number.parseInt(kindValue || "", 10)
-  const pubkey = normalizePubkey(pubkeyValue || "")
-  const identifier = identifierParts.join(":")
-
-  if (kind !== COMMUNITY_DEFINITION_KIND || !pubkey || identifier) return undefined
-
-  return {kind, pubkey, address: `${COMMUNITY_DEFINITION_KIND}:${pubkey}:`}
-}
-
 export const makeAdmissionFormAddress = (pubkey: string, identifier: string) => {
   const normalizedPubkey = normalizePubkey(pubkey)
   const normalizedIdentifier = identifier.trim()
@@ -178,6 +163,15 @@ export const makeAdmissionFormAddress = (pubkey: string, identifier: string) => 
   return normalizedPubkey && normalizedIdentifier
     ? `${FORM_TEMPLATE_KIND}:${normalizedPubkey}:${normalizedIdentifier}`
     : ""
+}
+
+const parseAdmissionFormAddress = (address: string) => {
+  const [kind, pubkeyValue, ...identifierParts] = address.split(":")
+  const pubkey = parseControllerPubkey(pubkeyValue || "")
+  const identifier = identifierParts.join(":")
+  if (kind !== String(FORM_TEMPLATE_KIND) || !pubkey || !identifier) return undefined
+
+  return makeAdmissionFormAddress(pubkey, identifier) === address ? address : undefined
 }
 
 const stringifySettings = (settings?: Record<string, unknown>) => JSON.stringify(settings || {})
@@ -195,26 +189,27 @@ const slugify = (value: string, fallback: string) =>
     .replace(/^-+|-+$/g, "") || fallback
 
 export const makeAdmissionFormIdentifier = ({
-  communityPubkey,
+  community,
   sectionName,
 }: {
-  communityPubkey: string
+  community: CommunityPointer
   sectionName: string
-}) => {
-  const communityPrefix = normalizePubkey(communityPubkey)?.slice(0, 12) || "community"
-
-  return `community-${communityPrefix}-${slugify(normalizeCommunitySectionName(sectionName), "section")}-application`
-}
+}) =>
+  makeCommunityChildIdentifier(
+    community.communityId,
+    "form",
+    `${slugify(normalizeCommunitySectionName(sectionName), "section")}-application`,
+  ) || ""
 
 export const makeDefaultAdmissionFormDraft = ({
-  communityPubkey,
+  community,
   sectionName,
 }: {
-  communityPubkey: string
+  community: CommunityPointer
   sectionName: string
 }): CommunityAdmissionFormDraft => ({
   sectionName,
-  identifier: makeAdmissionFormIdentifier({communityPubkey, sectionName}),
+  identifier: makeAdmissionFormIdentifier({community, sectionName}),
   name: `${sectionName} application`,
   description: `Request access to publish in the ${sectionName} section.`,
   questions: [
@@ -241,22 +236,22 @@ const getDraftQuestionType = (field: CommunityFormField): CommunityAdmissionQues
 
 export const makeAdmissionFormDraftFromForm = ({
   form,
-  communityPubkey,
+  community,
   sectionName,
   currentModeratorPubkey,
 }: {
   form?: CommunityAdmissionForm
-  communityPubkey: string
+  community: CommunityPointer
   sectionName: string
   currentModeratorPubkey?: string
 }): CommunityAdmissionFormDraft => {
-  if (!form) return makeDefaultAdmissionFormDraft({communityPubkey, sectionName})
+  if (!form) return makeDefaultAdmissionFormDraft({community, sectionName})
 
   const currentModerator = normalizePubkey(currentModeratorPubkey || "")
   const identifier =
     currentModerator && form.pubkey === currentModerator
       ? form.identifier
-      : makeAdmissionFormIdentifier({communityPubkey, sectionName})
+      : makeAdmissionFormIdentifier({community, sectionName})
 
   return {
     sectionName,
@@ -355,7 +350,7 @@ const makeFieldTag = (field: CommunityFormFieldInput) => [
 
 export const makeAdmissionFormTemplate = ({
   identifier,
-  communityPubkey,
+  community,
   sectionName,
   name,
   description,
@@ -363,7 +358,7 @@ export const makeAdmissionFormTemplate = ({
   fields,
 }: {
   identifier: string
-  communityPubkey: string
+  community: CommunityPointer
   sectionName: string
   name: string
   description?: string
@@ -374,12 +369,13 @@ export const makeAdmissionFormTemplate = ({
   content: "",
   tags: [
     ["d", identifier.trim()],
-    ["a", makeCommunityDefinitionAddress(communityPubkey)],
-    ["content", normalizeCommunitySectionName(sectionName)],
-    ["name", name.trim() || `${sectionName} application`],
-    ["settings", stringifySettings(description?.trim() ? {description: description.trim()} : {})],
-    ...normalizeRelays(relays || []).map(relay => ["relay", relay]),
-    ...fields.filter(field => field.id.trim() && field.label.trim()).map(makeFieldTag),
+    ...makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+      ["content", normalizeCommunitySectionName(sectionName)],
+      ["name", name.trim() || `${sectionName} application`],
+      ["settings", stringifySettings(description?.trim() ? {description: description.trim()} : {})],
+      ...normalizeRelays(relays || []).map(relay => ["relay", relay]),
+      ...fields.filter(field => field.id.trim() && field.label.trim()).map(makeFieldTag),
+    ]),
   ],
 })
 
@@ -403,15 +399,13 @@ export const parseAdmissionForm = (event: TrustedEvent): CommunityAdmissionForm 
   if (event.kind !== FORM_TEMPLATE_KIND) return undefined
 
   const pubkey = normalizePubkey(event.pubkey || "")
-  const identifier = getDTag(event)
+  const dTags = event.tags.filter(tag => tag[0] === "d")
+  const identifier = dTags[0]?.[1] || ""
   const address = makeAdmissionFormAddress(pubkey, identifier)
-  if (!address) return undefined
+  const community = parseCommunityAuthorityV2(event)
+  if (dTags.length !== 1 || dTags[0].length !== 2 || !address || !community) return undefined
 
   const settings = safeJsonObject(event.tags.find(tag => tag[0] === "settings")?.[1])
-  const communityRef = event.tags
-    .filter(tag => tag[0] === "a")
-    .map(tag => parseCommunityDefinitionAddress(tag[1] || ""))
-    .find(Boolean)
   const fields: Record<string, CommunityFormField> = {}
   const fieldOrder: string[] = []
 
@@ -442,8 +436,7 @@ export const parseAdmissionForm = (event: TrustedEvent): CommunityAdmissionForm 
     settings,
     description: typeof settings.description === "string" ? settings.description : undefined,
     relays: normalizeRelays(event.tags.filter(tag => tag[0] === "relay").map(tag => tag[1] || "")),
-    communityAddress: communityRef?.address,
-    communityPubkey: communityRef?.pubkey,
+    community,
     sectionName:
       normalizeCommunitySectionName(event.tags.find(tag => tag[0] === "content")?.[1] || "") ||
       undefined,
@@ -475,22 +468,21 @@ export const selectLatestFormByAddress = (events: TrustedEvent[]) => {
 
 export const selectActiveAdmissionForm = ({
   events,
-  communityPubkey,
+  community,
   sectionName,
   moderatorPubkeys,
 }: {
   events: TrustedEvent[]
-  communityPubkey: string
+  community: CommunityPointer
   sectionName: string
   moderatorPubkeys?: string[]
 }) => {
-  const communityAddress = makeCommunityDefinitionAddress(communityPubkey)
   const moderators = new Set((moderatorPubkeys || []).map(normalizePubkey).filter(Boolean))
   const filterModerators = Boolean(moderatorPubkeys)
   let selected: CommunityAdmissionForm | undefined
 
   for (const form of selectLatestFormByAddress(events)) {
-    if (form.communityAddress !== communityAddress) continue
+    if (form.community.address !== community.address) continue
     if (
       normalizeCommunitySectionName(form.sectionName || "") !==
       normalizeCommunitySectionName(sectionName)
@@ -506,8 +498,17 @@ export const selectActiveAdmissionForm = ({
 export const parseAdmissionResponse = (event: TrustedEvent): CommunityFormResponse | undefined => {
   if (event.kind !== FORM_RESPONSE_KIND) return undefined
 
-  const formAddress = event.tags.find(tag => tag[0] === "a")?.[1] || ""
-  if (!formAddress) return undefined
+  const community = parseCommunityAuthorityV2(event)
+  const formTags = event.tags.filter(tag => tag[0] === "a" && tag[3] === "form")
+  const formAddress = formTags[0]?.[1] || ""
+  if (
+    !community ||
+    formTags.length !== 1 ||
+    formTags[0].length !== 4 ||
+    !parseAdmissionFormAddress(formAddress)
+  ) {
+    return undefined
+  }
 
   const responses: CommunityFormResponseValue[] = []
   const values: Record<string, string> = {}
@@ -523,7 +524,7 @@ export const parseAdmissionResponse = (event: TrustedEvent): CommunityFormRespon
     responses.push({fieldId, value, metadata: safeJsonObject(tag[3])})
   }
 
-  return {event, formAddress, values, responses}
+  return {event, community, formAddress, values, responses}
 }
 
 export const getAdmissionResponseDisplayValue = (
@@ -558,39 +559,51 @@ export const getAdmissionResponseDisplayValue = (
 }
 
 export const makeAdmissionResponse = ({
+  community,
   formAddress,
   values,
   metadata,
 }: {
+  community: CommunityPointer
   formAddress: string
   values: Record<string, string | string[]>
   metadata?: Record<string, Record<string, unknown>>
-}): EventContent & {kind: typeof FORM_RESPONSE_KIND} => ({
-  kind: FORM_RESPONSE_KIND,
-  content: "",
-  tags: [
-    ["a", formAddress],
-    ...Object.entries(values).map(([fieldId, value]) => [
-      "response",
-      fieldId,
-      Array.isArray(value) ? value.join(";") : value,
-      stringifySettings(metadata?.[fieldId]),
-    ]),
-  ],
-})
+}): EventContent & {kind: typeof FORM_RESPONSE_KIND} => {
+  if (!parseAdmissionFormAddress(formAddress)) throw new Error("Invalid admission form address.")
+
+  return {
+    kind: FORM_RESPONSE_KIND,
+    content: "",
+    tags: [
+      ...makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+        ["a", formAddress, "", "form"],
+        ...Object.entries(values).map(([fieldId, value]) => [
+          "response",
+          fieldId,
+          Array.isArray(value) ? value.join(";") : value,
+          stringifySettings(metadata?.[fieldId]),
+        ]),
+      ]),
+    ],
+  }
+}
 
 export const makeAdmissionResponseDelete = ({
+  community,
   responseId,
   reason = "Deleted application submission",
 }: {
+  community: CommunityPointer
   responseId: string
   reason?: string
 }): EventContent & {kind: typeof DELETE} => ({
   kind: DELETE,
   content: reason,
   tags: [
-    ["e", responseId],
-    ["k", String(FORM_RESPONSE_KIND)],
+    ...makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+      ["e", responseId],
+      ["k", String(FORM_RESPONSE_KIND)],
+    ]),
   ],
 })
 
@@ -602,18 +615,28 @@ export const isAdmissionResponseDeleted = (
     if (event.kind !== DELETE) return false
     if (normalizePubkey(event.pubkey || "") !== normalizePubkey(response.event.pubkey || ""))
       return false
-    if (!event.tags.some(tag => tag[0] === "e" && tag[1] === response.event.id)) return false
-
+    const community = parseCommunityAuthorityV2(event)
+    if (!community || community.address !== response.community.address) return false
+    const eventTags = event.tags.filter(tag => tag[0] === "e")
     const kindTags = event.tags.filter(tag => tag[0] === "k")
-    return kindTags.length === 0 || kindTags.some(tag => tag[1] === String(FORM_RESPONSE_KIND))
+    return (
+      eventTags.length === 1 &&
+      eventTags[0].length === 2 &&
+      eventTags[0][1] === response.event.id &&
+      kindTags.length === 1 &&
+      kindTags[0].length === 2 &&
+      kindTags[0][1] === String(FORM_RESPONSE_KIND)
+    )
   })
 
 export const selectActiveAdmissionResponse = ({
+  community,
   events,
   deleteEvents,
   formAddress,
   applicantPubkey,
 }: {
+  community: CommunityPointer
   events: TrustedEvent[]
   deleteEvents: TrustedEvent[]
   formAddress: string
@@ -625,6 +648,7 @@ export const selectActiveAdmissionResponse = ({
   for (const event of events) {
     const response = parseAdmissionResponse(event)
     if (!response) continue
+    if (response.community.address !== community.address) continue
     if (response.formAddress !== formAddress) continue
     if (normalizePubkey(response.event.pubkey || "") !== applicant) continue
     if (isAdmissionResponseDeleted(response, deleteEvents)) continue
@@ -638,8 +662,26 @@ export const parseAdmissionReview = (event: TrustedEvent): CommunityFormReview |
   if (event.kind !== COMMUNITY_FORM_REVIEW_KIND) return undefined
   if (event.content !== "+" && event.content !== "-") return undefined
 
-  const responseId = event.tags.find(tag => tag[0] === "e")?.[1]
-  if (!responseId) return undefined
+  const community = parseCommunityAuthorityV2(event)
+  const responseTags = event.tags.filter(tag => tag[0] === "e" && tag[4] === "response")
+  const responseId = responseTags[0]?.[1]
+  const formTags = event.tags.filter(tag => tag[0] === "a" && tag[3] === "form")
+  const applicantTags = event.tags.filter(tag => tag[0] === "p")
+  const applicantPubkey = parseControllerPubkey(applicantTags[0]?.[1] || "")
+  if (
+    !community ||
+    responseTags.length !== 1 ||
+    responseTags[0].length !== 5 ||
+    !responseId ||
+    formTags.length !== 1 ||
+    formTags[0].length !== 4 ||
+    !parseAdmissionFormAddress(formTags[0][1] || "") ||
+    applicantTags.length !== 1 ||
+    applicantTags[0].length !== 2 ||
+    !applicantPubkey
+  ) {
+    return undefined
+  }
 
   const kindTags = event.tags.filter(tag => tag[0] === "k")
   if (kindTags.length && !kindTags.some(tag => tag[1] === String(FORM_RESPONSE_KIND)))
@@ -648,10 +690,9 @@ export const parseAdmissionReview = (event: TrustedEvent): CommunityFormReview |
   return {
     event,
     responseId,
-    applicantPubkey: event.tags.find(tag => tag[0] === "p")?.[1],
-    formAddress: event.tags.find(tag => tag[0] === "a")?.[1],
-    communityPubkey:
-      normalizePubkey(event.tags.find(tag => tag[0] === "h")?.[1] || "") || undefined,
+    applicantPubkey,
+    formAddress: formTags[0][1],
+    community,
     sectionName:
       normalizeCommunitySectionName(event.tags.find(tag => tag[0] === "content")?.[1] || "") ||
       undefined,
@@ -662,42 +703,57 @@ export const parseAdmissionReview = (event: TrustedEvent): CommunityFormReview |
 export const makeAdmissionReview = ({
   responseId,
   applicantPubkey,
-  formAddress = "",
-  communityPubkey = "",
+  formAddress,
+  community,
   sectionName = "",
   relays = [],
   status,
 }: {
   responseId: string
   applicantPubkey: string
-  formAddress?: string
-  communityPubkey?: string
+  formAddress: string
+  community: CommunityPointer
   sectionName?: string
   relays?: string[]
   status: CommunityFormReviewStatus
-}): EventContent & {kind: typeof COMMUNITY_FORM_REVIEW_KIND} => ({
-  kind: COMMUNITY_FORM_REVIEW_KIND,
-  content: status === "granted" ? "+" : "-",
-  tags: [
-    ["e", responseId],
-    ["p", normalizePubkey(applicantPubkey)],
-    ["k", String(FORM_RESPONSE_KIND)],
-    ...makeOptionalTag("a", formAddress),
-    ...makeOptionalTag("h", normalizePubkey(communityPubkey)),
-    ...makeOptionalTag("content", normalizeCommunitySectionName(sectionName)),
-    ...normalizeRelays(relays).map(relay => ["relay", relay]),
-  ],
-})
+}): EventContent & {kind: typeof COMMUNITY_FORM_REVIEW_KIND} => {
+  const applicant = parseControllerPubkey(applicantPubkey)
+  if (!responseId || !applicant || !parseAdmissionFormAddress(formAddress)) {
+    throw new Error("Invalid admission review reference.")
+  }
+
+  return {
+    kind: COMMUNITY_FORM_REVIEW_KIND,
+    content: status === "granted" ? "+" : "-",
+    tags: [
+      ...makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+        ["e", responseId, "", "", "response"],
+        ["p", applicant],
+        ["k", String(FORM_RESPONSE_KIND)],
+        ["a", formAddress, "", "form"],
+        ...makeOptionalTag("content", normalizeCommunitySectionName(sectionName)),
+        ...normalizeRelays(relays).map(relay => ["relay", relay]),
+      ]),
+    ],
+  }
+}
 
 export const selectLatestAdmissionReview = ({
   events,
+  community,
   responseId,
+  formAddress,
+  applicantPubkey,
   moderatorPubkeys,
 }: {
   events: TrustedEvent[]
+  community: CommunityPointer
   responseId: string
+  formAddress: string
+  applicantPubkey: string
   moderatorPubkeys?: string[]
 }) => {
+  const applicant = normalizePubkey(applicantPubkey)
   const moderators = new Set((moderatorPubkeys || []).map(normalizePubkey).filter(Boolean))
   const filterModerators = Boolean(moderatorPubkeys)
   let selected: CommunityFormReview | undefined
@@ -705,7 +761,10 @@ export const selectLatestAdmissionReview = ({
   for (const event of events) {
     const review = parseAdmissionReview(event)
     if (!review) continue
+    if (review.community.address !== community.address) continue
     if (review.responseId !== responseId) continue
+    if (review.formAddress !== formAddress) continue
+    if (normalizePubkey(review.applicantPubkey) !== applicant) continue
     if (filterModerators && !moderators.has(normalizePubkey(review.event.pubkey || ""))) continue
     if (isPreferredEvent(review.event, selected?.event)) selected = review
   }
@@ -722,7 +781,7 @@ const sortReviewsNewestFirst = (a: CommunityFormReview, b: CommunityFormReview) 
 export const getAdmissionReviewHistory = ({
   reviewEvents,
   applicantPubkey,
-  communityPubkey,
+  community,
   sectionName,
   formAddress,
   moderatorPubkeys,
@@ -730,14 +789,13 @@ export const getAdmissionReviewHistory = ({
 }: {
   reviewEvents: TrustedEvent[]
   applicantPubkey: string
-  communityPubkey?: string
+  community?: CommunityPointer
   sectionName?: string
   formAddress?: string
   moderatorPubkeys?: string[]
   excludeResponseId?: string
 }): CommunityAdmissionReviewHistory => {
   const applicant = normalizePubkey(applicantPubkey)
-  const community = normalizePubkey(communityPubkey || "")
   const section = normalizeCommunitySectionName(sectionName || "")
   const moderators = new Set((moderatorPubkeys || []).map(normalizePubkey).filter(Boolean))
   const filterModerators = Boolean(moderatorPubkeys)
@@ -747,7 +805,7 @@ export const getAdmissionReviewHistory = ({
     const review = parseAdmissionReview(event)
     if (!review) continue
     if (!applicant || normalizePubkey(review.applicantPubkey || "") !== applicant) continue
-    if (community && normalizePubkey(review.communityPubkey || "") !== community) continue
+    if (community && review.community.address !== community.address) continue
     if (section && normalizeCommunitySectionName(review.sectionName || "") !== section) continue
     if (formAddress && review.formAddress !== formAddress) continue
     if (filterModerators && !moderators.has(normalizePubkey(review.event.pubkey || ""))) continue
@@ -771,6 +829,7 @@ export const getAdmissionReviewHistory = ({
 }
 
 export const getAdmissionSubmissionState = ({
+  community,
   responseEvents,
   deleteEvents,
   reviewEvents,
@@ -779,6 +838,7 @@ export const getAdmissionSubmissionState = ({
   moderatorPubkeys,
   profileListGranted = false,
 }: {
+  community: CommunityPointer
   responseEvents: TrustedEvent[]
   deleteEvents: TrustedEvent[]
   reviewEvents: TrustedEvent[]
@@ -788,6 +848,7 @@ export const getAdmissionSubmissionState = ({
   profileListGranted?: boolean
 }): CommunitySubmissionState => {
   const response = selectActiveAdmissionResponse({
+    community,
     events: responseEvents,
     deleteEvents,
     formAddress,
@@ -798,7 +859,10 @@ export const getAdmissionSubmissionState = ({
 
   const review = selectLatestAdmissionReview({
     events: reviewEvents,
+    community,
     responseId: response.event.id,
+    formAddress,
+    applicantPubkey,
     moderatorPubkeys,
   })
 

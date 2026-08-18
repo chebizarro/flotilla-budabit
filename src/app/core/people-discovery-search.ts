@@ -12,7 +12,7 @@ import {
 import {deriveEvents} from "@welshman/store"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  activeCommunityDefinition,
+  activeExactCommunityDefinition,
   activeCommunityProfileListEvents,
   activeCommunityReportState,
   communityAdminDefinitionEvents,
@@ -24,11 +24,11 @@ import {
 } from "@app/core/community-state"
 import {
   normalizePubkey,
-  parseCommunityDefinition,
-  TARGETED_PUBLICATION_KIND,
-  type CommunityDefinition,
+  selectCurrentCommunityDefinitionsV2,
+  TARGETED_PUBLICATION_KIND_V2,
+  type CommunityDefinitionV2,
 } from "@app/core/community"
-import {userRenouncedCommunityPubkeys} from "@app/core/community-renunciations"
+import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
 import {buildCommunityTrustAssessments} from "@app/core/community-trust"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 import {
@@ -66,49 +66,29 @@ export type PeopleDiscoverySearch = {
 
 type PeopleDiscoveryEvidence = {
   definitionEvents: TrustedEvent[]
-  definitions: CommunityDefinition[]
+  definitions: Map<string, CommunityDefinitionV2>
   profileListEvents: TrustedEvent[]
   reportStates: Map<string, EffectiveCommunityReportState>
-  renouncedCommunityPubkeys: string[]
+  renouncedCommunityAddresses: string[]
 }
 
 const dedupeEvents = (events: TrustedEvent[]) =>
   Array.from(new Map(events.filter(event => event.id).map(event => [event.id, event])).values())
 
-const selectLatestDefinitions = (events: TrustedEvent[]) => {
-  const definitions = new Map<string, CommunityDefinition>()
-
-  for (const event of events) {
-    const definition = parseCommunityDefinition(event)
-    if (!definition) continue
-
-    const current = definitions.get(definition.pubkey)
-    if (
-      !current ||
-      definition.event.created_at > current.event.created_at ||
-      (definition.event.created_at === current.event.created_at &&
-        definition.event.id.localeCompare(current.event.id) < 0)
-    ) {
-      definitions.set(definition.pubkey, definition)
-    }
-  }
-
-  return Array.from(definitions.values())
-}
-
 const getContextCommunityPeoplePubkeys = (
+  communityAddress: string,
   communityPubkey: string,
   evidence: PeopleDiscoveryEvidence,
 ) => {
-  if (!communityPubkey) {
+  if (!communityAddress && !communityPubkey) {
     return getCommunityPeoplePubkeys({
-      definitionEvents: evidence.definitionEvents,
+      definitions: Array.from(evidence.definitions.values()),
       profileListEvents: evidence.profileListEvents,
-      excludedCommunityPubkeys: evidence.renouncedCommunityPubkeys,
+      excludedCommunityAddresses: evidence.renouncedCommunityAddresses,
     })
   }
 
-  const definition = evidence.definitions.find(item => item.pubkey === communityPubkey)
+  const definition = communityAddress ? evidence.definitions.get(communityAddress) : undefined
   if (!definition) return [communityPubkey]
 
   const profileListAddresses = new Set(
@@ -124,9 +104,9 @@ const getContextCommunityPeoplePubkeys = (
   })
 
   return getCommunityPeoplePubkeys({
-    definitionEvents: [definition.event],
+    definitions: [definition],
     profileListEvents,
-    excludedCommunityPubkeys: evidence.renouncedCommunityPubkeys,
+    excludedCommunityAddresses: evidence.renouncedCommunityAddresses,
   })
 }
 
@@ -147,8 +127,7 @@ const withLoadedRepoAssociations = (
   const associationEvents = loadedAssociationEvents.filter(event =>
     event.tags.some(
       tag =>
-        (tag[0] === "a" && tag[1] === repoAddress) ||
-        (tag[0] === "e" && tag[1] === repoEvent.id),
+        (tag[0] === "a" && tag[1] === repoAddress) || (tag[0] === "e" && tag[1] === repoEvent.id),
     ),
   )
 
@@ -157,7 +136,7 @@ const withLoadedRepoAssociations = (
 
 const loadedRepoAssociationEvents = deriveEvents({
   repository,
-  filters: [{kinds: [TARGETED_PUBLICATION_KIND]}],
+  filters: [{kinds: [TARGETED_PUBLICATION_KIND_V2]}],
 })
 
 export const peopleDiscoverySearch = derived(
@@ -173,10 +152,10 @@ export const peopleDiscoverySearch = derived(
     communityMemberProfileListEvents,
     communityModeratorProfileListEvents,
     communityMemberReportStates,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    userRenouncedCommunityPubkeys,
+    userRenouncedCommunityAddresses,
     loadedRepoAssociationEvents,
   ] as const,
   ([
@@ -191,17 +170,17 @@ export const peopleDiscoverySearch = derived(
     $communityMemberProfileListEvents,
     $communityModeratorProfileListEvents,
     $communityMemberReportStates,
-    $activeCommunityDefinition,
+    $activeExactCommunityDefinition,
     $activeCommunityProfileListEvents,
     $activeCommunityReportState,
-    $userRenouncedCommunityPubkeys,
+    $userRenouncedCommunityAddresses,
     $loadedRepoAssociationEvents,
   ]): PeopleDiscoverySearch => {
     const definitionEvents = dedupeEvents([
       ...$communityAdminDefinitionEvents,
       ...$communityMemberDefinitionEvents,
       ...$communityModeratorDefinitionEvents,
-      ...($activeCommunityDefinition ? [$activeCommunityDefinition.event] : []),
+      ...($activeExactCommunityDefinition ? [$activeExactCommunityDefinition.event] : []),
     ])
     const profileListEvents = dedupeEvents([
       ...$communityMemberProfileListEvents,
@@ -209,15 +188,15 @@ export const peopleDiscoverySearch = derived(
       ...$activeCommunityProfileListEvents,
     ])
     const reportStates = new Map($communityMemberReportStates)
-    if ($activeCommunityDefinition) {
-      reportStates.set($activeCommunityDefinition.pubkey, $activeCommunityReportState)
+    if ($activeExactCommunityDefinition) {
+      reportStates.set($activeExactCommunityDefinition.pointer.address, $activeCommunityReportState)
     }
     const evidence: PeopleDiscoveryEvidence = {
       definitionEvents,
-      definitions: selectLatestDefinitions(definitionEvents),
+      definitions: selectCurrentCommunityDefinitionsV2(definitionEvents),
       profileListEvents,
       reportStates,
-      renouncedCommunityPubkeys: $userRenouncedCommunityPubkeys,
+      renouncedCommunityAddresses: $userRenouncedCommunityAddresses,
     }
     const viewerPubkey = normalizePubkey($pubkey || "")
     const directFollowPubkeys = viewerPubkey ? getFollows(viewerPubkey) : []
@@ -234,6 +213,7 @@ export const peopleDiscoverySearch = derived(
         viewerPubkey,
       )
       const rawCommunityPubkeys = getContextCommunityPeoplePubkeys(
+        resolvedContext.communityAddress,
         resolvedContext.communityPubkey,
         evidence,
       )
@@ -275,10 +255,11 @@ export const peopleDiscoverySearch = derived(
         candidatePubkeys: matchingCommunityPubkeys,
         viewerPubkey: viewerPubkey || undefined,
         context: resolvedContext.trustContext,
+        definitions: Array.from(evidence.definitions.values()),
         definitionEvents,
         profileListEvents,
         reportStates,
-        renouncedCommunityPubkeys: $userRenouncedCommunityPubkeys,
+        renouncedCommunityAddresses: $userRenouncedCommunityAddresses,
       })
       const communityPubkeys = matchingCommunityPubkeys
         .filter(candidatePubkey => {

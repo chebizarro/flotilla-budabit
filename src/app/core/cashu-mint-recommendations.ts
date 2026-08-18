@@ -9,7 +9,7 @@ import {
   normalizePubkey,
   normalizeRelays,
   PROFILE_LIST_KIND,
-  type CommunityDefinition,
+  type CommunityDefinitionV2,
 } from "@app/core/community"
 import type {
   ActiveUserCommunityRef,
@@ -28,11 +28,12 @@ export type CashuMintRecommendationEvidenceKind =
   | "follow"
   | "own_nutzap"
 
-export type CashuMintRecommendationEvidenceSource = "10222" | "10019"
+export type CashuMintRecommendationEvidenceSource = "32222" | "10019"
 
 export type CashuMintRecommendationRoleDetail = {
   pubkey: string
   communityPubkey: string
+  communityAddress: string
   role: CashuMintRecommendationRole
   moderatorSectionCount: number
   memberGrantCount: number
@@ -44,6 +45,7 @@ export type CashuMintRecommendationEvidence = {
   source: CashuMintRecommendationEvidenceSource
   pubkey: string
   communityPubkey?: string
+  communityAddress?: string
   relayHints?: string[]
   communityRelayHints?: string[]
   role?: CashuMintRecommendationRole
@@ -185,8 +187,8 @@ const getLatestMintListEventsByPubkey = (events: TrustedEvent[] = []) => {
   return Array.from(latest.values())
 }
 
-const getReportState = (states: UserCommunityReportStates | undefined, communityPubkey: string) =>
-  states instanceof Map ? states.get(communityPubkey) : states?.[communityPubkey]
+const getReportState = (states: UserCommunityReportStates | undefined, communityAddress: string) =>
+  states instanceof Map ? states.get(communityAddress) : states?.[communityAddress]
 
 const getTrackedEventRelays = (event: TrustedEvent | undefined) => {
   if (!event?.id) return []
@@ -198,7 +200,7 @@ const getTrackedEventRelays = (event: TrustedEvent | undefined) => {
   }
 }
 
-const getCommunityDefinitionRelayHints = (definition: CommunityDefinition) =>
+const getCommunityDefinitionRelayHints = (definition: CommunityDefinitionV2) =>
   normalizeRelays([...definition.relays, ...getTrackedEventRelays(definition.event)])
 
 const getProfileListPubkeyRelayHints = (event: TrustedEvent | undefined, pubkey: string) => {
@@ -260,19 +262,21 @@ const getCommunityRoleDetail = ({
   reportStates,
   pubkey,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   profileListsByAddress: Map<string, TrustedEvent>
   reportStates?: UserCommunityReportStates
   pubkey: string
 }): CashuMintRecommendationRoleDetail | undefined => {
   const normalizedPubkey = normalizePubkey(pubkey || "")
   if (!normalizedPubkey) return
-  const communityRelayHints = getCommunityDefinitionRelayHints(definition)
+  const communityAddress = definition.pointer.address
+  const communityRelayHints = definition.relays
 
-  if (definition.pubkey === normalizedPubkey) {
+  if (definition.controllerPubkey === normalizedPubkey) {
     return {
       pubkey: normalizedPubkey,
-      communityPubkey: definition.pubkey,
+      communityPubkey: definition.controllerPubkey,
+      communityAddress,
       role: "community",
       moderatorSectionCount: definition.sections.length,
       memberGrantCount: definition.sections.length,
@@ -280,7 +284,7 @@ const getCommunityRoleDetail = ({
     }
   }
 
-  if (isCommunityPersonBanned(getReportState(reportStates, definition.pubkey), normalizedPubkey)) {
+  if (isCommunityPersonBanned(getReportState(reportStates, communityAddress), normalizedPubkey)) {
     return
   }
 
@@ -296,7 +300,10 @@ const getCommunityRoleDetail = ({
         ...getTrackedEventRelays(event),
       ])
 
-      if (ref.pubkey === normalizedPubkey && event?.pubkey === normalizedPubkey) {
+      if (
+        normalizePubkey(ref.address.split(":")[1] || "") === normalizedPubkey &&
+        event?.pubkey === normalizedPubkey
+      ) {
         moderatorSections.add(section.name)
         roleRelayHints.push(...profileListRelayHints)
       }
@@ -314,7 +321,8 @@ const getCommunityRoleDetail = ({
   if (moderatorSections.size > 0) {
     return {
       pubkey: normalizedPubkey,
-      communityPubkey: definition.pubkey,
+      communityPubkey: definition.controllerPubkey,
+      communityAddress,
       role: "moderator",
       moderatorSectionCount: moderatorSections.size,
       memberGrantCount: memberSections.size,
@@ -325,7 +333,8 @@ const getCommunityRoleDetail = ({
   if (memberSections.size > 0) {
     return {
       pubkey: normalizedPubkey,
-      communityPubkey: definition.pubkey,
+      communityPubkey: definition.controllerPubkey,
+      communityAddress,
       role: "member",
       moderatorSectionCount: 0,
       memberGrantCount: memberSections.size,
@@ -335,16 +344,18 @@ const getCommunityRoleDetail = ({
 }
 
 const getDefinitionsFromRefs = (refs: ActiveUserCommunityRef[] = []) => {
-  const byPubkey = new Map<string, CommunityDefinition>()
+  const byAddress = new Map<string, CommunityDefinitionV2>()
 
   for (const ref of refs) {
-    const current = byPubkey.get(ref.communityPubkey)
-    if (!current || ref.definition.event.created_at > current.event.created_at) {
-      byPubkey.set(ref.communityPubkey, ref.definition)
+    const address = ref.community.address
+    if (!address) continue
+    const current = byAddress.get(address)
+    if (isPreferredEvent(ref.definition.event, current?.event)) {
+      byAddress.set(address, ref.definition)
     }
   }
 
-  return Array.from(byPubkey.values())
+  return Array.from(byAddress.values())
 }
 
 const tagSupportsSat = (tag: string[]) => {
@@ -410,13 +421,17 @@ const countEvidence = (entry: CashuMintRecommendation) => {
 
   for (const evidence of entry.evidence) {
     if (evidence.kind === "community" && evidence.communityPubkey) {
-      communities.add(evidence.communityPubkey)
+      communities.add(evidence.communityAddress || evidence.communityPubkey)
     }
     if (evidence.kind === "moderator") {
-      moderators.add(`${evidence.pubkey}:${evidence.communityPubkey || ""}`)
+      moderators.add(
+        `${evidence.pubkey}:${evidence.communityAddress || evidence.communityPubkey || ""}`,
+      )
     }
     if (evidence.kind === "member")
-      members.add(`${evidence.pubkey}:${evidence.communityPubkey || ""}`)
+      members.add(
+        `${evidence.pubkey}:${evidence.communityAddress || evidence.communityPubkey || ""}`,
+      )
     if (evidence.kind === "follow") follows.add(evidence.pubkey)
     if (evidence.kind === "own_nutzap") ownNutzap = 1
   }
@@ -468,9 +483,10 @@ export const buildCashuMintRecommendations = ({
 
       addEvidence(recommendations, mintUrl, {
         kind: "community",
-        source: "10222",
-        pubkey: definition.pubkey,
-        communityPubkey: definition.pubkey,
+        source: "32222",
+        pubkey: definition.controllerPubkey,
+        communityPubkey: definition.controllerPubkey,
+        communityAddress: viewerRole.communityAddress,
         relayHints: getCommunityDefinitionRelayHints(definition),
         communityRelayHints: getCommunityDefinitionRelayHints(definition),
         role: "community",
@@ -522,7 +538,8 @@ export const buildCashuMintRecommendations = ({
           kind: getRoleEvidenceKind(recommenderRole.role),
           source: "10019",
           pubkey: recommender,
-          communityPubkey: definition.pubkey,
+          communityPubkey: definition.controllerPubkey,
+          communityAddress: recommenderRole.communityAddress,
           relayHints: normalizeRelays([...recommenderRelayHints, ...recommenderRole.relayHints]),
           communityRelayHints: getCommunityDefinitionRelayHints(definition),
           role: recommenderRole.role,
@@ -565,8 +582,8 @@ export const buildCashuMintRecommendations = ({
   for (const entry of recommendations.values()) countEvidence(entry)
 
   return Array.from(recommendations.values()).sort((a, b) => {
-    const aCommunityMint = a.evidence.some(evidence => evidence.source === "10222")
-    const bCommunityMint = b.evidence.some(evidence => evidence.source === "10222")
+    const aCommunityMint = a.evidence.some(evidence => evidence.source === "32222")
+    const bCommunityMint = b.evidence.some(evidence => evidence.source === "32222")
 
     if (aCommunityMint !== bCommunityMint) return aCommunityMint ? -1 : 1
     if (a.score !== b.score) return b.score - a.score
@@ -591,11 +608,11 @@ const getCommunityProfileListAuthors = (
   const memberAuthors: string[] = []
 
   for (const definition of getDefinitionsFromRefs(communityRefs)) {
-    communityAuthors.push(definition.pubkey)
+    communityAuthors.push(definition.controllerPubkey)
 
     for (const section of definition.sections) {
       for (const ref of section.profileLists) {
-        moderatorAuthors.push(ref.pubkey)
+        moderatorAuthors.push(normalizePubkey(ref.address.split(":")[1] || ""))
 
         const event = profileListsByAddress.get(ref.address)
         memberAuthors.push(...getProfileListPubkeys(event))

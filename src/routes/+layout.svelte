@@ -62,9 +62,9 @@
   import CashuPayConfirm from "@app/components/CashuPayConfirm.svelte"
   import {
     activePreferredCommunities,
-    activeCommunityDefinition,
-    activeCommunityRelays,
-    activeCommunitySession,
+    activeExactCommunityDefinition,
+    activeExactCommunityRelays,
+    activeExactCommunitySession,
     activeUserCommunityRefs,
     authenticateCommunityRelays,
     COMMUNITY_PRIORITY_RELAY_AUTH_TIMEOUT,
@@ -195,8 +195,11 @@
 
   $effect(() => {
     const user = $pubkey || ""
-    const relayHints = getCommunityAuthWarmupRelays($activeCommunitySession, $activeCommunityRelays)
-    const priorityRelays = $activeCommunityDefinition?.relays || []
+    const relayHints = getCommunityAuthWarmupRelays(
+      $activeExactCommunitySession,
+      $activeExactCommunityRelays,
+    )
+    const priorityRelays = $activeExactCommunityDefinition?.relays || []
     const key = user ? `${user}:${relayHints.join(",")}` : ""
 
     if (!browser || !user || relayHints.length === 0) {
@@ -287,7 +290,7 @@
   })
 
   $effect(() => {
-    const session = $activeCommunitySession
+    const session = $activeExactCommunitySession
     const inCommunityRoute = $page.route.id?.startsWith("/c/[community]")
     const key = session ? getCommunityBootstrapKey(session, $pubkey || "") : ""
 
@@ -300,14 +303,12 @@
 
   $effect(() => {
     const user = $pubkey || ""
-    const relayHints = $activeCommunityRelays
+    const relayHints = $activeExactCommunityRelays
     const relayListKey = $userRelayList?.event?.id || ""
-    const inExploreRoute = $page.route.id?.startsWith("/explore")
     const key = user ? `${user}:${relayHints.join(",")}:${relayListKey}` : ""
 
     if (
       !browser ||
-      inExploreRoute ||
       !user ||
       !key ||
       loadedCommunityPreferencesKey === key ||
@@ -330,8 +331,8 @@
   })
 
   $effect(() => {
-    const definition = $activeCommunityDefinition
-    const relays = $activeCommunityRelays
+    const definition = $activeExactCommunityDefinition
+    const relays = $activeExactCommunityRelays
     const key =
       definition && $pubkey && relays.length
         ? `${definition.event.id}:${$pubkey}:${relays.join(",")}`

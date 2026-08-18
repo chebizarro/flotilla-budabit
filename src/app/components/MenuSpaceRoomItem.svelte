@@ -4,7 +4,7 @@
   import Icon from "@lib/components/Icon.svelte"
   import SecondaryNavItem from "@lib/components/SecondaryNavItem.svelte"
   import ChannelName from "@app/components/ChannelName.svelte"
-  import {makeRoomPath} from "@app/util/routes"
+  import {makeExactCommunityRoomPath, parseExactCommunityRouteParam} from "@app/util/routes"
   import {notifications} from "@app/util/notifications"
 
   interface Props {
@@ -18,7 +18,10 @@
   const {url, room, notify = false, replaceState = false, archived = false}: Props = $props()
 
   const roomId = $derived(typeof room === "string" ? room : room?.id || room?.room || "")
-  const path = $derived(makeRoomPath(url, roomId))
+  const community = $derived(parseExactCommunityRouteParam(url))
+  const path = $derived(
+    community && roomId ? makeExactCommunityRoomPath(community, roomId) : "/explore",
+  )
   const isClosed = $derived(Boolean(typeof room === "object" && (room.closed || room.private)))
 </script>
 

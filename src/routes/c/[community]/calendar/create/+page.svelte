@@ -24,16 +24,16 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
     getUserOutboxRelays,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND, normalizeRelays} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND_V2, normalizeRelays} from "@app/core/community"
   import {
     makeAddressablePublicationRef,
-    makeTargetedPublicationForCommunity,
+    makeTargetedPublicationForCommunityV2,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -43,23 +43,30 @@
     getCommunityCalendarWriteTargetSectionName,
   } from "@app/core/community-permissions"
   import {publishLinkedOperation, type LinkedPublishOperation} from "@app/core/linked-publish"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityCalendarPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
   const calendarPath = $derived(
-    communityPubkey ? makeCommunityPath(communityPubkey, "calendar") : "",
+    routeCommunity ? makeExactCommunityCalendarPath(routeCommunity) : "",
   )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -82,9 +89,7 @@
 
   const isDateBased = $derived(eventKind === EVENT_DATE)
   const calendarSectionName = $derived(
-    getCommunityCalendarWriteTargetSectionName(
-      communityReady ? $activeCommunityDefinition : undefined,
-    ),
+    getCommunityCalendarWriteTargetSectionName(communityReady ? communityDefinition : undefined),
   )
   const calendarAccessMessage = $derived(
     `Request ${calendarSectionName} access to publish calendar events.`,
@@ -93,9 +98,9 @@
     Boolean(
       $pubkey &&
       communityReady &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityCalendarTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         reportState: $activeCommunityReportState,
@@ -151,13 +156,14 @@
 
   const createEvent = async () => {
     const trimmedTitle = title.trim()
-    if (publishing || !$pubkey || !communityPubkey || !trimmedTitle) return
+    if (publishing || !$pubkey || !routeCommunity || !communityId || !trimmedTitle) return
 
     const currentEventKind = eventKind
     const semanticInput = JSON.stringify({
       pubkey: $pubkey,
-      communityPubkey,
-      communityRelays: $activeCommunityPublishRelays,
+      communityId,
+      communityAddress,
+      communityRelays: $activeExactCommunityRelays,
       outboxRelays: getUserOutboxRelays(),
       title: trimmedTitle,
       location: location.trim(),
@@ -185,7 +191,7 @@
     if (currentEventKind === EVENT_DATE && !dateRange) return
     if (currentEventKind === EVENT_TIME && !timeRange) return
 
-    const relays = $activeCommunityPublishRelays
+    const relays = $activeExactCommunityRelays
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return
@@ -241,13 +247,12 @@
           return publishThunk({
             relays,
             event: makeEvent(
-              TARGETED_PUBLICATION_KIND,
-              makeTargetedPublicationForCommunity({
+              TARGETED_PUBLICATION_KIND_V2,
+              makeTargetedPublicationForCommunityV2({
                 targetingId,
                 originalKind: currentEventKind,
                 originalRef,
-                communityPubkey,
-                communityRelay: originalAckRelay,
+                community: routeCommunity,
               }),
             ),
             optimistic: false,
@@ -280,7 +285,7 @@
     <strong>Create an Event</strong>
   {/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={routeCommunity?.naddr} />
   {/snippet}
 </PageBar>
 

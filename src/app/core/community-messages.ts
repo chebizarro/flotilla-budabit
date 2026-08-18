@@ -1,6 +1,6 @@
 import type {EventContent, TrustedEvent} from "@welshman/util"
 import {MESSAGE, THREAD, getTagValue} from "@welshman/util"
-import {normalizePubkey} from "@app/core/community"
+import {makeCommunityScopeTagsV2} from "@app/core/community"
 import type {CommunityRoomRoot} from "@app/core/community-rooms"
 import {eventTargetsCommunity, getRoomRootIdForMessage} from "@app/core/community-feeds"
 
@@ -30,15 +30,14 @@ export const makeCommunityRoomMessage = ({
     pubkey: room.creatorPubkey,
     relay,
   }
-  const eventTags = [
-    ["h", normalizePubkey(communityPubkey)],
+  const eventTags = makeCommunityScopeTagsV2(communityPubkey, [
     ["E", room.id, relay || "", room.creatorPubkey],
     ["K", String(THREAD)],
     ["e", structuralParent.id, structuralParent.relay || "", structuralParent.pubkey],
     ["k", String(parent ? MESSAGE : THREAD)],
     ["p", structuralParent.pubkey, ...(structuralParent.relay ? [structuralParent.relay] : [])],
     ...tags,
-  ]
+  ])
 
   if (parent) {
     eventTags.push(["q", parent.id, parent.relay || "", parent.pubkey])

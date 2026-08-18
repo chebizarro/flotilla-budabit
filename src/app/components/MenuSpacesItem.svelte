@@ -4,12 +4,13 @@
   import RelayIcon from "@app/components/RelayIcon.svelte"
   import RelayName from "@app/components/RelayName.svelte"
   import RelayDescription from "@app/components/RelayDescription.svelte"
-  import {makeSpacePath} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
   import {notifications} from "@app/util/notifications"
 
   const {url} = $props()
 
-  const path = makeSpacePath(url)
+  const community = $derived(parseExactCommunityRouteParam(url))
+  const path = $derived(community ? makeExactCommunityPath(community) : "/explore")
 </script>
 
 <Link replaceState href={path}>

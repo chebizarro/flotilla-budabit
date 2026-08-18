@@ -62,8 +62,9 @@ describe("profile discoverability test matrix", () => {
 
     expect(gitStateTests).toContain("adds only h-tagged community relays")
     expect(gitStateTests).toContain(
-      "derives scoped community relay targets from repo announcement h tags",
+      "derives scoped community relay targets from repo announcement community IDs",
     )
+    expect(gitStateTests).toContain("uses an exact marked community binding")
     expect(gitCommandsTests).toContain("publishes comments only to provided relays")
     expect(gitCommandsTests).toContain("publishes issues only to provided repo relays")
     expect(gitCommandsTests).toContain("publishes statuses only to provided repo relays")

@@ -25,9 +25,11 @@
   import MenuSpaceRoomItem from "@app/components/MenuSpaceRoomItem.svelte"
   import {ENABLE_ZAPS, canCreateRoomByPlatformPolicy, channelsByUrl} from "@app/core/state"
   import {notifications} from "@app/util/notifications"
-  import {makeSpacePath} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const {url} = $props()
+  const community = $derived(parseExactCommunityRouteParam(url))
+  const homePath = $derived(community ? makeExactCommunityPath(community) : "/explore")
 
   const relay = deriveRelay(url)
   const owner = $derived($relay?.pubkey)
@@ -35,17 +37,21 @@
     canCreateRoomByPlatformPolicy({relayUrl: url, viewerPubkey: $pubkey, relayOwnerPubkey: owner}),
   )
 
-  const chatPath = makeSpacePath(url, "chat")
-  const gitPath = makeSpacePath(url, "git")
-  const goalsPath = makeSpacePath(url, "goals")
-  const threadsPath = makeSpacePath(url, "threads")
-  const calendarPath = makeSpacePath(url, "calendar")
+  const chatPath = $derived(community ? makeExactCommunityPath(community, "rooms") : "/explore")
+  const gitPath = $derived(community ? makeExactCommunityPath(community, "git") : "/git")
+  const goalsPath = $derived(community ? makeExactCommunityPath(community, "goals") : "/explore")
+  const threadsPath = $derived(
+    community ? makeExactCommunityPath(community, "threads") : "/explore",
+  )
+  const calendarPath = $derived(
+    community ? makeExactCommunityPath(community, "calendar") : "/explore",
+  )
 
   const activeChannels = $derived.by(() => $channelsByUrl.get(url) || [])
 
   const showDetail = () => pushModal(SpaceDetail, {url}, {replaceState})
 
-  const goHome = () => goto(makeSpacePath(url))
+  const goHome = () => goto(homePath)
 
   const addRoom = () => {
     if (!canCreateRoom) return
@@ -79,7 +85,7 @@
     </div>
 
     <div class="flex max-h-[calc(100vh-250px)] min-h-0 flex-col gap-1 overflow-auto">
-      <SecondaryNavItem {replaceState} href={makeSpacePath(url)}>
+      <SecondaryNavItem {replaceState} href={homePath}>
         <Icon icon={HomeSmile} /> Home
       </SecondaryNavItem>
 

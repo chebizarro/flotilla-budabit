@@ -3,14 +3,12 @@
   import Star from "@assets/icons/star.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import LogIn from "@app/components/LogIn.svelte"
-  import {makeDelete} from "@app/core/commands"
   import {
-    activeCommunityStarByCommunity,
+    activeCommunityStarByAddress,
     getCommunityStarRelays,
     hydrateCommunityStars,
   } from "@app/core/community-state"
-  import {normalizeRelays} from "@app/core/community"
-  import {makeCommunityDefinitionAddress} from "@app/core/community-forms"
+  import {normalizeRelays, type CommunityPointer} from "@app/core/community"
   import {
     discardPublication,
     publicationOperations,
@@ -23,32 +21,30 @@
   } from "@app/core/community-star-operations"
   import {pushToast} from "@app/util/toast"
   import {pushModal} from "@app/util/modal"
-  import {makeCommunityStarReaction} from "@app/util/community-stars"
+  import {makeCommunityStarDeleteV2, makeCommunityStarReactionV2} from "@app/util/community-stars"
 
   type Props = {
-    communityPubkey: string
-    relayHints?: string[]
+    community: CommunityPointer
     publishRelayHints?: string[]
     class?: string
   }
 
   const {
-    communityPubkey,
-    relayHints = [],
+    community,
     publishRelayHints = undefined,
     class: className = "btn btn-square btn-sm",
   }: Props = $props()
 
-  const relays = $derived(getCommunityStarRelays(relayHints))
+  const relays = $derived(getCommunityStarRelays(community.relayHints))
   const publishRelays = $derived(
     publishRelayHints === undefined ? relays : normalizeRelays(publishRelayHints),
   )
   const starProjection = $derived(
     projectCommunityStarOperation({
-      star: $activeCommunityStarByCommunity.get(communityPubkey),
+      star: $activeCommunityStarByAddress.get(community.address),
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
-      communityPubkey,
+      community,
     }),
   )
   const star = $derived(starProjection.star)
@@ -59,7 +55,7 @@
       pushModal(LogIn)
       return
     }
-    if (!communityPubkey || publishRelays.length === 0) {
+    if (publishRelays.length === 0) {
       pushToast({theme: "error", message: "No relays available for updating this star."})
       return
     }
@@ -78,34 +74,28 @@
         })
         return
       }
-      const supersededStarEventId = starProjection.retryDesiredStarred
-        ? starProjection.retryEventId
-        : undefined
       if (starProjection.retryOperationId) {
         discardPublication(starProjection.retryOperationId)
       }
 
       if (star) {
         startPublication({
-          event: makeDelete({
-            event: star.reaction,
-            tags: supersededStarEventId ? [["e", supersededStarEventId]] : [],
-          }),
+          event: makeCommunityStarDeleteV2(community, star.reaction.id),
           relays: publishRelays,
           label: "Unstar community",
-          semanticKey: getCommunityStarOperationSemanticKey(communityPubkey),
+          semanticKey: getCommunityStarOperationSemanticKey(community),
           preview: "rollback-on-failure",
         })
       } else {
-        const event = makeCommunityStarReaction({
-          communityPubkey,
-          relayHints: publishRelayHints ?? relayHints,
+        const event = makeCommunityStarReactionV2({
+          ...community,
+          relayHints: publishRelayHints ?? community.relayHints,
         })
         startPublication({
           event,
           relays: publishRelays,
           label: "Star community",
-          semanticKey: getCommunityStarOperationSemanticKey(communityPubkey),
+          semanticKey: getCommunityStarOperationSemanticKey(community),
           preview: "rollback-on-failure",
         })
       }
@@ -118,17 +108,19 @@
   }
 
   $effect(() => {
-    const address = makeCommunityDefinitionAddress(communityPubkey)
-    if (!$pubkey || !address) return
+    if (!$pubkey) return
 
-    hydrateCommunityStars({relayHints, communityAddress: address}).catch(() => {})
+    hydrateCommunityStars({
+      relayHints: community.relayHints,
+      communityAddress: community.address,
+    }).catch(() => {})
   })
 </script>
 
 <button
   type="button"
   class="{className} {star ? 'btn-primary' : 'btn-outline'}"
-  disabled={!communityPubkey || toggling}
+  disabled={toggling}
   aria-label={star ? "Unstar community" : "Star community"}
   title={star ? "Unstar community" : "Star community"}
   onclick={toggleStar}>

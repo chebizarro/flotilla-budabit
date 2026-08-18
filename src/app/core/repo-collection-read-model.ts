@@ -1,10 +1,12 @@
 import {DELETE, type TrustedEvent} from "@welshman/util"
-import {parseTargetedPublication} from "@app/core/community"
+import {parseTargetedPublicationV2} from "@app/core/community"
 import {getPublicationTargetingId} from "@app/core/community-targeting"
 import {parseRepoStarReaction, type RepoStarRef} from "@app/util/repo-stars"
 
 export type RepoCollectionCommunityOption = {
-  pubkey: string
+  controllerPubkey: string
+  address: string
+  communityId: string
   label?: string
   relay?: string
   relays?: string[]
@@ -69,7 +71,9 @@ export const buildRepoCommunityStarCollections = ({
   if (!viewerPubkey || communityOptions.length === 0) return []
 
   const deletedTargetIds = getDeletedRepoCollectionTargetIds(targetEvents, targetDeleteEvents)
-  const communitiesByPubkey = new Map(communityOptions.map(option => [option.pubkey, option]))
+  const communitiesByAddress = new Map(
+    communityOptions.filter(option => option.address).map(option => [option.address, option]),
+  )
   const targetsByTargetingId = new Map<
     string,
     Array<{targetEvent: TrustedEvent; community: RepoCollectionCommunityOption}>
@@ -96,20 +100,20 @@ export const buildRepoCommunityStarCollections = ({
 
   for (const event of targetEvents) {
     if (event.pubkey !== viewerPubkey || deletedTargetIds.has(event.id)) continue
-    const targeting = parseTargetedPublication(event)
+    const targeting = parseTargetedPublicationV2(event)
     if (!targeting) continue
 
     for (const communityRef of targeting.communities) {
-      const community = communitiesByPubkey.get(communityRef.pubkey)
+      const community = communitiesByAddress.get(communityRef.address)
       if (!community) continue
 
       const target = {targetEvent: event, community}
-      if (!targeting.ref) {
+      if (!targeting.source) {
         addTarget(targetsByTargetingId, targeting.id, target)
-      } else if (targeting.ref.type === "e") {
-        addTarget(targetsByOriginalEventId, targeting.ref.value, target)
-      } else if (targeting.ref.type === "a") {
-        addTarget(targetsByOriginalAddress, targeting.ref.value, target)
+      } else if (targeting.source.type === "e") {
+        addTarget(targetsByOriginalEventId, targeting.source.value, target)
+      } else if (targeting.source.type === "a") {
+        addTarget(targetsByOriginalAddress, targeting.source.value, target)
       }
     }
   }
@@ -131,7 +135,7 @@ export const buildRepoCommunityStarCollections = ({
     ]
 
     for (const target of targets) {
-      const key = `${target.targetEvent.id}:${target.community.pubkey}:${star.reaction.id}`
+      const key = `${target.targetEvent.id}:${target.community.address}:${star.reaction.id}`
       collectionsByKey.set(key, {...target, star})
     }
   }

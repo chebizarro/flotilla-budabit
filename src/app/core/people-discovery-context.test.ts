@@ -1,14 +1,27 @@
 import {describe, expect, it} from "vitest"
-import {COMMUNITY_DEFINITION_KIND, PROFILE_LIST_KIND, parseCommunityDefinition} from "./community"
+import {getPublicKey} from "nostr-tools/pure"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  PROFILE_LIST_KIND,
+  buildCommunityDefinitionV2,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+} from "./community"
 import {
   resolveCommunityPeopleDiscoveryContext,
   resolveRepoPeopleDiscoveryContext,
 } from "./people-discovery-context"
 
-const owner = "a".repeat(64)
-const maintainer = "b".repeat(64)
-const community = "c".repeat(64)
-const listOwner = "d".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const owner = key(1)
+const maintainer = key(2)
+const community = key(3)
+const communityId = key(4)
+const listOwner = key(5)
+const siblingController = key(6)
+const communityAddress = `${COMMUNITY_DEFINITION_KIND_V2}:${community}:${communityId}`
+const pointer = makeCommunityPointer({controllerPubkey: community, communityId})!
 
 const makeRepoEvent = (communityPubkey = community) =>
   ({
@@ -27,16 +40,23 @@ const makeRepoEvent = (communityPubkey = community) =>
 
 const definitionEvent = {
   id: "definition",
-  kind: COMMUNITY_DEFINITION_KIND,
+  kind: COMMUNITY_DEFINITION_KIND_V2,
   pubkey: community,
   created_at: 1,
   content: "",
   sig: "",
-  tags: [
-    ["content", "Repositories"],
-    ["k", "30617"],
-    ["a", `${PROFILE_LIST_KIND}:${listOwner}:Repositories`],
-  ],
+  tags: buildCommunityDefinitionV2({
+    communityId,
+    name: "Builders",
+    relays: ["wss://relay.example"],
+    sections: [
+      {
+        name: "Repositories",
+        kinds: [{kind: 30617}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${listOwner}:Repositories`}],
+      },
+    ],
+  }).tags,
 } as any
 
 const profileListEvent = {
@@ -52,18 +72,41 @@ const profileListEvent = {
   ],
 } as any
 
-const definition = parseCommunityDefinition(definitionEvent)!
+const definition = parseCommunityDefinitionV2(definitionEvent)!
+const siblingDefinition = parseCommunityDefinitionV2({
+  ...definitionEvent,
+  id: "sibling-definition",
+  pubkey: siblingController,
+})!
+const associationEvent = {
+  id: "association",
+  pubkey: owner,
+  created_at: 2,
+  sig: "",
+  ...buildTargetedPublicationV2({
+    id: "repo-association",
+    kind: 30617,
+    source: {type: "a", value: `30617:${owner}:demo`},
+    communities: [pointer],
+  }),
+} as any
 
 describe("people discovery contexts", () => {
   it("keeps standalone community context free of repository authority", () => {
     expect(
       resolveCommunityPeopleDiscoveryContext(
-        {scope: "community", communityPubkey: community},
+        {scope: "community", communityPubkey: community, communityAddress},
         owner,
       ),
     ).toEqual({
-      trustContext: {scope: "community", viewerPubkey: owner, communityPubkey: community},
+      trustContext: {
+        scope: "community",
+        viewerPubkey: owner,
+        communityPubkey: community,
+        communityAddress,
+      },
       communityPubkey: community,
+      communityAddress,
       repoOwnerPubkeys: [],
       repoMaintainerPubkeys: [],
     })
@@ -74,9 +117,9 @@ describe("people discovery contexts", () => {
       {
         scope: "repo",
         authority: {source: "announcement", event: makeRepoEvent()},
-        community: {scope: "community", communityPubkey: community},
+        community: {scope: "community", communityPubkey: community, communityAddress},
       },
-      {definitions: [], profileListEvents: [], reportStates: new Map()},
+      {definitions: new Map(), profileListEvents: [], reportStates: new Map()},
       owner,
     )
 
@@ -85,17 +128,33 @@ describe("people discovery contexts", () => {
     expect(result.trustContext).toMatchObject({
       scope: "repo",
       communityPubkey: community,
+      communityAddress,
       repoAddress: `30617:${owner}:demo`,
     })
   })
 
   it("uses an announcement community only when the association is endorsed", () => {
     const endorsed = resolveRepoPeopleDiscoveryContext(
-      {scope: "repo", authority: {source: "announcement", event: makeRepoEvent()}},
       {
-        definitions: [definition],
+        scope: "repo",
+        authority: {source: "announcement", event: makeRepoEvent()},
+        associationEvents: [associationEvent],
+      },
+      {
+        definitions: new Map([
+          [definition.pointer.address, definition],
+          [siblingDefinition.pointer.address, siblingDefinition],
+        ]),
         profileListEvents: [profileListEvent],
-        reportStates: new Map(),
+        reportStates: new Map([
+          [
+            siblingDefinition.pointer.address,
+            {
+              eventReports: [],
+              personReports: [{targetPubkey: owner}],
+            } as any,
+          ],
+        ]),
       },
     )
     const unvalidated = resolveRepoPeopleDiscoveryContext(
@@ -103,10 +162,15 @@ describe("people discovery contexts", () => {
         scope: "repo",
         authority: {source: "announcement", event: makeRepoEvent("e".repeat(64))},
       },
-      {definitions: [definition], profileListEvents: [], reportStates: new Map()},
+      {
+        definitions: new Map([[definition.pointer.address, definition]]),
+        profileListEvents: [],
+        reportStates: new Map(),
+      },
     )
 
     expect(endorsed.communityPubkey).toBe(community)
+    expect(endorsed.trustContext.communityAddress).toBe(communityAddress)
     expect(unvalidated.communityPubkey).toBe("")
     expect(unvalidated.trustContext.communityPubkey).toBeUndefined()
   })
@@ -121,7 +185,7 @@ describe("people discovery contexts", () => {
           maintainerPubkeys: [owner, maintainer, maintainer],
         },
       },
-      {definitions: [], profileListEvents: [], reportStates: new Map()},
+      {definitions: new Map(), profileListEvents: [], reportStates: new Map()},
     )
 
     expect(result.repoOwnerPubkeys).toEqual([owner])

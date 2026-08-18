@@ -40,6 +40,7 @@
   import {
     findRepoCommunityOption,
     getRepoCommunityOptionBinding,
+    getRepoCommunityOptionKey,
   } from "./repo-community-options.js";
   import {
     DEFAULT_BRANCH_COPY_FILTER_TOOLTIP,
@@ -171,7 +172,7 @@
   function searchMaintainerProfiles(query: string) {
     if (!searchProfiles) return Promise.resolve([]);
     return searchProfiles(query, {
-      communityPubkey: selectedCommunityPubkey || undefined,
+      communityAddress: selectedCommunityPubkey || undefined,
     });
   }
 
@@ -434,7 +435,7 @@
     const communityGraspServerUrls = [
       ...(selectedCommunity?.graspServers || []),
       ...communityOptions
-        .filter((option) => option.pubkey !== selectedCommunity?.pubkey)
+        .filter((option) => option.address !== selectedCommunity?.address)
         .flatMap((option) => option.graspServers || []),
     ];
 
@@ -760,14 +761,14 @@
     mergeGraspServiceDescriptors([
       ...buildGraspServiceDescriptors(
         findRepoCommunityOption(communityOptions, selectedCommunityPubkey)?.graspServers || [],
-        "community-10222"
+        "community-definition"
       ),
       ...buildGraspServiceDescriptors(graspServerUrlsLocal, "user-10317"),
       ...buildGraspServiceDescriptors(
         communityOptions
-          .filter((option) => option.pubkey !== selectedCommunityPubkey)
+          .filter((option) => getRepoCommunityOptionKey(option) !== selectedCommunityPubkey)
           .flatMap((option) => option.graspServers || []),
-        "community-10222"
+        "community-definition"
       ),
     ])
   );

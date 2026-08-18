@@ -13,11 +13,13 @@
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
   import GitCommunityMenuButton from "@app/components/GitCommunityMenuButton.svelte"
-  import {activeCommunitySession} from "@app/core/community-state"
+  import {activeExactCommunitySession} from "@app/core/community-state"
   import Git from "@assets/icons/git.svg?dataurl"
 
   const url = $repoAnnouncementRelaysStore[0] || ""
-  const gitPageWidthClass = $derived($activeCommunitySession?.communityPubkey ? "" : "cw-full")
+  const gitPageWidthClass = $derived(
+    $activeExactCommunitySession?.definition.controllerPubkey ? "" : "cw-full",
+  )
 
   let loading = $state(true)
   let lastLoadedRelays = $state("")

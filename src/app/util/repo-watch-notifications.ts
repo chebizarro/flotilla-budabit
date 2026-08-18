@@ -28,11 +28,15 @@ import {
   parseRepoAnnouncementEvent,
   type RepoAnnouncementEvent,
 } from "@nostr-git/core/events"
-import {COMMUNITY_DEFINITION_KIND, type CommunityDefinition} from "@app/core/community"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  parseCommunityDefinitionAddress,
+  parseCommunityDefinitionV2,
+  type CommunityDefinitionV2,
+} from "@app/core/community"
 import {
   makeCommunityProfileListFilters,
   makeCommunityReportFilters,
-  selectLatestCommunityDefinition,
 } from "@app/core/community-state"
 import {
   COMMUNITY_WRITE_TARGETS,
@@ -67,7 +71,6 @@ import {
   notificationHistoryFilterLimit,
   notificationHistorySince,
 } from "@app/util/notification-history"
-import {makeGitPath} from "@app/util/routes"
 import {ROLE_NS} from "@app/util/labels"
 import {createBackgroundLiveCoordinator} from "@app/core/background-live"
 import {
@@ -98,7 +101,8 @@ type WatchedRepoRef = RepoWatchAddressRef & {
 export type RepoWatchNotificationRepo = RepoWatchAddressRef & {
   options: RepoWatchOptions
   repoEvent?: TrustedEvent
-  communityDefinition?: CommunityDefinition
+  communityAddress?: string
+  communityDefinition?: CommunityDefinitionV2
   communityProfileListEvents?: TrustedEvent[]
   communityReportState?: EffectiveCommunityReportState
 }
@@ -152,7 +156,7 @@ type LoadedRepoWatchEvents<T extends TrustedEvent> = RepoWatchHistoryStatus & {
 }
 
 export type RepoWatchCommunityContext = {
-  definition?: CommunityDefinition
+  definition?: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   ready: boolean
@@ -233,7 +237,7 @@ const getBaseRelays = () => {
 }
 
 const getRepoWatchPath = (repo: RepoWatchAddressRef, section: RepoWatchCandidateSection) =>
-  `${makeGitPath(undefined, repo.naddr)}/${section}`
+  `/git/${repo.naddr}/${section}`
 
 const getRepoWatchPaths = (repo: RepoWatchAddressRef) => [
   getRepoWatchPath(repo, "issues"),
@@ -421,7 +425,7 @@ export const buildRepoWatchRootRelayGroups = (
 ) => buildRepoWatchRelayGroups(targets, ownership, buildRootFilters, buildLocalRootFilters)
 
 type RepoWatchScopedFilterSource = {
-  communityPubkey?: string
+  communityAddress?: string
   relays: string[]
   filters: Filter[]
 }
@@ -435,12 +439,12 @@ export const buildRepoWatchScopedFilterGroups = (
   for (const source of sources) {
     const relays = normalizeRelays(source.relays)
     if (relays.length === 0 && source.filters.length > 0) {
-      const scope = source.communityPubkey || ""
+      const scope = source.communityAddress || ""
       groupsByScopeRelay.set(`${scope}:`, {scope, relay: "", filters: [...source.filters]})
     }
 
     for (const relay of relays) {
-      const scope = source.communityPubkey || ""
+      const scope = source.communityAddress || ""
       const key = `${scope}:${relay}`
       const group = groupsByScopeRelay.get(key) || {scope, relay, filters: []}
       group.filters.push(...source.filters)
@@ -1298,11 +1302,11 @@ const watchedRepoCommunityRefs = derived(knownRepoAnnouncementEvents, $events =>
   for (const event of $events) {
     try {
       const community = parseRepoAnnouncementEvent(event as RepoAnnouncementEvent).community
-      if (!community?.pubkey) continue
+      if (!community?.address) continue
 
-      const relays = refs.get(community.pubkey) || []
+      const relays = refs.get(community.address) || []
       if (community.relay) relays.push(community.relay)
-      refs.set(community.pubkey, relays)
+      refs.set(community.address, relays)
     } catch {
       continue
     }
@@ -1316,16 +1320,20 @@ const watchedRepoCommunityDefinitionSources = derived(knownRepoAnnouncementEvent
     try {
       const announcement = parseRepoAnnouncementEvent(event as RepoAnnouncementEvent)
       const community = announcement.community
-      if (!community?.pubkey) return []
+      const pointer = community?.address
+        ? parseCommunityDefinitionAddress(community.address)
+        : undefined
+      if (!pointer) return []
 
       return [
         {
-          communityPubkey: community.pubkey,
-          relays: normalizeRelays([...(announcement.relays || []), community.relay]),
+          communityAddress: pointer.address,
+          relays: normalizeRelays([...(announcement.relays || []), community?.relay]),
           filters: [
             {
-              kinds: [COMMUNITY_DEFINITION_KIND],
-              authors: [community.pubkey],
+              kinds: [COMMUNITY_DEFINITION_KIND_V2],
+              authors: [pointer.controllerPubkey],
+              "#d": [pointer.communityId],
               limit: 1,
             },
           ],
@@ -1344,27 +1352,42 @@ const watchedRepoCommunityDefinitionLoad = deriveLoadedEventGroups<TrustedEvent>
   label: "repo community definitions",
 })
 
+export const selectRepoWatchCommunityDefinitions = (
+  events: TrustedEvent[],
+  communityAddresses: Iterable<string>,
+) => {
+  const addresses = new Set(communityAddresses)
+  const definitions = new Map<string, CommunityDefinitionV2>()
+
+  for (const event of events) {
+    const definition = parseCommunityDefinitionV2(event)
+    if (!definition || !addresses.has(definition.pointer.address)) continue
+    const current = definitions.get(definition.pointer.address)
+    if (
+      !current ||
+      definition.event.created_at > current.event.created_at ||
+      (definition.event.created_at === current.event.created_at &&
+        definition.event.id < current.event.id)
+    ) {
+      definitions.set(definition.pointer.address, definition)
+    }
+  }
+
+  return definitions
+}
+
 const watchedRepoCommunityDefinitions = derived(
   [watchedRepoCommunityRefs, watchedRepoCommunityDefinitionLoad],
-  ([$refs, $load]) => {
-    const definitions = new Map<string, CommunityDefinition>()
-
-    for (const communityPubkey of $refs.keys()) {
-      const definition = selectLatestCommunityDefinition($load.events, communityPubkey)
-      if (definition) definitions.set(communityPubkey, definition)
-    }
-
-    return definitions
-  },
+  ([$refs, $load]) => selectRepoWatchCommunityDefinitions($load.events, $refs.keys()),
 )
 
 const watchedRepoCommunityProfileListSources = derived(
   [watchedRepoCommunityRefs, watchedRepoCommunityDefinitions],
   ([$refs, $definitions]) =>
     Array.from($definitions.values()).map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: normalizeRelays([
-        ...($refs.get(definition.pubkey) || []),
+        ...($refs.get(definition.pointer.address) || []),
         ...definition.relays,
         ...definition.sections.flatMap(section =>
           section.profileLists.flatMap(profileList =>
@@ -1387,9 +1410,12 @@ const watchedRepoCommunityReportSources = derived(
   [watchedRepoCommunityRefs, watchedRepoCommunityDefinitions],
   ([$refs, $definitions]) =>
     Array.from($definitions.values()).map(definition => ({
-      communityPubkey: definition.pubkey,
-      relays: normalizeRelays([...($refs.get(definition.pubkey) || []), ...definition.relays]),
-      filters: makeCommunityReportFilters(definition),
+      communityAddress: definition.pointer.address,
+      relays: normalizeRelays([
+        ...($refs.get(definition.pointer.address) || []),
+        ...definition.relays,
+      ]),
+      filters: makeCommunityReportFilters(definition.pointer),
     })),
 )
 
@@ -1404,7 +1430,7 @@ const watchedRepoCommunityReportDeleteSources = derived(
   [watchedRepoCommunityReportSources, watchedRepoCommunityReportLoad],
   ([$sources, $load]) =>
     $sources.map(source => ({
-      communityPubkey: source.communityPubkey,
+      communityAddress: source.communityAddress,
       relays: source.relays,
       filters: makeSameAuthorDeleteFilters(
         $load.events.filter(event => matchFilters(source.filters, event)),
@@ -1420,7 +1446,7 @@ const watchedRepoCommunityReportDeleteLoad = deriveLoadedEventGroups<TrustedEven
 })
 
 const getDefinitionProfileListEvents = (
-  definition: CommunityDefinition,
+  definition: CommunityDefinitionV2,
   events: TrustedEvent[],
 ) => {
   const filters = makeCommunityProfileListFilters(definition)
@@ -1428,18 +1454,18 @@ const getDefinitionProfileListEvents = (
 }
 
 export const isRepoWatchCommunitySourceComplete = (
-  communityPubkey: string,
+  communityAddress: string,
   sources: RepoWatchScopedFilterSource[],
   completeScopes: Set<string>,
 ) => {
-  const communitySources = sources.filter(source => source.communityPubkey === communityPubkey)
+  const communitySources = sources.filter(source => source.communityAddress === communityAddress)
   if (communitySources.length === 0) return false
 
   return communitySources.every(source => {
     if (source.filters.length === 0) return true
     const relays = normalizeRelays(source.relays)
     return (
-      relays.length > 0 && relays.every(relay => completeScopes.has(`${communityPubkey}:${relay}`))
+      relays.length > 0 && relays.every(relay => completeScopes.has(`${communityAddress}:${relay}`))
     )
   })
 }
@@ -1447,7 +1473,6 @@ export const isRepoWatchCommunitySourceComplete = (
 export const watchedRepoCommunityContexts: Readable<Map<string, RepoWatchCommunityContext>> =
   derived(
     [
-      watchedRepoCommunityRefs,
       watchedRepoCommunityDefinitions,
       watchedRepoCommunityDefinitionSources,
       watchedRepoCommunityDefinitionLoad,
@@ -1459,7 +1484,6 @@ export const watchedRepoCommunityContexts: Readable<Map<string, RepoWatchCommuni
       watchedRepoCommunityReportDeleteLoad,
     ],
     ([
-      $refs,
       $definitions,
       $definitionSources,
       $definitionLoad,
@@ -1472,43 +1496,42 @@ export const watchedRepoCommunityContexts: Readable<Map<string, RepoWatchCommuni
     ]) => {
       const contexts = new Map<string, RepoWatchCommunityContext>()
 
-      for (const communityPubkey of $refs.keys()) {
-        const definition = $definitions.get(communityPubkey)
-        const profileListEvents = definition
-          ? getDefinitionProfileListEvents(definition, $profileListLoad.events)
-          : []
-        const reportState = definition
-          ? getEffectiveCommunityReportState({
-              definition,
-              profileListEvents,
-              reportEvents: $reportLoad.events,
-              deleteEvents: $reportDeleteLoad.events,
-            })
-          : undefined
+      for (const definition of $definitions.values()) {
+        const communityAddress = definition.pointer.address
+        const profileListEvents = getDefinitionProfileListEvents(
+          definition,
+          $profileListLoad.events,
+        )
+        const reportState = getEffectiveCommunityReportState({
+          community: definition.pointer,
+          definition,
+          profileListEvents,
+          reportEvents: $reportLoad.events,
+          deleteEvents: $reportDeleteLoad.events,
+        })
 
-        contexts.set(communityPubkey, {
+        contexts.set(communityAddress, {
           definition,
           profileListEvents,
           reportState,
           ready: Boolean(
-            definition &&
             isRepoWatchCommunitySourceComplete(
-              communityPubkey,
+              communityAddress,
               $definitionSources,
               $definitionLoad.completeScopes,
             ) &&
             isRepoWatchCommunitySourceComplete(
-              communityPubkey,
+              communityAddress,
               $profileListSources,
               $profileListLoad.completeScopes,
             ) &&
             isRepoWatchCommunitySourceComplete(
-              communityPubkey,
+              communityAddress,
               $reportSources,
               $reportLoad.completeScopes,
             ) &&
             isRepoWatchCommunitySourceComplete(
-              communityPubkey,
+              communityAddress,
               $reportDeleteSources,
               $reportDeleteLoad.completeScopes,
             ),
@@ -1520,14 +1543,30 @@ export const watchedRepoCommunityContexts: Readable<Map<string, RepoWatchCommuni
     },
   )
 
-const getRepoCommunityPubkey = (repo: RepoWatchNotificationRepo) => {
+const getRepoCommunityId = (repo: RepoWatchNotificationRepo) => {
   try {
     return repo.repoEvent
-      ? parseRepoAnnouncementEvent(repo.repoEvent as RepoAnnouncementEvent).community?.pubkey || ""
+      ? parseRepoAnnouncementEvent(repo.repoEvent as RepoAnnouncementEvent).community
+          ?.communityId || ""
       : ""
   } catch {
     return ""
   }
+}
+
+const getRepoCommunityAddress = (
+  repo: RepoWatchNotificationRepo,
+  contexts: Map<string, RepoWatchCommunityContext>,
+) => {
+  if (repo.communityAddress) return repo.communityAddress
+  const communityId = getRepoCommunityId(repo)
+  if (!communityId) return ""
+
+  return (
+    Array.from(contexts.entries()).find(
+      ([, context]) => context.definition?.communityId === communityId,
+    )?.[0] || ""
+  )
 }
 
 const getRepoWatchActivityAuthors = (
@@ -1548,7 +1587,7 @@ const getRepoWatchActivityAuthors = (
     repo.options.activityFilter === "community" ||
     repo.options.activityFilter === "maintainers-community"
   ) {
-    const context = contexts.get(getRepoCommunityPubkey(repo))
+    const context = contexts.get(getRepoCommunityAddress(repo, contexts))
     if (context?.ready && context.definition && context.reportState) {
       for (const writer of getCommunityTargetWriterPubkeys({
         definition: context.definition,
@@ -1705,10 +1744,13 @@ export const repoWatchNotificationCandidates = derived(
   ],
   ([$pubkey, $repos, $activityLoad, $rootScopedLoad, $communityContexts]) => {
     const repos = $repos.map(repo => {
-      const communityContext = $communityContexts.get(getRepoCommunityPubkey(repo))
+      const communityContext = $communityContexts.get(
+        getRepoCommunityAddress(repo, $communityContexts),
+      )
 
       return {
         ...repo,
+        communityAddress: communityContext?.definition?.pointer.address,
         communityDefinition: communityContext?.ready ? communityContext.definition : undefined,
         communityReportState: communityContext?.ready ? communityContext.reportState : undefined,
         communityProfileListEvents: communityContext?.ready

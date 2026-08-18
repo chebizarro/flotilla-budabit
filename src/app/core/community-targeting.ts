@@ -2,13 +2,15 @@ import type {EventContent, TrustedEvent} from "@welshman/util"
 import {getTagValue} from "@welshman/util"
 import {randomId} from "@welshman/lib"
 import {
-  MAX_TARGET_COMMUNITIES,
+  MAX_TARGET_COMMUNITIES_V2,
   TARGETED_PUBLICATION_KINDS,
-  type CommunityTarget,
-  type TargetedPublicationRef,
-  buildTargetedPublication,
+  type CommunityPointer,
+  type TargetedPublicationSourceV2,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
   normalizePubkey,
-  parseTargetedPublication,
+  parseTargetedPublicationV2,
+  removeTargetedCommunityV2,
 } from "@app/core/community"
 
 export const TARGETING_TAG = "h"
@@ -31,24 +33,22 @@ export const withPublicationTargetingId = <T extends EventContent>(
   targetingId,
 })
 
-export const makeTargetedPublicationForCommunity = ({
+export const makeTargetedPublicationForCommunityV2 = ({
   targetingId,
   originalKind,
   originalRef,
-  communityPubkey,
-  communityRelay,
+  community,
 }: {
   targetingId: string
   originalKind: number
-  originalRef?: TargetedPublicationRef
-  communityPubkey: string
-  communityRelay?: string
+  originalRef?: TargetedPublicationSourceV2
+  community: CommunityPointer
 }): EventContent =>
-  buildTargetedPublication({
+  buildTargetedPublicationV2({
     id: targetingId,
     kind: originalKind,
-    ref: originalRef,
-    communities: [{pubkey: communityPubkey, relay: communityRelay}],
+    source: originalRef,
+    communities: [community],
   })
 
 export const makeAddressablePublicationRef = ({
@@ -61,7 +61,7 @@ export const makeAddressablePublicationRef = ({
   pubkey: string
   identifier: string
   relay?: string
-}): TargetedPublicationRef => ({
+}): TargetedPublicationSourceV2 => ({
   type: "a",
   value: `${kind}:${normalizePubkey(pubkey)}:${identifier}`,
   relay,
@@ -75,43 +75,39 @@ export const makeEventPublicationRef = ({
   id: string
   relay?: string
   pubkey?: string
-}): TargetedPublicationRef => ({type: "e", value: id, relay, pubkey})
+}): TargetedPublicationSourceV2 => ({type: "e", value: id, relay, pubkey})
 
 export const upsertCommunityTarget = (
   event: TrustedEvent,
-  target: CommunityTarget,
+  target: CommunityPointer,
 ): EventContent | undefined => {
-  const parsed = parseTargetedPublication(event)
+  const parsed = parseTargetedPublicationV2(event)
   if (!parsed) return undefined
 
-  const targetPubkey = normalizePubkey(target.pubkey)
-  if (!targetPubkey) return undefined
-
-  const communities = parsed.communities.filter(community => community.pubkey !== targetPubkey)
-  communities.push({pubkey: targetPubkey, relay: target.relay})
-
-  return buildTargetedPublication({
-    id: parsed.id,
-    kind: parsed.kind,
-    ref: parsed.ref,
-    communities: communities.slice(0, MAX_TARGET_COMMUNITIES),
+  const pointer = makeCommunityPointer({
+    controllerPubkey: target.controllerPubkey,
+    communityId: target.communityId,
+    relayHints: target.relayHints,
   })
+  if (!pointer || pointer.address !== target.address || pointer.naddr !== target.naddr)
+    return undefined
+
+  const tags = event.tags.map(tag => [...tag])
+  const existingIndex = tags.findIndex(
+    tag => tag[0] === "a" && tag[1] === pointer.address && tag[3] === "community",
+  )
+  if (existingIndex >= 0) {
+    tags[existingIndex] = ["a", pointer.address, pointer.relayHints[0] || "", "community"]
+  } else {
+    if (parsed.communities.length >= MAX_TARGET_COMMUNITIES_V2) return undefined
+    tags.push(["h", pointer.communityId])
+    tags.push(["a", pointer.address, pointer.relayHints[0] || "", "community"])
+  }
+
+  return {content: event.content, tags}
 }
 
 export const removeCommunityTarget = (
   event: TrustedEvent,
-  communityPubkey: string,
-): EventContent | undefined => {
-  const parsed = parseTargetedPublication(event)
-  if (!parsed) return undefined
-
-  const targetPubkey = normalizePubkey(communityPubkey)
-  if (!targetPubkey) return undefined
-
-  return buildTargetedPublication({
-    id: parsed.id,
-    kind: parsed.kind,
-    ref: parsed.ref,
-    communities: parsed.communities.filter(community => community.pubkey !== targetPubkey),
-  })
-}
+  definitionAddress: string,
+): EventContent | undefined => removeTargetedCommunityV2(event, definitionAddress)

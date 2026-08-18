@@ -1,17 +1,46 @@
 import {localStorageProvider, synced} from "@welshman/store"
 import {get} from "svelte/store"
-import {normalizePubkey} from "@app/core/community"
+import {
+  normalizePubkey,
+  parseCommunityDefinitionAddress,
+  type CommunityPointer,
+} from "@app/core/community"
 
-export const COMMUNITY_EXTENSION_PROMPT_KEY = "budabit/community-extension-prompt"
+export const COMMUNITY_EXTENSION_PROMPT_KEY = "budabit/community-extension-prompt/v2"
 
 export type CommunityExtensionPromptState = {
+  version: 2
   pubkey: string
-  dismissedCommunityPubkeys: string[]
+  dismissedCommunityAddresses: string[]
 }
 
 export const defaultCommunityExtensionPromptState: CommunityExtensionPromptState = {
+  version: 2,
   pubkey: "",
-  dismissedCommunityPubkeys: [],
+  dismissedCommunityAddresses: [],
+}
+
+export const normalizeCommunityExtensionPromptState = (
+  value: unknown,
+): CommunityExtensionPromptState => {
+  if (!value || typeof value !== "object" || (value as {version?: unknown}).version !== 2) {
+    return {...defaultCommunityExtensionPromptState}
+  }
+  const source = value as Partial<CommunityExtensionPromptState>
+  const userPubkey = normalizePubkey(source.pubkey || "")
+  const dismissedCommunityAddresses = Array.from(
+    new Set(
+      (Array.isArray(source.dismissedCommunityAddresses)
+        ? source.dismissedCommunityAddresses
+        : []
+      ).flatMap(address => {
+        const pointer = parseCommunityDefinitionAddress(address)
+        return pointer ? [pointer.address] : []
+      }),
+    ),
+  )
+
+  return {version: 2, pubkey: userPubkey, dismissedCommunityAddresses}
 }
 
 export const communityExtensionPrompt = synced({
@@ -27,7 +56,7 @@ export const ensureCommunityExtensionPromptLogin = (userPubkey: string) => {
   communityExtensionPrompt.update(state =>
     state.pubkey === normalizedPubkey
       ? state
-      : {pubkey: normalizedPubkey, dismissedCommunityPubkeys: []},
+      : {version: 2, pubkey: normalizedPubkey, dismissedCommunityAddresses: []},
   )
 }
 
@@ -35,33 +64,42 @@ export const clearCommunityExtensionPromptLogin = () => {
   communityExtensionPrompt.set(defaultCommunityExtensionPromptState)
 }
 
-export const dismissCommunityExtensionPrompt = (userPubkey: string, communityPubkey: string) => {
+export const dismissCommunityExtensionPromptState = (
+  state: CommunityExtensionPromptState | undefined,
+  userPubkey: string,
+  community: CommunityPointer,
+) => {
   const normalizedUser = normalizePubkey(userPubkey)
-  const normalizedCommunity = normalizePubkey(communityPubkey)
-  if (!normalizedUser || !normalizedCommunity) return
+  const pointer = parseCommunityDefinitionAddress(community.address)
+  if (!normalizedUser || !pointer) return normalizeCommunityExtensionPromptState(state)
+  const current = normalizeCommunityExtensionPromptState(state)
+  const dismissed = current.pubkey === normalizedUser ? current.dismissedCommunityAddresses : []
 
-  communityExtensionPrompt.update(state => {
-    const current = state.pubkey === normalizedUser ? state.dismissedCommunityPubkeys || [] : []
-
-    return {
-      pubkey: normalizedUser,
-      dismissedCommunityPubkeys: Array.from(new Set([...current, normalizedCommunity])),
-    }
-  })
+  return {
+    version: 2 as const,
+    pubkey: normalizedUser,
+    dismissedCommunityAddresses: Array.from(new Set([...dismissed, pointer.address])),
+  }
 }
+
+export const dismissCommunityExtensionPrompt = (userPubkey: string, community: CommunityPointer) =>
+  communityExtensionPrompt.update(state =>
+    dismissCommunityExtensionPromptState(state, userPubkey, community),
+  )
 
 export const isCommunityExtensionPromptDismissed = (
   userPubkey: string,
-  communityPubkey: string,
+  community: CommunityPointer,
   state = get(communityExtensionPrompt),
 ) => {
   const normalizedUser = normalizePubkey(userPubkey)
-  const normalizedCommunity = normalizePubkey(communityPubkey)
+  const pointer = parseCommunityDefinitionAddress(community.address)
+  const current = normalizeCommunityExtensionPromptState(state)
 
   return Boolean(
     normalizedUser &&
-    normalizedCommunity &&
-    state.pubkey === normalizedUser &&
-    (state.dismissedCommunityPubkeys || []).includes(normalizedCommunity),
+    pointer &&
+    current.pubkey === normalizedUser &&
+    current.dismissedCommunityAddresses.includes(pointer.address),
   )
 }

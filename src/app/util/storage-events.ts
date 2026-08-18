@@ -21,6 +21,7 @@ import {
   GIT_STATUS_APPLIED,
 } from "@nostr-git/core/events"
 import {COMMUNITY_REPORT_KIND} from "@app/core/community-reports"
+import {COMMUNITY_DEFINITION_KIND_V2, parseCommunityId} from "@app/core/community-v2"
 
 const GIT_COVER_LETTER_KIND = 1624
 const mobilePersistedContentKinds = new Set([EVENT_TIME, THREAD, ZAP_GOAL])
@@ -40,6 +41,18 @@ const persistedGitDeleteKinds = new Set([
   GIT_STATUS_APPLIED,
   COMMENT,
 ])
+
+export const isPersistedCommunityDefinitionEvent = (event: TrustedEvent) => {
+  if (event.kind !== COMMUNITY_DEFINITION_KIND_V2) return false
+
+  const identifiers = event.tags.filter(tag => tag[0] === "d")
+
+  return (
+    identifiers.length === 1 &&
+    identifiers[0].length === 2 &&
+    Boolean(parseCommunityId(identifiers[0][1] || ""))
+  )
+}
 
 export const isPersistedGitDeleteEvent = (event: TrustedEvent) => {
   if (event.kind !== DELETE) return false

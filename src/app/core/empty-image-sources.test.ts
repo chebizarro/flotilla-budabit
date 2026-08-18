@@ -55,13 +55,10 @@ describe("empty image source guards", () => {
   })
 
   it("falls back when community profile images fail to load", () => {
-    const preview = readProjectFile("../components/community/CommunityPreviewCard.svelte")
     const link = readProjectFile("../components/community/CommunityLinkCard.svelte")
     const menu = readProjectFile("../components/CommunityMenu.svelte")
     const home = readProjectFile("../../routes/c/[community]/+page.svelte")
 
-    expect(preview).toContain("failedPicture")
-    expect(preview).toContain("onerror={() => (failedPicture = picture)}")
     expect(link).toContain("failedPicture")
     expect(link).toContain("onerror={() => (failedPicture = picture)}")
     expect(menu).toContain("showCommunityPicture")

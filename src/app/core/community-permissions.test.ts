@@ -1,19 +1,22 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {
   BADGE_DEFINITION,
+  DELETE,
   EVENT_DATE,
   EVENT_TIME,
   matchFilters,
   type TrustedEvent,
 } from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2 as COMMUNITY_DEFINITION_KIND,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildTargetedPublication,
-  parseCommunityDefinition,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
 } from "./community"
 import {
   makeAdmissionFormAddress,
@@ -50,11 +53,20 @@ import {
 import type {EffectiveCommunityReportState} from "./community-reports"
 import {makeCommunityContentFilterPlan} from "./community-feeds"
 
-const communityPubkey = "a".repeat(64)
-const memberPubkey = "b".repeat(64)
-const managerPubkey = "c".repeat(64)
-const outsiderPubkey = "d".repeat(64)
-const repoManagerPubkey = "e".repeat(64)
+const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const communityPubkey = testPubkey(71)
+const memberPubkey = testPubkey(72)
+const managerPubkey = testPubkey(73)
+const outsiderPubkey = testPubkey(74)
+const repoManagerPubkey = testPubkey(75)
+const communityPointer = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: communityPubkey,
+})!
+const otherCommunityPointer = makeCommunityPointer({
+  controllerPubkey: testPubkey(76),
+  communityId: testPubkey(77),
+})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -68,7 +80,41 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const definition = parseCommunityDefinition(
+const parseTestDefinition = (event: TrustedEvent) => {
+  const sectionTags: string[][] = []
+  let sectionHasProfileList = false
+  let sectionName = "General"
+
+  for (const tag of event.tags) {
+    if (tag[0] === "content") {
+      if (sectionTags.length > 0 && !sectionHasProfileList) {
+        sectionTags.push(["a", `${PROFILE_LIST_KIND}:${communityPubkey}:${sectionName}`])
+      }
+      sectionName = tag[1] || "General"
+      sectionHasProfileList = false
+    } else if (tag[0] === "a") {
+      sectionHasProfileList = true
+    }
+    sectionTags.push(tag)
+  }
+  if (sectionTags.length > 0 && !sectionHasProfileList) {
+    sectionTags.push(["a", `${PROFILE_LIST_KIND}:${communityPubkey}:${sectionName}`])
+  }
+
+  return parseCommunityDefinitionV2({
+    ...event,
+    kind: COMMUNITY_DEFINITION_KIND,
+    content: "",
+    tags: [
+      ["d", communityPubkey],
+      ["name", "Test community"],
+      ["r", "wss://relay.example"],
+      ...sectionTags,
+    ],
+  })!
+}
+
+const definition = parseTestDefinition(
   makeEvent({
     kind: COMMUNITY_DEFINITION_KIND,
     pubkey: communityPubkey,
@@ -183,6 +229,55 @@ describe("community permissions", () => {
     ).toBe(false)
   })
 
+  it("does not derive grants from malformed or tombstoned profile lists", () => {
+    const address = `${PROFILE_LIST_KIND}:${managerPubkey}:General`
+    const list = {...generalProfileList, id: "grant-list", created_at: 2}
+    const malformed = {
+      ...list,
+      id: "malformed-list",
+      created_at: 4,
+      tags: [
+        ["d", "General"],
+        ["d", "Other"],
+        ["p", outsiderPubkey],
+      ],
+    }
+    const deletion = makeEvent({
+      id: "delete-grant-list",
+      kind: DELETE,
+      pubkey: managerPubkey,
+      created_at: 2,
+      tags: [["a", address]],
+    })
+    const recreated = {...list, id: "recreated-list", created_at: 3}
+    const capability = (events: TrustedEvent[]) =>
+      getGrantCapability({
+        definition,
+        userPubkey: managerPubkey,
+        sectionName: "General",
+        profileListEvents: events,
+      }).canGrant
+
+    expect(findProfileListEvent(definition.sections[0].profileLists[0], [list, malformed])).toBe(
+      list,
+    )
+    expect(capability([list, deletion])).toBe(false)
+    expect(capability([list, deletion, recreated])).toBe(true)
+    expect(capability([list, {...deletion, pubkey: outsiderPubkey}])).toBe(true)
+    expect(
+      capability([
+        list,
+        {
+          ...deletion,
+          tags: [
+            ["a", address],
+            ["a", `${address}-other`],
+          ],
+        },
+      ]),
+    ).toBe(true)
+  })
+
   it("checks write access from profile lists", () => {
     expect(
       canWriteCommunityTarget({
@@ -272,11 +367,11 @@ describe("community permissions", () => {
         id,
         pubkey,
         kind: TARGETED_PUBLICATION_KIND,
-        tags: buildTargetedPublication({
+        tags: buildTargetedPublicationV2({
           id: `target-${id}`,
           kind,
-          ref: {type: "e", value: `original-${id}`},
-          communities: [{pubkey: community}],
+          source: {type: "e", value: "1".repeat(64)},
+          communities: community === communityPubkey ? [communityPointer] : [otherCommunityPointer],
         }).tags,
       })
     const authorized = makeTarget({id: "authorized", pubkey: repoManagerPubkey})
@@ -284,13 +379,14 @@ describe("community permissions", () => {
     const otherCommunity = makeTarget({
       id: "other-community",
       pubkey: repoManagerPubkey,
-      community: "f".repeat(64),
+      community: otherCommunityPointer.communityId,
     })
     const otherKind = makeTarget({id: "other-kind", pubkey: repoManagerPubkey, kind: 1623})
     const events = [authorized, unauthorized, otherCommunity, otherKind]
 
     expect(
       filterAuthorizedCommunityTargetingEvents({
+        community: communityPointer,
         definition,
         profileListEvents: [generalProfileList, repoProfileList],
         events,
@@ -299,6 +395,7 @@ describe("community permissions", () => {
     ).toEqual([authorized])
     expect(
       filterAuthorizedCommunityTargetingEvents({
+        community: communityPointer,
         definition,
         profileListEvents: [generalProfileList, repoProfileList],
         events,
@@ -306,6 +403,42 @@ describe("community permissions", () => {
         kinds: [30617],
       }),
     ).toEqual([])
+  })
+
+  it("admits targeting wrappers only for the selected exact community branch", () => {
+    const communityId = testPubkey(77)
+    const selected = makeCommunityPointer({
+      controllerPubkey: communityPubkey,
+      communityId,
+    })!
+    const sameIdSibling = makeCommunityPointer({
+      controllerPubkey: testPubkey(76),
+      communityId,
+    })!
+    const makeTarget = (id: string, community: typeof selected) =>
+      makeEvent({
+        id,
+        pubkey: repoManagerPubkey,
+        kind: TARGETED_PUBLICATION_KIND,
+        tags: buildTargetedPublicationV2({
+          id: `target-${id}`,
+          kind: 30617,
+          source: {type: "e", value: "1".repeat(64)},
+          communities: [community],
+        }).tags,
+      })
+    const selectedTarget = makeTarget("selected", selected)
+    const siblingTarget = makeTarget("sibling", sameIdSibling)
+
+    expect(
+      filterAuthorizedCommunityTargetingEvents({
+        community: selected,
+        definition,
+        profileListEvents: [generalProfileList, repoProfileList],
+        events: [selectedTarget, siblingTarget],
+        kinds: [30617],
+      }),
+    ).toEqual([selectedTarget])
   })
 
   it("lets person bans override existing write and grant permissions", () => {
@@ -500,7 +633,7 @@ describe("community permissions", () => {
   it("classifies publish gate state by login, write access, and admission status", () => {
     const formTemplate = makeAdmissionFormTemplate({
       identifier: "general-application",
-      communityPubkey,
+      community: communityPointer,
       sectionName: "General",
       name: "General application",
       fields: [{id: "q1", label: "Why should we grant access?"}],
@@ -518,6 +651,7 @@ describe("community permissions", () => {
       kind: FORM_RESPONSE_KIND,
       pubkey: outsiderPubkey,
       tags: makeAdmissionResponse({
+        community: communityPointer,
         formAddress: makeAdmissionFormAddress(managerPubkey, "general-application"),
         values: {q1: "I build community tooling."},
       }).tags,
@@ -531,6 +665,8 @@ describe("community permissions", () => {
       tags: makeAdmissionReview({
         responseId: "response",
         applicantPubkey: outsiderPubkey,
+        formAddress: makeAdmissionFormAddress(managerPubkey, "general-application"),
+        community: communityPointer,
         status: "rejected",
       }).tags,
     })
@@ -616,7 +752,7 @@ describe("community permissions", () => {
 
   it("merges multiple section profile lists for write access", () => {
     const secondMemberPubkey = "f".repeat(64)
-    const multiAuthorityDefinition = parseCommunityDefinition(
+    const multiAuthorityDefinition = parseTestDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
         pubkey: communityPubkey,
@@ -666,7 +802,7 @@ describe("community permissions", () => {
   })
 
   it("matches known write targets by kind when a section has a custom name", () => {
-    const customDefinition = parseCommunityDefinition(
+    const customDefinition = parseTestDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
         pubkey: communityPubkey,
@@ -712,7 +848,7 @@ describe("community permissions", () => {
   })
 
   it("resolves target section names from assigned kind and subtype", () => {
-    const customDefinition = parseCommunityDefinition(
+    const customDefinition = parseTestDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
         pubkey: communityPubkey,
@@ -745,7 +881,7 @@ describe("community permissions", () => {
   })
 
   it("keeps calendar mappings distinct while either grant admits both event kinds", () => {
-    const dateOnlyDefinition = parseCommunityDefinition(
+    const dateOnlyDefinition = parseTestDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
         pubkey: communityPubkey,
@@ -756,7 +892,7 @@ describe("community permissions", () => {
         ],
       }),
     )!
-    const timeOnlyDefinition = parseCommunityDefinition(
+    const timeOnlyDefinition = parseTestDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
         pubkey: communityPubkey,
@@ -874,6 +1010,7 @@ describe("community permissions", () => {
       },
     ]) {
       const directEvent = makeEvent({
+        id: "4".repeat(64),
         pubkey: memberPubkey,
         kind: admittedKind,
         tags: [
@@ -890,15 +1027,16 @@ describe("community permissions", () => {
       const wrapper = makeEvent({
         pubkey: memberPubkey,
         kind: TARGETED_PUBLICATION_KIND,
-        tags: buildTargetedPublication({
+        tags: buildTargetedPublicationV2({
           id: `calendar-wrapper-${admittedKind}`,
           kind: admittedKind,
-          ref: {type: "e", value: directEvent.id},
-          communities: [{pubkey: communityPubkey}],
+          source: {type: "e", value: directEvent.id},
+          communities: [communityPointer],
         }).tags,
       })
       expect(
         filterAuthorizedCommunityTargetingEvents({
+          community: communityPointer,
           definition,
           profileListEvents,
           events: [wrapper],
@@ -909,7 +1047,7 @@ describe("community permissions", () => {
   })
 
   it("matches widget grants in the custom section assigned to kind 30033", () => {
-    const widgetDefinition = parseCommunityDefinition(
+    const widgetDefinition = parseTestDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,
         pubkey: communityPubkey,

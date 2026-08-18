@@ -1,7 +1,10 @@
 <script lang="ts">
   import { ChevronDown } from "@lucide/svelte";
   import type { RepoCommunityOption } from "./repo-community-options.js";
-  import { getRepoCommunityOptionLabel } from "./repo-community-options.js";
+  import {
+    getRepoCommunityOptionKey,
+    getRepoCommunityOptionLabel,
+  } from "./repo-community-options.js";
 
   interface Props {
     options?: RepoCommunityOption[];
@@ -32,12 +35,14 @@
     <select
       id="repo-community-select"
       class="w-full appearance-none rounded-md border border-input bg-background py-2 pl-3 pr-10 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-      bind:value
-      {disabled}
+      bind:value={value}
+      disabled={disabled}
     >
       <option value="">No community</option>
-      {#each options as option (option.pubkey)}
-        <option value={option.pubkey}>{getRepoCommunityOptionLabel(option)}</option>
+      {#each options as option (getRepoCommunityOptionKey(option))}
+        <option value={getRepoCommunityOptionKey(option)}
+          >{getRepoCommunityOptionLabel(option)}</option
+        >
       {/each}
     </select>
     <ChevronDown

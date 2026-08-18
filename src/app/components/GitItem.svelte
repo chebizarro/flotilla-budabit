@@ -6,13 +6,13 @@
   import NoteCard from "./NoteCard.svelte"
   import GitActions from "./GitActions.svelte"
   import Markdown from "@lib/components/Markdown.svelte"
-  import {makeCommunityPath} from "@app/util/routes"
   import {getInteractiveCardTarget} from "@lib/html"
   import {notifications, hasRepoNotification} from "@app/util/notifications"
   import {makeRepoHrefFromEvent} from "@app/util/repo-links"
   import type {RepoCollectionReadState} from "@app/core/repo-collection-read-model"
   import {parseRepoCommunityBinding} from "@nostr-git/core/events"
-  import {deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
+  import {makeExactCommunityPath} from "@app/util/routes"
+  import {parseCommunityDefinitionAddress} from "@app/core/community"
   import RepoCollectButton from "@app/components/RepoCollectButton.svelte"
   import {Star} from "@lucide/svelte"
 
@@ -53,18 +53,12 @@
   const name = event.tags.find(nthEq(0, "name"))?.[1]
   const description = event.tags.find(nthEq(0, "description"))?.[1]
   const community = $derived.by(() => parseRepoCommunityBinding(event))
-  const communityProfileRelays = $derived.by(() =>
-    Array.from(new Set([community?.relay || "", ...profileRelays].filter(Boolean))),
-  )
-  const communityDisplay = $derived(
-    deriveBudabitProfileDisplay(community?.pubkey, {
-      communityRelays: communityProfileRelays,
-      load: loadProfiles,
-    }),
+  const communityPointer = $derived.by(() =>
+    community ? parseCommunityDefinitionAddress(community.address) : undefined,
   )
   const communityLabel = $derived.by(() => {
-    if (!community) return ""
-    return $communityDisplay || `${community.pubkey.slice(0, 8)}...`
+    if (!communityPointer) return ""
+    return `${communityPointer.controllerPubkey.slice(0, 6)}:${communityPointer.communityId.slice(0, 6)}...`
   })
   const browseHref = $derived.by(() => makeRepoHrefFromEvent(event, {url}))
   const issuesHref = $derived.by(() => `${browseHref}/issues`)
@@ -217,9 +211,9 @@
               {name}
             </p>
           </a>
-          {#if community}
+          {#if community && communityPointer}
             <a
-              href={makeCommunityPath(community.pubkey)}
+              href={makeExactCommunityPath(communityPointer)}
               class="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/15"
               onclick={(event: MouseEvent) => event.stopPropagation()}
               title={`Community: ${communityLabel}`}>

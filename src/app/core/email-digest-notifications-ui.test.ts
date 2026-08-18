@@ -82,8 +82,8 @@ describe("email digest notification settings UI", () => {
   })
 
   it("exposes density, every Anchor boolean, statuses, and provider selection", () => {
-    expect(communityAlertSource).toContain('setDensity(group.communityPubkey, "compact")')
-    expect(communityAlertSource).toContain('setDensity(group.communityPubkey, "expanded")')
+    expect(communityAlertSource).toContain('setDensity(group.communityAddress, "compact")')
+    expect(communityAlertSource).toContain('setDensity(group.communityAddress, "expanded")')
     for (const preference of [
       "engagement.replies",
       "engagement.mentions",
@@ -120,7 +120,7 @@ describe("email digest notification settings UI", () => {
     expect(communityAlertSource).toContain("requestGeneration")
     expect(communityAlertSource).toContain("isCurrentRequest")
     expect(communityAlertSource).toContain("Unavailable registrations")
-    expect(communityAlertSource).toContain("<Profile pubkey={communityPubkey}")
+    expect(communityAlertSource).toContain("title={group.communityAddress}")
     expect(communityAlertSource).not.toContain("communityPubkey.slice")
     expect(communityAlertSource).toContain("pubkey={provider.servicePubkey}")
     expect(communityAlertSource).toContain("relays={group.definition.relays}")

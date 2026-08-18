@@ -20,12 +20,12 @@
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
     loadCommunityEvents,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND, normalizePubkey} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND_V2, normalizePubkey} from "@app/core/community"
   import {getCommunityScopedPublishRelays} from "@app/core/community-relays"
   import {publicationOperations, startPublication} from "@app/core/publication-operations"
   import {getReportReviewSemanticKey} from "@app/core/governance-publication-operations"
@@ -36,7 +36,7 @@
   } from "@app/core/community-reports"
   import {pushModal} from "@app/util/modal"
   import {pushToast} from "@app/util/toast"
-  import {getCommunityEventPath, getCommunityReportTargetPath} from "@app/util/routes"
+  import {getCommunityEventPath, getExactCommunityReportTargetPath} from "@app/util/routes"
 
   type Props = {
     group: CommunityContentReportGroup
@@ -50,14 +50,14 @@
   let targetEventLoadKey = ""
 
   const currentPubkey = $derived(normalizePubkey($pubkey || ""))
-  const reportRelays = $derived(getCommunityScopedPublishRelays($activeCommunityDefinition))
+  const reportRelays = $derived(getCommunityScopedPublishRelays($activeExactCommunityDefinition))
   const profileRelays = $derived(relays.length > 0 ? relays : reportRelays)
   const pendingReports = $derived(group.reports.filter(report => !report.reviewed))
   const reviewablePendingReports = $derived.by(() =>
-    $activeCommunityDefinition
+    $activeExactCommunityDefinition
       ? pendingReports.filter(report =>
           canReviewCommunityContentReport({
-            definition: $activeCommunityDefinition!,
+            definition: $activeExactCommunityDefinition!,
             reviewerPubkey: currentPubkey,
             report,
             profileListEvents: $activeCommunityProfileListEvents,
@@ -120,11 +120,11 @@
       "",
   )
   const targetPath = $derived.by(() => {
-    if (!$activeCommunityDefinition) return undefined
+    if (!$activeExactCommunityDefinition) return undefined
 
     return (
       (targetEvent ? getCommunityEventPath(targetEvent) : undefined) ||
-      getCommunityReportTargetPath($activeCommunityDefinition.pubkey, group)
+      getExactCommunityReportTargetPath($activeExactCommunityDefinition.pointer, group)
     )
   })
 
@@ -135,7 +135,7 @@
     if (kind === EVENT_DATE || kind === EVENT_TIME) return "Calendar event"
     if (kind === ZAP_GOAL) return "Goal"
     if (kind === NOTE) return "Note"
-    if (kind === TARGETED_PUBLICATION_KIND) return "Community targeting update"
+    if (kind === TARGETED_PUBLICATION_KIND_V2) return "Community targeting update"
 
     return `Kind ${kind}`
   }
@@ -161,7 +161,7 @@
   })
 
   const publishReviewedLabels = () => {
-    if (!$activeCommunityDefinition || !canReview || reviewStatus === "publishing") return
+    if (!$activeExactCommunityDefinition || !canReview || reviewStatus === "publishing") return
 
     if (reportRelays.length === 0) {
       pushToast({theme: "error", message: "Community definition must declare at least one relay."})
@@ -175,7 +175,7 @@
     for (const report of startablePendingReports) {
       try {
         const template = makeCommunityReportReviewLabel({
-          communityPubkey: $activeCommunityDefinition.pubkey,
+          community: report.community,
           reportId: report.event.id,
           targetEventId: report.targetEventId,
           targetEventKind: report.targetEventKind,

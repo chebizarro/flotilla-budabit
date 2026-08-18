@@ -11,12 +11,11 @@
     activeCommunityAdmissionFormReadiness,
     activeCommunityAuthorityReadiness,
     activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    activeCommunityRelays,
-    activeCommunitySession,
-    makeCommunitySession,
+    activeExactCommunityRelays,
+    activeExactCommunitySession,
     recoverCommunityBootstrap,
   } from "@app/core/community-state"
   import {FORM_RESPONSE_KIND} from "@app/core/community"
@@ -29,7 +28,7 @@
   import {COMMUNITY_FORM_REVIEW_KIND} from "@app/core/community-forms"
   import LogIn from "@app/components/LogIn.svelte"
   import {pushModal} from "@app/util/modal"
-  import {makeCommunityPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   type Props = {
     target: CommunityWriteTarget
@@ -55,14 +54,20 @@
     children,
   }: Props = $props()
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
   const communityPubkey = $derived(
-    parsedCommunity?.pubkey || $activeCommunityDefinition?.pubkey || "",
+    routeCommunity?.controllerPubkey || $activeExactCommunityDefinition?.controllerPubkey || "",
+  )
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
   )
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -102,11 +107,11 @@
     return selected
   })
   const targetSections = $derived.by(() =>
-    communityBootstrapReady && $activeCommunityDefinition
+    communityBootstrapReady && communityDefinition
       ? targets.reduce(
           (sections, currentTarget) => {
             for (const section of getCommunityWriteTargetSections(
-              $activeCommunityDefinition!,
+              communityDefinition!,
               currentTarget,
             )) {
               if (!sections.some(existing => existing.name === section.name)) {
@@ -138,8 +143,8 @@
     formEntry?.sectionName || targetSections[0]?.name || target.sectionName,
   )
   const accessPath = $derived(
-    communityPubkey
-      ? `${makeCommunityPath(communityPubkey, "access")}?section=${encodeURIComponent(targetSectionName)}`
+    routeCommunity
+      ? `${makeExactCommunityPath(routeCommunity, "access")}?section=${encodeURIComponent(targetSectionName)}`
       : "",
   )
   const responseFilters = $derived(
@@ -164,10 +169,10 @@
     deriveEventsAsc(deriveEventsById({repository, filters: reviewFilters})),
   )
   const gateStates = $derived.by<CommunityPublishGateState[]>(() =>
-    communityBootstrapReady && $activeCommunityDefinition
+    communityBootstrapReady && communityDefinition
       ? targets.map(currentTarget =>
           getCommunityPublishGateState({
-            definition: $activeCommunityDefinition!,
+            definition: communityDefinition!,
             profileListEvents: $activeCommunityProfileListEvents,
             userPubkey: $pubkey,
             target: currentTarget,
@@ -246,11 +251,7 @@
 
   const login = () => pushModal(LogIn)
   const retryAccess = async () => {
-    const session =
-      $activeCommunitySession ||
-      (parsedCommunity
-        ? makeCommunitySession(parsedCommunity, $activeCommunityDefinition)
-        : undefined)
+    const session = $activeExactCommunitySession
     if (!session || retryingAccess) return
 
     retryingAccess = true
@@ -264,13 +265,18 @@
   }
 
   $effect(() => {
-    if (!communityBootstrapReady || $activeCommunityRelays.length === 0) return
+    if (!communityBootstrapReady || $activeExactCommunityRelays.length === 0) return
 
     const filters = [...responseFilters, ...deleteFilters, ...reviewFilters]
     if (filters.length === 0) return
 
     const controller = new AbortController()
-    request({relays: $activeCommunityRelays, autoClose: true, filters, signal: controller.signal})
+    request({
+      relays: $activeExactCommunityRelays,
+      autoClose: true,
+      filters,
+      signal: controller.signal,
+    })
 
     return () => controller.abort()
   })

@@ -8,12 +8,16 @@ import {
   type TrustedEvent,
 } from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  PROFILE_LIST_KIND,
   makeAddress,
+  makeCommunityAuthorityTagsV2,
+  makeCommunityChildIdentifier,
   normalizePubkey,
-  type CommunityDefinition,
+  parseCommunityAuthorityV2,
+  type CommunityDefinitionV2,
+  type CommunityPointer,
 } from "@app/core/community"
-import {getGrantCapableSectionModeratorPubkeys} from "@app/core/community-permissions"
+import {isCommunityReportStatePersonBanned} from "@app/core/community-permissions"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 
 export const PROFILE_BADGES_KIND = 10008
@@ -35,14 +39,14 @@ export type CommunityBadgeDefinition = {
   imageDimensions?: string
   thumbs: CommunityBadgeThumb[]
   deprecated: boolean
-  communityAddress?: string
-  communityPubkey?: string
+  community: CommunityPointer
 }
 
 export type CommunityBadgeAward = {
   event: TrustedEvent
   definitionAddress: string
   recipientPubkey: string
+  community: CommunityPointer
 }
 
 export type ProfileBadgePair = {
@@ -66,23 +70,6 @@ export type PendingCommunityBadgeAward = {
 const getTagValue = (event: TrustedEvent, tagName: string) =>
   event.tags.find(tag => tag[0] === tagName)?.[1]?.trim() || ""
 
-const makeCommunityDefinitionAddress = (communityPubkey: string) => {
-  const pubkey = normalizePubkey(communityPubkey)
-
-  return pubkey ? `${COMMUNITY_DEFINITION_KIND}:${pubkey}:` : ""
-}
-
-const parseCommunityDefinitionAddress = (address: string) => {
-  const [kindValue, pubkeyValue, ...identifierParts] = address.split(":")
-  const kind = Number.parseInt(kindValue || "", 10)
-  const pubkey = normalizePubkey(pubkeyValue || "")
-  const identifier = identifierParts.join(":")
-
-  if (kind !== COMMUNITY_DEFINITION_KIND || !pubkey || identifier) return undefined
-
-  return {pubkey, address: `${COMMUNITY_DEFINITION_KIND}:${pubkey}:`}
-}
-
 const getEventAddress = (event: TrustedEvent) => {
   const identifier = getTagValue(event, "d")
 
@@ -98,6 +85,14 @@ const parseBadgeDefinitionAddress = (address: string) => {
   if (kind !== BADGE_DEFINITION || !pubkey || !identifier) return undefined
 
   return {kind, pubkey, identifier, address: `${BADGE_DEFINITION}:${pubkey}:${identifier}`}
+}
+
+const parseProfileListAddress = (address: string) => {
+  const [kindValue, pubkeyValue, ...identifierParts] = address.split(":")
+  const pubkey = normalizePubkey(pubkeyValue || "")
+  const identifier = identifierParts.join(":")
+  if (kindValue !== String(PROFILE_LIST_KIND) || !pubkey || !identifier) return undefined
+  return {pubkey}
 }
 
 const appendDefined = (base: string[], ...values: Array<string | undefined>) => {
@@ -116,12 +111,24 @@ const hasKindTag = (event: TrustedEvent, kind: number) => {
   return kindTags.length === 0 || kindTags.some(tag => tag[1] === String(kind))
 }
 
-export const makeCommunityBadgeIdentifier = (value: string) =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "badge"
+export const makeCommunityBadgeIdentifier = (community: CommunityPointer, value: string) => {
+  const prefix = `budabit-${community.communityId}-`
+  const identifier = makeCommunityChildIdentifier(
+    community.communityId,
+    "badge",
+    value.startsWith(prefix) ? value.slice(prefix.length) : value,
+  )
+  if (!identifier) throw new Error("Invalid community badge identifier.")
+  return identifier
+}
+
+const isCommunityBadgeIdentifier = (community: CommunityPointer, value: string) => {
+  try {
+    return makeCommunityBadgeIdentifier(community, value) === value
+  } catch {
+    return false
+  }
+}
 
 const parseImageDimensions = (dimensions?: string) => {
   const match = dimensions?.match(/^(\d+)x(\d+)$/)
@@ -156,21 +163,32 @@ export const getCommunityBadgeCreatorPubkeys = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
-}) =>
-  unique([
-    normalizePubkey(definition.pubkey),
-    ...definition.sections.flatMap(section =>
-      getGrantCapableSectionModeratorPubkeys({
-        definition,
-        sectionName: section.name,
-        profileListEvents,
-        reportState,
-      }),
-    ),
-  ])
+}) => {
+  const activeAddresses = new Set(
+    (profileListEvents || []).flatMap(event => {
+      const identifier = getTagValue(event, "d")
+      const community = parseCommunityAuthorityV2(event)
+      if (!identifier || community?.address !== definition.pointer.address) return []
+      if (event.tags.some(tag => tag[0] === "status" && tag[1] === "declined")) return []
+      return [makeAddress(event.kind, event.pubkey, identifier)]
+    }),
+  )
+  const moderators = definition.sections.flatMap(section =>
+    section.profileLists.flatMap(ref => {
+      const parsed = parseProfileListAddress(ref.address)
+      return parsed && activeAddresses.has(ref.address) ? [parsed.pubkey] : []
+    }),
+  )
+
+  return unique([definition.controllerPubkey, ...moderators]).filter(
+    pubkey =>
+      pubkey === definition.controllerPubkey ||
+      !isCommunityReportStatePersonBanned(reportState, pubkey),
+  )
+}
 
 export const canCreateCommunityBadge = ({
   definition,
@@ -178,7 +196,7 @@ export const canCreateCommunityBadge = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   pubkey: string
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
@@ -194,7 +212,7 @@ export const canCreateCommunityBadge = ({
 }
 
 export const makeCommunityBadgeDefinitionEvent = ({
-  communityPubkey,
+  community,
   identifier,
   name,
   description,
@@ -203,7 +221,7 @@ export const makeCommunityBadgeDefinitionEvent = ({
   thumbs = [],
   deprecated = false,
 }: {
-  communityPubkey: string
+  community: CommunityPointer
   identifier: string
   name?: string
   description?: string
@@ -212,13 +230,10 @@ export const makeCommunityBadgeDefinitionEvent = ({
   thumbs?: CommunityBadgeThumb[]
   deprecated?: boolean
 }): EventContent & {kind: typeof BADGE_DEFINITION} => {
-  const communityAddress = makeCommunityDefinitionAddress(communityPubkey)
-  const id = identifier.trim()
+  const id = makeCommunityBadgeIdentifier(community, identifier)
   const tags: string[][] = [
     ["d", id],
     ["name", name?.trim() || id],
-    ["a", communityAddress],
-    ["h", normalizePubkey(communityPubkey)],
   ]
 
   if (description?.trim()) tags.push(["description", description.trim()])
@@ -228,26 +243,34 @@ export const makeCommunityBadgeDefinitionEvent = ({
   }
   if (deprecated) tags.push(["deprecated"])
 
-  return {kind: BADGE_DEFINITION, content: "", tags}
+  return {
+    kind: BADGE_DEFINITION,
+    content: "",
+    tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], tags),
+  }
 }
 
 export const makeCommunityBadgeAwardDelete = ({
+  community,
   awardId,
 }: {
+  community: CommunityPointer
   awardId: string
 }): EventContent & {kind: typeof DELETE} => ({
   kind: DELETE,
   content: "Deleted community badge award",
-  tags: [
+  tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
     ["e", awardId],
     ["k", String(BADGE_AWARD)],
-  ],
+  ]),
 })
 
 export const makeCommunityBadgeAwardEvent = ({
+  community,
   definitionAddress,
   recipientPubkey,
 }: {
+  community: CommunityPointer
   definitionAddress: string
   recipientPubkey: string
 }): EventContent & {kind: typeof BADGE_AWARD} => {
@@ -256,7 +279,10 @@ export const makeCommunityBadgeAwardEvent = ({
   return {
     kind: BADGE_AWARD,
     content: "",
-    tags: [["a", definitionAddress], ...(pubkey ? [["p", pubkey]] : [])],
+    tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+      ["a", definitionAddress, "", "badge"],
+      ...(pubkey ? [["p", pubkey]] : []),
+    ]),
   }
 }
 
@@ -271,7 +297,7 @@ export const makeProfileBadgesEvent = ({
   content: "",
   tags: [
     ...pairs.flatMap(pair => [
-      appendDefined(["a", pair.definitionAddress], pair.definitionRelay),
+      ["a", pair.definitionAddress, pair.definitionRelay || "", "badge"],
       appendDefined(["e", pair.awardId], pair.awardRelay),
     ]),
     ...extraTags,
@@ -280,23 +306,24 @@ export const makeProfileBadgesEvent = ({
 
 export const parseCommunityBadgeDefinition = (
   event: TrustedEvent,
-  communityPubkey?: string,
+  expectedCommunity?: CommunityPointer,
 ): CommunityBadgeDefinition | undefined => {
   if (event.kind !== BADGE_DEFINITION) return undefined
 
   const pubkey = normalizePubkey(event.pubkey || "")
   const identifier = getTagValue(event, "d")
-  if (!pubkey || !identifier) return undefined
+  const community = parseCommunityAuthorityV2(event)
+  if (
+    !pubkey ||
+    !identifier ||
+    !community ||
+    !isCommunityBadgeIdentifier(community, identifier) ||
+    (expectedCommunity && community.address !== expectedCommunity.address)
+  ) {
+    return undefined
+  }
 
   const address = getEventAddress(event)
-  const communityAddress = event.tags
-    .filter(tag => tag[0] === "a")
-    .map(tag => parseCommunityDefinitionAddress(tag[1] || ""))
-    .find(Boolean)
-  const scopedCommunityPubkey = normalizePubkey(getTagValue(event, "h")) || communityAddress?.pubkey
-  const expectedCommunityPubkey = normalizePubkey(communityPubkey || "")
-
-  if (expectedCommunityPubkey && scopedCommunityPubkey !== expectedCommunityPubkey) return undefined
 
   const imageTag = event.tags.find(tag => tag[0] === "image")
 
@@ -313,15 +340,23 @@ export const parseCommunityBadgeDefinition = (
       .filter(tag => tag[0] === "thumb" && tag[1]?.trim())
       .map(tag => ({url: tag[1].trim(), dimensions: tag[2]?.trim() || undefined})),
     deprecated: event.tags.some(tag => tag[0] === "deprecated"),
-    communityAddress: communityAddress?.address,
-    communityPubkey: scopedCommunityPubkey || undefined,
+    community,
   }
 }
 
-export const parseCommunityBadgeAward = (event: TrustedEvent): CommunityBadgeAward | undefined => {
+export const parseCommunityBadgeAward = (
+  event: TrustedEvent,
+  expectedCommunity?: CommunityPointer,
+): CommunityBadgeAward | undefined => {
   if (event.kind !== BADGE_AWARD) return undefined
 
-  const definitionAddress = event.tags.find(tag => tag[0] === "a")?.[1] || ""
+  const community = parseCommunityAuthorityV2(event)
+  if (!community || (expectedCommunity && community.address !== expectedCommunity.address)) {
+    return undefined
+  }
+  const badgeTags = event.tags.filter(tag => tag[0] === "a" && tag[3] === "badge")
+  if (badgeTags.length !== 1 || badgeTags[0].length !== 4) return undefined
+  const definitionAddress = badgeTags[0][1] || ""
   const parsedDefinition = parseBadgeDefinitionAddress(definitionAddress)
   if (!parsedDefinition) return undefined
 
@@ -330,7 +365,12 @@ export const parseCommunityBadgeAward = (event: TrustedEvent): CommunityBadgeAwa
   )
   if (recipientPubkeys.length !== 1) return undefined
 
-  return {event, definitionAddress: parsedDefinition.address, recipientPubkey: recipientPubkeys[0]}
+  return {
+    event,
+    definitionAddress: parsedDefinition.address,
+    recipientPubkey: recipientPubkeys[0],
+    community,
+  }
 }
 
 export const isCommunityBadgeAwardDeleted = (award: TrustedEvent, deleteEvents: TrustedEvent[]) =>
@@ -338,6 +378,9 @@ export const isCommunityBadgeAwardDeleted = (award: TrustedEvent, deleteEvents: 
     if (event.kind !== DELETE) return false
     if (normalizePubkey(event.pubkey || "") !== normalizePubkey(award.pubkey || "")) return false
     if (!event.tags.some(tag => tag[0] === "e" && tag[1] === award.id)) return false
+    const awardCommunity = parseCommunityAuthorityV2(award)
+    const deleteCommunity = parseCommunityAuthorityV2(event)
+    if (!awardCommunity || deleteCommunity?.address !== awardCommunity.address) return false
 
     return hasKindTag(event, BADGE_AWARD)
   })
@@ -355,7 +398,13 @@ export const parseProfileBadgePairs = (event: TrustedEvent): ProfileBadgePair[] 
     const definitionTag = event.tags[index]
     const awardTag = event.tags[index + 1]
 
-    if (definitionTag[0] !== "a" || awardTag[0] !== "e") continue
+    if (
+      definitionTag[0] !== "a" ||
+      definitionTag[3] !== "badge" ||
+      definitionTag.length !== 4 ||
+      awardTag[0] !== "e"
+    )
+      continue
     const parsedDefinition = parseBadgeDefinitionAddress(definitionTag[1] || "")
     if (!parsedDefinition || !awardTag[1]) continue
 
@@ -446,16 +495,22 @@ export const makeCommunityBadgeDefinitionFilters = ({
   reportState,
   limit = 200,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   limit?: number
 }): Filter[] => {
   const authors = getCommunityBadgeCreatorPubkeys({definition, profileListEvents, reportState})
-  const communityAddress = makeCommunityDefinitionAddress(definition.pubkey)
-
-  return authors.length && communityAddress
-    ? [{kinds: [BADGE_DEFINITION], authors, "#a": [communityAddress], limit}]
+  return authors.length
+    ? [
+        {
+          kinds: [BADGE_DEFINITION],
+          authors,
+          "#h": [definition.communityId],
+          "#a": [definition.pointer.address],
+          limit,
+        },
+      ]
     : []
 }
 
@@ -469,6 +524,7 @@ export const makeCommunityBadgeAwardFilters = ({
   limit?: number
 }): Filter[] => {
   const addresses = unique(definitions.map(definition => definition.address))
+  const communityIds = unique(definitions.map(definition => definition.community.communityId))
   const recipient = normalizePubkey(recipientPubkey || "")
 
   return addresses.length
@@ -476,6 +532,7 @@ export const makeCommunityBadgeAwardFilters = ({
         {
           kinds: [BADGE_AWARD],
           "#a": addresses,
+          "#h": communityIds,
           ...(recipient ? {"#p": [recipient]} : {}),
           limit,
         },
@@ -485,8 +542,16 @@ export const makeCommunityBadgeAwardFilters = ({
 
 export const makeCommunityBadgeAwardDeleteFilters = (awardEvents: TrustedEvent[]): Filter[] => {
   const awardIds = unique(awardEvents.map(event => event.id).filter(Boolean))
+  const communityIds = unique(
+    awardEvents.flatMap(event => {
+      const community = parseCommunityAuthorityV2(event)
+      return community ? [community.communityId] : []
+    }),
+  )
 
-  return awardIds.length ? [{kinds: [DELETE], "#e": awardIds}] : []
+  return awardIds.length && communityIds.length
+    ? [{kinds: [DELETE], "#e": awardIds, "#h": communityIds}]
+    : []
 }
 
 export const makeProfileBadgeFilters = (profilePubkey: string): Filter[] => {
@@ -511,7 +576,7 @@ const getTrustedDefinitionsByAddress = ({
   reportState,
   includeDeprecated = false,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
@@ -523,7 +588,7 @@ const getTrustedDefinitionsByAddress = ({
   const definitions = new Map<string, CommunityBadgeDefinition>()
 
   for (const event of badgeDefinitionEvents) {
-    const badgeDefinition = parseCommunityBadgeDefinition(event, definition.pubkey)
+    const badgeDefinition = parseCommunityBadgeDefinition(event, definition.pointer)
     if (!badgeDefinition || !creators.has(badgeDefinition.pubkey)) continue
 
     const current = definitions.get(badgeDefinition.address)
@@ -551,7 +616,7 @@ export const selectCommunityBadgeDefinitions = ({
   reportState,
   includeDeprecated = false,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
@@ -607,7 +672,7 @@ export const getCommunityBadgeAward = ({
 
   return badgeAwardEvents
     .filter(event => !isCommunityBadgeAwardDeleted(event, badgeAwardDeleteEvents))
-    .map(parseCommunityBadgeAward)
+    .map(event => parseCommunityBadgeAward(event, definition.community))
     .filter((award): award is CommunityBadgeAward => Boolean(award))
     .filter(
       award =>
@@ -630,7 +695,7 @@ export const getAcceptedCommunityBadges = ({
   profilePubkey,
   reportState,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   badgeAwardEvents: TrustedEvent[]
@@ -650,7 +715,7 @@ export const getAcceptedCommunityBadges = ({
   })
   const awards = badgeAwardEvents
     .filter(event => !isCommunityBadgeAwardDeleted(event, badgeAwardDeleteEvents))
-    .map(parseCommunityBadgeAward)
+    .map(event => parseCommunityBadgeAward(event, definition.pointer))
     .filter((award): award is CommunityBadgeAward => Boolean(award))
   const awardsById = getAwardsById({awards, definitionsByAddress, profilePubkey})
 
@@ -674,7 +739,7 @@ export const getPendingCommunityBadgeAwards = ({
   profilePubkey,
   reportState,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   badgeAwardEvents: TrustedEvent[]
@@ -703,7 +768,7 @@ export const getPendingCommunityBadgeAwards = ({
   )
   const awards = badgeAwardEvents
     .filter(event => !isCommunityBadgeAwardDeleted(event, badgeAwardDeleteEvents))
-    .map(parseCommunityBadgeAward)
+    .map(event => parseCommunityBadgeAward(event, definition.pointer))
     .filter((award): award is CommunityBadgeAward => Boolean(award))
   const awardsById = getAwardsById({awards, definitionsByAddress, profilePubkey})
 

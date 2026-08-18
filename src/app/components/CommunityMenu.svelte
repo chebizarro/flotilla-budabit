@@ -25,17 +25,17 @@
   import SocketStatusIndicator from "@app/components/SocketStatusIndicator.svelte"
   import {pushModal} from "@app/util/modal"
   import {
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityAdmissionForms,
     activeCommunityAdmissionFormReadiness,
     activeCommunityAuthorityReadiness,
-    activeCommunityProfile,
     activeCommunityProfileListEvents,
     activeCommunityReportDeleteEvents,
     activeCommunityReportEvents,
     activeCommunityReportReviewEvents,
     activeCommunityReportState,
-    activeCommunityRelays,
+    activeExactCommunityRelays,
     makeCommunityReportDeleteFilters,
     makeCommunityReportReviewFilters,
   } from "@app/core/community-state"
@@ -58,7 +58,7 @@
     makeCommunityRoomRootsFilter,
   } from "@app/core/community-feeds"
   import {readCommunityRoomRoots} from "@app/core/community-rooms"
-  import {FORM_RESPONSE_KIND, normalizePubkey} from "@app/core/community"
+  import {FORM_RESPONSE_KIND, normalizePubkey, type CommunityPointer} from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
@@ -74,19 +74,17 @@
   } from "@app/core/community-reports"
   import {ENABLE_ZAPS} from "@app/core/state"
   import {notifications} from "@app/util/notifications"
-  import {formatShortNpub} from "@app/util/pubkeys"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
   import {
-    makeCommunityCalendarPath,
-    makeGitCommunityPath,
-    makeCommunityGoalPath,
-    makeCommunityPath,
-    makeCommunityRoomPath,
-    makeCommunityThreadPath,
+    makeExactCommunityCalendarPath,
+    makeExactGitCommunityPath,
+    makeExactCommunityGoalPath,
+    makeExactCommunityPath,
+    makeExactCommunityRoomPath,
+    makeExactCommunityThreadPath,
   } from "@app/util/routes"
 
   type Props = {
-    community: string
+    community: CommunityPointer
   }
 
   const {community}: Props = $props()
@@ -99,49 +97,57 @@
   let reportEvidenceLoading = $state(false)
   let reportEvidenceLoaded = $state(false)
 
-  const shortCommunity = $derived(formatShortNpub(community) || "Community")
-  const communityName = $derived(
-    $activeCommunityProfile?.display_name || $activeCommunityProfile?.name || shortCommunity,
+  const exactDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === community.address
+      ? $activeExactCommunityDefinition
+      : undefined,
   )
-  const communityPicture = $derived($activeCommunityProfile?.picture || "")
+  const shortCommunity = $derived(`Community ${community.naddr.slice(0, 12)}...`)
+  const communityName = $derived(exactDefinition?.metadata.name || shortCommunity)
+  const communityPicture = $derived(exactDefinition?.metadata.picture || "")
   let failedPicture = $state("")
   const showCommunityPicture = $derived(
     Boolean(communityPicture && failedPicture !== communityPicture),
   )
-  const mainRelay = $derived($activeCommunityDefinition?.relays[0] || "")
+  const mainRelay = $derived(exactDefinition?.relays[0] || "")
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === community
+    $activeCommunityAuthorityReadiness.communityPubkey === community.controllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
   const communityAdmissionFormReadiness = $derived(
-    $activeCommunityAdmissionFormReadiness.communityPubkey === community
+    $activeCommunityAdmissionFormReadiness.communityPubkey === community.controllerPubkey
       ? $activeCommunityAdmissionFormReadiness.state
       : "loading",
   )
   const communityAuthorityReady = $derived(communityAuthorityReadiness === "ready")
-  const homePath = $derived(makeCommunityPath(community))
-  const threadsPath = $derived(makeCommunityThreadPath(community))
-  const calendarPath = $derived(makeCommunityCalendarPath(community))
-  const goalsPath = $derived(makeCommunityGoalPath(community))
-  const adminPath = $derived(makeCommunityPath(community, "admin"))
-  const badgesPath = $derived(makeCommunityPath(community, "badges"))
-  const accessPath = $derived(makeCommunityPath(community, "access"))
-  const moderationPath = $derived(makeCommunityPath(community, "moderation"))
-  const gitCommunityInput = $derived(
-    community
-      ? makeCommunityInputValue({pubkey: community, relayHints: $activeCommunityRelays}) ||
-          community
-      : "",
+  const exactCommunity = $derived(
+    $activeExactCommunityPointer?.address === community.address ? community : undefined,
   )
-  const gitPath = $derived(makeGitCommunityPath(gitCommunityInput))
+  const homePath = $derived(exactCommunity ? makeExactCommunityPath(exactCommunity) : "")
+  const threadsPath = $derived(exactCommunity ? makeExactCommunityThreadPath(exactCommunity) : "")
+  const calendarPath = $derived(
+    exactCommunity ? makeExactCommunityCalendarPath(exactCommunity) : "",
+  )
+  const goalsPath = $derived(exactCommunity ? makeExactCommunityGoalPath(exactCommunity) : "")
+  const adminPath = $derived(exactCommunity ? makeExactCommunityPath(exactCommunity, "admin") : "")
+  const badgesPath = $derived(
+    exactCommunity ? makeExactCommunityPath(exactCommunity, "badges") : "",
+  )
+  const accessPath = $derived(
+    exactCommunity ? makeExactCommunityPath(exactCommunity, "access") : "",
+  )
+  const moderationPath = $derived(
+    exactCommunity ? makeExactCommunityPath(exactCommunity, "moderation") : "",
+  )
+  const gitPath = $derived(exactCommunity ? makeExactGitCommunityPath(exactCommunity) : "/git")
   const canViewAdmin = $derived(
-    Boolean($pubkey && normalizePubkey($pubkey) === normalizePubkey(community)),
+    Boolean($pubkey && normalizePubkey($pubkey) === normalizePubkey(community.controllerPubkey)),
   )
   const roomAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition?.pubkey === community
+    communityAuthorityReady && exactDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: exactDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.roomRoot,
           reportState: $activeCommunityReportState,
@@ -149,21 +155,24 @@
       : [],
   )
   const roomFilterPlan = $derived(
-    communityAuthorityReady && community
-      ? makeCommunityContentFilterPlan([makeCommunityRoomRootsFilter(community)], roomAuthorPubkeys)
+    communityAuthorityReady
+      ? makeCommunityContentFilterPlan(
+          [makeCommunityRoomRootsFilter(community.communityId)],
+          roomAuthorPubkeys,
+        )
       : {relayFilters: [], localFilters: []},
   )
   const roomFilters = $derived(roomFilterPlan.localFilters)
   const roomEvents = $derived(deriveEventsAsc(deriveEventsById({repository, filters: roomFilters})))
   const rooms = $derived(
-    readCommunityRoomRoots($roomEvents, community).filter(
+    readCommunityRoomRoots($roomEvents, community.communityId).filter(
       room => !isCommunityPersonBanned($activeCommunityReportState, room.event.pubkey),
     ),
   )
   const badgeDefinitionFilters = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && exactDefinition
       ? makeCommunityBadgeDefinitionFilters({
-          definition: $activeCommunityDefinition,
+          definition: exactDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
         })
@@ -173,9 +182,9 @@
     deriveEventsAsc(deriveEventsById({repository, filters: badgeDefinitionFilters})),
   )
   const badgeDefinitions = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && exactDefinition
       ? selectCommunityBadgeDefinitions({
-          definition: $activeCommunityDefinition,
+          definition: exactDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
           profileListEvents: $activeCommunityProfileListEvents,
           reportState: $activeCommunityReportState,
@@ -199,9 +208,9 @@
     deriveEventsAsc(deriveEventsById({repository, filters: profileBadgeFilters})),
   )
   const pendingBadgeAwardCount = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition && $pubkey
+    communityAuthorityReady && exactDefinition && $pubkey
       ? getPendingCommunityBadgeAwards({
-          definition: $activeCommunityDefinition,
+          definition: exactDefinition,
           badgeDefinitionEvents: $badgeDefinitionEvents,
           profileListEvents: $activeCommunityProfileListEvents,
           badgeAwardEvents: $badgeAwardEvents,
@@ -213,7 +222,7 @@
       : 0,
   )
   const canModerate = $derived.by(() => {
-    const definition = $activeCommunityDefinition
+    const definition = exactDefinition
     const userPubkey = $pubkey
 
     if (!definition || !userPubkey || !communityAuthorityReady) return false
@@ -237,7 +246,7 @@
   )
   const moderationAccessLoading = $derived(Boolean(communityAuthorityLoading && !canModerate))
   const grantableAdmissionForms = $derived.by(() => {
-    const definition = $activeCommunityDefinition
+    const definition = exactDefinition
     const userPubkey = $pubkey
 
     if (!definition || !userPubkey) return []
@@ -289,8 +298,8 @@
     makeCommunityReportDeleteFilters($activeCommunityReportEvents),
   )
   const reportReviewFilters = $derived(
-    $activeCommunityDefinition
-      ? makeCommunityReportReviewFilters($activeCommunityDefinition, $activeCommunityReportEvents)
+    exactDefinition
+      ? makeCommunityReportReviewFilters(exactDefinition.pointer, $activeCommunityReportEvents)
       : [],
   )
   const reportEvidenceFilters = $derived([...reportDeleteFilters, ...reportReviewFilters])
@@ -300,7 +309,7 @@
     ),
   )
   const pendingModerationApplicationCount = $derived.by(() => {
-    const definition = $activeCommunityDefinition
+    const definition = exactDefinition
     if (!definition || admissionReviewEvidenceLoading) return 0
 
     const sectionByForm = new Map(grantableAdmissionForms.map(item => [item.form.address, item]))
@@ -314,6 +323,7 @@
       if (!matched) continue
 
       const state = getAdmissionSubmissionState({
+        community: matched.form.community,
         responseEvents: $admissionResponseEvents,
         deleteEvents: $admissionDeleteEvents,
         reviewEvents: $admissionReviewEvents,
@@ -338,7 +348,7 @@
     return count
   })
   const pendingContentReportGroupCount = $derived.by(() => {
-    const definition = $activeCommunityDefinition
+    const definition = exactDefinition
     if (!definition || !$pubkey || reportReviewEvidenceLoading) return 0
 
     const reports = getCommunityContentReports({
@@ -374,10 +384,9 @@
     Boolean(
       $pubkey &&
       communityAuthorityReady &&
-      $activeCommunityDefinition &&
-      $activeCommunityDefinition.pubkey === community &&
+      exactDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: exactDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.roomRoot,
@@ -390,7 +399,7 @@
   const goHome = () => goto(homePath, {replaceState})
   const login = () => pushModal(LogIn, {}, {replaceState})
   const createRoom = () => {
-    if (canCreateRoom) pushModal(CommunityRoomCreate, {communityPubkey: community}, {replaceState})
+    if (canCreateRoom) pushModal(CommunityRoomCreate, {community}, {replaceState})
   }
 
   let replaceState = $state(false)
@@ -425,7 +434,7 @@
 
     if (
       !community ||
-      $activeCommunityRelays.length === 0 ||
+      $activeExactCommunityRelays.length === 0 ||
       admissionResponseIds.length === 0 ||
       filters.length === 0
     ) {
@@ -435,7 +444,7 @@
       return
     }
 
-    const key = JSON.stringify({relays: $activeCommunityRelays, filters})
+    const key = JSON.stringify({relays: $activeExactCommunityRelays, filters})
     if (admissionEvidenceKey === key) return
 
     admissionEvidenceKey = key
@@ -445,7 +454,12 @@
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), MENU_EVIDENCE_LOAD_TIMEOUT)
 
-    request({relays: $activeCommunityRelays, autoClose: true, filters, signal: controller.signal})
+    request({
+      relays: $activeExactCommunityRelays,
+      autoClose: true,
+      filters,
+      signal: controller.signal,
+    })
       .catch(error => {
         if (!controller.signal.aborted) {
           console.warn("[community-menu] Failed to load application review evidence", error)
@@ -471,7 +485,7 @@
 
     if (
       !community ||
-      $activeCommunityRelays.length === 0 ||
+      $activeExactCommunityRelays.length === 0 ||
       $activeCommunityReportEvents.length === 0 ||
       filters.length === 0
     ) {
@@ -481,7 +495,7 @@
       return
     }
 
-    const key = JSON.stringify({relays: $activeCommunityRelays, filters})
+    const key = JSON.stringify({relays: $activeExactCommunityRelays, filters})
     if (reportEvidenceKey === key) return
 
     reportEvidenceKey = key
@@ -491,7 +505,12 @@
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), MENU_EVIDENCE_LOAD_TIMEOUT)
 
-    request({relays: $activeCommunityRelays, autoClose: true, filters, signal: controller.signal})
+    request({
+      relays: $activeExactCommunityRelays,
+      autoClose: true,
+      filters,
+      signal: controller.signal,
+    })
       .catch(error => {
         if (!controller.signal.aborted) {
           console.warn("[community-menu] Failed to load report review evidence", error)
@@ -512,7 +531,7 @@
 
   $effect(() => {
     if (!menuBackgroundHydrationReady) return
-    if (!community || $activeCommunityRelays.length === 0) return
+    if (!community || $activeExactCommunityRelays.length === 0) return
 
     const filters = [
       ...badgeDefinitionFilters,
@@ -524,7 +543,12 @@
     if (filters.length === 0) return
 
     const controller = new AbortController()
-    request({relays: $activeCommunityRelays, autoClose: true, filters, signal: controller.signal})
+    request({
+      relays: $activeExactCommunityRelays,
+      autoClose: true,
+      filters,
+      signal: controller.signal,
+    })
 
     return () => controller.abort()
   })
@@ -592,7 +616,9 @@
       {/if}
 
       {#each rooms as room (room.id)}
-        {@const roomPath = makeCommunityRoomPath(community, room.id)}
+        {@const roomPath = exactCommunity
+          ? makeExactCommunityRoomPath(exactCommunity, room.id)
+          : ""}
         <SecondaryNavItem
           {replaceState}
           href={roomPath}

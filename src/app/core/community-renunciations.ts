@@ -38,6 +38,11 @@ import {
   normalizePubkey,
 } from "@app/core/community"
 import {INDEXER_RELAYS} from "@app/core/state"
+import {
+  makeCommunityPointer,
+  parseCommunityDefinitionAddress,
+  type CommunityPointer,
+} from "@app/core/community-v2"
 
 export const RENUNCIATION_PUBLISH_TIMEOUT = 6_000
 export const RENUNCIATION_SIGNER_TIMEOUT = 20_000
@@ -46,7 +51,7 @@ export const RENUNCIATION_READBACK_TIMEOUT = 3_000
 export type RenouncedCommunitiesListItem = {
   event: TrustedEvent
   list: PublishedList
-  communityPubkeys: string[]
+  communityAddresses: string[]
 }
 
 export type RenunciationPublishResult = {
@@ -73,13 +78,13 @@ export const makeRenouncedCommunitiesList = (list?: Partial<List>): List =>
     privateTags: list?.privateTags || [],
   })
 
-export const getRenouncedCommunityPubkeysFromList = (list: List | undefined) =>
+export const getRenouncedCommunityAddressesFromList = (list: List | undefined) =>
   Array.from(
     new Set(
       (list?.privateTags || [])
-        .filter(tag => tag[0] === "p")
-        .map(tag => normalizePubkey(tag[1] || ""))
-        .filter(Boolean),
+        .filter(tag => tag.length === 2 && tag[0] === "a")
+        .map(tag => parseCommunityDefinitionAddress(tag[1] || "")?.address)
+        .filter((address): address is string => Boolean(address)),
     ),
   ).sort((a, b) => a.localeCompare(b))
 
@@ -301,22 +306,26 @@ const publishAndVerifyRenouncedCommunitiesEvent = async (
   })
 }
 
-export const addRenouncedCommunityToList = (list: List | undefined, communityPubkey: string) => {
-  const normalizedCommunity = normalizePubkey(communityPubkey)
-  if (!normalizedCommunity) throw new Error("This group looks invalid.")
+const normalizeCommunityPointer = (community: CommunityPointer) => {
+  const pointer = makeCommunityPointer(community)
+  if (!pointer || pointer.address !== community.address) {
+    throw new Error("This group looks invalid.")
+  }
 
-  return addToListPrivately(makeRenouncedCommunitiesList(list), ["p", normalizedCommunity])
+  return pointer
 }
+
+export const addRenouncedCommunityToList = (list: List | undefined, community: CommunityPointer) =>
+  addToListPrivately(makeRenouncedCommunitiesList(list), [
+    "a",
+    normalizeCommunityPointer(community).address,
+  ])
 
 export const removeRenouncedCommunityFromList = (
   list: List | undefined,
-  communityPubkey: string,
-) => {
-  const normalizedCommunity = normalizePubkey(communityPubkey)
-  if (!normalizedCommunity) throw new Error("This group looks invalid.")
-
-  return removeFromList(makeRenouncedCommunitiesList(list), normalizedCommunity)
-}
+  community: CommunityPointer,
+) =>
+  removeFromList(makeRenouncedCommunitiesList(list), normalizeCommunityPointer(community).address)
 
 const readRenouncedCommunitiesList = async (event: TrustedEvent) => {
   let plaintext: string | undefined
@@ -393,7 +402,7 @@ export const renouncedCommunitiesListsByPubkey = deriveItemsByKey<RenouncedCommu
     return {
       event,
       list,
-      communityPubkeys: getRenouncedCommunityPubkeysFromList(list),
+      communityAddresses: getRenouncedCommunityAddressesFromList(list),
     }
   },
 })
@@ -415,37 +424,36 @@ export const userRenouncedCommunitiesList = makeUserData(
 
 export const loadUserRenouncedCommunitiesList = makeUserLoader(loadRenouncedCommunitiesList)
 
-export const userRenouncedCommunityPubkeys = derived(
+export const userRenouncedCommunityAddresses = derived(
   userRenouncedCommunitiesList,
-  $list => $list?.communityPubkeys || [],
+  $list => $list?.communityAddresses || [],
 )
 
-const assertCanRenounceCommunity = (communityPubkey: string) => {
-  const normalizedCommunity = normalizePubkey(communityPubkey)
+const assertCanRenounceCommunity = (community: CommunityPointer) => {
+  const pointer = normalizeCommunityPointer(community)
   const activePubkey = normalizePubkey(pubkey.get() || "")
 
   if (!activePubkey) throw new Error("Log in to update your groups.")
-  if (!normalizedCommunity) throw new Error("This group looks invalid.")
-  if (normalizedCommunity === activePubkey) {
+  if (pointer.controllerPubkey === activePubkey) {
     throw new Error("Community owner keys cannot leave their own community.")
   }
 
-  return normalizedCommunity
+  return pointer
 }
 
 export const renounceCommunity = async (
-  communityPubkey: string,
+  community: CommunityPointer,
   options: RenunciationPublishOptions = {},
 ) => {
-  const normalizedCommunity = assertCanRenounceCommunity(communityPubkey)
+  const pointer = assertCanRenounceCommunity(community)
   const relays = getRequiredRenunciationPublishRelays()
 
   const list = await loadRenouncedCommunitiesListForUpdate(relays, options)
-  if (getRenouncedCommunityPubkeysFromList(list).includes(normalizedCommunity)) return undefined
+  if (getRenouncedCommunityAddressesFromList(list).includes(pointer.address)) return undefined
 
   let privateTagsPlaintext = ""
   options.onStatus?.("Saving your choice...")
-  const eventTemplate = await addRenouncedCommunityToList(list, normalizedCommunity).reconcile(
+  const eventTemplate = await addRenouncedCommunityToList(list, pointer).reconcile(
     async payload => {
       privateTagsPlaintext = payload
       return encryptRenouncedCommunitiesList(payload, options.signal)
@@ -457,18 +465,18 @@ export const renounceCommunity = async (
 }
 
 export const rejoinCommunity = async (
-  communityPubkey: string,
+  community: CommunityPointer,
   options: RenunciationPublishOptions = {},
 ) => {
-  const normalizedCommunity = assertCanRenounceCommunity(communityPubkey)
+  const pointer = assertCanRenounceCommunity(community)
   const relays = getRequiredRenunciationPublishRelays()
 
   const list = await loadRenouncedCommunitiesListForUpdate(relays, options)
-  if (!getRenouncedCommunityPubkeysFromList(list).includes(normalizedCommunity)) return undefined
+  if (!getRenouncedCommunityAddressesFromList(list).includes(pointer.address)) return undefined
 
   let privateTagsPlaintext = ""
   options.onStatus?.("Saving your choice...")
-  const eventTemplate = await removeRenouncedCommunityFromList(list, normalizedCommunity).reconcile(
+  const eventTemplate = await removeRenouncedCommunityFromList(list, pointer).reconcile(
     async payload => {
       privateTagsPlaintext = payload
       return encryptRenouncedCommunitiesList(payload, options.signal)

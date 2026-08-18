@@ -565,8 +565,8 @@ class ActivityCoordinator {
 
 export const createEventActivityIO = (dependencies: EventActivityIODependencies) => {
   const now = dependencies.now || Date.now
-  const setTimer = dependencies.setTimer || setTimeout
-  const clearTimer = dependencies.clearTimer || clearTimeout
+  const setTimer = dependencies.setTimer || ((callback, delay) => setTimeout(callback, delay))
+  const clearTimer = dependencies.clearTimer || (timer => clearTimeout(timer))
   const batchMs = dependencies.batchMs ?? ACTIVITY_BATCH_MS
   const overlapSeconds = dependencies.overlapSeconds ?? ACTIVITY_LIVE_OVERLAP_SECONDS
   const coordinatorDependencies = {

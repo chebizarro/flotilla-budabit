@@ -6,11 +6,11 @@
   import WidgetModal from "@app/components/WidgetModal.svelte"
   import {normalizePubkey} from "@app/core/community"
   import {
-    activeCommunityDefinition,
-    activeCommunityProfile,
     activeCommunityProfileListEvents,
-    activeCommunityRelays,
     activeCommunityReportState,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
+    activeExactCommunityRelays,
   } from "@app/core/community-state"
   import {makeCommunityWidgetContext} from "@app/extensions/community-context"
   import {
@@ -23,12 +23,13 @@
   import {getWidgetLineId} from "@app/extensions/widget-identity"
   import type {SmartWidgetEvent, WidgetActionSlotType} from "@app/extensions/types"
   import {pushModal} from "@app/util/modal"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
+  import {makeExactCommunityInputValue} from "@app/util/community-stars"
 
   type LauncherVariant = "message-actions" | "top-menu"
 
   type Props = {
     communityPubkey: string
+    communityAddress?: string
     relayHints?: string[]
     slotType: WidgetActionSlotType
     variant?: LauncherVariant
@@ -37,12 +38,28 @@
 
   const {
     communityPubkey,
+    communityAddress = "",
     relayHints = [],
     slotType,
     variant = "message-actions",
     context = {},
   }: Props = $props()
-
+  const exactCommunity = $derived(
+    $activeExactCommunityPointer?.address === communityAddress ||
+      (!communityAddress &&
+        normalizePubkey($activeExactCommunityPointer?.controllerPubkey || "") ===
+          normalizePubkey(communityPubkey))
+      ? $activeExactCommunityPointer
+      : undefined,
+  )
+  const exactDefinition = $derived(
+    exactCommunity && $activeExactCommunityDefinition?.pointer.address === exactCommunity.address
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
+  const contextDefinition = $derived(
+    exactDefinition ? {...exactDefinition, pubkey: exactDefinition.controllerPubkey} : undefined,
+  )
   let curatedWidgets = $state<SmartWidgetEvent[]>([])
   let loadKey = ""
   let loadRequestId = 0
@@ -74,35 +91,36 @@
     widget.slot?.label || widget.content || widget.identifier || "Widget"
 
   const communityContext = $derived.by(() => {
-    if (
-      !$activeCommunityDefinition ||
-      normalizePubkey($activeCommunityDefinition.pubkey) !== normalizePubkey(communityPubkey)
-    ) {
+    if (!exactDefinition || !exactCommunity) {
       return undefined
     }
 
     return makeCommunityWidgetContext({
-      definition: $activeCommunityDefinition,
-      profile: $activeCommunityProfile,
+      definition: contextDefinition as any,
       profileListEvents: $activeCommunityProfileListEvents,
       reportState: $activeCommunityReportState,
       userPubkey: $pubkey || "",
-      relays: $activeCommunityRelays.length ? $activeCommunityRelays : relayHints,
+      relays: $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints,
       relayHints,
     })
   })
   const getCurrentCommunityRuntimeContext = () => {
-    const definition = get(activeCommunityDefinition)
-    if (!definition || normalizePubkey(definition.pubkey) !== normalizePubkey(communityPubkey)) {
+    const exactCommunity = get(activeExactCommunityPointer)
+    const definition = get(activeExactCommunityDefinition)
+    if (
+      !exactCommunity ||
+      (communityAddress && exactCommunity.address !== communityAddress) ||
+      normalizePubkey(exactCommunity.controllerPubkey) !== normalizePubkey(communityPubkey) ||
+      definition?.pointer.address !== exactCommunity.address
+    ) {
       return undefined
     }
 
     const profileListEvents = get(activeCommunityProfileListEvents)
     const reportState = get(activeCommunityReportState)
-    const relays = get(activeCommunityRelays)
+    const relays = get(activeExactCommunityRelays)
     const currentCommunityContext = makeCommunityWidgetContext({
-      definition,
-      profile: get(activeCommunityProfile),
+      definition: {...definition, pubkey: definition.controllerPubkey} as any,
       profileListEvents,
       reportState,
       userPubkey: get(pubkey) || "",
@@ -111,6 +129,7 @@
     })
 
     return {
+      community: exactCommunity,
       definition,
       profileListEvents,
       reportState,
@@ -120,9 +139,9 @@
     }
   }
   const curationEvidence = $derived.by(() => {
-    const definition = $activeCommunityDefinition
+    const definition = exactDefinition
     const matchesCommunity =
-      definition && normalizePubkey(definition.pubkey) === normalizePubkey(communityPubkey)
+      definition && exactCommunity && definition.pointer.address === exactCommunity.address
     const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
     const reportState = matchesCommunity ? $activeCommunityReportState : undefined
 
@@ -141,14 +160,20 @@
   })
 
   const openWidget = (widget: SmartWidgetEvent) => {
-    if (!widget.appUrl) return
+    if (!widget.appUrl || !exactCommunity) return
 
     pushModal(WidgetModal, {
       widget,
       context: {
         ...context,
         slot: {type: slotType, label: widget.slot?.label},
-        community: {pubkey: communityPubkey, relays: relayHints},
+        community: {
+          address: exactCommunity.address,
+          controllerPubkey: exactCommunity.controllerPubkey,
+          communityId: exactCommunity.communityId,
+          naddr: exactCommunity.naddr,
+          relays: relayHints,
+        },
         ...(communityContext ? {communityContext} : {}),
       },
       communityRuntimeContextProvider: getCurrentCommunityRuntimeContext,
@@ -173,7 +198,7 @@
 
   $effect(() => {
     void loadRefreshNonce
-    const input = makeCommunityInputValue({pubkey: communityPubkey, relayHints})
+    const input = exactCommunity ? makeExactCommunityInputValue(exactCommunity) : ""
     const evidence = curationEvidence
     const key =
       input && evidence.ready

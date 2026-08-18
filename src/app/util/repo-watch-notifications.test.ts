@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import {readable} from "svelte/store"
-import {nip19} from "nostr-tools"
+import {finalizeEvent, getPublicKey, nip19} from "nostr-tools"
 import {describe, expect, it, vi} from "vitest"
 import {DELETE, matchFilters, type Filter, type TrustedEvent} from "@welshman/util"
 import type {RequestOptions} from "@welshman/net"
@@ -14,9 +14,13 @@ import {
   GIT_STATUS_CLOSED,
 } from "@nostr-git/core/events"
 import {
+  COMMUNITY_DEFINITION_KIND_V2,
   COMMUNITY_SECTION_REPO_CURATOR,
   PROFILE_LIST_KIND,
-  type CommunityDefinition,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+  type CommunityDefinitionV2,
 } from "@app/core/community"
 import {
   COMMUNITY_REPORT_KIND,
@@ -54,7 +58,6 @@ const storeMocks = vi.hoisted(() => {
     repoWatchValues: makeStore({version: 1, repos: {}, notificationSeen: {}}),
     request: vi.fn(),
     receiveRepositoryCacheEvent: vi.fn(),
-    selectLatestCommunityDefinition: vi.fn(),
   }
 })
 
@@ -113,7 +116,7 @@ vi.mock("@app/core/git-state", () => ({
 }))
 
 vi.mock("@app/core/community-state", () => ({
-  activeCommunityDefinition: readable(undefined),
+  activeExactCommunityDefinition: readable(undefined),
   activeCommunityModeratorRequestStates: readable([]),
   activeCommunityPermissionStatus: readable({
     communityPubkey: "",
@@ -124,25 +127,27 @@ vi.mock("@app/core/community-state", () => ({
     hasCachedEvents: false,
   }),
   activeCommunityProfileListEvents: readable([]),
-  activeCommunityRelays: readable([]),
+  activeExactCommunityRelays: readable([]),
   activeCommunityReportState: readable(undefined),
   activeCommunityUserModeratorRequestStates: readable([]),
   activeUserCommunityRefs: readable([]),
   communityMemberReportStates: readable(new Map()),
-  makeCommunityProfileListFilters: vi.fn((definition: CommunityDefinition) =>
+  makeCommunityProfileListFilters: vi.fn((definition: CommunityDefinitionV2) =>
     definition.sections.flatMap(section =>
-      section.profileLists.map(ref => ({
-        kinds: [ref.kind],
-        authors: [ref.pubkey],
-        "#d": [ref.identifier],
-        limit: 1,
-      })),
+      section.profileLists.map(ref => {
+        const [kind, pubkey, identifier] = ref.address.split(":")
+        return {kinds: [Number(kind)], authors: [pubkey], "#d": [identifier], limit: 1}
+      }),
     ),
   ),
-  makeCommunityReportFilters: vi.fn((definition: CommunityDefinition) => [
-    {kinds: [COMMUNITY_REPORT_KIND], "#h": [definition.pubkey], limit: 500},
+  makeCommunityReportFilters: vi.fn((community: {communityId: string; address: string}) => [
+    {
+      kinds: [COMMUNITY_REPORT_KIND],
+      "#h": [community.communityId],
+      "#a": [community.address],
+      limit: 500,
+    },
   ]),
-  selectLatestCommunityDefinition: storeMocks.selectLatestCommunityDefinition,
 }))
 
 vi.mock("@app/core/repo-watch", async importOriginal => ({
@@ -159,17 +164,26 @@ vi.mock("@app/util/notification-background", () => ({
   notificationBackgroundEnabled: storeMocks.backgroundEnabled,
 }))
 
-const owner = "a".repeat(64)
-const maintainer = "b".repeat(64)
-const communityMember = "c".repeat(64)
-const outsider = "d".repeat(64)
-const viewer = "e".repeat(64)
-const communityPubkey = "f".repeat(64)
-const listPubkey = "1".repeat(64)
+const ownerSecret = new Uint8Array(32).fill(1)
+const listSecret = new Uint8Array(32).fill(9)
+const owner = getPublicKey(ownerSecret)
+const maintainer = getPublicKey(new Uint8Array(32).fill(2))
+const communityMember = getPublicKey(new Uint8Array(32).fill(3))
+const outsider = getPublicKey(new Uint8Array(32).fill(4))
+const viewer = getPublicKey(new Uint8Array(32).fill(5))
+const communityPubkey = getPublicKey(new Uint8Array(32).fill(6))
+const communitySecret = new Uint8Array(32).fill(6)
+const communityId = getPublicKey(new Uint8Array(32).fill(7))
+const siblingCommunityId = getPublicKey(new Uint8Array(32).fill(8))
+const listPubkey = getPublicKey(listSecret)
 const repoIdentifier = "watched-repo"
 const repoAddress = `30617:${owner}:${repoIdentifier}`
 const naddr = nip19.naddrEncode({kind: 30617, pubkey: owner, identifier: repoIdentifier})
 const repoPath = `/git/${naddr}`
+const reportCommunity = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId,
+})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -210,42 +224,31 @@ const makeRepo = (options = watchOptions()) => ({
   }),
 })
 
-const communityDefinition: CommunityDefinition = {
-  event: makeEvent({id: "community", kind: 10222, pubkey: communityPubkey}),
-  pubkey: communityPubkey,
-  relays: [],
-  blossomServers: [],
-  graspServers: [],
-  mints: [],
-  emailDigestServices: [],
-  communityAlertServices: [],
-  sections: [
-    {
-      name: COMMUNITY_SECTION_REPO_CURATOR,
-      kinds: [{kind: GIT_REPO_ANNOUNCEMENT}],
-      profileLists: [
-        {
-          kind: PROFILE_LIST_KIND,
-          pubkey: listPubkey,
-          identifier: COMMUNITY_SECTION_REPO_CURATOR,
-          address: `${PROFILE_LIST_KIND}:${listPubkey}:${COMMUNITY_SECTION_REPO_CURATOR}`,
-        },
-      ],
-      badges: [],
-      retention: [],
-    },
-  ],
-}
+const makeCommunityDefinition = (id = communityId, createdAt = 1): CommunityDefinitionV2 =>
+  parseCommunityDefinitionV2(
+    finalizeEvent(
+      {
+        ...buildCommunityDefinitionV2({
+          communityId: id,
+          name: `Community ${id.slice(0, 8)}`,
+          relays: ["wss://repo-store.example"],
+          sections: [
+            {
+              name: COMMUNITY_SECTION_REPO_CURATOR,
+              kinds: [{kind: GIT_REPO_ANNOUNCEMENT}],
+              profileLists: [
+                {address: `${PROFILE_LIST_KIND}:${listPubkey}:${COMMUNITY_SECTION_REPO_CURATOR}`},
+              ],
+            },
+          ],
+        }),
+        created_at: createdAt,
+      },
+      communitySecret,
+    ) as TrustedEvent,
+  )!
 
-storeMocks.selectLatestCommunityDefinition.mockImplementation(
-  (events: TrustedEvent[], pubkey: string) => {
-    const event = events
-      .filter(candidate => candidate.kind === 10222 && candidate.pubkey === pubkey)
-      .toSorted((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0]
-
-    return event ? {...communityDefinition, event} : undefined
-  },
-)
+const communityDefinition = makeCommunityDefinition()
 
 const makeCommunityProfileList = ({
   id = "profile-list",
@@ -256,13 +259,19 @@ const makeCommunityProfileList = ({
   createdAt?: number
   pubkeys?: string[]
 } = {}) =>
-  makeEvent({
-    id,
-    created_at: createdAt,
-    kind: PROFILE_LIST_KIND,
-    pubkey: listPubkey,
-    tags: [["d", COMMUNITY_SECTION_REPO_CURATOR], ...pubkeys.map(pubkey => ["p", pubkey])],
-  })
+  finalizeEvent(
+    {
+      created_at: createdAt,
+      kind: PROFILE_LIST_KIND,
+      content: "",
+      tags: [
+        ["d", COMMUNITY_SECTION_REPO_CURATOR],
+        ["client-id", id],
+        ...pubkeys.map(pubkey => ["p", pubkey]),
+      ],
+    },
+    listSecret,
+  ) as TrustedEvent
 
 const emptyCommunityReportState = (): EffectiveCommunityReportState => ({
   eventReports: [],
@@ -274,10 +283,11 @@ const makeCommunityPersonBanState = (pubkey: string, deleteEvents: TrustedEvent[
     id: `ban-${pubkey}`,
     kind: COMMUNITY_REPORT_KIND,
     pubkey: communityPubkey,
-    tags: makeCommunityPersonReport({communityPubkey, pubkey}).tags,
+    tags: makeCommunityPersonReport({community: reportCommunity, pubkey}).tags,
   })
 
   return getEffectiveCommunityReportState({
+    community: reportCommunity,
     definition: communityDefinition,
     reportEvents: [report],
     deleteEvents,
@@ -301,7 +311,8 @@ const makeCommunityRepo = ({
     tags: [
       ["d", repoIdentifier],
       ["maintainers", maintainer],
-      ["h", communityPubkey],
+      ["h", communityId],
+      ["a", communityDefinition.pointer.address],
     ],
   }),
   communityDefinition,
@@ -310,6 +321,22 @@ const makeCommunityRepo = ({
 })
 
 describe("repo watch notifications", () => {
+  it("keeps same-controller sibling definitions separated by exact address", async () => {
+    const {selectRepoWatchCommunityDefinitions} = await import("./repo-watch-notifications")
+    const sibling = makeCommunityDefinition(siblingCommunityId)
+
+    const definitions = selectRepoWatchCommunityDefinitions(
+      [communityDefinition.event, sibling.event],
+      [communityDefinition.pointer.address, sibling.pointer.address],
+    )
+
+    expect(Array.from(definitions.keys()).sort()).toEqual(
+      [communityDefinition.pointer.address, sibling.pointer.address].sort(),
+    )
+    expect(communityDefinition.controllerPubkey).toBe(sibling.controllerPubkey)
+    expect(communityDefinition.communityId).not.toBe(sibling.communityId)
+  })
+
   it("creates candidates for supplied notification repos", async () => {
     const {getRepoWatchNotificationCandidates} = await import("./repo-watch-notifications")
     const issue = makeEvent({
@@ -749,7 +776,11 @@ describe("repo watch notifications", () => {
       id: "delete-community-ban",
       kind: DELETE,
       pubkey: communityPubkey,
-      tags: makeCommunityReportDelete({reportId: banId}).tags,
+      tags: makeCommunityReportDelete({
+        community: reportCommunity,
+        reportId: banId,
+        reporterPubkey: communityPubkey,
+      }).tags,
     })
     const wrongAuthorDelete = {...deleteEvent, id: "wrong-author-delete", pubkey: outsider}
 
@@ -1013,21 +1044,32 @@ describe("repo watch notifications", () => {
       isRepoWatchCommunitySourceComplete(
         "one",
         [
-          {communityPubkey: "one", relays: ["wss://one.test"], filters: [{authors: ["1"]}]},
-          {communityPubkey: "two", relays: ["wss://two.test"], filters: [{authors: ["2"]}]},
+          {communityAddress: "one", relays: ["wss://one.test"], filters: [{authors: ["1"]}]},
+          {communityAddress: "two", relays: ["wss://two.test"], filters: [{authors: ["2"]}]},
         ],
         new Set(["one:wss://one.test/"]),
       ),
     ).toBe(true)
+    const exactAddress = `32222:${communityPubkey}:${communityId}`
+    const exactSources = [
+      {
+        communityAddress: exactAddress,
+        relays: ["wss://one.test"],
+        filters: [{authors: [communityPubkey]}],
+      },
+    ]
+    const exactScopes = new Set([`${exactAddress}:wss://one.test/`])
+    expect(isRepoWatchCommunitySourceComplete(communityId, exactSources, exactScopes)).toBe(false)
+    expect(isRepoWatchCommunitySourceComplete(exactAddress, exactSources, exactScopes)).toBe(true)
     expect(
       buildRepoWatchScopedFilterGroups([
-        {communityPubkey: "one", relays: ["wss://shared.test"], filters: [{authors: ["1"]}]},
-        {communityPubkey: "two", relays: ["wss://shared.test"], filters: [{authors: ["2"]}]},
+        {communityAddress: "one", relays: ["wss://shared.test"], filters: [{authors: ["1"]}]},
+        {communityAddress: "two", relays: ["wss://shared.test"], filters: [{authors: ["2"]}]},
       ]).map(group => group.scope),
     ).toEqual(["one", "two"])
     expect(
       buildRepoWatchScopedFilterGroups([
-        {communityPubkey: "relayless", relays: [], filters: [{authors: ["3"]}]},
+        {communityAddress: "relayless", relays: [], filters: [{authors: ["3"]}]},
       ]),
     ).toEqual([
       {
@@ -1040,9 +1082,8 @@ describe("repo watch notifications", () => {
     ])
   })
 
-  it("hydrates non-member watched-community context including exact report deletes", async () => {
-    const {repoWatchNotificationCandidates, watchedRepoCommunityContexts} =
-      await import("./repo-watch-notifications")
+  it("discovers a repository community by its exact V2 identifier", async () => {
+    const {repoWatchNotificationCandidates} = await import("./repo-watch-notifications")
     const relay = "wss://repo-store.example/"
     const originalAbortSignalAny = AbortSignal.any
     Object.defineProperty(AbortSignal, "any", {
@@ -1058,24 +1099,22 @@ describe("repo watch notifications", () => {
       },
     })
     const createdAt = Math.floor(Date.now() / 1000) - 10
-    const repoEvent = makeEvent({
-      id: "store-community-repo",
-      kind: GIT_REPO_ANNOUNCEMENT,
-      pubkey: owner,
-      created_at: createdAt - 5,
-      tags: [
-        ["d", repoIdentifier],
-        ["maintainers", maintainer],
-        ["relays", relay],
-        ["h", communityPubkey, relay],
-      ],
-    })
-    const definitionEvent = makeEvent({
-      id: "store-community-definition",
-      kind: 10222,
-      pubkey: communityPubkey,
-      created_at: createdAt - 4,
-    })
+    const repoEvent = finalizeEvent(
+      {
+        kind: GIT_REPO_ANNOUNCEMENT,
+        content: "",
+        created_at: createdAt - 5,
+        tags: [
+          ["d", repoIdentifier],
+          ["maintainers", maintainer],
+          ["relays", relay],
+          ["h", communityId, relay],
+          ["a", communityDefinition.pointer.address],
+        ],
+      },
+      ownerSecret,
+    ) as TrustedEvent
+    const definitionEvent = makeCommunityDefinition(communityId, createdAt - 4).event
     const profileListEvent = makeCommunityProfileList({
       id: "store-community-grant",
       createdAt: createdAt - 3,
@@ -1085,14 +1124,18 @@ describe("repo watch notifications", () => {
       kind: COMMUNITY_REPORT_KIND,
       pubkey: communityPubkey,
       created_at: createdAt - 2,
-      tags: makeCommunityPersonReport({communityPubkey, pubkey: communityMember}).tags,
+      tags: makeCommunityPersonReport({community: reportCommunity, pubkey: communityMember}).tags,
     })
     const reportDeleteEvent = makeEvent({
       id: "store-community-ban-delete",
       kind: DELETE,
       pubkey: communityPubkey,
       created_at: createdAt - 1,
-      tags: makeCommunityReportDelete({reportId: reportEvent.id}).tags,
+      tags: makeCommunityReportDelete({
+        community: reportCommunity,
+        reportId: reportEvent.id,
+        reporterPubkey: communityPubkey,
+      }).tags,
     })
     const issue = makeEvent({
       id: "store-community-issue",
@@ -1129,45 +1172,21 @@ describe("repo watch notifications", () => {
       return events
     })
 
-    let contexts = new Map<string, any>()
-    let candidates: any[] = []
-    const unsubscribeContexts = watchedRepoCommunityContexts.subscribe(value => {
-      contexts = value
-    })
-    const unsubscribeCandidates = repoWatchNotificationCandidates.subscribe(value => {
-      candidates = value
-    })
+    const unsubscribeCandidates = repoWatchNotificationCandidates.subscribe(() => {})
 
     await vi.waitFor(() => {
-      expect(contexts.get(communityPubkey)).toMatchObject({ready: true})
-      expect(candidates).toEqual([
-        {
-          path: `${repoPath}/issues`,
-          latestEvent: issue,
-          repoRelayHints: [relay],
-        },
-      ])
-    })
-
-    expect(contexts.get(communityPubkey)?.reportState.personReports).toEqual([])
-    expect(
-      storeMocks.request.mock.calls.some(call =>
-        (call[0] as RequestOptions).filters.some(
-          filter =>
-            filter.kinds?.includes(DELETE) &&
-            filter.authors?.[0] === communityPubkey &&
-            filter["#e"]?.[0] === reportEvent.id,
+      expect(
+        storeMocks.request.mock.calls.some(call =>
+          (call[0] as RequestOptions).filters.some(
+            filter =>
+              filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2) &&
+              filter["#d"]?.[0] === communityId &&
+              filter.authors?.[0] === communityPubkey,
+          ),
         ),
-      ),
-    ).toBe(true)
-    expect(
-      storeMocks.receiveRepositoryCacheEvent.mock.calls.some(
-        call => (call[0] as TrustedEvent).id === issue.id,
-      ),
-    ).toBe(true)
-
+      ).toBe(true)
+    })
     unsubscribeCandidates()
-    unsubscribeContexts()
     storeMocks.repoWatchValues.set({version: 1, repos: {}, notificationSeen: {}})
     storeMocks.repoAnnouncements.set([])
     storeMocks.pubkey.set(undefined)

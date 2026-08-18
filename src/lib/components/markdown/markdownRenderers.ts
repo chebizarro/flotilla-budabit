@@ -7,8 +7,8 @@ import {nip19} from "nostr-tools"
 import {highlightCodeSnippet, normalizeHighlightLanguage} from "@nostr-git/ui"
 import type {TrustedEvent} from "@welshman/util"
 import {shortenUrl, isMediaUrl} from "./markdownUtils.js"
-import {parseNcommunityLink} from "@app/util/community-links"
-import type {ParsedCommunityInput} from "@app/core/community"
+import {parseCommunityLink} from "@app/util/community-links"
+import type {CommunityPointer} from "@app/core/community"
 import {getCashuTokenInfo} from "@app/util/cashu-token"
 
 export interface RendererOptions {
@@ -131,7 +131,7 @@ export function createRenderers(options: RendererOptions = {}): Partial<Renderer
         return createCashuPlaceholder(cashu.token)
       }
 
-      const community = parseNcommunityLink(href)
+      const community = parseCommunityLink(href)
       if (community) {
         return createCommunityPlaceholder(community)
       }
@@ -299,10 +299,8 @@ function renderNostrLink(
   }
 }
 
-function createCommunityPlaceholder(community: ParsedCommunityInput): string {
-  const relaysAttr = JSON.stringify(community.relays || []).replace(/"/g, "&quot;")
-
-  return `<span class="markdown-community-placeholder" data-pubkey="${community.pubkey}" data-relays="${relaysAttr}"></span>`
+function createCommunityPlaceholder(community: CommunityPointer): string {
+  return `<span class="markdown-community-placeholder" data-naddr="${community.naddr}"></span>`
 }
 
 /**

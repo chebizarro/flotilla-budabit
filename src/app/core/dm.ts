@@ -44,6 +44,7 @@ export type DmRelayRecommendationSource = {
   source?: DmRelayRecommendationSourceKind
   pubkey?: string
   communityPubkey?: string
+  communityAddress?: string
   relays: string[]
   starredAt?: number
   createdAt?: number
@@ -56,6 +57,7 @@ export type DmRelayRecommendationEvidence = {
   source: DmRelayRecommendationSourceKind
   pubkey?: string
   communityPubkey?: string
+  communityAddress?: string
   score: number
   starredAt: number
   createdAt: number
@@ -66,6 +68,7 @@ export type DmRelayRecommendationEvidence = {
 
 export type DmRelayRecommendationCommunity = {
   communityPubkey: string
+  communityAddress?: string
   score: number
   sources: DmRelayRecommendationSourceKind[]
   isStarred: boolean
@@ -231,20 +234,24 @@ const getLatestMessagingRelayListEventsByPubkey = (events: TrustedEvent[] = []) 
   return Array.from(latest.values())
 }
 
-const getReportState = (states: UserCommunityReportStates | undefined, communityPubkey: string) =>
-  states instanceof Map ? states.get(communityPubkey) : states?.[communityPubkey]
+const getReportState = (states: UserCommunityReportStates | undefined, communityAddress: string) =>
+  states instanceof Map ? states.get(communityAddress) : states?.[communityAddress]
+
+const getProfileListOwner = (address: string) => normalizePubkey(address.split(":")[1] || "")
 
 const getDefinitionsFromRefs = (refs: ActiveUserCommunityRef[] = []) => {
-  const byPubkey = new Map<string, ActiveUserCommunityRef["definition"]>()
+  const byAddress = new Map<string, ActiveUserCommunityRef["definition"]>()
 
   for (const ref of refs) {
-    const current = byPubkey.get(ref.communityPubkey)
-    if (!current || ref.definition.event.created_at > current.event.created_at) {
-      byPubkey.set(ref.communityPubkey, ref.definition)
+    const address = getReplaceableAddress(ref.definition.event)
+    if (!address) continue
+    const current = byAddress.get(address)
+    if (isPreferredEvent(ref.definition.event, current?.event)) {
+      byAddress.set(address, ref.definition)
     }
   }
 
-  return Array.from(byPubkey.values())
+  return Array.from(byAddress.values())
 }
 
 export const normalizeRelayUrls = (relays: string[]) => {
@@ -299,7 +306,11 @@ export const getDmRelayRecommendationSourceScore = (source: DmRelayRecommendatio
 }
 
 const getDmRelayEvidenceKey = (evidence: DmRelayRecommendationEvidence) =>
-  [evidence.source, evidence.pubkey || "", evidence.communityPubkey || ""].join(":")
+  [
+    evidence.source,
+    evidence.pubkey || "",
+    evidence.communityAddress || evidence.communityPubkey || "",
+  ].join(":")
 
 const hasDmRelayEvidence = (
   recommendation: DmRelayRecommendation,
@@ -347,13 +358,15 @@ const countDmRelayRecommendationEvidence = (recommendation: DmRelayRecommendatio
   const messagingLists = new Set<string>()
 
   for (const evidence of recommendation.evidence) {
-    if (evidence.communityPubkey) communities.add(evidence.communityPubkey)
+    if (evidence.communityPubkey) {
+      communities.add(evidence.communityAddress || evidence.communityPubkey)
+    }
     if (evidence.pubkey) pubkeys.add(evidence.pubkey)
     if (evidence.source === "active_community_relay" && evidence.communityPubkey) {
-      activeCommunities.add(evidence.communityPubkey)
+      activeCommunities.add(evidence.communityAddress || evidence.communityPubkey)
     }
     if (evidence.source === "starred_community_relay" && evidence.communityPubkey) {
-      starredCommunities.add(evidence.communityPubkey)
+      starredCommunities.add(evidence.communityAddress || evidence.communityPubkey)
     }
     if (evidence.source === "follow_messaging" && evidence.pubkey) follows.add(evidence.pubkey)
     if (DM_RELAY_MESSAGING_SOURCES.has(evidence.source)) {
@@ -402,6 +415,7 @@ export const getDmRelayRecommendations = (
         source: sourceKind,
         pubkey: source.pubkey,
         communityPubkey: source.communityPubkey,
+        communityAddress: source.communityAddress,
         score: sourceScore,
         starredAt: source.starredAt || 0,
         createdAt: source.createdAt || 0,
@@ -427,7 +441,9 @@ export const getDmRelayRecommendations = (
 
       if (source.communityPubkey) {
         const community = recommendation.communities.find(
-          community => community.communityPubkey === source.communityPubkey,
+          community =>
+            (community.communityAddress || community.communityPubkey) ===
+            (source.communityAddress || source.communityPubkey),
         )
 
         if (community) {
@@ -439,6 +455,7 @@ export const getDmRelayRecommendations = (
         } else {
           recommendation.communities.push({
             communityPubkey: source.communityPubkey,
+            communityAddress: source.communityAddress,
             score: sourceScore,
             sources: [sourceKind],
             isStarred: evidence.isStarred,
@@ -463,7 +480,11 @@ export const getDmRelayRecommendations = (
         getDmRelayEvidenceKey(a).localeCompare(getDmRelayEvidenceKey(b)),
     )
     recommendation.communities.sort(
-      (a, b) => b.score - a.score || a.communityPubkey.localeCompare(b.communityPubkey),
+      (a, b) =>
+        b.score - a.score ||
+        (a.communityAddress || a.communityPubkey).localeCompare(
+          b.communityAddress || b.communityPubkey,
+        ),
     )
     countDmRelayRecommendationEvidence(recommendation)
   }
@@ -518,11 +539,16 @@ const getCommunityMessagingSourceKind = ({
   const normalizedPubkey = normalizePubkey(pubkey || "")
   if (!normalizedPubkey) return
 
-  if (definition.pubkey === normalizedPubkey) {
+  if (definition.controllerPubkey === normalizedPubkey) {
     return "community_messaging"
   }
 
-  if (isCommunityPersonBanned(getReportState(reportStates, definition.pubkey), normalizedPubkey)) {
+  if (
+    isCommunityPersonBanned(
+      getReportState(reportStates, definition.pointer.address),
+      normalizedPubkey,
+    )
+  ) {
     return
   }
 
@@ -532,7 +558,7 @@ const getCommunityMessagingSourceKind = ({
   for (const section of definition.sections) {
     for (const ref of section.profileLists) {
       const event = profileListsByAddress.get(ref.address)
-      const moderatorPubkey = normalizePubkey(ref.pubkey || "")
+      const moderatorPubkey = getProfileListOwner(ref.address)
 
       if (moderatorPubkey === normalizedPubkey && event?.pubkey === normalizedPubkey) {
         isModerator = true
@@ -555,7 +581,8 @@ const getActiveCommunityRelaySources = (communityRefs: ActiveUserCommunityRef[] 
     return [
       {
         source: "active_community_relay" as const,
-        communityPubkey: ref.communityPubkey,
+        communityPubkey: ref.community.controllerPubkey,
+        communityAddress: ref.community.address,
         relays: ref.definition.relays,
         isStarred: false,
         isModerator: ref.roles.includes("moderator"),
@@ -617,7 +644,8 @@ export const buildDmRelayRecommendations = ({
       communitySources.push({
         source: sourceKind,
         pubkey: recommender,
-        communityPubkey: definition.pubkey,
+        communityPubkey: definition.controllerPubkey,
+        communityAddress: definition.pointer.address,
         relays,
         createdAt: event.created_at,
         isModerator: sourceKind === "moderator_messaging",
@@ -653,11 +681,11 @@ const getCommunityProfileListAuthors = (
   const memberAuthors: string[] = []
 
   for (const definition of getDefinitionsFromRefs(communityRefs)) {
-    communityAuthors.push(definition.pubkey)
+    communityAuthors.push(definition.controllerPubkey)
 
     for (const section of definition.sections) {
       for (const ref of section.profileLists) {
-        moderatorAuthors.push(ref.pubkey)
+        moderatorAuthors.push(getProfileListOwner(ref.address))
 
         const event = profileListsByAddress.get(ref.address)
         memberAuthors.push(...getProfileListPubkeys(event))

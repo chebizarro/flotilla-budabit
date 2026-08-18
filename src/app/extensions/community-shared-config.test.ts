@@ -13,12 +13,11 @@ describe("community shared config authority", () => {
           {descriptor: {kind: 31923}, moderatorPubkeys: [calendarModerator]},
           {descriptor: {kind: 11, subtype: "room"}, moderatorPubkeys: [roomModerator]},
         ],
-        legacyAuthorizedPubkeys: [],
       }),
     ).toBe(false)
   })
 
-  it("requires exact requested descriptors and conservatively authorizes legacy events", () => {
+  it("requires exact requested descriptors and rejects descriptor-less events", () => {
     const moderator = "a".repeat(64)
     const authorities = [
       {descriptor: {kind: 31923}, moderatorPubkeys: [moderator]},
@@ -29,7 +28,6 @@ describe("community shared config authority", () => {
       isAuthorizedCommunitySharedConfigEvent({
         event: {pubkey: moderator, tags: [["descriptor", "31923"]]},
         descriptorAuthorities: authorities,
-        legacyAuthorizedPubkeys: [moderator],
         requireExactDescriptors: true,
       }),
     ).toBe(false)
@@ -37,15 +35,13 @@ describe("community shared config authority", () => {
       isAuthorizedCommunitySharedConfigEvent({
         event: {pubkey: moderator, tags: []},
         descriptorAuthorities: authorities,
-        legacyAuthorizedPubkeys: [moderator],
         requireExactDescriptors: true,
       }),
-    ).toBe(true)
+    ).toBe(false)
     expect(
       isAuthorizedCommunitySharedConfigEvent({
         event: {pubkey: "b".repeat(64), tags: []},
         descriptorAuthorities: authorities,
-        legacyAuthorizedPubkeys: [moderator],
         requireExactDescriptors: true,
       }),
     ).toBe(false)
@@ -68,7 +64,6 @@ describe("community shared config authority", () => {
           {descriptor: {kind: 31923}, moderatorPubkeys: [calendarModerator]},
           {descriptor: {kind: 11, subtype: "room"}, moderatorPubkeys: [roomModerator]},
         ],
-        legacyAuthorizedPubkeys: [],
         requireExactDescriptors: true,
       }),
     ).toBe(true)

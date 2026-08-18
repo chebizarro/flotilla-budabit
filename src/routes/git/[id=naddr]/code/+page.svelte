@@ -233,8 +233,10 @@
         }),
       )
       .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
+        controllerPubkey: ref.definition.controllerPubkey,
+        address: ref.community.address,
+        communityId: ref.community.communityId,
+        label: getCommunityOptionLabel(ref.definition.controllerPubkey),
         relays: ref.definition.relays,
       })),
   )
@@ -513,24 +515,22 @@
     if (repoClass && !isCloning) {
       // Defer ref loading to avoid blocking initial render
       const timeout = setTimeout(() => {
-        repoClass
-          .getAllRefsWithFallback()
-          .catch((err: Error) => {
-            console.error("Failed to load repository references:", err)
-            notifyCorsProxyIssue(err)
-            // Don't show toast for transient worker initialization errors
-            const errorMessage = err.message || String(err)
-            if (
-              !errorMessage.includes("Cannot read properties of undefined") &&
-              !errorMessage.includes("Worker operation") &&
-              !errorMessage.includes("apply")
-            ) {
-              pushToast({
-                message: "Failed to load branches from git repository: " + errorMessage,
-                theme: "error",
-              })
-            }
-          })
+        repoClass.getAllRefsWithFallback().catch((err: Error) => {
+          console.error("Failed to load repository references:", err)
+          notifyCorsProxyIssue(err)
+          // Don't show toast for transient worker initialization errors
+          const errorMessage = err.message || String(err)
+          if (
+            !errorMessage.includes("Cannot read properties of undefined") &&
+            !errorMessage.includes("Worker operation") &&
+            !errorMessage.includes("apply")
+          ) {
+            pushToast({
+              message: "Failed to load branches from git repository: " + errorMessage,
+              theme: "error",
+            })
+          }
+        })
       }, 100)
 
       return () => {

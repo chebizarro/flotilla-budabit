@@ -1,7 +1,7 @@
 import type { Readable } from "svelte/store";
 
 export interface ProfileSearchContext {
-  communityPubkey?: string;
+  communityAddress?: string;
 }
 
 export type ProfileSearchUpdateSignal = Readable<unknown>;

@@ -56,7 +56,11 @@
   import LogIn from "@app/components/LogIn.svelte"
   import {publishDelete} from "@app/core/commands"
   import {activeUserCommunityRefs, hydratePreferredCommunities} from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND, parseTargetedPublication} from "@app/core/community"
+  import {
+    TARGETED_PUBLICATION_KIND_V2,
+    makeCommunityPointer,
+    parseTargetedPublicationV2,
+  } from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     communityWritableSectionsSupportTarget,
@@ -68,7 +72,8 @@
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {loadBoundedCommunityHistory, makeSameAuthorDeleteFilters} from "@app/core/requests"
   import {
-    makeTargetedPublicationForCommunity,
+    makeEventPublicationRef,
+    makeTargetedPublicationForCommunityV2,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {GIT_RELAYS, getRepoScopedRelays} from "@app/core/git-state"
@@ -188,8 +193,10 @@
           }),
         )
         .map(ref => ({
-          pubkey: ref.communityPubkey,
-          label: getCommunityOptionLabel(ref.communityPubkey),
+          controllerPubkey: ref.community.controllerPubkey,
+          address: ref.community.address,
+          communityId: ref.community.communityId,
+          label: ref.definition.metadata.name,
           relays: ref.definition.relays,
         })),
   )
@@ -206,16 +213,16 @@
       return {relayFilters: [], localFilters: []}
     }
 
-    const communityPubkeys = Array.from(
-      new Set(repoStarCommunityOptions.map(option => option.pubkey).filter(Boolean)),
+    const communityIds = Array.from(
+      new Set(repoStarCommunityOptions.map(option => option.communityId).filter(Boolean)),
     )
-    if (communityPubkeys.length === 0) return {relayFilters: [], localFilters: []}
+    if (communityIds.length === 0) return {relayFilters: [], localFilters: []}
 
     return makeCommunityContentFilterPlan(
       [
         {
-          kinds: [TARGETED_PUBLICATION_KIND],
-          "#p": communityPubkeys,
+          kinds: [TARGETED_PUBLICATION_KIND_V2],
+          "#h": communityIds,
           "#k": [String(REACTION)],
         } as Filter,
       ],
@@ -269,7 +276,7 @@
     normalizeRelays([
       ...repoStarCommunityRelays,
       ...eligibleUserCommunityStarTargetEvents.flatMap(event => {
-        const relay = parseTargetedPublication(event)?.ref?.relay
+        const relay = parseTargetedPublicationV2(event)?.source?.relay
         return relay ? [relay] : []
       }),
     ]),
@@ -356,7 +363,7 @@
   }
 
   const getRepoCollectionCommunityLabel = (community: RepoCommunityOption) =>
-    community.label || getCommunityOptionLabel(community.pubkey)
+    community.label || getCommunityOptionLabel(community.controllerPubkey)
 
   const getDeclaredCommunityRelays = (community: RepoCommunityOption | undefined) =>
     normalizeRelays([community?.relay || "", ...(community?.relays || [])])
@@ -399,6 +406,14 @@
   }) => {
     const targetingId = randomId()
     const communityRelays = requireDeclaredCommunityRelays(community)
+    const communityPointer = makeCommunityPointer({
+      controllerPubkey: community.controllerPubkey,
+      communityId: community.communityId || "",
+      relayHints: communityRelays,
+    })
+    if (!communityPointer || communityPointer.address !== community.address) {
+      throw new Error("Selected community is unavailable.")
+    }
     const relays = normalizeRelays(repoPublishRelays)
     const starEvent = withPublicationTargetingId(
       {
@@ -414,12 +429,18 @@
     const starThunk = publishEvent(starEvent as any, relays, repoAddress)
     if (starThunk?.event) repository.publish(starThunk.event as TrustedEvent)
 
-    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND, {
-      ...makeTargetedPublicationForCommunity({
+    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
+      ...makeTargetedPublicationForCommunityV2({
         targetingId,
         originalKind: REACTION,
-        communityPubkey: community.pubkey,
-        communityRelay: communityRelays[0],
+        originalRef: starThunk?.event?.id
+          ? makeEventPublicationRef({
+              id: starThunk.event.id,
+              relay: relays[0],
+              pubkey: starThunk.event.pubkey,
+            })
+          : undefined,
+        community: communityPointer,
       }),
       created_at: createdAt + 1,
     })
@@ -493,14 +514,14 @@
 
     const personalStar = existingPersonalStar
     const communityStars = existingCommunityStars
-    const existingCommunityByPubkey = new Map(
-      communityStars.map(collection => [collection.community.pubkey, collection]),
+    const existingCommunityByAddress = new Map(
+      communityStars.map(collection => [collection.community.address, collection]),
     )
     const communityOptions = [...repoStarCommunityOptions]
     const communityHistoryCompleteAtOpen = communityHistoryComplete
 
     for (const collection of communityStars) {
-      if (!communityOptions.some(option => option.pubkey === collection.community.pubkey)) {
+      if (!communityOptions.some(option => option.address === collection.community.address)) {
         communityOptions.push(collection.community)
       }
     }
@@ -516,28 +537,28 @@
       allowEmpty: true,
       requireChanges: true,
       defaultPersonal: Boolean(personalStar),
-      defaultCommunityPubkeys: Array.from(existingCommunityByPubkey.keys()),
-      lockedCommunityPubkeys: communityHistoryCompleteAtOpen
+      defaultCommunityAddresses: Array.from(existingCommunityByAddress.keys()).filter(Boolean),
+      lockedCommunityAddresses: communityHistoryCompleteAtOpen
         ? []
-        : Array.from(existingCommunityByPubkey.keys()),
+        : Array.from(existingCommunityByAddress.keys()).filter(Boolean),
       onCancel: clearModals,
       onCollect: async ({
         personal,
-        communityPubkeys,
+        communityAddresses,
       }: {
         personal: boolean
-        communityPubkeys: string[]
+        communityAddresses: string[]
       }) => {
         if (pending) return
 
         pending = true
         try {
           const baseCreatedAt = Math.floor(Date.now() / 1000)
-          const selectedCommunityPubkeys = new Set(communityPubkeys)
+          const selectedCommunityAddresses = new Set(communityAddresses)
           if (
             !communityHistoryCompleteAtOpen &&
             communityStars.some(
-              collection => !selectedCommunityPubkeys.has(collection.community.pubkey),
+              collection => !selectedCommunityAddresses.has(collection.community.address || ""),
             )
           ) {
             pushToast({
@@ -570,7 +591,7 @@
           }
 
           for (const collection of communityStars) {
-            if (selectedCommunityPubkeys.has(collection.community.pubkey)) continue
+            if (selectedCommunityAddresses.has(collection.community.address || "")) continue
 
             actions.push({
               thunks: deleteCommunityRepoStar({collection, community: collection.community}),
@@ -579,11 +600,11 @@
             })
           }
 
-          for (const [index, communityPubkey] of communityPubkeys.entries()) {
-            if (existingCommunityByPubkey.has(communityPubkey)) continue
+          for (const [index, communityAddress] of communityAddresses.entries()) {
+            if (existingCommunityByAddress.has(communityAddress)) continue
 
             const community = repoStarCommunityOptions.find(
-              option => option.pubkey === communityPubkey,
+              option => option.address === communityAddress,
             )
             if (!community) continue
 

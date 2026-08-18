@@ -83,12 +83,12 @@
     Boolean(normalizeEmailDigestEmail($userCommunityAlertDeliveryProfile.email)),
   )
   const offeredCommunities = $derived(
-    new Set($communityAlertProviderGroups.map(group => group.communityPubkey)),
+    new Set($communityAlertProviderGroups.map(group => group.communityAddress)),
   )
   const unavailableRegistrations = $derived(
     Object.entries($userCommunityAlertRegistrations).filter(
-      ([communityPubkey, registration]) =>
-        !offeredCommunities.has(communityPubkey) &&
+      ([communityAddress, registration]) =>
+        !offeredCommunities.has(communityAddress) &&
         Boolean(
           registration.enabled ||
           registration.pendingProvider ||
@@ -123,7 +123,7 @@
 
   const providerChoices = (group: CommunityAlertProviderGroup): ProviderChoice[] => {
     const choices: ProviderChoice[] = group.providers.map(provider => ({...provider}))
-    const registration = $userCommunityAlertRegistrations[group.communityPubkey]
+    const registration = $userCommunityAlertRegistrations[group.communityAddress]
     for (const savedProvider of [registration?.provider, registration?.pendingProvider]) {
       const key = savedProvider ? providerKey(savedProvider) : ""
       if (savedProvider && key && !choices.some(choice => providerKey(choice) === key)) {
@@ -136,7 +136,7 @@
 
   const selectedProvider = (group: CommunityAlertProviderGroup) => {
     const choices = providerChoices(group)
-    const selectedKey = drafts[group.communityPubkey]?.providerKey
+    const selectedKey = drafts[group.communityAddress]?.providerKey
 
     return choices.find(provider => providerKey(provider) === selectedKey) || choices[0]
   }
@@ -146,16 +146,16 @@
     provider: CommunityAlertService | undefined,
   ) =>
     isCommunityAlertProviderAdvertised({
-      communityPubkey: group.communityPubkey,
+      communityAddress: group.communityAddress,
       provider,
       providerGroups: $communityAlertProviderGroups,
     })
 
-  const currentStatus = (communityPubkey: string) => providerStates[communityPubkey]?.status
+  const currentStatus = (communityAddress: string) => providerStates[communityAddress]?.status
 
-  const statusLabel = (communityPubkey: string, registration?: CommunityAlertRegistration) => {
-    const status = currentStatus(communityPubkey)
-    if (errors[communityPubkey] || registration?.lastError) return "Error"
+  const statusLabel = (communityAddress: string, registration?: CommunityAlertRegistration) => {
+    const status = currentStatus(communityAddress)
+    if (errors[communityAddress] || registration?.lastError) return "Error"
     if (status?.state === "ineligible") return "Ineligible"
     if (status?.state === "suppressed") return "Suppressed"
     if (status?.state === "error") return "Error"
@@ -196,18 +196,18 @@
     markProfileDirty()
   }
 
-  const setDensity = (communityPubkey: string, density: CommunityAlertPreferences["density"]) => {
-    const draft = drafts[communityPubkey]
+  const setDensity = (communityAddress: string, density: CommunityAlertPreferences["density"]) => {
+    const draft = drafts[communityAddress]
     if (draft) draft.preferences.density = density
   }
 
   const setProvider = (group: CommunityAlertProviderGroup, event: Event) => {
-    const draft = drafts[group.communityPubkey]
+    const draft = drafts[group.communityAddress]
     if (!draft) return
     draft.providerKey = (event.currentTarget as HTMLSelectElement).value
-    providerStates[group.communityPubkey] = undefined
-    errors[group.communityPubkey] = ""
-    requestTokens = {...requestTokens, [group.communityPubkey]: ++requestCounter}
+    providerStates[group.communityAddress] = undefined
+    errors[group.communityAddress] = ""
+    requestTokens = {...requestTokens, [group.communityAddress]: ++requestCounter}
   }
 
   const saveDeliveryProfile = async (event: SubmitEvent) => {
@@ -239,89 +239,89 @@
   }
 
   const refresh = async (group: CommunityAlertProviderGroup) => {
-    const communityPubkey = group.communityPubkey
-    const registration = $userCommunityAlertRegistrations[communityPubkey]
+    const communityAddress = group.communityAddress
+    const registration = $userCommunityAlertRegistrations[communityAddress]
     const provider =
       registration?.pendingProvider || registration?.provider || selectedProvider(group)
     if (!provider || !settingsReady) return
-    const guard = beginRequest(communityPubkey)
-    loading[communityPubkey] = "refresh"
-    errors[communityPubkey] = ""
+    const guard = beginRequest(communityAddress)
+    loading[communityAddress] = "refresh"
+    errors[communityAddress] = ""
     try {
-      const result = await queryCommunityAlertProviderState({communityPubkey, provider})
+      const result = await queryCommunityAlertProviderState({communityAddress, provider})
       if (!isCurrentRequest(guard)) return
-      providerStates[communityPubkey] = result
-      if (result.statusError) errors[communityPubkey] = result.statusError
+      providerStates[communityAddress] = result
+      if (result.statusError) errors[communityAddress] = result.statusError
     } catch (error) {
       if (!isCurrentRequest(guard)) return
-      errors[communityPubkey] =
+      errors[communityAddress] =
         error instanceof Error ? error.message : "Failed to load community alert status"
     } finally {
-      if (isCurrentRequest(guard)) loading[communityPubkey] = ""
+      if (isCurrentRequest(guard)) loading[communityAddress] = ""
     }
   }
 
   const save = async (event: SubmitEvent, group: CommunityAlertProviderGroup) => {
     event.preventDefault()
-    const communityPubkey = group.communityPubkey
-    const draft = drafts[communityPubkey]
+    const communityAddress = group.communityAddress
+    const draft = drafts[communityAddress]
     const provider = draft ? selectedProvider(group) : undefined
     if (!draft || !provider || !isProviderAvailable(group, provider)) return
-    const guard = beginRequest(communityPubkey)
-    loading[communityPubkey] = "save"
-    errors[communityPubkey] = ""
+    const guard = beginRequest(communityAddress)
+    loading[communityAddress] = "save"
+    errors[communityAddress] = ""
     try {
       const result = await saveAndEnableCommunityAlerts({
-        communityPubkey,
+        communityAddress,
         provider,
         preferences: draft.preferences,
       })
       if (!isCurrentRequest(guard)) return
-      providerStates[communityPubkey] = result
-      if (result.statusError) errors[communityPubkey] = result.statusError
+      providerStates[communityAddress] = result
+      if (result.statusError) errors[communityAddress] = result.statusError
       pushToast({message: "Community alerts saved"})
     } catch (error) {
       if (!isCurrentRequest(guard)) return
-      errors[communityPubkey] =
+      errors[communityAddress] =
         error instanceof Error ? error.message : "Failed to save community alerts"
-      pushToast({theme: "error", message: errors[communityPubkey]})
+      pushToast({theme: "error", message: errors[communityAddress]})
     } finally {
-      if (isCurrentRequest(guard)) loading[communityPubkey] = ""
+      if (isCurrentRequest(guard)) loading[communityAddress] = ""
     }
   }
 
-  const disable = async (communityPubkey: string) => {
-    const guard = beginRequest(communityPubkey)
-    loading[communityPubkey] = "disable"
-    errors[communityPubkey] = ""
+  const disable = async (communityAddress: string) => {
+    const guard = beginRequest(communityAddress)
+    loading[communityAddress] = "disable"
+    errors[communityAddress] = ""
     try {
-      await disableCommunityAlerts(communityPubkey)
+      await disableCommunityAlerts(communityAddress)
       if (!isCurrentRequest(guard)) return
-      providerStates[communityPubkey] = undefined
+      providerStates[communityAddress] = undefined
       pushToast({message: "Community alerts disabled"})
     } catch (error) {
       if (!isCurrentRequest(guard)) return
-      errors[communityPubkey] =
+      errors[communityAddress] =
         error instanceof Error ? error.message : "Provider cleanup is still pending"
-      pushToast({theme: "error", message: errors[communityPubkey]})
+      pushToast({theme: "error", message: errors[communityAddress]})
     } finally {
-      if (isCurrentRequest(guard)) loading[communityPubkey] = ""
+      if (isCurrentRequest(guard)) loading[communityAddress] = ""
     }
   }
 
-  const retryCleanup = async (communityPubkey: string) => {
-    const guard = beginRequest(communityPubkey)
-    loading[communityPubkey] = "cleanup"
-    errors[communityPubkey] = ""
+  const retryCleanup = async (communityAddress: string) => {
+    const guard = beginRequest(communityAddress)
+    loading[communityAddress] = "cleanup"
+    errors[communityAddress] = ""
     try {
-      await retryCommunityAlertCleanup(communityPubkey)
+      await retryCommunityAlertCleanup(communityAddress)
       if (!isCurrentRequest(guard)) return
       pushToast({message: "Provider cleanup completed"})
     } catch (error) {
       if (!isCurrentRequest(guard)) return
-      errors[communityPubkey] = error instanceof Error ? error.message : "Provider cleanup failed"
+      errors[communityAddress] = error instanceof Error ? error.message : "Provider cleanup failed"
     } finally {
-      if (isCurrentRequest(guard)) loading[communityPubkey] = ""
+      if (isCurrentRequest(guard)) loading[communityAddress] = ""
     }
   }
 
@@ -386,10 +386,10 @@
     const next = {...drafts}
     let changed = false
     for (const group of $communityAlertProviderGroups) {
-      if (next[group.communityPubkey]) continue
-      const registration = $userCommunityAlertRegistrations[group.communityPubkey]
+      if (next[group.communityAddress]) continue
+      const registration = $userCommunityAlertRegistrations[group.communityAddress]
       const provider = registration?.pendingProvider || registration?.provider || group.providers[0]
-      next[group.communityPubkey] = {
+      next[group.communityAddress] = {
         providerKey: provider ? providerKey(provider) : "",
         preferences: normalizeCommunityAlertPreferences(registration?.preferences),
       }
@@ -401,14 +401,14 @@
   $effect(() => {
     if (!settingsReady) return
     for (const group of $communityAlertProviderGroups) {
-      const registration = $userCommunityAlertRegistrations[group.communityPubkey]
+      const registration = $userCommunityAlertRegistrations[group.communityAddress]
       if (
         (!registration?.enabled && !registration?.pendingProvider) ||
-        queried[group.communityPubkey]
+        queried[group.communityAddress]
       ) {
         continue
       }
-      queried[group.communityPubkey] = true
+      queried[group.communityAddress] = true
       void refresh(group)
     }
   })
@@ -419,10 +419,7 @@
     const controller = new AbortController()
     for (const group of groups) {
       void hydratePubkeyProfiles({
-        pubkeys: [
-          group.communityPubkey,
-          ...group.providers.map(provider => provider.servicePubkey),
-        ],
+        pubkeys: group.providers.map(provider => provider.servicePubkey),
         relayHints: group.definition.relays,
         signal: controller.signal,
       }).catch(() => {})
@@ -564,25 +561,26 @@
       </div>
     {/if}
 
-    {#each $communityAlertProviderGroups as group (group.communityPubkey)}
-      {@const draft = drafts[group.communityPubkey]}
-      {@const registration = $userCommunityAlertRegistrations[group.communityPubkey]}
+    {#each $communityAlertProviderGroups as group (group.communityAddress)}
+      {@const draft = drafts[group.communityAddress]}
+      {@const registration = $userCommunityAlertRegistrations[group.communityAddress]}
       {@const choices = providerChoices(group)}
       {@const provider = selectedProvider(group)}
       {@const providerAvailable = isProviderAvailable(group, provider)}
-      {@const status = currentStatus(group.communityPubkey)}
-      {@const label = statusLabel(group.communityPubkey, registration)}
+      {@const status = currentStatus(group.communityAddress)}
+      {@const label = statusLabel(group.communityAddress, registration)}
       {@const disabledReason = enableDisabledReason(group, provider)}
       {#if draft && provider}
         <form
           class="rounded-2xl border border-base-300 bg-base-200/30 p-4 sm:p-5"
           onsubmit={event => save(event, group)}>
           <div class="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <Profile
-              pubkey={group.communityPubkey}
-              relays={group.definition.relays}
-              avatarSize={9}
-              roleLabel="Community" />
+            <div class="min-w-0">
+              <div class="truncate font-semibold">{group.definition.metadata.name}</div>
+              <div class="truncate text-xs text-muted-foreground" title={group.communityAddress}>
+                {group.communityAddress}
+              </div>
+            </div>
             <span
               class="badge h-auto min-h-6 max-w-full shrink-0 whitespace-normal break-words px-3 py-1 text-center leading-4"
               class:badge-success={label === "Active"}
@@ -612,9 +610,9 @@
                 </div>
                 <Button
                   class="btn btn-warning btn-sm inline-flex max-w-full shrink-0 items-center justify-center whitespace-normal text-center [&>span]:min-h-0 [&>span]:w-full [&>span]:justify-center"
-                  disabled={Boolean(loading[group.communityPubkey]) || !settingsReady}
+                  disabled={Boolean(loading[group.communityAddress]) || !settingsReady}
                   onclick={() => refresh(group)}>
-                  <Spinner loading={loading[group.communityPubkey] === "refresh"}
+                  <Spinner loading={loading[group.communityAddress] === "refresh"}
                     >I've verified, refresh status</Spinner>
                 </Button>
               </div>
@@ -676,12 +674,12 @@
                     class="btn btn-sm justify-center {draft.preferences.density === 'compact'
                       ? 'btn-primary'
                       : 'btn-outline'}"
-                    onclick={() => setDensity(group.communityPubkey, "compact")}>Compact</Button>
+                    onclick={() => setDensity(group.communityAddress, "compact")}>Compact</Button>
                   <Button
                     class="btn btn-sm justify-center {draft.preferences.density === 'expanded'
                       ? 'btn-primary'
                       : 'btn-outline'}"
-                    onclick={() => setDensity(group.communityPubkey, "expanded")}>Expanded</Button>
+                    onclick={() => setDensity(group.communityAddress, "expanded")}>Expanded</Button>
                 </div>
                 <p class="mt-2 text-xs text-muted-foreground">
                   Compact summarizes activity; expanded includes more per-item detail.
@@ -852,15 +850,15 @@
               </span>
             </div>
           {/if}
-          {#if errors[group.communityPubkey] || registration?.lastError}
+          {#if errors[group.communityAddress] || registration?.lastError}
             <p class="mt-4 rounded-xl border border-error/30 bg-error/10 p-3 text-sm text-error">
-              {errors[group.communityPubkey] || registration?.lastError}
+              {errors[group.communityAddress] || registration?.lastError}
             </p>
           {/if}
 
           <div
             class="mt-4 flex min-w-0 flex-col gap-3 border-t border-base-300 pt-4 sm:flex-row sm:items-end sm:justify-between">
-            {#if disabledReason && !loading[group.communityPubkey]}
+            {#if disabledReason && !loading[group.communityAddress]}
               <p class="min-w-0 text-xs leading-5 text-muted-foreground">{disabledReason}</p>
             {:else}
               <span class="hidden sm:block"></span>
@@ -868,33 +866,33 @@
             <div class="flex min-w-0 flex-wrap justify-end gap-2">
               <Button
                 class="btn btn-outline btn-sm inline-flex items-center justify-center text-center [&>span]:min-h-0 [&>span]:w-full [&>span]:justify-center"
-                disabled={Boolean(loading[group.communityPubkey]) || !settingsReady}
+                disabled={Boolean(loading[group.communityAddress]) || !settingsReady}
                 onclick={() => refresh(group)}>
-                <Spinner loading={loading[group.communityPubkey] === "refresh"}
+                <Spinner loading={loading[group.communityAddress] === "refresh"}
                   >Refresh status</Spinner>
               </Button>
               {#if registration?.pendingCleanup?.length}
                 <Button
                   class="btn btn-outline btn-warning btn-sm inline-flex items-center justify-center text-center [&>span]:min-h-0 [&>span]:w-full [&>span]:justify-center"
-                  disabled={Boolean(loading[group.communityPubkey])}
-                  onclick={() => retryCleanup(group.communityPubkey)}>
-                  <Spinner loading={loading[group.communityPubkey] === "cleanup"}
+                  disabled={Boolean(loading[group.communityAddress])}
+                  onclick={() => retryCleanup(group.communityAddress)}>
+                  <Spinner loading={loading[group.communityAddress] === "cleanup"}
                     >Retry cleanup</Spinner>
                 </Button>
               {/if}
               {#if registration?.enabled || registration?.pendingProvider || registration?.pendingCleanup?.length}
                 <Button
                   class="btn btn-outline btn-error btn-sm inline-flex items-center justify-center text-center [&>span]:min-h-0 [&>span]:w-full [&>span]:justify-center"
-                  disabled={Boolean(loading[group.communityPubkey])}
-                  onclick={() => disable(group.communityPubkey)}>
-                  <Spinner loading={loading[group.communityPubkey] === "disable"}>Disable</Spinner>
+                  disabled={Boolean(loading[group.communityAddress])}
+                  onclick={() => disable(group.communityAddress)}>
+                  <Spinner loading={loading[group.communityAddress] === "disable"}>Disable</Spinner>
                 </Button>
               {/if}
               <Button
                 type="submit"
                 class="btn btn-primary btn-sm inline-flex items-center justify-center whitespace-normal text-center [&>span]:min-h-0 [&>span]:w-full [&>span]:justify-center"
-                disabled={Boolean(disabledReason) || Boolean(loading[group.communityPubkey])}>
-                <Spinner loading={loading[group.communityPubkey] === "save"}>
+                disabled={Boolean(disabledReason) || Boolean(loading[group.communityAddress])}>
+                <Spinner loading={loading[group.communityAddress] === "save"}>
                   {registration?.enabled ? "Save alerts" : "Enable alerts"}
                 </Spinner>
               </Button>
@@ -912,7 +910,7 @@
           can be disabled or cleanup can be retried after eligibility or declarations change.
         </p>
         <div class="mt-3 grid gap-3">
-          {#each unavailableRegistrations as [communityPubkey, registration] (communityPubkey)}
+          {#each unavailableRegistrations as [communityAddress, registration] (communityAddress)}
             {@const savedProviders = uniqueProviders([
               registration.provider,
               registration.pendingProvider,
@@ -926,7 +924,12 @@
             <div class="rounded-xl border border-warning/30 bg-base-100 p-3">
               <div
                 class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <Profile pubkey={communityPubkey} avatarSize={8} roleLabel="Community" />
+                <div class="min-w-0">
+                  <div class="font-semibold">Unavailable community</div>
+                  <div class="truncate text-xs text-muted-foreground" title={communityAddress}>
+                    {communityAddress}
+                  </div>
+                </div>
                 <span
                   class="badge h-auto min-h-6 max-w-full shrink-0 whitespace-normal break-words px-3 py-1 text-center leading-4"
                   class:badge-warning={orphanLabel === "Pending confirmation"}
@@ -945,22 +948,22 @@
                   {/each}
                 </div>
               {/if}
-              {#if errors[communityPubkey] || registration.lastError}
+              {#if errors[communityAddress] || registration.lastError}
                 <p class="mt-3 text-sm text-error">
-                  {errors[communityPubkey] || registration.lastError}
+                  {errors[communityAddress] || registration.lastError}
                 </p>
               {/if}
               <div class="mt-3 flex flex-wrap justify-end gap-2">
                 {#if registration.pendingCleanup?.length}
                   <Button
                     class="btn btn-outline btn-warning btn-sm"
-                    disabled={Boolean(loading[communityPubkey])}
-                    onclick={() => retryCleanup(communityPubkey)}>Retry cleanup</Button>
+                    disabled={Boolean(loading[communityAddress])}
+                    onclick={() => retryCleanup(communityAddress)}>Retry cleanup</Button>
                 {/if}
                 <Button
                   class="btn btn-outline btn-error btn-sm"
-                  disabled={Boolean(loading[communityPubkey])}
-                  onclick={() => disable(communityPubkey)}>Disable registration</Button>
+                  disabled={Boolean(loading[communityAddress])}
+                  onclick={() => disable(communityAddress)}>Disable registration</Button>
               </div>
             </div>
           {/each}

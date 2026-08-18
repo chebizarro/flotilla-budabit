@@ -26,11 +26,7 @@
   } from "../../hooks/useImportRepo.svelte";
   import { tokens } from "../../stores/tokens.js";
   import { graspServersStore, normalizeGraspServerUrls } from "../../stores/graspServers.js";
-  import {
-    parseRepoUrl,
-    checkRepoOwnership,
-    getGitServiceApiFromUrl,
-  } from "@nostr-git/core";
+  import { parseRepoUrl, checkRepoOwnership, getGitServiceApiFromUrl } from "@nostr-git/core";
   import { tryTokensForHost } from "../../utils/tokenHelpers.js";
   import { matchesHost } from "../../utils/tokenMatcher.js";
   import { AllTokensFailedError, TokenNotFoundError } from "../../utils/tokenErrors.js";
@@ -80,6 +76,7 @@
   import {
     findRepoCommunityOption,
     getRepoCommunityOptionBinding,
+    getRepoCommunityOptionKey,
   } from "./repo-community-options.js";
 
   interface Props {
@@ -263,7 +260,7 @@
   const otherCommunityGraspServerUrls = $derived.by(() =>
     normalizeGraspServerUrls(
       communityOptions
-        .filter((option) => option.pubkey !== selectedCommunityPubkey)
+        .filter((option) => getRepoCommunityOptionKey(option) !== selectedCommunityPubkey)
         .flatMap((option) => option.graspServers || [])
     )
   );
@@ -595,9 +592,9 @@
   );
   const declaredGraspServices = $derived.by(() =>
     mergeGraspServiceDescriptors([
-      ...buildGraspServiceDescriptors(selectedCommunityGraspServerUrls, "community-10222"),
+      ...buildGraspServiceDescriptors(selectedCommunityGraspServerUrls, "community-definition"),
       ...buildGraspServiceDescriptors(graspServerOptions, "user-10317"),
-      ...buildGraspServiceDescriptors(otherCommunityGraspServerUrls, "community-10222"),
+      ...buildGraspServiceDescriptors(otherCommunityGraspServerUrls, "community-definition"),
     ])
   );
   const unbackedGraspRelayUrls = $derived.by(() =>
@@ -1101,8 +1098,7 @@
 
     // Validate relays
     if (effectiveSelectedRelays.length === 0) {
-      validationError =
-        "Select at least one repository or GRASP relay before starting the import.";
+      validationError = "Select at least one repository or GRASP relay before starting the import.";
       return;
     }
 

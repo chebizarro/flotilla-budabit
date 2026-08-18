@@ -4,20 +4,12 @@ import {describe, expect, it} from "vitest"
 const readProjectFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
 
 describe("community profile relay hints", () => {
-  it("uses the Budabit profile resolver with community relays in community cards", () => {
-    const preview = readProjectFile("../components/community/CommunityPreviewCard.svelte")
-    const selector = readProjectFile("../components/community/CommunitySelectorCard.svelte")
+  it("keeps V2 community cards definition-native", () => {
     const link = readProjectFile("../components/community/CommunityLinkCard.svelte")
 
-    for (const source of [preview, selector, link]) {
-      expect(source).toContain("@app/core/profile-resolver")
-      expect(source).toContain("deriveBudabitProfile")
-      expect(source).toContain("deriveBudabitProfileDisplay")
-    }
-
-    expect(preview).toContain("communityRelays: profileRelays")
-    expect(selector).toContain("communityRelays: profileRelays")
-    expect(link).toContain("communityRelays: displayRelays")
+    expect(link).toContain("definition?.metadata.name")
+    expect(link).toContain("definition?.metadata.picture")
+    expect(link).not.toContain("@app/core/profile-resolver")
   })
 
   it("parses community home descriptions instead of rendering raw text", () => {
@@ -94,11 +86,13 @@ describe("community profile relay hints", () => {
     }
 
     expect(threadDetail).toContain(
-      "<NoteCard event={thread.event} relays={$activeCommunityRelays}>",
+      "<NoteCard event={thread.event} relays={$activeExactCommunityRelays}>",
     )
-    expect(goalDetail).toContain("<NoteCard event={approvedGoal} relays={$activeCommunityRelays}>")
+    expect(goalDetail).toContain(
+      "<NoteCard event={approvedGoal} relays={$activeExactCommunityRelays}>",
+    )
     expect(calendarDetail).toContain(
-      "<CalendarEventMeta event={approvedEvent} relays={$activeCommunityRelays} />",
+      "<CalendarEventMeta event={approvedEvent} relays={$activeExactCommunityRelays} />",
     )
   })
 

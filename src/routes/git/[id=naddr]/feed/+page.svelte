@@ -6,6 +6,7 @@
   import type {Readable} from "svelte/store"
   import Spinner from "@lib/components/Spinner.svelte"
   import RepoFeedGitItem from "@app/components/RepoFeedGitItem.svelte"
+  import {activeUserCommunityRefs} from "@app/core/community-state"
   import {
     REPO_FEED_ACTIVITY_KEY,
     REPO_KEY,
@@ -35,9 +36,14 @@
   const repoFeedActivity = $derived.by(() => $repoFeedActivityStore || [])
   const repoRelays = $derived.by(() => $repoRelaysStore || [])
   const resolvedStatusByRoot = $derived.by(() => $resolvedStatusByRootStore || new Map())
-  const defaultThreadCommunityPubkey = $derived(repoClass.community?.pubkey || "")
+  const defaultThreadCommunityAddress = $derived.by(() => {
+    const communityAddress = repoClass.community?.address || ""
+    return $activeUserCommunityRefs.some(ref => ref.community.address === communityAddress)
+      ? communityAddress
+      : ""
+  })
   const repoCommunityScope = $derived(
-    repoClass.community?.pubkey ||
+    repoClass.community?.communityId ||
       getTagValue("h", (((repoClass as any)?.repoEvent?.tags || []) as string[][])) ||
       "",
   )
@@ -120,7 +126,7 @@
             event={element.value}
             openHref={getOpenHref(element.value)}
             statusState={statusStateById.get(element.value.id) || "open"}
-            {defaultThreadCommunityPubkey} />
+            {defaultThreadCommunityAddress} />
         {/if}
       {/each}
     </div>

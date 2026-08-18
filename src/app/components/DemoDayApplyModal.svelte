@@ -33,7 +33,7 @@
   import {pushToast} from "@src/app/util/toast"
   import {PublishStatus, request} from "@welshman/net"
   import {goto} from "$app/navigation"
-  import {makeRoomPath} from "@src/app/util/routes"
+  import {makeExactCommunityRoomPath, parseExactCommunityRouteParam} from "@src/app/util/routes"
   import {Check} from "@lucide/svelte"
 
   const {url} = $props()
@@ -354,7 +354,8 @@
         })
       }
 
-      goto(makeRoomPath(url, "Demo Day"))
+      const community = parseExactCommunityRouteParam(url)
+      if (community) goto(makeExactCommunityRoomPath(community, "Demo Day"))
     } finally {
       posting = false
     }

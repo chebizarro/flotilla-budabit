@@ -353,7 +353,7 @@
       pubkey: $pubkey || "",
       mints: trustedMints,
       communities: $activeUserCommunityRefs.map(
-        ref => `${ref.communityPubkey}:${ref.definition.event.id}`,
+        ref => `${ref.community.address}:${ref.definition.event.id}`,
       ),
       profileLists: profileListEvents.map(event => `${event.id}:${event.created_at}`),
       reports: Array.from($communityMemberReportStates.entries()).map(([community, state]) => [

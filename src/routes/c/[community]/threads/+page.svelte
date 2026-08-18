@@ -15,14 +15,13 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
-    activeCommunityRelays,
-    activeCommunitySession,
+    activeExactCommunitySession,
     hasCommunityHydrationCompleted,
-    makeCommunitySession,
     markCommunityHydrationCompleted,
     recoverCommunityBootstrap,
     type CommunityHydrationStatus,
@@ -44,22 +43,29 @@
   import {isCommunityPersonBanned} from "@app/core/community-reports"
   import {makeFeed} from "@app/core/requests"
   import {setChecked} from "@app/util/notifications"
-  import {makeCommunityThreadPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityThreadPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const FEED_EMPTY_SETTLE_TIMEOUT_MS = 10_000
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
   const threadsPath = $derived(
-    communityPubkey ? makeCommunityThreadPath(communityPubkey) : $page.url.pathname,
+    routeCommunity ? makeExactCommunityThreadPath(routeCommunity) : $page.url.pathname,
   )
   const createPath = $derived(
-    communityPubkey ? makeCommunityThreadPath(communityPubkey, "create") : "",
+    routeCommunity ? makeExactCommunityThreadPath(routeCommunity, "create") : "",
   )
   const threadAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.thread,
           reportState: $activeCommunityReportState,
@@ -67,9 +73,9 @@
       : [],
   )
   const replyAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.comment,
           reportState: $activeCommunityReportState,
@@ -77,9 +83,9 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.reaction,
           reportState: $activeCommunityReportState,
@@ -87,9 +93,9 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
@@ -98,17 +104,17 @@
   )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -120,26 +126,26 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const threadSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.thread,
     ),
   )
   const threadFilterPlan = $derived(
-    communityAuthorityReady && communityPubkey
+    communityAuthorityReady && communityId
       ? makeCommunityContentFilterPlan(
-          [makeCommunityThreadsFilter(communityPubkey)],
+          [makeCommunityThreadsFilter(communityId)],
           threadAuthorPubkeys,
         )
       : {relayFilters: [], localFilters: []},
   )
   const replyFilterPlan = $derived(
-    communityAuthorityReady && communityPubkey
+    communityAuthorityReady && communityId
       ? makeCommunityContentFilterPlan(
-          [makeCommunityThreadRepliesFilter(communityPubkey)],
+          [makeCommunityThreadRepliesFilter(communityId)],
           replyAuthorPubkeys,
         )
       : {relayFilters: [], localFilters: []},
@@ -154,12 +160,12 @@
   ] as Filter[])
   const feedKey = $derived.by(() =>
     communityAuthorityReady &&
-    communityPubkey &&
+    communityAddress &&
     feedFilters.length &&
-    $activeCommunityRelays.length
+    $activeExactCommunityRelays.length
       ? [
-          communityPubkey,
-          ...$activeCommunityRelays,
+          communityAddress,
+          ...$activeExactCommunityRelays,
           ...threadAuthorPubkeys,
           ...replyAuthorPubkeys,
         ].join("|")
@@ -186,22 +192,22 @@
       matches: event =>
         Boolean(
           (threadAuthorPubkeys.includes(event.pubkey) &&
-            readCommunityThreads([event], communityPubkey).length) ||
+            readCommunityThreads([event], communityId).length) ||
           (replyAuthorPubkeys.includes(event.pubkey) &&
-            readCommunityThreadReply(event, communityPubkey)),
+            readCommunityThreadReply(event, communityId)),
         ),
     }),
   )
   const threads = $derived.by(() => {
     const repliesByThread = new Map<string, number>()
-    const roots = readCommunityThreads(threadProjection.events, communityPubkey).filter(
+    const roots = readCommunityThreads(threadProjection.events, communityId).filter(
       thread => !isCommunityPersonBanned($activeCommunityReportState, thread.event.pubkey),
     )
 
     for (const event of threadProjection.events) {
       if (isCommunityPersonBanned($activeCommunityReportState, event.pubkey)) continue
 
-      const reply = readCommunityThreadReply(event, communityPubkey)
+      const reply = readCommunityThreadReply(event, communityId)
       if (!reply) continue
 
       repliesByThread.set(
@@ -220,9 +226,9 @@
     Boolean(
       $pubkey &&
       communityAuthorityReady &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.reaction,
@@ -266,11 +272,11 @@
       !key ||
       feedFilters.length === 0 ||
       feedRelayFilters.length === 0 ||
-      $activeCommunityRelays.length === 0
+      $activeExactCommunityRelays.length === 0
     )
       return
 
-    const hydrationKey = `threads:feed:${key}`
+    const hydrationKey = `threads:feed:${communityAddress}:${key}`
 
     loadingEvents = !hasCommunityHydrationCompleted(hydrationKey)
     feedLoadStatus = "loading"
@@ -281,7 +287,7 @@
 
     const feed = makeFeed({
       element,
-      relays: $activeCommunityRelays,
+      relays: $activeExactCommunityRelays,
       feedFilters,
       relayFilters: feedRelayFilters,
       subscriptionFilters: feedFilters,
@@ -320,15 +326,12 @@
 
   const retryFeed = async () => {
     if (communityBootstrapFailed || communityAuthorityUnavailable) {
-      const session =
-        $activeCommunitySession ||
-        (parsedCommunity
-          ? makeCommunitySession(parsedCommunity, $activeCommunityDefinition)
-          : undefined)
-      if (!session || retryingCommunityAccess) return
+      if (!routeCommunity || retryingCommunityAccess) return
 
       retryingCommunityAccess = true
       try {
+        const session = $activeExactCommunitySession
+        if (!session || $activeExactCommunityPointer?.address !== routeCommunity.address) return
         await recoverCommunityBootstrap(session, {recoverAuth: true})
       } catch (error) {
         console.warn("[community-threads] Failed to recover community access", error)
@@ -373,7 +376,7 @@
         <Icon icon={NotesMinimalistic} />
         Create
       </PublishGate>
-      <CommunityMenuButton community={communityPubkey} />
+      <CommunityMenuButton community={routeCommunity?.naddr} />
     </div>
   {/snippet}
 </PageBar>
@@ -382,10 +385,11 @@
   <div class="col-2">
     {#each threads as thread (thread.id)}
       <ThreadItem
-        url={communityPubkey}
-        relays={$activeCommunityRelays}
-        publishRelays={$activeCommunityPublishRelays}
-        scopeH={communityPubkey}
+        community={routeCommunity}
+        url={communityControllerPubkey}
+        relays={$activeExactCommunityRelays}
+        publishRelays={$activeExactCommunityRelays}
+        scopeH={communityId}
         activityLiveCovered
         communitySectionName={threadSectionName}
         allowedAuthors={replyAuthorPubkeys}

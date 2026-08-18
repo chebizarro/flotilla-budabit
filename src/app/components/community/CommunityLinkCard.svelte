@@ -4,65 +4,67 @@
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
-  import {formatShortNpub} from "@app/util/pubkeys"
   import {
-    getCommunityBootstrapRelays,
-    hydratePubkeyProfiles,
+    COMMUNITY_DISCOVERY_RELAYS,
+    hydratePubkeyOutboxRelays,
     loadCommunityEvents,
-    makeCommunityDefinitionFilter,
-    selectLatestCommunityDefinition,
-    setActiveCommunityInput,
+    makeExactCommunityDefinitionFilter,
+    resolveExactCommunityDefinition,
+    selectExactCommunityDefinition,
   } from "@app/core/community-state"
-  import {
-    makeCommunityNcommunity,
-    normalizeRelays,
-    type CommunityDefinition,
-    type ParsedCommunityInput,
-  } from "@app/core/community"
-  import {makeCommunityPath} from "@app/util/routes"
+  import type {CommunityDefinitionV2, CommunityPointer} from "@app/core/community"
+  import {makeExactCommunityPath} from "@app/util/routes"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
-  import {deriveBudabitProfile, deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
 
   type Props = {
-    value: ParsedCommunityInput
+    value: CommunityPointer
     compact?: boolean
+    initialDefinition?: CommunityDefinitionV2
   }
 
-  const {value, compact = false}: Props = $props()
+  const {value, compact = false, initialDefinition}: Props = $props()
 
-  const communityPubkey = $derived(value.pubkey)
-  const relayHints = $derived(normalizeRelays(value.relays || []))
-  const fallbackName = $derived(formatShortNpub(communityPubkey) || "Unknown community")
+  const fallbackName = $derived(`${value.address.slice(0, 18)}...${value.address.slice(-8)}`)
 
-  let definition = $state<CommunityDefinition | undefined>()
+  let definition = $state<CommunityDefinitionV2 | undefined>(initialDefinition)
   let loadingDefinition = $state(false)
 
   $effect(() => {
-    const pubkey = communityPubkey
-    if (!pubkey) {
-      definition = undefined
+    if (initialDefinition) {
+      definition = initialDefinition
       return
     }
 
     const events = deriveEventsAsc(
-      deriveEventsById({repository, filters: [makeCommunityDefinitionFilter(pubkey)]}),
+      deriveEventsById({
+        repository,
+        filters: [
+          makeExactCommunityDefinitionFilter(value),
+          {kinds: [5], authors: [value.controllerPubkey]},
+        ],
+      }),
     )
 
     return events.subscribe(items => {
-      definition = selectLatestCommunityDefinition(items, pubkey)
+      definition = selectExactCommunityDefinition(items, value)
     })
   })
 
   $effect(() => {
-    const pubkey = communityPubkey
-    const relays = getCommunityBootstrapRelays(relayHints)
-    if (!pubkey || relays.length === 0) return
+    if (initialDefinition) return
 
     let cancelled = false
     loadingDefinition = true
 
-    loadCommunityEvents(relays, [makeCommunityDefinitionFilter(pubkey)], {timeout: 3000})
-      .catch(() => [])
+    resolveExactCommunityDefinition(value, {
+      discoveryRelays: COMMUNITY_DISCOVERY_RELAYS,
+      hydrateControllerOutbox: hydratePubkeyOutboxRelays,
+      loadEvents: (relays, filters) => loadCommunityEvents(relays, filters, {timeout: 3000}),
+    })
+      .then(result => {
+        if (!cancelled && result) definition = result
+      })
+      .catch(() => undefined)
       .finally(() => {
         if (!cancelled) loadingDefinition = false
       })
@@ -72,39 +74,15 @@
     }
   })
 
-  const displayRelays = $derived(normalizeRelays([...relayHints, ...(definition?.relays || [])]))
-  const profile = $derived(deriveBudabitProfile(communityPubkey, {communityRelays: displayRelays}))
-  const profileDisplay = $derived(
-    deriveBudabitProfileDisplay(communityPubkey, {communityRelays: displayRelays}),
-  )
-  const name = $derived($profileDisplay || fallbackName)
-  const description = $derived(
-    definition?.description || $profile?.about || displayRelays[0] || "Shared Budabit community",
-  )
-  let profileHydrationKey = ""
+  const name = $derived(definition?.metadata.name || fallbackName)
+  const description = $derived(definition?.metadata.description || "Shared Budabit community")
   let failedPicture = $state("")
 
-  const picture = $derived(String($profile?.picture || "").trim())
+  const picture = $derived(String(definition?.metadata.picture || "").trim())
   const showPicture = $derived(Boolean(picture && failedPicture !== picture))
-  const shareValue = $derived(
-    makeCommunityNcommunity({pubkey: communityPubkey, relayHints: displayRelays}),
-  )
-  const href = $derived(makeCommunityPath(shareValue || communityPubkey))
-  const preserveRelayHints = () => {
-    if (shareValue) setActiveCommunityInput(shareValue)
-  }
-
-  $effect(() => {
-    const key = communityPubkey ? `${communityPubkey}:${displayRelays.join(",")}` : ""
-    if (!key || profileHydrationKey === key) return
-
-    profileHydrationKey = key
-    hydratePubkeyProfiles({pubkeys: [communityPubkey], relayHints: displayRelays}).catch(() => {})
-  })
+  const href = $derived(makeExactCommunityPath(value))
 
   const openCommunity = (event: MouseEvent) => {
-    preserveRelayHints()
-
     if (event.defaultPrevented || event.button !== 0) return
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
 
@@ -159,8 +137,8 @@
           Open
         </a>
         <CommunityShareButton
-          {communityPubkey}
-          relayHints={displayRelays}
+          {value}
+          definitionRelays={definition?.relays || []}
           class="btn btn-square btn-sm" />
       </div>
     </div>

@@ -17,12 +17,13 @@
     refreshWidget,
     publishDelete,
   } from "@app/core/commands"
-  import {activeCommunitySession, activeUserCommunityRefs} from "@app/core/community-state"
+  import {activeUserCommunityRefs} from "@app/core/community-state"
   import {
-    TARGETED_PUBLICATION_KIND,
+    TARGETED_PUBLICATION_KIND_V2,
     normalizePubkey,
     normalizeRelays,
-    parseTargetedPublication,
+    parseCommunityNaddr,
+    parseTargetedPublicationV2,
   } from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
@@ -38,7 +39,6 @@
     getManualCommunityWidgets,
     getTrustedCommunityWidgets,
   } from "@app/extensions/community-widget-trust"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
   import {pushToast} from "@app/util/toast"
   import type {SmartWidgetEvent} from "@app/extensions/types"
   import {installedWidgetUpdatesById} from "@app/extensions/widget-update-notifications"
@@ -94,7 +94,7 @@
   let curatedWidgets = $state<SmartWidgetEvent[]>([])
   let trustedWidgetAuthorPubkeys = $state<string[]>([])
   let communityDiscoveryRequestId = 0
-  let selectedCommunityPubkey = $state("")
+  let selectedCommunityAddress = $state("")
   let communityWidgetLoadKey = ""
   let recommendationContextVersion = $state(0)
   let widgetTargetLoadKey = ""
@@ -118,13 +118,19 @@
     )
   }
 
-  const communityDiscoveryOptions = $derived.by((): WidgetCommunityOption[] =>
-    $activeUserCommunityRefs.map(ref => ({
-      pubkey: ref.communityPubkey,
-      label: getCommunityOptionLabel(ref.communityPubkey),
+  const makeWidgetCommunityOption = (ref: (typeof $activeUserCommunityRefs)[number]) => {
+    return {
+      community: ref.community,
+      label: ref.definition.metadata.name,
       relays: ref.definition.relays,
       relayHints: ref.relayHints,
-    })),
+    }
+  }
+  const communityDiscoveryOptions = $derived.by((): WidgetCommunityOption[] =>
+    $activeUserCommunityRefs.flatMap(ref => {
+      const option = makeWidgetCommunityOption(ref)
+      return option ? [option] : []
+    }),
   )
   const widgetCommunityOptions = $derived.by((): WidgetCommunityOption[] =>
     $activeUserCommunityRefs
@@ -135,17 +141,13 @@
           target: COMMUNITY_WRITE_TARGETS.widget,
         }),
       )
-      .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
-        relays: ref.definition.relays,
-        relayHints: ref.relayHints,
-      })),
+      .flatMap(ref => {
+        const option = makeWidgetCommunityOption(ref)
+        return option ? [option] : []
+      }),
   )
   const selectedCommunityOption = $derived(
-    communityDiscoveryOptions.find(
-      option => normalizePubkey(option.pubkey) === normalizePubkey(selectedCommunityPubkey),
-    ),
+    communityDiscoveryOptions.find(option => option.community.address === selectedCommunityAddress),
   )
   const trustedCuratedWidgets = $derived(
     getTrustedCommunityWidgets(curatedWidgets, trustedWidgetAuthorPubkeys),
@@ -162,9 +164,13 @@
   const trustedWidgetsToInstall = $derived(
     trustedCuratedWidgets.filter(widget => !installedWidgetIds.has(getWidgetLineId(widget))),
   )
-  const requestedCommunityPubkey = $derived(
-    normalizePubkey($page.url.searchParams.get("community") || ""),
-  )
+  const requestedCommunity = $derived.by(() => {
+    try {
+      return parseCommunityNaddr($page.url.searchParams.get("community") || "")
+    } catch {
+      return undefined
+    }
+  })
   const focusTrustedExtensions = $derived($page.url.searchParams.get("focus") === "trusted")
 
   const getUserOutboxRelays = () => {
@@ -214,7 +220,7 @@
     $pubkey && widgetAddresses.length
       ? [
           {
-            kinds: [TARGETED_PUBLICATION_KIND],
+            kinds: [TARGETED_PUBLICATION_KIND_V2],
             authors: [$pubkey],
             "#a": widgetAddresses,
             "#k": [String(SMART_WIDGET_KIND)],
@@ -283,11 +289,7 @@
     trustedWidgetAuthorPubkeys = []
 
     const requestId = ++communityDiscoveryRequestId
-    const communityInput =
-      makeCommunityInputValue({
-        pubkey: option.pubkey,
-        relayHints: getWidgetCommunityOptionRelayHints(option),
-      }) || option.pubkey
+    const communityInput = option.community.naddr
 
     try {
       const result = await loadCommunityCuratedWidgets(communityInput)
@@ -295,7 +297,7 @@
 
       if (result.status === "invalid-input") {
         communityDiscoveryState = "invalid"
-        communityDiscoveryMessage = "Enter a valid community npub, hex pubkey, or ncommunity."
+        communityDiscoveryMessage = "Select a valid community naddr."
         return
       }
 
@@ -324,25 +326,27 @@
     if (!address) return []
 
     return activeWidgetTargetEvents.filter(event => {
-      const targeting = parseTargetedPublication(event)
+      const targeting = parseTargetedPublicationV2(event)
 
       return (
         targeting?.kind === SMART_WIDGET_KIND &&
-        targeting.ref?.type === "a" &&
-        targeting.ref.value === address
+        targeting.source?.type === "a" &&
+        targeting.source.value === address
       )
     })
   }
 
-  const getWidgetTargetedCommunityPubkeys = (widget: SmartWidgetEvent) => {
-    const eligiblePubkeys = new Set(widgetCommunityOptions.map(option => option.pubkey))
+  const getWidgetTargetedCommunityAddresses = (widget: SmartWidgetEvent) => {
+    const eligibleAddresses = new Set(
+      widgetCommunityOptions.map(option => option.community.address),
+    )
 
     return Array.from(
       new Set(
         getWidgetTargetEvents(widget)
-          .flatMap(event => parseTargetedPublication(event)?.communities || [])
-          .map(community => normalizePubkey(community.pubkey))
-          .filter(pubkey => pubkey && eligiblePubkeys.has(pubkey)),
+          .flatMap(event => parseTargetedPublicationV2(event)?.communities || [])
+          .map(community => community.address)
+          .filter(address => eligibleAddresses.has(address)),
       ),
     )
   }
@@ -353,8 +357,7 @@
     return makeCommunityWidgetPreviewContextOptions({
       widgetLineId: getWidgetLineId(widget),
       userPubkey: $pubkey || "",
-      getProfile: context => $profilesByPubkey.get(context.communityPubkey),
-      getLabel: context => getCommunityOptionLabel(context.communityPubkey),
+      getLabel: context => getCommunityOptionLabel(context.community.controllerPubkey),
     })
   }
 
@@ -377,7 +380,7 @@
 
   const onWidgetTargetedCommunitiesChange = async (
     widget: SmartWidgetEvent,
-    communityPubkeys: string[],
+    communityAddresses: string[],
   ) => {
     if (!$pubkey) {
       pushToast({theme: "error", message: "Log in to edit widget community targets."})
@@ -392,9 +395,9 @@
     }
 
     const targetEvents = getWidgetTargetEvents(widget)
-    const previousCommunityPubkeys = targetEvents.flatMap(
+    const previousCommunityAddresses = targetEvents.flatMap(
       event =>
-        parseTargetedPublication(event)?.communities.map(community => community.pubkey) || [],
+        parseTargetedPublicationV2(event)?.communities.map(community => community.address) || [],
     )
     const baseRelays = normalizeRelays([
       ...getWidgetOriginalRelayHints(widget),
@@ -407,7 +410,7 @@
         ...targetEvents.flatMap(getWidgetTargetEventRelayHints),
         ...getWidgetTargetPublishRelays({
           communityOptions: widgetCommunityOptions,
-          communityPubkeys: [...previousCommunityPubkeys, ...communityPubkeys],
+          communityAddresses: [...previousCommunityAddresses, ...communityAddresses],
         }),
       ])
       const deleteThunks = targetEvents.map(event => {
@@ -426,15 +429,15 @@
               },
               baseRelays: publishRelays,
               communityOptions: widgetCommunityOptions,
-              communityPubkeys,
+              communityAddresses,
             })
           : undefined
-      const targetingThunk = communityPubkeys.length
+      const targetingThunk = communityAddresses.length
         ? publishWidgetTargetingEvent({
             widget,
             baseRelays: publishRelays,
             communityOptions: widgetCommunityOptions,
-            communityPubkeys,
+            communityAddresses,
             originalRelay: getWidgetOriginalRelayHints(widget)[0] || publishRelays[0],
           })
         : undefined
@@ -449,36 +452,31 @@
 
   $effect(() => {
     if (
-      requestedCommunityPubkey &&
+      requestedCommunity &&
       communityDiscoveryOptions.some(
-        option => normalizePubkey(option.pubkey) === requestedCommunityPubkey,
+        option => option.community.address === requestedCommunity.address,
       )
     ) {
-      selectedCommunityPubkey = requestedCommunityPubkey
+      selectedCommunityAddress = requestedCommunity.address
       return
     }
 
     if (
-      selectedCommunityPubkey &&
+      selectedCommunityAddress &&
       communityDiscoveryOptions.some(
-        option => normalizePubkey(option.pubkey) === normalizePubkey(selectedCommunityPubkey),
+        option => option.community.address === selectedCommunityAddress,
       )
     ) {
       return
     }
 
-    const activeCommunityPubkey = $activeCommunitySession?.communityPubkey || ""
-    selectedCommunityPubkey = communityDiscoveryOptions.some(
-      option => normalizePubkey(option.pubkey) === normalizePubkey(activeCommunityPubkey),
-    )
-      ? activeCommunityPubkey
-      : ""
+    selectedCommunityAddress = ""
   })
 
   $effect(() => {
     const option = selectedCommunityOption
     const key = option
-      ? `${option.pubkey}:${getWidgetCommunityOptionRelayHints(option).join(",")}`
+      ? `${option.community.address}:${getWidgetCommunityOptionRelayHints(option).join(",")}`
       : ""
 
     if (!key) {
@@ -501,14 +499,14 @@
   $effect(() => {
     if (
       !focusTrustedExtensions ||
-      !requestedCommunityPubkey ||
-      selectedCommunityPubkey !== requestedCommunityPubkey ||
+      !requestedCommunity ||
+      selectedCommunityAddress !== requestedCommunity.address ||
       communityDiscoveryState !== "community"
     ) {
       return
     }
 
-    const key = `${requestedCommunityPubkey}:${trustedCuratedWidgets.map(getWidgetLineId).join(",")}`
+    const key = `${requestedCommunity.address}:${trustedCuratedWidgets.map(getWidgetLineId).join(",")}`
     if (key === focusedTrustedSectionKey) return
     focusedTrustedSectionKey = key
 
@@ -758,10 +756,10 @@
             widgetUpdateRefreshing={Boolean(refreshingWidgetUpdates[item.id])}
             onWidgetUpdate={() => onUpdateWidget(item.id)}
             communityOptions={widgetCommunityOptions}
-            targetedCommunityPubkeys={getWidgetTargetedCommunityPubkeys(item.widget)}
+            targetedCommunityAddresses={getWidgetTargetedCommunityAddresses(item.widget)}
             previewCommunityOptions={getWidgetPreviewCommunityOptions(item.widget)}
-            onTargetedCommunitiesChange={pubkeys =>
-              onWidgetTargetedCommunitiesChange(item.widget, pubkeys)} />
+            onTargetedCommunitiesChange={addresses =>
+              onWidgetTargetedCommunitiesChange(item.widget, addresses)} />
         {/each}
       </div>
     {:else}
@@ -782,11 +780,12 @@
         <span class="label-text">Community</span>
         <select
           class="select select-bordered w-full"
-          bind:value={selectedCommunityPubkey}
+          bind:value={selectedCommunityAddress}
           disabled={communityDiscoveryOptions.length === 0 || communityDiscoveryLoading}>
           <option value="">Select a community</option>
-          {#each communityDiscoveryOptions as option (option.pubkey)}
-            <option value={option.pubkey}>{option.label || option.pubkey}</option>
+          {#each communityDiscoveryOptions as option (option.community.address)}
+            <option value={option.community.address}
+              >{option.label || option.community.address}</option>
           {/each}
         </select>
       </label>

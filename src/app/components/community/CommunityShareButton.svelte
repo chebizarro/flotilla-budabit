@@ -1,23 +1,24 @@
 <script lang="ts">
   import ShareCircle from "@assets/icons/share-circle.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
-  import {makeCommunityNcommunity, normalizeRelays} from "@app/core/community"
+  import {makeCommunityPointer, type CommunityPointer} from "@app/core/community"
   import {clip} from "@app/util/toast"
 
   type Props = {
-    communityPubkey: string
-    relayHints?: string[]
+    value: CommunityPointer
+    definitionRelays?: string[]
     class?: string
   }
 
-  const {
-    communityPubkey,
-    relayHints = [],
-    class: className = "btn btn-square btn-sm",
-  }: Props = $props()
+  const {value, definitionRelays = [], class: className = "btn btn-square btn-sm"}: Props = $props()
 
-  const relays = $derived(normalizeRelays(relayHints))
-  const shareValue = $derived(makeCommunityNcommunity({pubkey: communityPubkey, relayHints: relays}))
+  const shareValue = $derived(
+    makeCommunityPointer({
+      controllerPubkey: value.controllerPubkey,
+      communityId: value.communityId,
+      relayHints: definitionRelays,
+    })?.naddr || value.naddr,
+  )
 
   const shareCommunity = () => {
     if (!shareValue) return

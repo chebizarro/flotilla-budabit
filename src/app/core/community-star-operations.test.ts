@@ -1,18 +1,21 @@
 import {describe, expect, it} from "vitest"
 import {PublishStatus} from "@welshman/net"
 import {DELETE, type TrustedEvent} from "@welshman/util"
+import {getPublicKey} from "nostr-tools/pure"
+import {makeCommunityPointer} from "@app/core/community"
 import type {PublicationSnapshot} from "./publication-operations"
 import {
   getCommunityStarOperationSemanticKey,
   projectCommunityStarOperation,
 } from "./community-star-operations"
-import {makeCommunityStarReaction, parseCommunityStarReaction} from "@app/util/community-stars"
+import {makeCommunityStarReactionV2, parseCommunityStarReaction} from "@app/util/community-stars"
 
-const ownerPubkey = "a".repeat(64)
-const communityPubkey = "b".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const ownerPubkey = key(91)
+const community = makeCommunityPointer({controllerPubkey: key(92), communityId: key(93)})!
 const relay = "wss://relay.example/"
 
-const sign = (event: ReturnType<typeof makeCommunityStarReaction>, id: string): TrustedEvent => ({
+const sign = (event: ReturnType<typeof makeCommunityStarReactionV2>, id: string): TrustedEvent => ({
   ...event,
   id,
   pubkey: ownerPubkey,
@@ -29,7 +32,7 @@ const makeOperation = ({
   operationId: event.id,
   ownerPubkey,
   label: "Community star",
-  semanticKey: getCommunityStarOperationSemanticKey(communityPubkey),
+  semanticKey: getCommunityStarOperationSemanticKey(community),
   event,
   phase,
   preview: "rollback-on-failure",
@@ -42,19 +45,19 @@ const makeOperation = ({
 describe("community star operation projection", () => {
   it("shows a publishing star and rolls it back when unconfirmed", () => {
     const reaction = sign(
-      makeCommunityStarReaction({communityPubkey, relayHints: [relay]}),
+      makeCommunityStarReactionV2({...community, relayHints: [relay]}),
       "1".repeat(64),
     )
 
     const publishing = projectCommunityStarOperation({
       operations: [makeOperation({event: reaction})],
       ownerPubkey,
-      communityPubkey,
+      community,
     })
     const unconfirmed = projectCommunityStarOperation({
       operations: [makeOperation({event: reaction, phase: "unconfirmed"})],
       ownerPubkey,
-      communityPubkey,
+      community,
     })
 
     expect(publishing.star?.reaction).toBe(reaction)
@@ -70,7 +73,7 @@ describe("community star operation projection", () => {
 
   it("hides a canonical star only while its delete is publishing", () => {
     const reaction = sign(
-      makeCommunityStarReaction({communityPubkey, relayHints: [relay]}),
+      makeCommunityStarReactionV2({...community, relayHints: [relay]}),
       "2".repeat(64),
     )
     const star = parseCommunityStarReaction(reaction)
@@ -86,13 +89,13 @@ describe("community star operation projection", () => {
       star,
       operations: [makeOperation({event: deleteEvent})],
       ownerPubkey,
-      communityPubkey,
+      community,
     })
     const unconfirmed = projectCommunityStarOperation({
       star,
       operations: [makeOperation({event: deleteEvent, phase: "unconfirmed"})],
       ownerPubkey,
-      communityPubkey,
+      community,
     })
 
     expect(publishing).toMatchObject({star: undefined, pending: true})
@@ -107,7 +110,7 @@ describe("community star operation projection", () => {
 
   it("ignores other owners and non-community-star semantic keys", () => {
     const reaction = sign(
-      makeCommunityStarReaction({communityPubkey, relayHints: [relay]}),
+      makeCommunityStarReactionV2({...community, relayHints: [relay]}),
       "4".repeat(64),
     )
     const operation = makeOperation({event: reaction})
@@ -116,14 +119,14 @@ describe("community star operation projection", () => {
       projectCommunityStarOperation({
         operations: [{...operation, ownerPubkey: "c".repeat(64)}],
         ownerPubkey,
-        communityPubkey,
+        community,
       }).pending,
     ).toBe(false)
     expect(
       projectCommunityStarOperation({
-        operations: [{...operation, semanticKey: `repo-star:${communityPubkey}`}],
+        operations: [{...operation, semanticKey: `repo-star:${community.address}`}],
         ownerPubkey,
-        communityPubkey,
+        community,
       }).pending,
     ).toBe(false)
   })

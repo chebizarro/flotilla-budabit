@@ -34,12 +34,25 @@ describe("repository settings feedback surface", () => {
     expect(panel).toContain("Try again");
   });
 
+  it("keys the repository community form by its exact address", async () => {
+    const panel = await readPackageSource("src/lib/components/git/EditRepoPanel.svelte");
+
+    expect(panel).toContain("communityAddress: repo.community?.address ||");
+    expect(panel).toContain("bind:value={formData.communityAddress}");
+    expect(panel).toContain("communityAddress: formData.communityAddress || undefined");
+    expect(panel).not.toContain("communityPubkey: string;");
+  });
+
   it("returns relay ACK evidence from both settings entry points", async () => {
     const layout = await readWorkspaceSource("src/routes/git/[id=naddr]/+layout.svelte");
+    const session = await readWorkspaceSource("src/routes/git/[id=naddr]/RepoSession.svelte");
 
-    expect(layout.match(/return publishRepoSettingsEventWithOutcomes\(/g)).toHaveLength(2);
-    expect(layout).toContain("context?.relays?.length");
-    expect(layout).toContain("context?.additionalRelays");
-    expect(layout).toContain("publishLocally: false");
+    expect(layout).toContain("<RepoSession {data} {children} />");
+    expect(session.match(/return publishRepoSettingsEventWithOutcomes\(/g)).toHaveLength(2);
+    expect(session).toContain("context?.relays?.length");
+    expect(session).toContain("context?.additionalRelays");
+    expect(session).toContain("publishLocally: false");
+    expect(session).toContain("const hasRequiredAck = requiredRelays.some");
+    expect(session).toContain("if (hasRequiredAck && result.event");
   });
 });

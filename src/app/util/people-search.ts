@@ -1,10 +1,10 @@
 import * as nip19 from "nostr-tools/nip19"
 import type {TrustedEvent} from "@welshman/util"
 import {
+  type CommunityDefinitionV2,
   getProfileListPubkeys,
   isRenouncedCommunitiesListEvent,
   normalizePubkey,
-  parseCommunityDefinition,
   PROFILE_LIST_KIND,
 } from "@app/core/community"
 import {DIRECT_MUTE_WEIGHT, type TrustAssessment} from "@app/core/trust-assessment"
@@ -136,32 +136,32 @@ export const decodePeopleSearchPubkey = (query: string) => {
 }
 
 export const getCommunityPeoplePubkeys = ({
-  definitionEvents = [],
+  definitions = [],
   profileListEvents = [],
-  excludedCommunityPubkeys = [],
+  excludedCommunityAddresses = [],
 }: {
-  definitionEvents?: TrustedEvent[]
+  definitions?: CommunityDefinitionV2[]
   profileListEvents?: TrustedEvent[]
-  excludedCommunityPubkeys?: string[]
+  excludedCommunityAddresses?: string[]
 }) => {
   const pubkeys = new Set<string>()
-  const excludedCommunities = new Set(
-    excludedCommunityPubkeys.map(pubkey => normalizePubkey(pubkey)).filter(Boolean),
-  )
-  const excludedProfileListAddresses = new Set<string>()
+  const excludedCommunities = new Set(excludedCommunityAddresses)
+  const includedProfileListAddresses = new Set<string>()
+  const referencedProfileListAddresses = new Set<string>()
 
-  for (const event of definitionEvents) {
-    const definition = parseCommunityDefinition(event)
-    if (!definition?.pubkey) continue
+  for (const definition of definitions) {
+    const profileListAddresses = definition.sections.flatMap(section =>
+      section.profileLists.map(ref => ref.address),
+    )
+    for (const address of profileListAddresses) referencedProfileListAddresses.add(address)
 
-    if (excludedCommunities.has(definition.pubkey)) {
-      for (const section of definition.sections) {
-        for (const ref of section.profileLists) excludedProfileListAddresses.add(ref.address)
-      }
-      continue
+    if (excludedCommunities.has(definition.pointer.address)) continue
+
+    const controller = normalizePubkey(definition.controllerPubkey)
+    if (controller) pubkeys.add(controller)
+    for (const address of profileListAddresses) {
+      includedProfileListAddresses.add(address)
     }
-
-    pubkeys.add(definition.pubkey)
   }
 
   for (const event of profileListEvents) {
@@ -170,7 +170,13 @@ export const getCommunityPeoplePubkeys = ({
 
     const identifier = event.tags.find(tag => tag[0] === "d")?.[1] || ""
     const address = identifier ? `${event.kind}:${event.pubkey}:${identifier}` : ""
-    if (address && excludedProfileListAddresses.has(address)) continue
+    if (
+      address &&
+      referencedProfileListAddresses.has(address) &&
+      !includedProfileListAddresses.has(address)
+    ) {
+      continue
+    }
 
     const listOwner = normalizePubkey(event.pubkey)
     if (listOwner) pubkeys.add(listOwner)

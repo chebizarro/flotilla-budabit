@@ -5,7 +5,6 @@
   import EventActivity from "@app/components/EventActivity.svelte"
   import EventActions from "@app/components/EventActions.svelte"
   import {publishReactionDeleteOperation, publishReactionOperation} from "@app/core/commands"
-  import {makeThreadPath} from "@app/util/routes"
 
   interface Props {
     url: any
@@ -15,13 +14,7 @@
     path?: string
   }
 
-  const {
-    url,
-    event,
-    showActivity = false,
-    noun = "Comment",
-    path = makeThreadPath(url, event.id),
-  }: Props = $props()
+  const {url, event, showActivity = false, noun = "Comment", path = ""}: Props = $props()
 
   const deleteReaction = async (reaction: TrustedEvent) =>
     publishReactionDeleteOperation({reaction, relays: [url]})

@@ -94,7 +94,7 @@
 
   const repoBoundRelays = $derived.by(() => (repoRelaysStore ? $repoRelaysStore : []))
   const repoCommunityScope = $derived(
-    repoClass.community?.pubkey ||
+    repoClass.community?.communityId ||
       getTagValue("h", ((repoClass as any)?.repoEvent?.tags || []) as string[][]) ||
       "",
   )

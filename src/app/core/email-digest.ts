@@ -3,12 +3,13 @@ import {parseJson} from "@welshman/lib"
 import {getAddress, type TrustedEvent} from "@welshman/util"
 import {verifyEvent} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   getCommunityEmailDigestServiceDescriptorKey,
   normalizeCommunityEmailDigestService,
   normalizePubkey,
-  parseCommunityDefinition,
-  type CommunityDefinition,
+  parseCommunityDefinitionAddress,
+  parseCommunityDefinitionV2,
+  type CommunityDefinitionV2,
   type CommunityEmailDigestService,
 } from "@app/core/community"
 import type {ActiveUserCommunityRef} from "@app/core/community-membership"
@@ -30,7 +31,7 @@ export const EMAIL_DIGEST_MAX_REPOSITORY_NAME_LENGTH = 200
 export const EMAIL_DIGEST_MAX_LOCALE_LENGTH = 64
 
 export type EmailDigestProvider = CommunityEmailDigestService & {
-  endorsingCommunityPubkeys: string[]
+  endorsingCommunities: CommunityDefinitionV2[]
   isActiveCommunity: boolean
 }
 
@@ -41,13 +42,13 @@ export type EmailDigestProviderIdentity = {
 }
 
 export type EmailDigestSettings = {
-  version: 1
+  version: 2
   enabled: boolean
   email: string
   intervalDays: number
   localTime: string
   timezone: string
-  selectedCommunityPubkey: string
+  selectedCommunityAddress: string
   provider?: CommunityEmailDigestService
 }
 
@@ -227,42 +228,43 @@ export const normalizeEmailDigestTimezone = (
 }
 
 export const defaultEmailDigestSettings: EmailDigestSettings = {
-  version: 1,
+  version: 2,
   enabled: false,
   email: "",
   intervalDays: 7,
   localTime: "09:00",
   timezone: getDefaultEmailDigestTimezone(),
-  selectedCommunityPubkey: "",
+  selectedCommunityAddress: "",
 }
 
 export const normalizeEmailDigestSettings = (value: unknown): EmailDigestSettings => {
   const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {}
-  if (source.version !== 1) return {...defaultEmailDigestSettings}
+  if (source.version !== 2) return {...defaultEmailDigestSettings}
   const email = normalizeEmailDigestEmail(source.email)
-  const selectedCommunityPubkey = normalizePubkey(String(source.selectedCommunityPubkey || ""))
+  const selectedCommunityAddress =
+    parseCommunityDefinitionAddress(String(source.selectedCommunityAddress || ""))?.address || ""
   const provider = normalizeEmailDigestProvider(
     (source.provider || {}) as CommunityEmailDigestService,
   )
-  const enabled = source.enabled === true && Boolean(email && selectedCommunityPubkey && provider)
+  const enabled = source.enabled === true && Boolean(email && selectedCommunityAddress && provider)
 
   return {
-    version: 1,
+    version: 2,
     enabled,
     email,
     intervalDays: normalizeEmailDigestIntervalDays(source.intervalDays),
     localTime: normalizeEmailDigestLocalTime(source.localTime),
     timezone: normalizeEmailDigestTimezone(source.timezone),
-    selectedCommunityPubkey,
+    selectedCommunityAddress,
     ...(provider ? {provider} : {}),
   }
 }
 
-const isVerifiedCommunityDefinition = (definition?: CommunityDefinition) => {
+const isVerifiedCommunityDefinition = (definition?: CommunityDefinitionV2) => {
   if (!definition) return false
   const event = definition?.event
-  if (!event?.sig || event.kind !== COMMUNITY_DEFINITION_KIND) return false
-  if (normalizePubkey(event.pubkey) !== normalizePubkey(definition.pubkey)) return false
+  if (!event?.sig || event.kind !== COMMUNITY_DEFINITION_KIND_V2) return false
+  if (normalizePubkey(event.pubkey) !== definition.controllerPubkey) return false
   return verifyEventSignature(event)
 }
 
@@ -270,11 +272,11 @@ export const discoverEmailDigestProviders = ({
   activeCommunityDefinition,
   communityRefs,
 }: {
-  activeCommunityDefinition?: CommunityDefinition
+  activeCommunityDefinition?: CommunityDefinitionV2
   communityRefs: ActiveUserCommunityRef[]
 }): EmailDigestProvider[] => {
-  const activeCommunityPubkey = normalizePubkey(activeCommunityDefinition?.pubkey || "")
-  const latestByCommunity = new Map<string, CommunityDefinition>()
+  const activeCommunityAddress = activeCommunityDefinition?.pointer.address || ""
+  const latestByCommunity = new Map<string, CommunityDefinitionV2>()
 
   for (const candidate of [
     ...(activeCommunityDefinition ? [activeCommunityDefinition] : []),
@@ -282,47 +284,56 @@ export const discoverEmailDigestProviders = ({
   ]) {
     if (!isVerifiedCommunityDefinition(candidate)) continue
 
-    const definition = parseCommunityDefinition(candidate.event)
+    const definition = parseCommunityDefinitionV2(candidate.event)
     if (!definition) continue
 
-    const current = latestByCommunity.get(definition.pubkey)
+    const current = latestByCommunity.get(definition.pointer.address)
     if (
       !current ||
       definition.event.created_at > current.event.created_at ||
       (definition.event.created_at === current.event.created_at &&
         definition.event.id < current.event.id)
     ) {
-      latestByCommunity.set(definition.pubkey, definition)
+      latestByCommunity.set(definition.pointer.address, definition)
     }
   }
 
   const byDescriptor = new Map<string, EmailDigestProvider>()
   const definitions = Array.from(latestByCommunity.values()).sort((a, b) => {
     const activeOrder =
-      Number(b.pubkey === activeCommunityPubkey) - Number(a.pubkey === activeCommunityPubkey)
-    return activeOrder || a.pubkey.localeCompare(b.pubkey)
+      Number(b.pointer.address === activeCommunityAddress) -
+      Number(a.pointer.address === activeCommunityAddress)
+    return activeOrder || a.pointer.address.localeCompare(b.pointer.address)
   })
 
   for (const definition of definitions) {
-    for (const rawService of definition.emailDigestServices) {
-      const service = normalizeEmailDigestProvider(rawService)
+    for (const rawService of definition.services) {
+      if (rawService.name !== EMAIL_DIGEST_CHANNEL) continue
+      const service = normalizeEmailDigestProvider({
+        ...rawService,
+        servicePubkey: rawService.pubkey,
+      })
       if (!service) continue
       const key = getCommunityEmailDigestServiceDescriptorKey(service)
       if (!key) continue
 
       const existing = byDescriptor.get(key)
       if (existing) {
-        if (!existing.endorsingCommunityPubkeys.includes(definition.pubkey)) {
-          existing.endorsingCommunityPubkeys.push(definition.pubkey)
+        if (
+          !existing.endorsingCommunities.some(
+            candidate => candidate.pointer.address === definition.pointer.address,
+          )
+        ) {
+          existing.endorsingCommunities.push(definition)
         }
-        existing.isActiveCommunity ||= definition.pubkey === activeCommunityPubkey
+        existing.isActiveCommunity ||= definition.pointer.address === activeCommunityAddress
         continue
       }
 
       byDescriptor.set(key, {
         ...service,
-        endorsingCommunityPubkeys: [definition.pubkey],
-        isActiveCommunity: definition.pubkey === activeCommunityPubkey,
+        endorsingCommunities: [definition],
+        isActiveCommunity: definition.pointer.address === activeCommunityAddress,
       })
     }
   }
@@ -898,21 +909,32 @@ export const runEmailDigestSaveSequence = async <T>({
 
 export const isEmailDigestProviderAdvertised = (
   provider: CommunityEmailDigestService | undefined,
-  advertisedProviders: CommunityEmailDigestService[],
+  advertisedProviders: EmailDigestProvider[],
+  communityAddress: string,
 ) => {
   const key = provider ? getCommunityEmailDigestServiceDescriptorKey(provider) : ""
+  const address = parseCommunityDefinitionAddress(communityAddress)?.address || ""
   return Boolean(
     key &&
+    address &&
     advertisedProviders.some(
-      candidate => getCommunityEmailDigestServiceDescriptorKey(candidate) === key,
+      candidate =>
+        getCommunityEmailDigestServiceDescriptorKey(candidate) === key &&
+        candidate.endorsingCommunities.some(definition => definition.pointer.address === address),
     ),
   )
 }
 
 export const shouldAutoSyncEmailDigest = (
   settings: EmailDigestSettings,
-  advertisedProviders: CommunityEmailDigestService[],
-) => settings.enabled && isEmailDigestProviderAdvertised(settings.provider, advertisedProviders)
+  advertisedProviders: EmailDigestProvider[],
+) =>
+  settings.enabled &&
+  isEmailDigestProviderAdvertised(
+    settings.provider,
+    advertisedProviders,
+    settings.selectedCommunityAddress,
+  )
 
 export const runBestEffortEmailDigestSync = async ({
   shouldSync,

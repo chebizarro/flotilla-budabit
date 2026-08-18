@@ -40,18 +40,19 @@
   import ProfileBadges from "@app/components/ProfileBadges.svelte"
   import RepoCollectButton from "@app/components/RepoCollectButton.svelte"
   import {
-    activeCommunitySession,
+    activeExactCommunityPointer,
     activeUserCommunityRefs,
     COMMUNITY_DISCOVERY_RELAYS,
   } from "@app/core/community-state"
-  import {COMMUNITY_DEFINITION_KIND, PROFILE_LIST_KIND} from "@app/core/community"
-  import {selectUserCommunityRefs, type ActiveUserCommunityRef} from "@app/core/community-membership"
-  import {makeCommunityDefinitionProfileListRefFilters} from "@app/util/community-preferences"
-  import {getRepoAnnouncementRelays, getRepoMaintainers} from "@app/core/git-state"
   import {
-    buildBookmarkRepoFilters,
-    matchBookmarkedRepoEvents,
-  } from "@app/util/bookmarks"
+    COMMUNITY_DEFINITION_KIND_V2,
+    PROFILE_LIST_KIND,
+    parseCommunityDefinitionV2,
+    selectCurrentCommunityDefinitionsV2,
+    type CommunityDefinitionV2,
+  } from "@app/core/community"
+  import {getRepoAnnouncementRelays, getRepoMaintainers} from "@app/core/git-state"
+  import {buildBookmarkRepoFilters, matchBookmarkedRepoEvents} from "@app/util/bookmarks"
   import {loadBudabitProfile} from "@app/core/profile-resolver"
   import {formatShortNpub, normalizePubkey} from "@app/util/pubkeys"
   import {makeRepoHrefFromEvent} from "@app/util/repo-links"
@@ -62,7 +63,7 @@
     repoStarToBookmarkAddress,
     selectActiveRepoStars,
   } from "@app/util/repo-stars"
-  import {makeChatPath, makeCommunityPath} from "@app/util/routes"
+  import {makeChatPath, makeExactCommunityPath} from "@app/util/routes"
   import {pushModal} from "@app/util/modal"
   import {clip} from "@app/util/toast"
 
@@ -78,6 +79,12 @@
   }
 
   type RepoProfileTab = "owned" | "starred"
+
+  type ProfileCommunityRef = {
+    address: string
+    definition: CommunityDefinitionV2
+    roles: Array<"admin" | "moderator" | "member">
+  }
 
   const PROFILE_EVENT_LIMIT = 200
   const COMMUNITY_PREVIEW_LIMIT = 10
@@ -189,6 +196,30 @@
     return histories
   }
 
+  const getEventAddress = (event: TrustedEvent) => {
+    const identifier = getTagValue("d", event.tags || [])
+    return identifier ? `${event.kind}:${event.pubkey}:${identifier}` : ""
+  }
+
+  const getLatestEventsByAddress = (events: TrustedEvent[]) => {
+    const result = new Map<string, TrustedEvent>()
+
+    for (const event of events) {
+      const address = getEventAddress(event)
+      if (!address) continue
+      const current = result.get(address)
+      if (
+        !current ||
+        event.created_at > current.created_at ||
+        (event.created_at === current.created_at && event.id < current.id)
+      ) {
+        result.set(address, event)
+      }
+    }
+
+    return result
+  }
+
   const formatCount = (count: number, singular: string, plural = `${singular}s`) =>
     `${count} ${count === 1 ? singular : plural}`
 
@@ -202,8 +233,8 @@
   const isSelf = $derived(Boolean(targetPubkey && $sessionPubkey === targetPubkey))
   const chatPath = $derived(targetPubkey ? makeChatPath(targetPubkey) : "")
   const targetNpub = $derived(targetPubkey ? nip19.npubEncode(targetPubkey) : "")
-  const activeCommunityPubkey = $derived($activeCommunitySession?.communityPubkey || "")
-  const profilePageWidthClass = $derived(activeCommunityPubkey ? "" : "cw-full")
+  const activeCommunityPointer = $derived($activeExactCommunityPointer)
+  const profilePageWidthClass = $derived(activeCommunityPointer ? "" : "cw-full")
 
   let previousProfilePubkey = $state("")
   let communitiesExpanded = $state(false)
@@ -230,35 +261,94 @@
   )
   const targetCommunityDefinitionFilters = $derived<Filter[]>([
     ...(targetPubkey
-      ? [{kinds: [COMMUNITY_DEFINITION_KIND], authors: [targetPubkey], limit: PROFILE_EVENT_LIMIT}]
+      ? [
+          {
+            kinds: [COMMUNITY_DEFINITION_KIND_V2],
+            authors: [targetPubkey],
+            limit: PROFILE_EVENT_LIMIT,
+          },
+        ]
       : []),
-    ...makeCommunityDefinitionProfileListRefFilters($targetCommunityProfileListEvents),
+    ...Array.from(
+      new Set(
+        $targetCommunityProfileListEvents
+          .map(event => getEventAddress(event as TrustedEvent))
+          .filter(Boolean),
+      ),
+      address => ({
+        kinds: [COMMUNITY_DEFINITION_KIND_V2],
+        "#a": [address],
+        limit: PROFILE_EVENT_LIMIT,
+      }),
+    ),
   ])
   const targetCommunityDefinitionEvents = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: targetCommunityDefinitionFilters})),
   )
-  const targetCommunityRefs = $derived.by(() =>
-    selectUserCommunityRefs({
-      author: targetPubkey,
-      definitionEvents: $targetCommunityDefinitionEvents,
-      profileListEvents: $targetCommunityProfileListEvents,
-    }),
-  )
+  const targetCommunityRefs = $derived.by(() => {
+    const profileLists = getLatestEventsByAddress(
+      $targetCommunityProfileListEvents as TrustedEvent[],
+    )
+
+    return Array.from(
+      selectCurrentCommunityDefinitionsV2(
+        $targetCommunityDefinitionEvents as TrustedEvent[],
+      ).entries(),
+    )
+      .flatMap(([address, definition]): ProfileCommunityRef[] => {
+        const roles = new Set<ProfileCommunityRef["roles"][number]>()
+        if (definition.controllerPubkey === targetPubkey) roles.add("admin")
+
+        for (const section of definition.sections) {
+          for (const listRef of section.profileLists) {
+            const list = profileLists.get(listRef.address)
+            if (!list) continue
+            if (list.pubkey === targetPubkey) roles.add("moderator")
+            if (list.tags.some(tag => tag[0] === "p" && tag[1] === targetPubkey)) {
+              roles.add("member")
+            }
+          }
+        }
+
+        return roles.size > 0
+          ? [
+              {
+                address,
+                definition,
+                roles: ["admin", "moderator", "member"].filter(role =>
+                  roles.has(role as ProfileCommunityRef["roles"][number]),
+                ) as ProfileCommunityRef["roles"],
+              },
+            ]
+          : []
+      })
+      .sort(
+        (a, b) =>
+          a.definition.metadata.name.localeCompare(b.definition.metadata.name) ||
+          a.address.localeCompare(b.address),
+      )
+  })
   const visibleCommunityRefs = $derived(
-    communitiesExpanded ? targetCommunityRefs : targetCommunityRefs.slice(0, COMMUNITY_PREVIEW_LIMIT),
+    communitiesExpanded
+      ? targetCommunityRefs
+      : targetCommunityRefs.slice(0, COMMUNITY_PREVIEW_LIMIT),
   )
-  const viewerCommunityPubkeys = $derived(
-    new Set($activeUserCommunityRefs.map(ref => ref.communityPubkey)),
+  const viewerCommunityAddresses = $derived(
+    new Set(
+      $activeUserCommunityRefs.flatMap(ref => {
+        const definition = parseCommunityDefinitionV2(ref.definition.event)
+        return definition ? [definition.pointer.address] : []
+      }),
+    ),
   )
-  const getCommunityDescription = (ref: ActiveUserCommunityRef) => {
-    const description = ref.definition.description?.trim() || ""
+  const getCommunityDescription = (ref: ProfileCommunityRef) => {
+    const description = ref.definition.metadata.description?.trim() || ""
 
     return description.length > COMMUNITY_DESCRIPTION_LIMIT
       ? `${description.slice(0, COMMUNITY_DESCRIPTION_LIMIT).trimEnd()}...`
       : description
   }
-  const isSharedCommunity = (communityPubkey: string) =>
-    !isSelf && viewerCommunityPubkeys.has(communityPubkey)
+  const isSharedCommunity = (address: string) => !isSelf && viewerCommunityAddresses.has(address)
   const repoAnnouncementFilters = $derived<Filter[]>([
     ...(targetPubkey
       ? [{kinds: [GIT_REPO_ANNOUNCEMENT], authors: [targetPubkey], limit: PROFILE_EVENT_LIMIT}]
@@ -295,14 +385,12 @@
   const targetRepoStarReactionEvents = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: targetRepoStarReactionFilters})),
   )
-  const targetRepoStarDeleteFilters = $derived.by(() =>
-    [
-      makeRepoStarDeleteFilter(
-        targetPubkey,
-        $targetRepoStarReactionEvents as TrustedEvent[],
-      ),
-      makeRecentRepoStarDeleteFilter(targetPubkey),
-    ].filter(Boolean) as Filter[],
+  const targetRepoStarDeleteFilters = $derived.by(
+    () =>
+      [
+        makeRepoStarDeleteFilter(targetPubkey, $targetRepoStarReactionEvents as TrustedEvent[]),
+        makeRecentRepoStarDeleteFilter(targetPubkey),
+      ].filter(Boolean) as Filter[],
   )
   const targetRepoStarDeleteEvents = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: targetRepoStarDeleteFilters})),
@@ -361,10 +449,10 @@
     normalizedRepoSearchQuery
       ? "No repositories match this search."
       : activeRepoTab === "owned"
-      ? "No owned repos loaded for this profile yet."
-      : targetRepoStars.length > 0
-        ? "Starred repos are still loading for this profile."
-        : "No starred repos loaded for this profile yet.",
+        ? "No owned repos loaded for this profile yet."
+        : targetRepoStars.length > 0
+          ? "Starred repos are still loading for this profile."
+          : "No starred repos loaded for this profile yet.",
   )
   const getRepoMaintainerPreview = (event: RepoAnnouncementEvent) =>
     getRepoMaintainers(event).slice(0, MAINTAINER_PREVIEW_LIMIT)
@@ -517,9 +605,9 @@
   })
 </script>
 
-{#if activeCommunityPubkey}
+{#if activeCommunityPointer}
   <SecondaryNav>
-    <CommunityMenu community={activeCommunityPubkey} />
+    <CommunityMenu community={activeCommunityPointer} />
   </SecondaryNav>
 {/if}
 
@@ -567,9 +655,7 @@
                 </h1>
                 {#if isSelf}
                   <span class="badge badge-primary badge-sm sm:badge-md">You</span>
-                  <Button
-                    class="btn btn-neutral btn-xs min-h-0 px-2 sm:btn-sm"
-                    onclick={startEdit}>
+                  <Button class="btn btn-neutral btn-xs min-h-0 px-2 sm:btn-sm" onclick={startEdit}>
                     <Icon icon={PenNewSquare} size={4} />
                     Edit profile
                   </Button>
@@ -630,7 +716,11 @@
           </h2>
           <div class="flex shrink-0 items-center gap-2">
             <span class="badge badge-neutral badge-sm sm:badge-md"
-              >{formatCount(targetCommunityRefs.length, "community", "communities")}</span>
+              >{formatCount(
+                targetCommunityRefs.length,
+                "loaded community",
+                "loaded communities",
+              )}</span>
             <div class="transition-transform group-open:rotate-180">
               <Icon icon={AltArrowDown} />
             </div>
@@ -638,23 +728,41 @@
         </summary>
 
         <div class="mt-3 border-t border-base-300/60 pt-3 sm:mt-4 sm:pt-4">
+          <p class="mb-3 text-xs opacity-60 sm:text-sm">
+            Community discovery is bounded and may be incomplete.
+          </p>
           {#if targetCommunityRefs.length > 0}
             <div class="grid gap-2 sm:gap-3 md:grid-cols-2">
-              {#each visibleCommunityRefs as ref (ref.communityPubkey)}
+              {#each visibleCommunityRefs as ref (ref.address)}
                 <Link
-                  href={makeCommunityPath(ref.communityPubkey)}
+                  href={makeExactCommunityPath(ref.definition.pointer)}
                   class="rounded-box bg-base-200/60 p-3 hover:bg-base-200 sm:p-4">
                   <div class="flex min-w-0 items-start gap-2 sm:gap-3">
-                    <ProfileCircle pubkey={ref.communityPubkey} relays={ref.relayHints} size={7} />
+                    {#if ref.definition.metadata.picture}
+                      <img
+                        src={ref.definition.metadata.picture}
+                        alt=""
+                        class="h-10 w-10 shrink-0 rounded-box object-cover sm:h-12 sm:w-12" />
+                    {:else}
+                      <div
+                        class="center h-10 w-10 shrink-0 rounded-box bg-base-100 sm:h-12 sm:w-12">
+                        <Icon icon={UsersGroup} size={5} />
+                      </div>
+                    {/if}
                     <div class="min-w-0 flex-1">
                       <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
                         <div class="truncate text-sm font-medium sm:text-base">
-                          <ProfileName pubkey={ref.communityPubkey} url={ref.relayHints[0]} />
+                          {ref.definition.metadata.name}
                         </div>
-                        {#if isSharedCommunity(ref.communityPubkey)}
+                        {#if isSharedCommunity(ref.address)}
                           <span class="badge badge-info badge-sm">Shared</span>
                         {/if}
                       </div>
+                      {#if ref.definition.metadata.location}
+                        <p class="mt-0.5 truncate text-xs opacity-50">
+                          {ref.definition.metadata.location}
+                        </p>
+                      {/if}
                       {#if getCommunityDescription(ref)}
                         <p class="mt-1 break-words text-xs leading-5 opacity-60">
                           {getCommunityDescription(ref)}
@@ -726,7 +834,8 @@
             </Button>
           </div>
 
-          <label class="input input-bordered mt-3 flex min-h-0 items-center gap-2 rounded-box bg-base-200/60 text-sm">
+          <label
+            class="input input-bordered mt-3 flex min-h-0 items-center gap-2 rounded-box bg-base-200/60 text-sm">
             <Icon icon={Magnifier} size={4} class="shrink-0 opacity-60" />
             <input
               type="search"
@@ -750,7 +859,10 @@
                         class="shrink-0 rounded-full"
                         aria-label="Open repository owner profile"
                         onclick={() => openRepoOwnerProfile(repo)}>
-                        <ProfileCircle pubkey={repo.pubkey} relays={getRepoOwnerRelays(repo)} size={10} />
+                        <ProfileCircle
+                          pubkey={repo.pubkey}
+                          relays={getRepoOwnerRelays(repo)}
+                          size={10} />
                       </button>
                     {:else}
                       <div class="center h-9 w-9 shrink-0 rounded-full bg-base-100 sm:h-10 sm:w-10">
@@ -800,13 +912,17 @@
                       </div>
                     </button>
                     {#if maintainerPopoverAddress === repoAddress}
-                      <InlinePopover align="right" widthClass="w-72" onClose={closeMaintainerPopover}>
+                      <InlinePopover
+                        align="right"
+                        widthClass="w-72"
+                        onClose={closeMaintainerPopover}>
                         <div class="mb-2 text-xs font-semibold uppercase tracking-wide opacity-60">
                           Maintainers
                         </div>
                         <div class="flex flex-col gap-1.5">
                           {#each maintainers as maintainer (maintainer)}
-                            <div class="flex min-w-0 items-center gap-2 rounded-box p-1.5 hover:bg-base-200/70">
+                            <div
+                              class="flex min-w-0 items-center gap-2 rounded-box p-1.5 hover:bg-base-200/70">
                               <ProfileCircle pubkey={maintainer} size={6} />
                               <ProfileLink
                                 pubkey={maintainer}
@@ -838,7 +954,6 @@
           </div>
         </div>
       </details>
-
     </div>
   {:else}
     <div class="card2 bg-alt mx-auto mt-3 max-w-xl !p-3 shadow-md sm:mt-4 sm:!p-6">

@@ -2,11 +2,15 @@ import {describe, expect, it} from "vitest"
 import {EVENT_TIME, MESSAGE, THREAD, ZAP_GOAL} from "@welshman/util"
 import {DM_KIND} from "@app/core/state"
 import {COMMUNITY_REPORT_KIND} from "@app/core/community-reports"
+import {COMMUNITY_DEFINITION_KIND_V2} from "@app/core/community-v2"
 import {
+  isPersistedCommunityDefinitionEvent,
   isPersistedCommunityReportDeleteEvent,
   isPersistedGitDeleteEvent,
   isPersistedMobileContentEvent,
 } from "./storage-events"
+
+const communityId = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
 
 const makeEvent = (kind: number) =>
   ({
@@ -121,6 +125,40 @@ describe("storage community report delete persistence", () => {
         ],
       } as any),
     ).toBe(false)
+  })
+})
+
+describe("storage community definition persistence", () => {
+  it("persists kind 32222 definitions at their exact d coordinate", () => {
+    const event = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    event.tags = [["d", communityId]]
+
+    expect(isPersistedCommunityDefinitionEvent(event)).toBe(true)
+  })
+
+  it("does not persist legacy kind 10222 community definitions", () => {
+    const event = makeEvent(10222)
+    event.tags = [["d", communityId]]
+
+    expect(isPersistedCommunityDefinitionEvent(event)).toBe(false)
+  })
+
+  it("does not persist kind 32222 events without one exact community-id d tag", () => {
+    const missing = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    const duplicate = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    duplicate.tags = [
+      ["d", communityId],
+      ["d", communityId],
+    ]
+    const extended = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    extended.tags = [["d", communityId, "extra"]]
+    const invalid = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    invalid.tags = [["d", "not-a-community-id"]]
+
+    expect(isPersistedCommunityDefinitionEvent(missing)).toBe(false)
+    expect(isPersistedCommunityDefinitionEvent(duplicate)).toBe(false)
+    expect(isPersistedCommunityDefinitionEvent(extended)).toBe(false)
+    expect(isPersistedCommunityDefinitionEvent(invalid)).toBe(false)
   })
 })
 

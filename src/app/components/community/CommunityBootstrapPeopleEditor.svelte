@@ -21,11 +21,10 @@
   import {
     getProfileListPubkeys,
     normalizePubkey,
-    type CommunityDefinition,
-    type CommunityProfileListRef,
+    type CommunityDefinitionV2,
+    type CommunityProfileListRefV2,
   } from "@app/core/community"
   import {
-    findCommunityProfileListEvent,
     type CommunityBootstrapGrantDraft,
     type CommunityBootstrapGrantRole,
   } from "@app/core/community-admin"
@@ -37,11 +36,11 @@
   type SectionOption = {
     name: string
     displayName: string
-    profileLists: CommunityProfileListRef[]
+    profileLists: CommunityProfileListRefV2[]
   }
 
   type Props = {
-    definition: CommunityDefinition
+    definition: CommunityDefinitionV2
     sections: SectionOption[]
     profileListEvents?: TrustedEvent[]
     relays?: string[]
@@ -213,7 +212,11 @@
     if (!query) return []
 
     return $peopleDiscoverySearch.searchValues(query, {
-      context: {scope: "community", communityPubkey: definition.pubkey},
+      context: {
+        scope: "community",
+        communityPubkey: definition.controllerPubkey,
+        communityAddress: definition.pointer.address,
+      },
       resultLimit: 8,
     })
   }
@@ -229,7 +232,11 @@
 
     for (const section of sections) {
       for (const profileList of section.profileLists) {
-        const event = findCommunityProfileListEvent(profileList, profileListEvents)
+        const event = profileListEvents.find(
+          event =>
+            `${event.kind}:${event.pubkey}:${event.tags.find(tag => tag[0] === "d")?.[1] || ""}` ===
+            profileList.address,
+        )
         if (getProfileListPubkeys(event).includes(normalized)) names.add(section.name)
       }
     }
@@ -243,7 +250,11 @@
     if (!normalized) return names
 
     for (const section of sections) {
-      if (section.profileLists.some(ref => normalizePubkey(ref.pubkey) === normalized)) {
+      if (
+        section.profileLists.some(
+          ref => normalizePubkey(ref.address.split(":")[1] || "") === normalized,
+        )
+      ) {
         names.add(section.name)
       }
     }

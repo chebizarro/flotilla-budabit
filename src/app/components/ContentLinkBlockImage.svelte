@@ -6,7 +6,7 @@
   import LinkRound from "@assets/icons/link-round.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import {
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityBlossomServers,
     getCommunityBlossomServers,
   } from "@app/core/community-state"
@@ -34,7 +34,7 @@
   const nonce = getTagValue("decryption-nonce", meta)
   const algorithm = getTagValue("encryption-algorithm", meta)
   const mimeType = getTagValue("m", meta)
-  const communityPubkey = getTagValue("h", event.tags)
+  const communityId = getTagValue("h", event.tags)
 
   const getOriginalServer = () => {
     try {
@@ -59,11 +59,13 @@
   const getFallbackTargets = async () => {
     if (!hash) return []
 
-    const definition = $activeCommunityDefinition
+    const definition = $activeExactCommunityDefinition
     const communityServers =
-      definition?.pubkey && definition.pubkey === communityPubkey
+      definition?.communityId === communityId
         ? getCommunityBlossomServers(definition)
-        : $activeCommunityBlossomServers
+        : communityId
+          ? []
+          : $activeCommunityBlossomServers
 
     return getBlossomFallbackTargets({
       hash,

@@ -18,7 +18,6 @@
   } from "@lucide/svelte"
   import {fade, fly, slide} from "@lib/transition"
   import Spinner from "@lib/components/Spinner.svelte"
-  import AppLink from "@lib/components/Link.svelte"
   import {formatDistanceToNow} from "date-fns"
   import {getTagValue} from "@welshman/util"
   import Button from "@lib/components/Button.svelte"
@@ -48,12 +47,13 @@
   } from "@nostr-git/core/events"
   import {isGraspRelayUrl, isGraspRepoHttpUrl} from "@nostr-git/core/utils"
   import {page} from "$app/stores"
-  import {profilesByPubkey, pubkey} from "@welshman/app"
+  import {pubkey} from "@welshman/app"
+  import {makeExactCommunityPath} from "@app/util/routes"
+  import AppLink from "@lib/components/Link.svelte"
   import {nip19} from "nostr-tools"
   import {clip, pushToast} from "@app/util/toast"
   import {getDisplayedRepoWebUrls} from "@app/util/repo-web-urls"
-  import {makeCommunityPath} from "@app/util/routes"
-  import {normalizeRelays} from "@app/core/community"
+  import {normalizeRelays, parseCommunityDefinitionAddress} from "@app/core/community"
   import {makeEventShareEntityForEvent} from "@app/util/event-share"
 
   import {getContext, onDestroy} from "svelte"
@@ -349,11 +349,14 @@
   })
 
   const repoCommunityLabel = $derived.by(() => {
-    const community = repoMetadata.community
-    if (!community) return ""
-    const profile = $profilesByPubkey.get(community.pubkey)
-    return profile?.display_name || profile?.name || `${community.pubkey.slice(0, 8)}...`
+    if (!repoCommunityPointer) return ""
+    return `${repoCommunityPointer.communityId.slice(0, 8)}...`
   })
+  const repoCommunityPointer = $derived.by(() =>
+    repoMetadata.community
+      ? parseCommunityDefinitionAddress(repoMetadata.community.address)
+      : undefined,
+  )
   const repoCommunityProfileRelays = $derived.by(() => {
     const relays = repoProfileRelays?.() || []
     if (relays.length > 0) return relays
@@ -932,11 +935,11 @@
                   </div>
                 {/if}
 
-                {#if repoMetadata.community}
+                {#if repoMetadata.community && repoCommunityPointer}
                   <div class="flex items-center gap-2 py-1">
                     <span class="flex-shrink-0 text-muted-foreground">Community</span>
                     <AppLink
-                      href={makeCommunityPath(repoMetadata.community.pubkey)}
+                      href={makeExactCommunityPath(repoCommunityPointer)}
                       class="min-w-0 flex-1 truncate rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/15">
                       {repoCommunityLabel}
                     </AppLink>

@@ -1,0 +1,247 @@
+import {describe, expect, it, vi} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
+import type {Filter, TrustedEvent} from "@welshman/util"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+} from "./community"
+import {
+  getExactCommunityBranchKey,
+  getExactCommunitySessionPointer,
+  makeExactCommunityDefinitionFilter,
+  makeExactCommunitySession,
+  parseExactCommunitySession,
+  readExactCommunitySession,
+  resolveExactCommunityDefinition,
+  selectBoundedCommunityDefinitionDiscovery,
+  selectExactCommunityDefinition,
+  writeExactCommunitySession,
+} from "./community-state"
+import {selectCurrentCommunityDefinitionsV2} from "./community"
+
+const secret = (value: number) => new Uint8Array(32).fill(value)
+const controller = getPublicKey(secret(11))
+const otherController = getPublicKey(secret(12))
+const communityId = getPublicKey(secret(13))
+const siblingId = getPublicKey(secret(14))
+const listController = getPublicKey(secret(15))
+const pointer = makeCommunityPointer({
+  controllerPubkey: controller,
+  communityId,
+  relayHints: ["wss://hint.example"],
+})!
+
+const makeDefinition = ({
+  id,
+  createdAt,
+  definitionController = controller,
+  definitionCommunityId = communityId,
+  name = "Builders",
+}: {
+  id: string
+  createdAt: number
+  definitionController?: string
+  definitionCommunityId?: string
+  name?: string
+}): TrustedEvent => ({
+  id,
+  pubkey: definitionController,
+  created_at: createdAt,
+  kind: COMMUNITY_DEFINITION_KIND_V2,
+  content: "",
+  sig: "f".repeat(128),
+  tags: buildCommunityDefinitionV2({
+    communityId: definitionCommunityId,
+    name,
+    relays: ["wss://relay.example"],
+    sections: [
+      {
+        name: "General",
+        kinds: [{kind: 1111}],
+        profileLists: [{address: `30000:${listController}:writers`}],
+      },
+    ],
+  }).tags,
+})
+
+describe("exact community state", () => {
+  it("builds an exact definition filter without relay-selected replacement limits", () => {
+    expect(makeExactCommunityDefinitionFilter(pointer)).toEqual({
+      kinds: [COMMUNITY_DEFINITION_KIND_V2],
+      authors: [controller],
+      "#d": [communityId],
+    })
+  })
+
+  it("keeps same-controller siblings and same-ID branches separate", () => {
+    const expected = makeDefinition({id: "2".repeat(64), createdAt: 2})
+    const sibling = makeDefinition({
+      id: "1".repeat(64),
+      createdAt: 3,
+      definitionCommunityId: siblingId,
+    })
+    const sameIdBranch = makeDefinition({
+      id: "0".repeat(64),
+      createdAt: 4,
+      definitionController: otherController,
+    })
+
+    expect(
+      selectExactCommunityDefinition([sibling, sameIdBranch, expected], pointer)?.event.id,
+    ).toBe(expected.id)
+  })
+
+  it("groups current definitions by exact coordinate", () => {
+    const first = makeDefinition({id: "1".repeat(64), createdAt: 2})
+    const sibling = makeDefinition({
+      id: "2".repeat(64),
+      createdAt: 3,
+      definitionCommunityId: siblingId,
+    })
+    const sameIdBranch = makeDefinition({
+      id: first.id,
+      createdAt: 4,
+      definitionController: otherController,
+    })
+
+    expect(Array.from(selectCurrentCommunityDefinitionsV2([first, sibling, sameIdBranch]))).toEqual(
+      [
+        [pointer.address, expect.objectContaining({event: first})],
+        [
+          `${COMMUNITY_DEFINITION_KIND_V2}:${controller}:${siblingId}`,
+          expect.objectContaining({event: sibling}),
+        ],
+        [
+          `${COMMUNITY_DEFINITION_KIND_V2}:${otherController}:${communityId}`,
+          expect.objectContaining({event: sameIdBranch}),
+        ],
+      ],
+    )
+  })
+
+  it("does not claim a saturated bounded definition discovery is complete", () => {
+    const definitions = [
+      makeDefinition({id: "1".repeat(64), createdAt: 2}),
+      makeDefinition({id: "2".repeat(64), createdAt: 2, definitionCommunityId: siblingId}),
+    ]
+
+    expect(selectBoundedCommunityDefinitionDiscovery(definitions, true, 2)).toMatchObject({
+      complete: false,
+      saturated: true,
+    })
+    expect(selectBoundedCommunityDefinitionDiscovery(definitions, true, 3)).toMatchObject({
+      complete: true,
+      saturated: false,
+    })
+    expect(selectBoundedCommunityDefinitionDiscovery(definitions, false, 3)).toMatchObject({
+      complete: false,
+      saturated: false,
+    })
+  })
+
+  it("selects equal-time candidates deterministically across relay order", () => {
+    const high = makeDefinition({id: "f".repeat(64), createdAt: 5, name: "High"})
+    const low = makeDefinition({id: "1".repeat(64), createdAt: 5, name: "Low"})
+
+    expect(selectExactCommunityDefinition([high, low], pointer)?.event.id).toBe(low.id)
+    expect(selectExactCommunityDefinition([low, high], pointer)?.event.id).toBe(low.id)
+  })
+
+  it("round-trips only versioned exact sessions and rejects old stored state", () => {
+    const session = makeExactCommunitySession(pointer, "definition-id")
+
+    expect(parseExactCommunitySession(JSON.stringify(session))).toEqual(session)
+    expect(getExactCommunitySessionPointer(session)).toMatchObject({address: pointer.address})
+    expect(
+      parseExactCommunitySession(
+        JSON.stringify({communityPubkey: communityId, communityRelayHints: pointer.relayHints}),
+      ),
+    ).toBeUndefined()
+    expect(parseExactCommunitySession("not-json")).toBeUndefined()
+  })
+
+  it("persists exact sessions and clears rejected stored shapes", () => {
+    let stored: string | null = null
+    const storage = {
+      getItem: vi.fn(() => stored),
+      setItem: vi.fn((_key: string, value: string) => {
+        stored = value
+      }),
+      removeItem: vi.fn(() => {
+        stored = null
+      }),
+    }
+    const session = makeExactCommunitySession(pointer, "definition-id")
+
+    writeExactCommunitySession(storage, session)
+    expect(readExactCommunitySession(storage)).toEqual(session)
+
+    stored = JSON.stringify({communityPubkey: communityId})
+    expect(readExactCommunitySession(storage)).toBeUndefined()
+    expect(storage.removeItem).toHaveBeenCalled()
+
+    writeExactCommunitySession(storage, undefined)
+    expect(stored).toBeNull()
+  })
+
+  it("uses exact branch identity without relay hints in state keys", () => {
+    const otherHints = makeCommunityPointer({
+      controllerPubkey: controller,
+      communityId,
+      relayHints: ["wss://elsewhere.example"],
+    })!
+
+    expect(getExactCommunityBranchKey(pointer, listController)).toBe(
+      getExactCommunityBranchKey(otherHints, listController),
+    )
+    expect(getExactCommunityBranchKey(pointer, listController)).toBe(
+      `${listController}:${pointer.address}`,
+    )
+  })
+
+  it("resolves from all relays and hydrates only the controller outbox", async () => {
+    const high = makeDefinition({id: "f".repeat(64), createdAt: 5, name: "High"})
+    const low = makeDefinition({id: "1".repeat(64), createdAt: 5, name: "Low"})
+    const hydrateControllerOutbox = vi.fn(async () => ["wss://outbox.example"])
+    const loadEvents = vi.fn(async (relays: string[], _filters: Filter[]) =>
+      relays.includes("wss://outbox.example") ? [low] : [high],
+    )
+
+    const definition = await resolveExactCommunityDefinition(pointer, {
+      discoveryRelays: ["wss://discovery.example"],
+      hydrateControllerOutbox,
+      loadEvents,
+    })
+
+    expect(hydrateControllerOutbox).toHaveBeenCalledWith(controller, pointer.relayHints)
+    expect(hydrateControllerOutbox).not.toHaveBeenCalledWith(communityId, expect.anything())
+    expect(loadEvents).toHaveBeenCalledTimes(2)
+    expect(loadEvents.mock.calls[0][1]).toEqual([
+      makeExactCommunityDefinitionFilter(pointer),
+      {kinds: [5], authors: [controller]},
+    ])
+    expect(definition?.event.id).toBe(low.id)
+  })
+
+  it("applies exact-event deletions acquired during definition resolution", async () => {
+    const deleted = makeDefinition({id: "1".repeat(64), createdAt: 5})
+    const older = makeDefinition({id: "2".repeat(64), createdAt: 4})
+    const deletion: TrustedEvent = {
+      id: "3".repeat(64),
+      pubkey: controller,
+      created_at: 6,
+      kind: 5,
+      content: "",
+      sig: "f".repeat(128),
+      tags: [["e", deleted.id]],
+    }
+
+    const definition = await resolveExactCommunityDefinition(pointer, {
+      hydrateControllerOutbox: async () => [],
+      loadEvents: async () => [deleted, older, deletion],
+    })
+
+    expect(definition?.event.id).toBe(older.id)
+  })
+})

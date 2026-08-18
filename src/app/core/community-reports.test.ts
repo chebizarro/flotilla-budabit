@@ -1,11 +1,14 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools"
 import {BADGE_DEFINITION, DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2 as COMMUNITY_DEFINITION_KIND,
   COMMUNITY_SECTION_THREADS,
   COMMUNITY_SUBTYPE_THREADS,
   PROFILE_LIST_KIND,
-  parseCommunityDefinition,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
 } from "./community"
 import {
   COMMUNITY_REPORT_KIND,
@@ -17,25 +20,82 @@ import {
   getAllSectionModeratorPubkeys,
   getCommunityCensorReason,
   getCommunityContentReportGroups,
-  getCommunityContentReports,
+  getCommunityContentReports as getCommunityContentReportsV2,
   getCommunityReportEventAddress,
   getEffectiveCommunityModerationActionsByReporter,
-  getEffectiveCommunityReportState,
+  getEffectiveCommunityReportState as getEffectiveCommunityReportStateV2,
+  isCommunityReportDeleted,
   isCommunityPersonBanned,
-  makeCommunityEventReport,
-  makeCommunityPersonReport,
-  makeCommunityReportDelete,
-  makeCommunityReportReviewLabel,
-  parseCommunityReport,
-  parseCommunityReportReviewLabel,
+  makeCommunityEventReport as makeCommunityEventReportV2,
+  makeCommunityPersonReport as makeCommunityPersonReportV2,
+  makeCommunityReportDelete as makeCommunityReportDeleteV2,
+  makeCommunityReportReviewLabel as makeCommunityReportReviewLabelV2,
+  parseCommunityReport as parseCommunityReportV2,
+  parseCommunityReportReviewLabel as parseCommunityReportReviewLabelV2,
 } from "./community-reports"
 
-const communityPubkey = "a".repeat(64)
-const sectionModeratorPubkey = "b".repeat(64)
-const allSectionModeratorPubkey = "c".repeat(64)
-const targetPubkey = "d".repeat(64)
-const outsiderPubkey = "e".repeat(64)
-const otherSectionModeratorPubkey = "f".repeat(64)
+const communityPubkey = getPublicKey(new Uint8Array(32).fill(1))
+const communityId = getPublicKey(new Uint8Array(32).fill(7))
+const communityPointer = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId,
+})!
+const siblingCommunityPointer = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: getPublicKey(new Uint8Array(32).fill(8)),
+})!
+const wrongBranchPointer = makeCommunityPointer({
+  controllerPubkey: getPublicKey(new Uint8Array(32).fill(9)),
+  communityId,
+})!
+const sectionModeratorPubkey = getPublicKey(new Uint8Array(32).fill(2))
+const allSectionModeratorPubkey = getPublicKey(new Uint8Array(32).fill(3))
+const targetPubkey = getPublicKey(new Uint8Array(32).fill(4))
+const outsiderPubkey = getPublicKey(new Uint8Array(32).fill(5))
+const otherSectionModeratorPubkey = getPublicKey(new Uint8Array(32).fill(6))
+
+// Keep the existing authorization matrix concise while exercising only V2 report wire shapes.
+const makeCommunityEventReport = (
+  params: Omit<Parameters<typeof makeCommunityEventReportV2>[0], "community"> & {
+    communityPubkey: string
+  },
+) => makeCommunityEventReportV2({...params, community: communityPointer})
+const makeCommunityPersonReport = (
+  params: Omit<Parameters<typeof makeCommunityPersonReportV2>[0], "community"> & {
+    communityPubkey: string
+  },
+) => makeCommunityPersonReportV2({...params, community: communityPointer})
+const makeCommunityReportReviewLabel = (
+  params: Omit<Parameters<typeof makeCommunityReportReviewLabelV2>[0], "community"> & {
+    communityPubkey: string
+  },
+) => makeCommunityReportReviewLabelV2({...params, community: communityPointer})
+const makeCommunityReportDelete = (
+  params: Omit<
+    Parameters<typeof makeCommunityReportDeleteV2>[0],
+    "community" | "reporterPubkey"
+  > & {
+    reporterPubkey?: string
+  },
+) =>
+  makeCommunityReportDeleteV2({
+    ...params,
+    community: communityPointer,
+    reporterPubkey: params.reporterPubkey || sectionModeratorPubkey,
+  })
+const parseCommunityReport = (
+  event: TrustedEvent,
+  _communityPubkey?: string,
+  targets: TrustedEvent[] = [],
+) => parseCommunityReportV2(event, communityPointer, targets)
+const parseCommunityReportReviewLabel = (event: TrustedEvent, _communityPubkey?: string) =>
+  parseCommunityReportReviewLabelV2(event, communityPointer)
+const getEffectiveCommunityReportState = (
+  params: Omit<Parameters<typeof getEffectiveCommunityReportStateV2>[0], "community">,
+) => getEffectiveCommunityReportStateV2({...params, community: communityPointer})
+const getCommunityContentReports = (
+  params: Omit<Parameters<typeof getCommunityContentReportsV2>[0], "community">,
+) => getCommunityContentReportsV2({...params, community: communityPointer})
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -50,33 +110,53 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const makeDefinition = ({includeSectionModerator = true} = {}) =>
-  parseCommunityDefinition(
+  parseCommunityDefinitionV2(
     makeEvent({
       kind: COMMUNITY_DEFINITION_KIND,
       pubkey: communityPubkey,
-      tags: [
-        ["content", "General"],
-        ["k", "9", "room-message"],
-        ["k", "1111"],
-        ["k", "1984"],
-        ...(includeSectionModerator
-          ? [
-              ["a", `${PROFILE_LIST_KIND}:${sectionModeratorPubkey}:General`],
-              ["badge", `${BADGE_DEFINITION}:${sectionModeratorPubkey}:General`],
-            ]
-          : []),
-        ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:General`],
-        ["badge", `${BADGE_DEFINITION}:${allSectionModeratorPubkey}:General`],
-        ["content", COMMUNITY_SECTION_THREADS],
-        ["k", "11", COMMUNITY_SUBTYPE_THREADS],
-        ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`],
-        ["badge", `${BADGE_DEFINITION}:${allSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`],
-        ["a", `${PROFILE_LIST_KIND}:${otherSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`],
-        [
-          "badge",
-          `${BADGE_DEFINITION}:${otherSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`,
+      tags: buildCommunityDefinitionV2({
+        communityId,
+        name: "Test community",
+        relays: ["wss://relay.example"],
+        sections: [
+          {
+            name: "General",
+            kinds: [{kind: 9, subtype: "room-message"}, {kind: 1111}, {kind: 1984}],
+            profileLists: [
+              ...(includeSectionModerator
+                ? [{address: `${PROFILE_LIST_KIND}:${sectionModeratorPubkey}:General`}]
+                : []),
+              {address: `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:General`},
+            ],
+            badges: [
+              ...(includeSectionModerator
+                ? [{address: `${BADGE_DEFINITION}:${sectionModeratorPubkey}:General`}]
+                : []),
+              {address: `${BADGE_DEFINITION}:${allSectionModeratorPubkey}:General`},
+            ],
+          },
+          {
+            name: COMMUNITY_SECTION_THREADS,
+            kinds: [{kind: 11, subtype: COMMUNITY_SUBTYPE_THREADS}],
+            profileLists: [
+              {
+                address: `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`,
+              },
+              {
+                address: `${PROFILE_LIST_KIND}:${otherSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`,
+              },
+            ],
+            badges: [
+              {
+                address: `${BADGE_DEFINITION}:${allSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`,
+              },
+              {
+                address: `${BADGE_DEFINITION}:${otherSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`,
+              },
+            ],
+          },
         ],
-      ],
+      }).tags,
     }),
   )!
 
@@ -86,6 +166,7 @@ const generalProfileList = makeEvent({
   pubkey: sectionModeratorPubkey,
   tags: [
     ["d", "General"],
+    ["a", `${PROFILE_LIST_KIND}:${sectionModeratorPubkey}:General`],
     ["p", outsiderPubkey],
   ],
 })
@@ -95,19 +176,28 @@ const moderatorProfileListEvents = [
     id: "all-section-general-profile-list",
     kind: PROFILE_LIST_KIND,
     pubkey: allSectionModeratorPubkey,
-    tags: [["d", "General"]],
+    tags: [
+      ["d", "General"],
+      ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:General`],
+    ],
   }),
   makeEvent({
     id: "all-section-threads-profile-list",
     kind: PROFILE_LIST_KIND,
     pubkey: allSectionModeratorPubkey,
-    tags: [["d", COMMUNITY_SECTION_THREADS]],
+    tags: [
+      ["d", COMMUNITY_SECTION_THREADS],
+      ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`],
+    ],
   }),
   makeEvent({
     id: "other-section-threads-profile-list",
     kind: PROFILE_LIST_KIND,
     pubkey: otherSectionModeratorPubkey,
-    tags: [["d", COMMUNITY_SECTION_THREADS]],
+    tags: [
+      ["d", COMMUNITY_SECTION_THREADS],
+      ["a", `${PROFILE_LIST_KIND}:${otherSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`],
+    ],
   }),
 ]
 
@@ -138,6 +228,9 @@ describe("community reports", () => {
 
     expect(parseCommunityReport(eventReport, communityPubkey)).toMatchObject({
       target: "event",
+      community: {address: communityPointer.address},
+      communityId,
+      controllerPubkey: communityPubkey,
       sectionName: "General",
       targetEventId: "reported-event",
       targetAddress,
@@ -152,13 +245,15 @@ describe("community reports", () => {
     expect(eventReport.tags).toContainEqual(["target-kind", "31922"])
     expect(eventReport.tags).toContainEqual(["target-title", "Reported title"])
     expect(eventReport.tags).toContainEqual(["target-content", "Reported content"])
-    expect(eventReport.tags).toContainEqual(["h", communityPubkey])
+    expect(eventReport.tags).toContainEqual(["h", communityId])
+    expect(eventReport.tags).toContainEqual(["a", communityPointer.address, "", "community"])
     expect(parseCommunityReport(personReport, communityPubkey)).toMatchObject({
       target: "person",
       targetPubkey,
     })
     expect(personReport.tags).toEqual([
-      ["h", communityPubkey],
+      ["h", communityId],
+      ["a", communityPointer.address, "", "community"],
       ["p", targetPubkey, "spam"],
     ])
   })
@@ -177,13 +272,13 @@ describe("community reports", () => {
     expect(getCommunityReportEventAddress(makeEvent({kind: 1, pubkey: targetPubkey}))).toBe("")
   })
 
-  it("rejects reports that use an a tag instead of h for community scope", () => {
+  it("requires one coherent exact community authority pair", () => {
     const report = makeEvent({
       id: "community-a-reason-report",
       kind: COMMUNITY_REPORT_KIND,
       pubkey: sectionModeratorPubkey,
       tags: [
-        ["a", `${COMMUNITY_DEFINITION_KIND}:${communityPubkey}:`, "spam"],
+        ["a", communityPointer.address, "", "community"],
         ["p", targetPubkey],
         ["content", "General"],
       ],
@@ -195,14 +290,33 @@ describe("community reports", () => {
         makeEvent({
           ...report,
           tags: [
-            ["h", communityPubkey],
-            ["h", communityPubkey],
+            ["h", communityId],
+            ["a", communityPointer.address, "", "community"],
+            ["h", communityId],
             ["p", targetPubkey, "spam"],
           ],
         }),
         communityPubkey,
       ),
     ).toBeUndefined()
+
+    const valid = makeEvent({
+      kind: COMMUNITY_REPORT_KIND,
+      pubkey: sectionModeratorPubkey,
+      tags: makeCommunityPersonReportV2({community: communityPointer, pubkey: targetPubkey}).tags,
+    })
+    const mismatched = makeEvent({
+      ...valid,
+      tags: valid.tags.map(tag =>
+        tag[0] === "a" && tag[3] === "community"
+          ? ["a", siblingCommunityPointer.address, "", "community"]
+          : tag,
+      ),
+    })
+
+    expect(parseCommunityReportV2(mismatched, communityPointer)).toBeUndefined()
+    expect(parseCommunityReportV2(valid, siblingCommunityPointer)).toBeUndefined()
+    expect(parseCommunityReportV2(valid, wrongBranchPointer)).toBeUndefined()
   })
 
   it("applies addressable event reports across replacements", () => {
@@ -271,7 +385,8 @@ describe("community reports", () => {
       tags: [
         ["e", "reported-event", "wss://relay.example.com/", "impersonation"],
         ["p", targetPubkey],
-        ["h", communityPubkey],
+        ["h", communityId],
+        ["a", communityPointer.address, "", "community"],
         ["content", "General"],
       ],
     })
@@ -281,7 +396,8 @@ describe("community reports", () => {
       pubkey: allSectionModeratorPubkey,
       tags: [
         ["p", targetPubkey, "illegal"],
-        ["h", communityPubkey],
+        ["h", communityId],
+        ["a", communityPointer.address, "", "community"],
       ],
     })
 
@@ -310,7 +426,8 @@ describe("community reports", () => {
       pubkey: sectionModeratorPubkey,
       tags: [
         ["e", targetEvent.id, "wss://relay.example.com/", "malware"],
-        ["h", communityPubkey],
+        ["h", communityId],
+        ["a", communityPointer.address, "", "community"],
         ["content", "General"],
       ],
     })
@@ -508,7 +625,20 @@ describe("community reports", () => {
       id: "delete-person-report",
       kind: DELETE,
       pubkey: allSectionModeratorPubkey,
-      tags: makeCommunityReportDelete({reportId: personReport.id}).tags,
+      tags: makeCommunityReportDelete({
+        reportId: personReport.id,
+        reporterPubkey: allSectionModeratorPubkey,
+      }).tags,
+    })
+    const wrongBranchDelete = makeEvent({
+      id: "wrong-branch-delete",
+      kind: DELETE,
+      pubkey: allSectionModeratorPubkey,
+      tags: makeCommunityReportDeleteV2({
+        community: wrongBranchPointer,
+        reportId: personReport.id,
+        reporterPubkey: allSectionModeratorPubkey,
+      }).tags,
     })
     const activeState = getEffectiveCommunityReportState({
       definition,
@@ -523,10 +653,50 @@ describe("community reports", () => {
     })
 
     expect(isCommunityPersonBanned(activeState, targetPubkey)).toBe(true)
+    expect(isCommunityReportDeleted(personReport, [wrongBranchDelete])).toBe(false)
     expect(isCommunityPersonBanned(revokedState, targetPubkey)).toBe(false)
     expect(
       getCommunityCensorReason({reportState: revokedState, pubkey: targetPubkey}),
     ).toBeUndefined()
+  })
+
+  it("does not derive report authority from a tombstoned profile list", () => {
+    const definition = makeDefinition()
+    const personReport = makeEvent({
+      id: "authority-report",
+      kind: COMMUNITY_REPORT_KIND,
+      pubkey: allSectionModeratorPubkey,
+      tags: makeCommunityPersonReport({communityPubkey, pubkey: targetPubkey}).tags,
+    })
+    const generalAddress = `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:General`
+    const deletion = makeEvent({
+      id: "delete-general-authority",
+      kind: DELETE,
+      pubkey: allSectionModeratorPubkey,
+      created_at: 1,
+      tags: [["a", generalAddress]],
+    })
+    const recreated = {
+      ...moderatorProfileListEvents[1],
+      id: "recreated-general-authority",
+      created_at: 2,
+    }
+    const derive = (profileListEvents: TrustedEvent[]) =>
+      getEffectiveCommunityReportState({
+        definition,
+        profileListEvents,
+        reportEvents: [personReport],
+      })
+
+    expect(
+      isCommunityPersonBanned(derive([...moderatorProfileListEvents, deletion]), targetPubkey),
+    ).toBe(false)
+    expect(
+      isCommunityPersonBanned(
+        derive([...moderatorProfileListEvents, deletion, recreated]),
+        targetPubkey,
+      ),
+    ).toBe(true)
   })
 
   it("protects current moderators from moderator reports but not admin reports", () => {
@@ -854,9 +1024,20 @@ describe("community reports", () => {
 
     expect(parseCommunityReportReviewLabel(authorizedReview, communityPubkey)).toMatchObject({
       reportId: userReport.id,
+      reportAuthorPubkey: outsiderPubkey,
       reviewerPubkey: sectionModeratorPubkey,
       sectionName: "General",
     })
+    expect(authorizedReview.tags).toContainEqual(["e", userReport.id, "", outsiderPubkey, "report"])
+    expect(
+      parseCommunityReportReviewLabelV2(
+        makeEvent({
+          ...authorizedReview,
+          tags: [["e", "reason-target", "spam"], ...authorizedReview.tags],
+        }),
+        communityPointer,
+      )?.reportId,
+    ).toBe(userReport.id)
     expect(
       canReviewCommunityContentReport({
         definition,

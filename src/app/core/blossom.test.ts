@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {beforeEach, describe, expect, it, vi} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {get} from "svelte/store"
 import {
   blossomDashboardState,
@@ -33,7 +34,12 @@ import {
   type BlossomServerCapability,
   type BlossomServerTarget,
 } from "./blossom"
-import {COMMUNITY_DEFINITION_KIND, PROFILE_LIST_KIND, parseCommunityDefinition} from "./community"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  PROFILE_LIST_KIND,
+  buildCommunityDefinitionV2,
+  parseCommunityDefinitionV2,
+} from "./community"
 import type {EffectiveCommunityReportState} from "./community-reports"
 import type {TrustedEvent} from "@welshman/util"
 
@@ -52,6 +58,43 @@ const makeUpload = (id: string, updatedAt = 100): BlossomUploadRecord => ({
   mirrorMode: "ask",
   mirrorJobs: [],
 })
+
+const makeKey = (seed: number) => getPublicKey(new Uint8Array(32).fill(seed))
+
+const makeBlossomDefinition = ({
+  id,
+  pubkey,
+  blossomServer,
+  profileListAddress,
+}: {
+  id: string
+  pubkey: string
+  blossomServer: string
+  profileListAddress?: string
+}) =>
+  parseCommunityDefinitionV2(
+    makeEvent({
+      id,
+      pubkey,
+      created_at: 2,
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      tags: buildCommunityDefinitionV2({
+        communityId: makeKey(id.charCodeAt(0)),
+        name: id,
+        relays: ["wss://relay.example"],
+        blossomServers: [blossomServer],
+        sections: [
+          {
+            name: "General",
+            kinds: [{kind: 9, subtype: "room-message"}],
+            profileLists: [
+              {address: profileListAddress || `${PROFILE_LIST_KIND}:${pubkey}:General`},
+            ],
+          },
+        ],
+      }).tags,
+    }),
+  )!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -170,6 +213,25 @@ describe("blossom dashboard state", () => {
     expect(Object.keys(normalized.capabilities)).toEqual(["https://blossom.example"])
   })
 
+  it("preserves the exact community address on normalized uploads", () => {
+    const communityAddress = `32222:${"c".repeat(64)}:${"1".repeat(64)}`
+    const normalized = normalizeBlossomDashboardState({
+      uploads: [
+        {
+          ...makeUpload("community-upload"),
+          context: {type: "community", communityAddress},
+        },
+      ],
+    })
+
+    expect(normalized.uploads[0].context).toEqual({
+      type: "community",
+      communityAddress,
+      communityName: undefined,
+      label: undefined,
+    })
+  })
+
   it("remembers uploads by id and keeps newest records first", () => {
     rememberBlossomUpload(makeUpload("older", 100))
     rememberBlossomUpload(makeUpload("newer", 200))
@@ -233,6 +295,41 @@ describe("blossom dashboard state", () => {
 })
 
 describe("blossom server sources", () => {
+  it("preserves exact sibling community addresses in server targets", () => {
+    const controller = "c".repeat(64)
+    const firstAddress = `32222:${controller}:${"1".repeat(64)}`
+    const secondAddress = `32222:${controller}:${"2".repeat(64)}`
+    const groups = buildBlossomServerGroups({
+      memberCommunities: [
+        {
+          communityAddress: firstAddress,
+          communityPubkey: controller,
+          communityName: "First project",
+          relayHints: [],
+          blossomServers: ["https://first.example"],
+          writableSections: ["General"],
+        },
+        {
+          communityAddress: secondAddress,
+          communityPubkey: controller,
+          communityName: "Second project",
+          relayHints: [],
+          blossomServers: ["https://second.example"],
+          writableSections: ["General"],
+        },
+      ],
+    })
+
+    expect(groups.memberCommunities.map(target => target.communityAddress)).toEqual([
+      firstAddress,
+      secondAddress,
+    ])
+    expect(groups.memberCommunities.map(target => target.label)).toEqual([
+      "First project",
+      "Second project",
+    ])
+  })
+
   it("builds grouped targets in priority order and deduplicates servers", () => {
     const groups = buildBlossomServerGroups({
       currentCommunity: {
@@ -243,6 +340,7 @@ describe("blossom server sources", () => {
       personalServers: ["https://personal.example", "https://shared.example/"],
       memberCommunities: [
         {
+          communityAddress: `32222:${"d".repeat(64)}:${"1".repeat(64)}`,
           communityPubkey: "d".repeat(64),
           relayHints: [],
           blossomServers: ["https://member.example", "notaurl"],
@@ -276,6 +374,7 @@ describe("blossom server sources", () => {
       personalServers: ["https://personal.example"],
       memberCommunities: [
         {
+          communityAddress: `32222:${"d".repeat(64)}:${"1".repeat(64)}`,
           communityPubkey: "d".repeat(64),
           communityName: "Member community",
           relayHints: [],
@@ -303,37 +402,21 @@ describe("blossom server sources", () => {
   })
 
   it("selects communities where the user can publish to at least one section", () => {
-    const userPubkey = "b".repeat(64)
-    const memberListOwner = "c".repeat(64)
-    const outsiderPubkey = "d".repeat(64)
-    const memberDefinition = parseCommunityDefinition(
-      makeEvent({
-        id: "member-definition",
-        pubkey: "e".repeat(64),
-        created_at: 2,
-        kind: COMMUNITY_DEFINITION_KIND,
-        tags: [
-          ["blossom", "https://member-blossom.example/"],
-          ["content", "General"],
-          ["k", "9", "room-message"],
-          ["a", `${PROFILE_LIST_KIND}:${memberListOwner}:General`],
-        ],
-      }),
-    )!
-    const emptyDefinition = parseCommunityDefinition(
-      makeEvent({
-        id: "empty-definition",
-        pubkey: "f".repeat(64),
-        created_at: 2,
-        kind: COMMUNITY_DEFINITION_KIND,
-        tags: [
-          ["blossom", "https://empty-blossom.example/"],
-          ["content", "General"],
-          ["k", "9", "room-message"],
-          ["a", `${PROFILE_LIST_KIND}:${memberListOwner}:Other`],
-        ],
-      }),
-    )!
+    const userPubkey = makeKey(31)
+    const memberListOwner = makeKey(32)
+    const outsiderPubkey = makeKey(33)
+    const memberDefinition = makeBlossomDefinition({
+      id: "member-definition",
+      pubkey: makeKey(34),
+      blossomServer: "https://member-blossom.example",
+      profileListAddress: `${PROFILE_LIST_KIND}:${memberListOwner}:General`,
+    })
+    const emptyDefinition = makeBlossomDefinition({
+      id: "empty-definition",
+      pubkey: makeKey(35),
+      blossomServer: "https://empty-blossom.example",
+      profileListAddress: `${PROFILE_LIST_KIND}:${memberListOwner}:Other`,
+    })
     const profileList = makeEvent({
       id: "member-list",
       pubkey: memberListOwner,
@@ -353,7 +436,8 @@ describe("blossom server sources", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey: memberDefinition.pubkey,
+        communityPubkey: memberDefinition.controllerPubkey,
+        communityAddress: memberDefinition.pointer.address,
         blossomServers: ["https://member-blossom.example"],
         writableSections: ["General"],
       }),
@@ -361,35 +445,19 @@ describe("blossom server sources", () => {
   })
 
   it("selects admin and moderator communities without p-tag membership", () => {
-    const userPubkey = "b".repeat(64)
-    const moderatorCommunityPubkey = "e".repeat(64)
-    const adminDefinition = parseCommunityDefinition(
-      makeEvent({
-        id: "admin-definition",
-        pubkey: userPubkey,
-        created_at: 2,
-        kind: COMMUNITY_DEFINITION_KIND,
-        tags: [
-          ["blossom", "https://admin-blossom.example/"],
-          ["content", "General"],
-          ["k", "1111"],
-        ],
-      }),
-    )!
-    const moderatorDefinition = parseCommunityDefinition(
-      makeEvent({
-        id: "moderator-definition",
-        pubkey: moderatorCommunityPubkey,
-        created_at: 2,
-        kind: COMMUNITY_DEFINITION_KIND,
-        tags: [
-          ["blossom", "https://moderator-blossom.example/"],
-          ["content", "General"],
-          ["k", "1111"],
-          ["a", `${PROFILE_LIST_KIND}:${userPubkey}:General`],
-        ],
-      }),
-    )!
+    const userPubkey = makeKey(36)
+    const moderatorCommunityPubkey = makeKey(37)
+    const adminDefinition = makeBlossomDefinition({
+      id: "admin-definition",
+      pubkey: userPubkey,
+      blossomServer: "https://admin-blossom.example",
+    })
+    const moderatorDefinition = makeBlossomDefinition({
+      id: "moderator-definition",
+      pubkey: moderatorCommunityPubkey,
+      blossomServer: "https://moderator-blossom.example",
+      profileListAddress: `${PROFILE_LIST_KIND}:${userPubkey}:General`,
+    })
     const moderatorProfileList = makeEvent({
       id: "moderator-list",
       pubkey: userPubkey,
@@ -405,12 +473,12 @@ describe("blossom server sources", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey: adminDefinition.pubkey,
+        communityPubkey: adminDefinition.controllerPubkey,
         blossomServers: ["https://admin-blossom.example"],
         writableSections: ["General"],
       }),
       expect.objectContaining({
-        communityPubkey: moderatorDefinition.pubkey,
+        communityPubkey: moderatorDefinition.controllerPubkey,
         blossomServers: ["https://moderator-blossom.example"],
         writableSections: ["General"],
       }),
@@ -418,36 +486,20 @@ describe("blossom server sources", () => {
   })
 
   it("excludes person-banned non-admin members while keeping the community admin", () => {
-    const userPubkey = "b".repeat(64)
-    const memberListOwner = "c".repeat(64)
-    const memberCommunityPubkey = "e".repeat(64)
-    const adminDefinition = parseCommunityDefinition(
-      makeEvent({
-        id: "admin-definition",
-        pubkey: userPubkey,
-        created_at: 2,
-        kind: COMMUNITY_DEFINITION_KIND,
-        tags: [
-          ["blossom", "https://admin-blossom.example/"],
-          ["content", "General"],
-          ["k", "1111"],
-        ],
-      }),
-    )!
-    const memberDefinition = parseCommunityDefinition(
-      makeEvent({
-        id: "banned-member-definition",
-        pubkey: memberCommunityPubkey,
-        created_at: 2,
-        kind: COMMUNITY_DEFINITION_KIND,
-        tags: [
-          ["blossom", "https://member-blossom.example/"],
-          ["content", "General"],
-          ["k", "1111"],
-          ["a", `${PROFILE_LIST_KIND}:${memberListOwner}:General`],
-        ],
-      }),
-    )!
+    const userPubkey = makeKey(38)
+    const memberListOwner = makeKey(39)
+    const memberCommunityPubkey = makeKey(40)
+    const adminDefinition = makeBlossomDefinition({
+      id: "admin-definition",
+      pubkey: userPubkey,
+      blossomServer: "https://admin-blossom.example",
+    })
+    const memberDefinition = makeBlossomDefinition({
+      id: "banned-member-definition",
+      pubkey: memberCommunityPubkey,
+      blossomServer: "https://member-blossom.example",
+      profileListAddress: `${PROFILE_LIST_KIND}:${memberListOwner}:General`,
+    })
     const profileList = makeEvent({
       id: "member-list",
       pubkey: memberListOwner,
@@ -464,13 +516,13 @@ describe("blossom server sources", () => {
         definitions: [memberDefinition, adminDefinition],
         profileListEvents: [profileList],
         reportStates: new Map([
-          [memberDefinition.pubkey, makePersonBanState(userPubkey)],
-          [adminDefinition.pubkey, makePersonBanState(userPubkey)],
+          [memberDefinition.pointer.address, makePersonBanState(userPubkey)],
+          [adminDefinition.pointer.address, makePersonBanState(userPubkey)],
         ]),
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey: adminDefinition.pubkey,
+        communityPubkey: adminDefinition.controllerPubkey,
         blossomServers: ["https://admin-blossom.example"],
       }),
     ])

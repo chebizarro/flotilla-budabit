@@ -353,7 +353,7 @@ describe("grasp-pipeline", () => {
             {
               relayUrl: "wss://grasp.example",
               httpBaseAliases: ["https://grasp.example"],
-              sources: ["community-10222"],
+              sources: ["community-definition"],
             },
           ],
           ownerPubkey,

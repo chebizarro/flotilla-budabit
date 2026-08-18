@@ -265,15 +265,17 @@ describe("budabit state", () => {
       expect(
         getRepoAnnouncementPublishRelays({
           repoRelays: ["wss://repo.example"],
-          communityPubkeys: [communityPubkey],
+          communityIds: [communityPubkey],
           communityRefs: [
             {
-              communityPubkey,
+              communityId: communityPubkey,
+              communityAddress: `32222:${"a".repeat(64)}:${communityPubkey}`,
               relayHints: ["wss://route-hint.example"],
               definition: {relays: ["wss://community.example"]},
             },
             {
-              communityPubkey: unrelatedCommunityPubkey,
+              communityId: unrelatedCommunityPubkey,
+              communityAddress: `32222:${"b".repeat(64)}:${unrelatedCommunityPubkey}`,
               relayHints: ["wss://unrelated.example"],
               definition: {relays: ["wss://unrelated.example"]},
             },
@@ -291,21 +293,24 @@ describe("budabit state", () => {
       ])
     })
 
-    it("derives scoped community relay targets from repo announcement h tags", () => {
-      const communityPubkey = "c".repeat(64)
-      const unrelatedCommunityPubkey = "d".repeat(64)
+    it("derives scoped community relay targets from repo announcement community IDs", () => {
+      const controllerPubkey = "a".repeat(64)
+      const communityId = "c".repeat(64)
+      const unrelatedCommunityId = "d".repeat(64)
 
       expect(
         getRepoAnnouncementPublishRelays({
-          repoEvent: {tags: [["h", communityPubkey]]},
+          repoEvent: {tags: [["h", communityId]]},
           communityRefs: [
             {
-              communityPubkey,
+              communityId,
+              communityAddress: `32222:${controllerPubkey}:${communityId}`,
               relayHints: ["wss://route-hint.example"],
               definition: {relays: ["wss://community.example"]},
             },
             {
-              communityPubkey: unrelatedCommunityPubkey,
+              communityId: unrelatedCommunityId,
+              communityAddress: `32222:${controllerPubkey}:${unrelatedCommunityId}`,
               relayHints: ["wss://unrelated.example"],
               definition: {relays: ["wss://unrelated.example"]},
             },
@@ -315,6 +320,40 @@ describe("budabit state", () => {
           userGraspRelays: [],
         }),
       ).toEqual(["wss://outbox.example/", "wss://git.example/", "wss://community.example/"])
+    })
+
+    it("uses an exact marked community binding instead of sibling same-ID branches", () => {
+      const communityId = "c".repeat(64)
+      const firstAddress = `32222:${"a".repeat(64)}:${communityId}`
+      const secondAddress = `32222:${"b".repeat(64)}:${communityId}`
+
+      expect(
+        getRepoAnnouncementPublishRelays({
+          repoEvent: {
+            tags: [
+              ["h", communityId],
+              ["a", secondAddress],
+            ],
+          },
+          communityRefs: [
+            {
+              communityId,
+              communityAddress: firstAddress,
+              relayHints: [],
+              definition: {relays: ["wss://first.example"]},
+            },
+            {
+              communityId,
+              communityAddress: secondAddress,
+              relayHints: [],
+              definition: {relays: ["wss://second.example"]},
+            },
+          ],
+          gitIndexerRelays: [],
+          userOutboxRelays: [],
+          userGraspRelays: [],
+        }),
+      ).toEqual(["wss://second.example/"])
     })
   })
 

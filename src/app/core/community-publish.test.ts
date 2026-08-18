@@ -1,7 +1,7 @@
 import {describe, expect, it, vi} from "vitest"
 import {PublishStatus} from "@welshman/net"
 import {type Filter, type SignedEvent, type TrustedEvent} from "@welshman/util"
-import {COMMUNITY_DEFINITION_KIND, PROFILE_LIST_KIND} from "./community"
+import {COMMUNITY_DEFINITION_KIND_V2, PROFILE_LIST_KIND} from "./community"
 import {
   getNextReplacementCreatedAt,
   makeReplacementCurrentFilter,
@@ -43,9 +43,14 @@ describe("community publish verification", () => {
   it("builds current replacement filters for community definition and profile lists", () => {
     expect(
       makeReplacementCurrentFilter(
-        makeSignedEvent({kind: COMMUNITY_DEFINITION_KIND, pubkey, tags: []}),
+        makeSignedEvent({kind: COMMUNITY_DEFINITION_KIND_V2, pubkey, tags: [["d", pubkey]]}),
       ),
-    ).toEqual({kinds: [COMMUNITY_DEFINITION_KIND], authors: [pubkey], limit: 10})
+    ).toEqual({
+      kinds: [COMMUNITY_DEFINITION_KIND_V2],
+      authors: [pubkey],
+      "#d": [pubkey],
+      limit: 10,
+    })
     expect(
       makeReplacementCurrentFilter(
         makeSignedEvent({kind: PROFILE_LIST_KIND, pubkey, tags: [["d", "General"]]}),

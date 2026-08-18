@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     analysisLoad: vi.fn(),
+    buildCommunityTrustAssessments: vi.fn(() => new Map()),
     getRepoMaintainers,
     loadProfile: vi.fn(() => Promise.resolve()),
     loadRepoAnnouncementByAddress: vi.fn(),
@@ -57,12 +58,16 @@ vi.mock("@app/core/profile-resolver", () => ({
 }))
 
 vi.mock("@app/core/community-renunciations", () => ({
-  userRenouncedCommunityPubkeys: {
-    subscribe: (run: (value: Set<string>) => void) => {
-      run(new Set())
+  userRenouncedCommunityAddresses: {
+    subscribe: (run: (value: string[]) => void) => {
+      run([])
       return () => undefined
     },
   },
+}))
+
+vi.mock("./community-trust", () => ({
+  buildCommunityTrustAssessments: mocks.buildCommunityTrustAssessments,
 }))
 
 vi.mock("@welshman/net", async importOriginal => {
@@ -90,6 +95,7 @@ describe("profile code trust analysis", () => {
     mocks.loadProfile.mockClear()
     mocks.loadRepoAnnouncementByAddress.mockReset()
     mocks.getRepoMaintainers.mockClear()
+    mocks.buildCommunityTrustAssessments.mockClear()
   })
 
   it("counts maintainer-accepted PRs, community-aligned maintainer merges, and collaborators", () => {
@@ -300,4 +306,67 @@ describe("profile code trust analysis", () => {
       }),
     ])
   })
+
+  it("scopes community trust by exact address and uses the controller as the person", async () => {
+    const controllerPubkey = "6".repeat(64)
+    const communityId = "7".repeat(64)
+    const communityAddress = `32222:${controllerPubkey}:${communityId}`
+    const community = {
+      kind: 32222,
+      controllerPubkey,
+      communityId,
+      address: communityAddress,
+      cacheKey: communityAddress,
+      naddr: "naddr1community",
+      relayHints: [],
+    }
+    const definition = {
+      pointer: community,
+      controllerPubkey,
+      communityId,
+      event: makeEventForContext(controllerPubkey, communityId),
+      metadata: {name: "Community"},
+      relays: [],
+      blossomServers: [],
+      graspServers: [],
+      mints: [],
+      services: [],
+      sections: [],
+      sourceTags: [],
+    }
+    const reportState = {personReports: [], eventReports: []}
+
+    mocks.analysisLoad.mockResolvedValueOnce([])
+
+    const analysis = await loadProfileCodeTrustAnalysis(targetPubkey, {
+      force: true,
+      communityContext: {
+        community: community as any,
+        definitions: [definition as any],
+        reportState: reportState as any,
+      },
+    })
+
+    expect(analysis.communityContextPubkey).toBe(controllerPubkey)
+    expect(mocks.buildCommunityTrustAssessments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: {
+          scope: "active_community",
+          communityAddress,
+          communityPubkey: controllerPubkey,
+        },
+        reportStates: new Map([[communityAddress, reportState]]),
+      }),
+    )
+  })
+})
+
+const makeEventForContext = (controllerPubkey: string, communityId: string) => ({
+  id: "0".repeat(64),
+  kind: 32222,
+  pubkey: controllerPubkey,
+  created_at: 1,
+  tags: [["d", communityId]],
+  content: "",
+  sig: "sig",
 })

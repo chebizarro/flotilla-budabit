@@ -14,10 +14,12 @@
     getCommunityCensorReason,
     getCommunityReportEventAddress,
   } from "@app/core/community-reports"
-  import {makeGoalPath} from "@app/util/routes"
+  import {makeExactCommunityGoalPath} from "@app/util/routes"
+  import type {CommunityPointer} from "@app/core/community"
 
   type Props = {
     url: string
+    community?: CommunityPointer
     event: TrustedEvent
     relays?: string[]
     publishRelays?: string[]
@@ -34,6 +36,7 @@
 
   const {
     url,
+    community = undefined,
     event,
     relays = [],
     publishRelays = undefined,
@@ -50,6 +53,7 @@
 
   const summary = getTagValue("summary", event.tags)
   const h = getTagValue("h", event.tags)
+  const goalPath = $derived(community ? makeExactCommunityGoalPath(community, event.id) : "")
   const censorReason = $derived.by(() =>
     communitySectionName
       ? getCommunityCensorReason({
@@ -64,9 +68,7 @@
 </script>
 
 <div data-event={event.id}>
-  <Link
-    class="col-2 card2 bg-alt w-full cursor-pointer shadow-md"
-    href={makeGoalPath(url, event.id)}>
+  <Link class="col-2 card2 bg-alt w-full cursor-pointer shadow-md" href={goalPath}>
     {#if censorReason}
       <ModeratedContent reason={censorReason} />
     {:else}
@@ -91,14 +93,15 @@
       <div class="flex w-full flex-col items-end justify-between gap-2 sm:flex-row">
         <span class="whitespace-nowrap py-1 text-sm opacity-75">
           Posted by <ProfileLink pubkey={event.pubkey} {relays} />
-          {#if h && showRoom}
-            in <RoomLink {url} {h} />
+          {#if h && showRoom && community}
+            in <RoomLink {community} {h} />
           {/if}
         </span>
         {#if !operationId}
           <GoalActions
             showActivity
             {url}
+            {community}
             {relays}
             {publishRelays}
             {scopeH}

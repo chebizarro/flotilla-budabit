@@ -1,8 +1,8 @@
 import {browser} from "$app/environment"
 import {derived, get, writable, type Readable, type Writable} from "svelte/store"
-import {deriveProfile, forceLoadRelayList, pubkey, repository, sign, tracker} from "@welshman/app"
+import {forceLoadRelayList, pubkey, repository, sign, tracker} from "@welshman/app"
 import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
-import {normalizeUrl, sortBy, LRUCache} from "@welshman/lib"
+import {normalizeUrl, LRUCache} from "@welshman/lib"
 import {
   AuthStateEvent,
   AuthStatus,
@@ -15,26 +15,29 @@ import {
 import {Router} from "@welshman/router"
 import {DELETE, PROFILE, type Filter, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
-  type CommunityDefinition,
-  type ParsedCommunityInput,
+  type CommunityDefinitionV2,
+  type CommunityPointer,
   getProfileListPubkeys,
   normalizeRelay,
   normalizePubkey,
   normalizeRelays,
-  parseCommunityDefinition,
-  parseCommunityInput,
+  makeCommunityPointer,
+  parseCommunityDefinitionAddress,
+  parseAddressRef,
+  parseCommunityNaddr,
+  parseCommunityDefinitionV2,
+  selectCurrentCommunityDefinitionsV2,
 } from "@app/core/community"
 import {
   getCommunityModeratorRefPubkeys,
   getGrantCapableSectionModeratorPubkeys,
 } from "@app/core/community-permissions"
+import {findCommunityProfileListEvent} from "@app/core/community-admin"
 import {
   type CommunityAdmissionForm,
-  makeCommunityDefinitionAddress,
-  parseCommunityDefinitionAddress,
   parseAdmissionForm,
   selectActiveAdmissionForm,
 } from "@app/core/community-forms"
@@ -60,7 +63,7 @@ import {
   selectUserCommunityRefs,
   type ActiveUserCommunityRef,
 } from "@app/core/community-membership"
-import {userRenouncedCommunityPubkeys} from "@app/core/community-renunciations"
+import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
 import {
   MODERATOR_REQUEST_REACTION_KIND,
   getModeratorPromotionRequestStates,
@@ -84,6 +87,205 @@ import {FINITE_RELAY_ADMISSION_TIMEOUT_MS} from "@app/core/finite-relay-request"
 import {recoverActiveNip46Receiver} from "@app/util/nip46"
 
 export const COMMUNITY_SESSION_STORAGE_KEY = "budabit/community-session"
+export const EXACT_COMMUNITY_SESSION_VERSION = 2
+
+export type ExactCommunitySession = {
+  version: typeof EXACT_COMMUNITY_SESSION_VERSION
+  definition: {
+    kind: typeof COMMUNITY_DEFINITION_KIND_V2
+    controllerPubkey: string
+    communityId: string
+  }
+  relayHints: string[]
+  definitionEventId?: string
+}
+
+export const makeExactCommunitySession = (
+  pointer: CommunityPointer,
+  definitionEventId?: string,
+): ExactCommunitySession => ({
+  version: EXACT_COMMUNITY_SESSION_VERSION,
+  definition: {
+    kind: COMMUNITY_DEFINITION_KIND_V2,
+    controllerPubkey: pointer.controllerPubkey,
+    communityId: pointer.communityId,
+  },
+  relayHints: [...pointer.relayHints],
+  ...(definitionEventId ? {definitionEventId} : {}),
+})
+
+export const getExactCommunitySessionPointer = (session: ExactCommunitySession) =>
+  makeCommunityPointer({
+    controllerPubkey: session.definition.controllerPubkey,
+    communityId: session.definition.communityId,
+    relayHints: session.relayHints,
+  })!
+
+export const parseExactCommunitySession = (raw: string): ExactCommunitySession | undefined => {
+  try {
+    const value = JSON.parse(raw) as Partial<ExactCommunitySession>
+    if (
+      value.version !== EXACT_COMMUNITY_SESSION_VERSION ||
+      value.definition?.kind !== COMMUNITY_DEFINITION_KIND_V2 ||
+      !Array.isArray(value.relayHints) ||
+      value.relayHints.some(relay => typeof relay !== "string") ||
+      (value.definitionEventId !== undefined && typeof value.definitionEventId !== "string")
+    ) {
+      return undefined
+    }
+    const pointer = makeCommunityPointer({
+      controllerPubkey: value.definition.controllerPubkey || "",
+      communityId: value.definition.communityId || "",
+      relayHints: value.relayHints,
+    })
+    if (!pointer) return undefined
+
+    return makeExactCommunitySession(pointer, value.definitionEventId)
+  } catch {
+    return undefined
+  }
+}
+
+type CommunitySessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
+
+export const readExactCommunitySession = (
+  storage: CommunitySessionStorage,
+): ExactCommunitySession | undefined => {
+  const raw = storage.getItem(COMMUNITY_SESSION_STORAGE_KEY)
+  if (!raw) return undefined
+  const session = parseExactCommunitySession(raw)
+  if (!session) storage.removeItem(COMMUNITY_SESSION_STORAGE_KEY)
+  return session
+}
+
+export const writeExactCommunitySession = (
+  storage: CommunitySessionStorage,
+  session?: ExactCommunitySession,
+) => {
+  if (!session) {
+    storage.removeItem(COMMUNITY_SESSION_STORAGE_KEY)
+    return
+  }
+  storage.setItem(COMMUNITY_SESSION_STORAGE_KEY, JSON.stringify(session))
+}
+
+export const makeExactCommunityDefinitionFilter = (pointer: CommunityPointer): Filter => ({
+  kinds: [COMMUNITY_DEFINITION_KIND_V2],
+  authors: [pointer.controllerPubkey],
+  "#d": [pointer.communityId],
+})
+
+export const selectExactCommunityDefinition = (
+  events: TrustedEvent[],
+  pointer: CommunityPointer,
+): CommunityDefinitionV2 | undefined =>
+  selectCurrentCommunityDefinitionsV2(events).get(pointer.address)
+
+export const selectBoundedCommunityDefinitionDiscovery = (
+  events: TrustedEvent[],
+  loadComplete: boolean,
+  limit: number,
+) => {
+  const saturated = events.length >= limit
+
+  return {
+    definitions: Array.from(selectCurrentCommunityDefinitionsV2(events).values()),
+    complete: loadComplete && !saturated,
+    saturated,
+  }
+}
+
+export const getExactCommunityBranchKey = (pointer: CommunityPointer, viewerPubkey = "") =>
+  `${normalizePubkey(viewerPubkey)}:${pointer.address}`
+
+type ResolveExactCommunityDefinitionOptions = {
+  discoveryRelays?: string[]
+  hydrateControllerOutbox: (controllerPubkey: string, relayHints: string[]) => Promise<string[]>
+  loadEvents: (relays: string[], filters: Filter[]) => Promise<TrustedEvent[]>
+}
+
+export const resolveExactCommunityDefinition = async (
+  pointer: CommunityPointer,
+  {
+    discoveryRelays = [],
+    hydrateControllerOutbox,
+    loadEvents,
+  }: ResolveExactCommunityDefinitionOptions,
+) => {
+  const filters: Filter[] = [
+    makeExactCommunityDefinitionFilter(pointer),
+    {kinds: [DELETE], authors: [pointer.controllerPubkey]},
+  ]
+  const initialRelays = Array.from(new Set([...pointer.relayHints, ...discoveryRelays]))
+  const initialEvents = initialRelays.length > 0 ? await loadEvents(initialRelays, filters) : []
+  const outboxRelays = await hydrateControllerOutbox(pointer.controllerPubkey, pointer.relayHints)
+  const additionalRelays = Array.from(
+    new Set(outboxRelays.filter(relay => !initialRelays.includes(relay))),
+  )
+  const outboxEvents =
+    additionalRelays.length > 0 ? await loadEvents(additionalRelays, filters) : []
+
+  return selectExactCommunityDefinition([...initialEvents, ...outboxEvents], pointer)
+}
+
+const canUseLocalStorage = () => browser && typeof localStorage !== "undefined"
+
+const getInitialExactCommunitySession = () => {
+  if (!canUseLocalStorage()) return undefined
+  return readExactCommunitySession(localStorage)
+}
+
+export const activeExactCommunitySession = writable<ExactCommunitySession | undefined>(
+  getInitialExactCommunitySession(),
+)
+
+export const activeExactCommunityPointer: Readable<CommunityPointer | undefined> = derived(
+  activeExactCommunitySession,
+  session => (session ? getExactCommunitySessionPointer(session) : undefined),
+)
+
+export const setActiveExactCommunityPointer = (pointer: CommunityPointer) => {
+  activeExactCommunitySession.update(current => {
+    const currentPointer = current ? getExactCommunitySessionPointer(current) : undefined
+    return makeExactCommunitySession(
+      pointer,
+      currentPointer?.address === pointer.address ? current?.definitionEventId : undefined,
+    )
+  })
+}
+
+export const setActiveExactCommunityDefinition = (definition: CommunityDefinitionV2) => {
+  repository.publish(definition.event)
+  activeExactCommunitySession.set(
+    makeExactCommunitySession(definition.pointer, definition.event.id),
+  )
+}
+
+export const activeExactCommunityDefinition: Readable<CommunityDefinitionV2 | undefined> = derived(
+  activeExactCommunityPointer,
+  (pointer, set) => {
+    if (!pointer) {
+      set(undefined)
+      return
+    }
+    return deriveEventsAsc(
+      deriveEventsById({
+        repository,
+        filters: [
+          makeExactCommunityDefinitionFilter(pointer),
+          {kinds: [DELETE], authors: [pointer.controllerPubkey]},
+        ],
+      }),
+    ).subscribe(events => set(selectExactCommunityDefinition(events, pointer)))
+  },
+)
+
+export const activeExactCommunityRelays: Readable<string[]> = derived(
+  [activeExactCommunityPointer, activeExactCommunityDefinition],
+  ([pointer, definition]) => definition?.relays || pointer?.relayHints || [],
+)
+
+export const clearActiveExactCommunity = () => activeExactCommunitySession.set(undefined)
 
 const fromCsv = (value?: string) =>
   String(value || "")
@@ -92,18 +294,13 @@ const fromCsv = (value?: string) =>
     .filter(Boolean)
 
 export const DEFAULT_COMMUNITY_INPUT = import.meta.env.VITE_DEFAULT_COMMUNITY || ""
+export const DEFAULT_COMMUNITY_POINTER = parseCommunityNaddr(DEFAULT_COMMUNITY_INPUT)
 export const COMMUNITY_DISCOVERY_RELAYS = normalizeRelays(
   fromCsv(import.meta.env.VITE_INDEXER_RELAYS),
 )
 
-export type CommunitySession = {
-  communityPubkey: string
-  communityRelayHints: string[]
-  communityDefinitionId?: string
-}
-
 export type CommunityBootstrap = {
-  definition?: CommunityDefinition
+  definition?: CommunityDefinitionV2
   profileListEvents: TrustedEvent[]
   admissionFormEvents: TrustedEvent[]
   reportEvents: TrustedEvent[]
@@ -165,67 +362,9 @@ export type CommunityRelayAuthOptions = {
 
 export type CommunityDefinitionLookupOptions = CommunityRelayLoadOptions & {
   relayHints?: string[]
-  onOutboxDefinition?: (definition: CommunityDefinition) => void
+  onOutboxDefinition?: (definition: CommunityDefinitionV2) => void
 }
 
-export type CommunityProfile = {
-  name?: string
-  display_name?: string
-  about?: string
-  picture?: string
-  website?: string
-  nip05?: string
-}
-
-const canUseLocalStorage = () => browser && typeof localStorage !== "undefined"
-
-const readStoredSession = (): CommunitySession | undefined => {
-  if (!canUseLocalStorage()) return undefined
-
-  try {
-    const raw = localStorage.getItem(COMMUNITY_SESSION_STORAGE_KEY)
-    if (!raw) return undefined
-
-    const value = JSON.parse(raw) as CommunitySession
-    const parsed = parseCommunityInput(value.communityPubkey)
-    if (!parsed) return undefined
-
-    return {
-      communityPubkey: parsed.pubkey,
-      communityRelayHints: normalizeRelays(value.communityRelayHints || []),
-      communityDefinitionId: value.communityDefinitionId,
-    }
-  } catch {
-    return undefined
-  }
-}
-
-const writeStoredSession = (session?: CommunitySession) => {
-  if (!canUseLocalStorage()) return
-
-  if (!session) {
-    localStorage.removeItem(COMMUNITY_SESSION_STORAGE_KEY)
-    return
-  }
-
-  localStorage.setItem(COMMUNITY_SESSION_STORAGE_KEY, JSON.stringify(session))
-}
-
-export const makeCommunitySession = (
-  parsed: ParsedCommunityInput,
-  definition?: CommunityDefinition,
-): CommunitySession => ({
-  communityPubkey: parsed.pubkey,
-  communityRelayHints: parsed.relays,
-  communityDefinitionId: definition?.event.id,
-})
-
-const getInitialSession = () => {
-  const stored = readStoredSession()
-  if (stored) return stored
-}
-
-export const activeCommunitySession = writable<CommunitySession | undefined>(getInitialSession())
 export const activeCommunityBootstrapStatus = writable<CommunityBootstrapStatus>({
   key: "",
   loading: false,
@@ -257,8 +396,8 @@ const communityBootstrapPromiseGenerations = new Map<string, number>()
 let communityBootstrapCacheVersion = 0
 let communityBootstrapGeneration = 0
 
-export const getCommunityBootstrapKey = (session: CommunitySession, userPubkey = "") =>
-  `${normalizePubkey(userPubkey)}:${session.communityPubkey}:${normalizeRelays(session.communityRelayHints).join(",")}`
+export const getCommunityBootstrapKey = (session: ExactCommunitySession, userPubkey = "") =>
+  `${normalizePubkey(userPubkey)}:${getExactCommunitySessionPointer(session).address}`
 
 export const hasCommunityHydrationCompleted = (key: string) =>
   Boolean(key && completedCommunityHydrationKeys.has(key))
@@ -276,10 +415,9 @@ export const getCommunityHydrationResultStatus = (
   return "incomplete"
 }
 
-export const clearCommunityBootstrapCache = (communityPubkey?: string) => {
-  const normalizedCommunityPubkey = normalizePubkey(communityPubkey || "")
+export const clearCommunityBootstrapCache = (communityAddress?: string) => {
   const matchesCommunity = (key: string) =>
-    !normalizedCommunityPubkey || key.split(":")[1] === normalizedCommunityPubkey
+    !communityAddress || key.endsWith(`:${communityAddress}`)
 
   communityBootstrapCacheVersion += 1
 
@@ -298,47 +436,13 @@ export const clearCommunityBootstrapCache = (communityPubkey?: string) => {
 }
 
 if (canUseLocalStorage()) {
-  activeCommunitySession.subscribe(writeStoredSession)
+  activeExactCommunitySession.subscribe(session =>
+    writeExactCommunitySession(localStorage, session),
+  )
 }
 
-export const setActiveCommunityInput = (input: string) => {
-  const parsed = parseCommunityInput(input)
-  if (!parsed) return undefined
-
-  let session: CommunitySession | undefined
-
-  activeCommunitySession.update(current => {
-    const sameCommunity = current?.communityPubkey === parsed.pubkey
-
-    session = {
-      communityPubkey: parsed.pubkey,
-      communityRelayHints:
-        parsed.relays.length || !sameCommunity ? parsed.relays : current.communityRelayHints,
-      communityDefinitionId: sameCommunity ? current.communityDefinitionId : undefined,
-    }
-
-    return session
-  })
-
-  return session
-}
-
-export const setActiveCommunityDefinition = (definition: CommunityDefinition) => {
-  repository.publish(definition.event)
-
-  activeCommunitySession.update(session => {
-    const next = {
-      communityPubkey: definition.pubkey,
-      communityRelayHints: session?.communityRelayHints || [],
-      communityDefinitionId: definition.event.id,
-    }
-
-    return next
-  })
-}
-
-export const clearActiveCommunity = () => {
-  activeCommunitySession.set(undefined)
+export const clearActiveCommunityState = () => {
+  clearActiveExactCommunity()
   startCommunityPermissionLoadContext()
   activeCommunityPermissionStatus.set({
     communityPubkey: "",
@@ -358,84 +462,6 @@ export const clearActiveCommunity = () => {
   })
 }
 
-export const activeCommunityPubkey: Readable<string | undefined> = derived(
-  activeCommunitySession,
-  session => session?.communityPubkey,
-)
-
-export const makeCommunityDefinitionFilter = (pubkey: string): Filter => ({
-  kinds: [COMMUNITY_DEFINITION_KIND],
-  authors: [pubkey],
-  limit: 1,
-})
-
-export const selectLatestCommunityDefinition = (
-  events: TrustedEvent[],
-  pubkey: string,
-): CommunityDefinition | undefined =>
-  sortBy(
-    definition => -definition.event.created_at,
-    events
-      .map(parseCommunityDefinition)
-      .filter((definition): definition is CommunityDefinition => Boolean(definition))
-      .filter(definition => definition.pubkey === pubkey),
-  )[0]
-
-export const activeCommunityDefinition: Readable<CommunityDefinition | undefined> = derived(
-  activeCommunitySession,
-  ($activeCommunitySession, set) => {
-    const communityPubkey = $activeCommunitySession?.communityPubkey
-    if (!communityPubkey) {
-      set(undefined)
-      return
-    }
-
-    return deriveEventsAsc(
-      deriveEventsById({repository, filters: [makeCommunityDefinitionFilter(communityPubkey)]}),
-    ).subscribe(events => {
-      set(selectLatestCommunityDefinition(events, communityPubkey))
-    })
-  },
-)
-
-export const activeCommunityProfile: Readable<CommunityProfile | undefined> = derived(
-  [activeCommunitySession, activeCommunityDefinition],
-  ([$activeCommunitySession, $activeCommunityDefinition], set) => {
-    const communityPubkey = $activeCommunitySession?.communityPubkey
-    if (!communityPubkey) {
-      set(undefined)
-      return
-    }
-
-    const relays = normalizeRelays([
-      ...($activeCommunitySession?.communityRelayHints || []),
-      ...($activeCommunityDefinition?.pubkey === communityPubkey
-        ? $activeCommunityDefinition.relays
-        : []),
-    ])
-
-    return deriveProfile(communityPubkey, relays).subscribe(set)
-  },
-)
-
-export const activeCommunityRelayHints: Readable<string[]> = derived(
-  activeCommunitySession,
-  session => session?.communityRelayHints || [],
-)
-
-export const activeCommunityRelays: Readable<string[]> = derived(
-  [activeCommunityDefinition, activeCommunityRelayHints],
-  ([$activeCommunityDefinition, $activeCommunityRelayHints]) =>
-    $activeCommunityDefinition
-      ? $activeCommunityDefinition.relays
-      : getCommunityBootstrapRelays($activeCommunityRelayHints),
-)
-
-export const activeCommunityPublishRelays: Readable<string[]> = derived(
-  activeCommunityDefinition,
-  definition => normalizeRelays(definition?.relays || []),
-)
-
 const normalizeCommunityBlossomServer = (server?: string) => {
   const value = server?.trim()
   if (!value || !/^https?:\/\//i.test(value)) return ""
@@ -447,7 +473,7 @@ const normalizeCommunityBlossomServer = (server?: string) => {
   }
 }
 
-export const getCommunityBlossomServers = (definition?: CommunityDefinition) =>
+export const getCommunityBlossomServers = (definition?: CommunityDefinitionV2) =>
   Array.from(
     new Set(
       (definition?.blossomServers || []).map(normalizeCommunityBlossomServer).filter(Boolean),
@@ -455,7 +481,7 @@ export const getCommunityBlossomServers = (definition?: CommunityDefinition) =>
   )
 
 export const activeCommunityBlossomServers: Readable<string[]> = derived(
-  activeCommunityDefinition,
+  activeExactCommunityDefinition,
   getCommunityBlossomServers,
 )
 
@@ -492,7 +518,7 @@ const loadPubkeyOutboxRelays = async (normalizedPubkey: string, relayHints: stri
       }),
     ])
   } catch {
-    // Missing or unreachable NIP-65 relay lists are expected for some community pubkeys.
+    // Missing or unreachable NIP-65 relay lists are expected for some controllers.
   } finally {
     if (timeout) clearTimeout(timeout)
   }
@@ -559,7 +585,7 @@ export const getCommunityBadgeReadRelays = ({
   ])
 
 export const getCommunityDefinitionRelayHints = (
-  definition?: CommunityDefinition,
+  definition?: CommunityDefinitionV2,
   fallbackRelays: string[] = [],
 ) => {
   const sourceRelays = definition ? Array.from(tracker.getRelays(definition.event.id)) : []
@@ -673,13 +699,13 @@ const startCommunityPermissionLoadContext = (
 }
 
 const makeCommunityPermissionStatusKey = (
-  definition: CommunityDefinition,
+  definition: CommunityDefinitionV2,
   relays: string[],
   {viewerPubkey, generation}: CommunityPermissionLoadContext,
 ) => `${viewerPubkey}:${definition.event.id}:${normalizeRelays(relays).join(",")}:${generation}`
 
 export const getCommunityPermissionStatusKeyPrefix = (
-  definition: CommunityDefinition,
+  definition: CommunityDefinitionV2,
   relays: string[],
   viewerPubkey: string,
 ) => `${normalizePubkey(viewerPubkey)}:${definition.event.id}:${normalizeRelays(relays).join(",")}:`
@@ -719,7 +745,7 @@ const deriveActiveCommunityPermissionReadiness = (
   status: Readable<CommunityPermissionStatus>,
 ): Readable<ActiveCommunityPermissionReadiness> =>
   derived(
-    [activeCommunityDefinition, activeCommunityRelays, pubkey, status],
+    [activeExactCommunityDefinition, activeExactCommunityRelays, pubkey, status],
     ([$definition, $relays, $pubkey, $status]) => {
       if (!$definition) {
         return {
@@ -736,11 +762,11 @@ const deriveActiveCommunityPermissionReadiness = (
       )
 
       return {
-        communityPubkey: $definition.pubkey,
+        communityPubkey: $definition.controllerPubkey,
         key: $status.key,
         state: getCommunityPermissionReadiness({
           status: $status,
-          communityPubkey: $definition.pubkey,
+          communityPubkey: $definition.controllerPubkey,
           expectedKeyPrefix,
         }),
       }
@@ -761,7 +787,7 @@ const startCommunityPermissionLoadStatus = ({
   context,
   status = activeCommunityPermissionStatus,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   relays: string[]
   filters: Filter[]
   context: CommunityPermissionLoadContext
@@ -773,7 +799,7 @@ const startCommunityPermissionLoadStatus = ({
 
   if (context.generation === latestCommunityPermissionLoadGeneration) {
     status.set({
-      communityPubkey: definition.pubkey,
+      communityPubkey: definition.controllerPubkey,
       key,
       loading: hasFilters,
       loaded: !hasFilters,
@@ -807,16 +833,15 @@ const updateCommunityPermissionLoadStatus = (
   })
 }
 
-export const getDefaultCommunityRelayHints = () =>
-  parseCommunityInput(DEFAULT_COMMUNITY_INPUT)?.relays || []
+export const getDefaultCommunityRelayHints = () => DEFAULT_COMMUNITY_POINTER?.relayHints || []
 
 export const getCommunityAuthWarmupRelays = (
-  session?: CommunitySession,
+  session?: ExactCommunitySession,
   activeRelays: string[] = [],
 ) =>
   normalizeRelays([
     ...activeRelays,
-    ...(session?.communityRelayHints || []),
+    ...(session?.relayHints || []),
     ...getDefaultCommunityRelayHints(),
   ])
 
@@ -1298,29 +1323,23 @@ export const hydrateCommunityEventsWithStatus = async ({
 }
 
 export const loadCommunityDefinitionFromRelays = async (
-  communityPubkey: string,
+  pointer: CommunityPointer,
   relays: string[],
   options: CommunityRelayLoadOptions = {},
 ) => {
-  const normalizedPubkey = normalizePubkey(communityPubkey)
-  if (!normalizedPubkey) return undefined
-
   const definitionEvents = await loadCommunityEvents(
     normalizeRelays(relays),
-    [makeCommunityDefinitionFilter(normalizedPubkey)],
+    [makeExactCommunityDefinitionFilter(pointer)],
     {settle: "first-non-empty", ...options},
   )
 
-  return selectLatestCommunityDefinition(definitionEvents, normalizedPubkey)
+  return selectExactCommunityDefinition(definitionEvents, pointer)
 }
 
 export const loadCommunityDefinitionWithOutboxFallback = async (
-  communityPubkey: string,
+  pointer: CommunityPointer,
   {relayHints = [], onOutboxDefinition, ...loadOptions}: CommunityDefinitionLookupOptions = {},
 ) => {
-  const normalizedPubkey = normalizePubkey(communityPubkey)
-  if (!normalizedPubkey) return undefined
-
   const definitionLoadOptions = {
     ...loadOptions,
     timeout: loadOptions.timeout ?? COMMUNITY_DEFINITION_LOOKUP_TIMEOUT,
@@ -1333,16 +1352,16 @@ export const loadCommunityDefinitionWithOutboxFallback = async (
   // slower one still runs to give the caller a chance to see a newer
   // version via `onOutboxDefinition`.
   const indexerPromise = loadCommunityDefinitionFromRelays(
-    normalizedPubkey,
+    pointer,
     discoveryRelays,
     definitionLoadOptions,
   ).catch(() => undefined)
-  const outboxRelaysPromise = hydratePubkeyOutboxRelays(normalizedPubkey, discoveryRelays)
+  const outboxRelaysPromise = hydratePubkeyOutboxRelays(pointer.controllerPubkey, discoveryRelays)
   const outboxPromise = (async () => {
     const outboxRelays = await outboxRelaysPromise
     if (!outboxRelays?.length) return undefined
     const outboxDefinition = await loadCommunityDefinitionFromRelays(
-      normalizedPubkey,
+      pointer,
       outboxRelays,
       definitionLoadOptions,
     ).catch(() => undefined)
@@ -1354,7 +1373,7 @@ export const loadCommunityDefinitionWithOutboxFallback = async (
 
   // Race for the first non-empty result; if both return undefined we still
   // resolve so the caller can fall back to cached repository data.
-  const firstDefinition = await Promise.race<CommunityDefinition | undefined>([
+  const firstDefinition = await Promise.race<CommunityDefinitionV2 | undefined>([
     indexerPromise.then(def => def ?? new Promise<undefined>(() => undefined)),
     outboxPromise.then(def => def ?? new Promise<undefined>(() => undefined)),
     Promise.all([indexerPromise, outboxPromise]).then(([a, b]) => a ?? b),
@@ -1468,9 +1487,10 @@ export const activeCommunityStars: Readable<CommunityStarRef[]> = derived(
   [] as CommunityStarRef[],
 )
 
-export const activeCommunityStarByCommunity: Readable<Map<string, CommunityStarRef>> = derived(
+export const activeCommunityStarByAddress: Readable<Map<string, CommunityStarRef>> = derived(
   activeCommunityStars,
-  $activeCommunityStars => new Map($activeCommunityStars.map(star => [star.communityPubkey, star])),
+  $activeCommunityStars =>
+    new Map($activeCommunityStars.map(star => [star.community.address, star])),
 )
 
 export const communityAdminDefinitionEvents: Readable<TrustedEvent[]> = derived(
@@ -1513,7 +1533,15 @@ export const communityModeratorProfileListEvents: Readable<TrustedEvent[]> = der
       return
     }
 
-    return deriveEventsAsc(deriveEventsById({repository, filters: [filter]})).subscribe(set)
+    return deriveEventsAsc(
+      deriveEventsById({
+        repository,
+        filters: [
+          filter,
+          {kinds: [DELETE], authors: [$pubkey!], limit: COMMUNITY_PREFERENCE_LIMIT},
+        ],
+      }),
+    ).subscribe(set)
   },
   [] as TrustedEvent[],
 )
@@ -1524,17 +1552,18 @@ export const communityModeratorDefinitionEvents: Readable<TrustedEvent[]> = deri
     const profileListCommunityRefs = getCommunityDefinitionRefsFromEvents(
       $communityModeratorProfileListEvents,
     )
-    const formCommunityPubkeys = Array.from(
-      new Set(
-        $communityModeratorFormEvents
-          .map(event => parseAdmissionForm(event)?.communityPubkey || "")
-          .filter(Boolean),
-      ),
+    const formCommunities = Array.from(
+      new Map(
+        $communityModeratorFormEvents.flatMap(event => {
+          const community = parseAdmissionForm(event)?.community
+          return community ? [[community.address, community] as const] : []
+        }),
+      ).values(),
     )
     const filters = [
       ...makeCommunityDefinitionProfileListRefFilters($communityModeratorProfileListEvents),
-      ...profileListCommunityRefs.map(ref => makeCommunityDefinitionFilter(ref.pubkey)),
-      ...formCommunityPubkeys.map(makeCommunityDefinitionFilter),
+      ...profileListCommunityRefs.map(makeExactCommunityDefinitionFilter),
+      ...formCommunities.map(makeExactCommunityDefinitionFilter),
     ]
 
     if (filters.length === 0) {
@@ -1603,39 +1632,18 @@ const getCommunityDefinitionRefsFromEvents = (events: TrustedEvent[]) =>
           const ref = parseCommunityDefinitionAddress(tag[1] || "")
           if (!ref) return []
 
-          return [
-            [
-              ref.address,
-              {
-                pubkey: ref.pubkey,
-                address: ref.address,
-                relay: normalizeRelay(tag[2]) || undefined,
-              },
-            ] as const,
-          ]
+          return [[ref.address, {...ref, relayHints: normalizeRelays([tag[2] || ""])}] as const]
         }),
       ),
     ).values(),
   )
 
-const selectLatestDefinitionsByPubkey = (events: TrustedEvent[]) => {
-  const definitions = new Map<string, CommunityDefinition>()
-
-  for (const event of events) {
-    const definition = parseCommunityDefinition(event)
-    if (!definition) continue
-
-    const current = definitions.get(definition.pubkey)
-    if (!current || definition.event.created_at > current.event.created_at) {
-      definitions.set(definition.pubkey, definition)
-    }
-  }
-
-  return Array.from(definitions.values())
+const selectLatestDefinitionsByAddress = (events: TrustedEvent[]) => {
+  return Array.from(selectCurrentCommunityDefinitionsV2(events).values())
 }
 
 const makeCommunityDefinitionDiscoveryFilter = (): Filter => ({
-  kinds: [COMMUNITY_DEFINITION_KIND],
+  kinds: [COMMUNITY_DEFINITION_KIND_V2],
   limit: COMMUNITY_PREFERENCE_LIMIT,
 })
 
@@ -1644,23 +1652,28 @@ const selectModeratorDiscoveryDefinitionEvents = (events: TrustedEvent[], author
   if (!normalizedAuthor) return []
 
   return events.filter(event => {
-    const definition = parseCommunityDefinition(event)
+    const definition = parseCommunityDefinitionV2(event)
 
     return definition?.sections.some(section =>
-      section.profileLists.some(profileList => profileList.pubkey === normalizedAuthor),
+      section.profileLists.some(
+        profileList =>
+          normalizePubkey(profileList.address.split(":")[1] || "") === normalizedAuthor,
+      ),
     )
   })
 }
 
 const loadDiscoveredMemberProfileLists = async (
-  definitions: CommunityDefinition[],
+  definitions: CommunityDefinitionV2[],
   memberPubkey: string,
 ) => {
   const filtersByRelay = new Map<string, Map<string, Filter>>()
 
   for (const definition of definitions) {
     for (const profileList of getProfileListRefs(definition)) {
-      const filter = {...makeAddressRefFilter(profileList), "#p": [memberPubkey]}
+      const address = parseAddressRef(profileList.address)
+      if (!address) continue
+      const filter: Filter = {...makeAddressRefFilter(profileList), "#p": [memberPubkey]}
       const relays = normalizeRelays([
         ...definition.relays,
         ...(profileList.relay ? [profileList.relay] : []),
@@ -1669,6 +1682,12 @@ const loadDiscoveredMemberProfileLists = async (
       for (const relay of relays) {
         const relayFilters = filtersByRelay.get(relay) || new Map<string, Filter>()
         relayFilters.set(profileList.address, filter)
+        relayFilters.set(`${profileList.address}:delete`, {
+          kinds: [DELETE],
+          authors: [address.pubkey],
+          "#a": [profileList.address],
+          limit: 1,
+        })
         filtersByRelay.set(relay, relayFilters)
       }
     }
@@ -1691,12 +1710,16 @@ const loadDiscoveredMemberProfileLists = async (
 }
 
 const selectMemberDiscoveryDefinitionEvents = (
-  definitions: CommunityDefinition[],
+  definitions: CommunityDefinitionV2[],
   profileListEvents: TrustedEvent[],
   memberPubkey: string,
 ) => {
+  const currentProfileListEvents = selectCurrentDefinitionProfileListEvents(
+    definitions,
+    profileListEvents,
+  )
   const profileListAddresses = new Set(
-    profileListEvents.flatMap(event => {
+    currentProfileListEvents.flatMap(event => {
       if (!getProfileListPubkeys(event).includes(memberPubkey)) return []
 
       const identifier = event.tags.find(tag => tag[0] === "d")?.[1]
@@ -1736,8 +1759,8 @@ const activeUserCommunityDefinitionEvents: Readable<TrustedEvent[]> = derived(
 export const communityMemberReportEvents: Readable<TrustedEvent[]> = derived(
   activeUserCommunityDefinitionEvents,
   ($activeUserCommunityDefinitionEvents, set) => {
-    const filters = selectLatestDefinitionsByPubkey($activeUserCommunityDefinitionEvents).flatMap(
-      makeCommunityReportFilters,
+    const filters = selectLatestDefinitionsByAddress($activeUserCommunityDefinitionEvents).flatMap(
+      definition => makeCommunityReportFilters(definition.pointer),
     )
 
     if (filters.length === 0) {
@@ -1783,12 +1806,13 @@ export const communityMemberReportStates: Readable<Map<string, EffectiveCommunit
     ]) => {
       const states = new Map<string, EffectiveCommunityReportState>()
 
-      for (const definition of selectLatestDefinitionsByPubkey(
+      for (const definition of selectLatestDefinitionsByAddress(
         $activeUserCommunityDefinitionEvents,
       )) {
         states.set(
-          definition.pubkey,
+          definition.pointer.address,
           getEffectiveCommunityReportState({
+            community: definition.pointer,
             definition,
             profileListEvents: dedupeTrustedEvents([
               ...$communityMemberProfileListEvents,
@@ -1833,9 +1857,9 @@ export const rawActiveUserCommunityRefs: Readable<ActiveUserCommunityRef[]> = de
 )
 
 export const activeUserCommunityRefs: Readable<ActiveUserCommunityRef[]> = derived(
-  [rawActiveUserCommunityRefs, userRenouncedCommunityPubkeys],
-  ([$rawActiveUserCommunityRefs, $userRenouncedCommunityPubkeys]) =>
-    filterExcludedCommunityRefs($rawActiveUserCommunityRefs, $userRenouncedCommunityPubkeys),
+  [rawActiveUserCommunityRefs, userRenouncedCommunityAddresses],
+  ([$rawActiveUserCommunityRefs, $userRenouncedCommunityAddresses]) =>
+    filterExcludedCommunityRefs($rawActiveUserCommunityRefs, $userRenouncedCommunityAddresses),
   [] as ActiveUserCommunityRef[],
 )
 
@@ -1843,12 +1867,15 @@ export const activeUserCommunityBlossomRefs: Readable<BlossomMemberCommunityRef[
   activeUserCommunityRefs,
   $activeUserCommunityRefs =>
     $activeUserCommunityRefs.flatMap(ref => {
-      const blossomServers = getCommunityBlossomServers(ref.definition)
+      const definition = ref.definition
+      const blossomServers = definition.blossomServers
       if (blossomServers.length === 0) return []
 
       return [
         {
-          communityPubkey: ref.communityPubkey,
+          communityAddress: definition.pointer.address,
+          communityPubkey: ref.community.controllerPubkey,
+          communityName: definition.metadata.name,
           relayHints: ref.relayHints,
           blossomServers,
           writableSections: ref.writableSections,
@@ -1863,7 +1890,7 @@ export const activePreferredCommunities: Readable<PreferredCommunityRef[]> = der
     pubkey,
     activeCommunityStars,
     activeUserCommunityRefs,
-    userRenouncedCommunityPubkeys,
+    userRenouncedCommunityAddresses,
     communityAdminDefinitionEvents,
     communityModeratorFormEvents,
     communityModeratorProfileListEvents,
@@ -1873,7 +1900,7 @@ export const activePreferredCommunities: Readable<PreferredCommunityRef[]> = der
     $pubkey,
     $activeCommunityStars,
     $activeUserCommunityRefs,
-    $userRenouncedCommunityPubkeys,
+    $userRenouncedCommunityAddresses,
     $communityAdminDefinitionEvents,
     $communityModeratorFormEvents,
     $communityModeratorProfileListEvents,
@@ -1882,7 +1909,7 @@ export const activePreferredCommunities: Readable<PreferredCommunityRef[]> = der
     selectPreferredCommunities({
       stars: $activeCommunityStars,
       memberCommunityRefs: $activeUserCommunityRefs,
-      excludedCommunityPubkeys: $userRenouncedCommunityPubkeys,
+      excludedCommunityAddresses: $userRenouncedCommunityAddresses,
       adminDefinitionEvents: $communityAdminDefinitionEvents,
       moderatorFormEvents: $communityModeratorFormEvents,
       moderatorProfileListEvents: $communityModeratorProfileListEvents,
@@ -2003,6 +2030,7 @@ export const hydratePreferredCommunityList = async ({
     makeCommunityAdminDefinitionFilter(user),
     makeCommunityModeratorFormFilter(user),
     makeCommunityModeratorProfileListFilter(user),
+    {kinds: [DELETE], authors: [user], limit: COMMUNITY_PREFERENCE_LIMIT},
     {
       kinds: [PROFILE_LIST_KIND],
       "#p": [user],
@@ -2026,23 +2054,24 @@ export const hydratePreferredCommunityList = async ({
     ...loadedEvents,
     ...get(communityModeratorProfileListEvents),
     ...get(communityMemberProfileListEvents),
-  ].filter(event => event.kind === PROFILE_LIST_KIND)
+  ].filter(event => event.kind === PROFILE_LIST_KIND || event.kind === DELETE)
   const profileListCommunityRefs = getCommunityDefinitionRefsFromEvents(profileListEvents)
-  const formCommunityPubkeys = Array.from(
-    new Set(
-      [...loadedEvents, ...get(communityModeratorFormEvents)]
-        .map(event => parseAdmissionForm(event)?.communityPubkey || "")
-        .filter(Boolean),
-    ),
+  const formCommunities = Array.from(
+    new Map(
+      [...loadedEvents, ...get(communityModeratorFormEvents)].flatMap(event => {
+        const community = parseAdmissionForm(event)?.community
+        return community ? [[community.address, community] as const] : []
+      }),
+    ).values(),
   )
   const definitionFilters = [
     ...makeCommunityDefinitionProfileListRefFilters(profileListEvents),
-    ...profileListCommunityRefs.map(ref => makeCommunityDefinitionFilter(ref.pubkey)),
-    ...formCommunityPubkeys.map(makeCommunityDefinitionFilter),
+    ...profileListCommunityRefs.map(makeExactCommunityDefinitionFilter),
+    ...formCommunities.map(makeExactCommunityDefinitionFilter),
   ]
   const definitionRelays = normalizeRelays([
     ...relays,
-    ...profileListCommunityRefs.flatMap(ref => (ref.relay ? [ref.relay] : [])),
+    ...profileListCommunityRefs.flatMap(ref => ref.relayHints),
   ])
 
   if (definitionFilters.length === 0 || definitionRelays.length === 0) return
@@ -2080,6 +2109,7 @@ export const hydrateCommunityPreferences = async ({
     makeCommunityAdminDefinitionFilter(user),
     makeCommunityModeratorFormFilter(user),
     makeCommunityModeratorProfileListFilter(user),
+    {kinds: [DELETE], authors: [user], limit: COMMUNITY_PREFERENCE_LIMIT},
     {
       kinds: [PROFILE_LIST_KIND],
       "#p": [user],
@@ -2120,34 +2150,35 @@ export const hydrateCommunityPreferences = async ({
       ...loadedEvents,
       ...get(communityModeratorProfileListEvents),
       ...get(communityMemberProfileListEvents),
-    ].filter(event => event.kind === PROFILE_LIST_KIND)
+    ].filter(event => event.kind === PROFILE_LIST_KIND || event.kind === DELETE)
     const profileListCommunityRefs = getCommunityDefinitionRefsFromEvents(profileListEvents)
-    const formCommunityPubkeys = Array.from(
-      new Set(
-        [...loadedEvents, ...get(communityModeratorFormEvents)]
-          .map(event => parseAdmissionForm(event)?.communityPubkey || "")
-          .filter(Boolean),
-      ),
+    const formCommunities = Array.from(
+      new Map(
+        [...loadedEvents, ...get(communityModeratorFormEvents)].flatMap(event => {
+          const community = parseAdmissionForm(event)?.community
+          return community ? [[community.address, community] as const] : []
+        }),
+      ).values(),
     )
     const discoveredModeratorDefinitionEvents = selectModeratorDiscoveryDefinitionEvents(
       definitionDiscoveryEvents,
       user,
     )
-    const discoveredModeratorDefinitions = selectLatestDefinitionsByPubkey(
+    const discoveredModeratorDefinitions = selectLatestDefinitionsByAddress(
       discoveredModeratorDefinitionEvents,
     )
-    const discoveredDefinitions = selectLatestDefinitionsByPubkey(definitionDiscoveryEvents)
+    const discoveredDefinitions = selectLatestDefinitionsByAddress(definitionDiscoveryEvents)
     const definitionFilters = [
       ...makeCommunityDefinitionProfileListRefFilters(profileListEvents),
-      ...profileListCommunityRefs.map(ref => makeCommunityDefinitionFilter(ref.pubkey)),
-      ...formCommunityPubkeys.map(makeCommunityDefinitionFilter),
+      ...profileListCommunityRefs.map(makeExactCommunityDefinitionFilter),
+      ...formCommunities.map(makeExactCommunityDefinitionFilter),
       ...discoveredModeratorDefinitions.map(definition =>
-        makeCommunityDefinitionFilter(definition.pubkey),
+        makeExactCommunityDefinitionFilter(definition.pointer),
       ),
     ]
     const definitionRelays = normalizeRelays([
       ...relays,
-      ...profileListCommunityRefs.flatMap(ref => (ref.relay ? [ref.relay] : [])),
+      ...profileListCommunityRefs.flatMap(ref => ref.relayHints),
       ...discoveredModeratorDefinitions.flatMap(definition => definition.relays),
     ])
 
@@ -2173,7 +2204,7 @@ export const hydrateCommunityPreferences = async ({
       user,
     )
 
-    const definitions = selectLatestDefinitionsByPubkey(
+    const definitions = selectLatestDefinitionsByAddress(
       dedupeTrustedEvents([
         ...loadedEvents,
         ...definitionEvents,
@@ -2181,7 +2212,7 @@ export const hydrateCommunityPreferences = async ({
         ...discoveredMemberDefinitionEvents,
       ]),
     )
-    const hasPreferenceEvidence = definitions.length > 0 || formCommunityPubkeys.length > 0
+    const hasPreferenceEvidence = definitions.length > 0 || formCommunities.length > 0
 
     if (!hasPreferenceEvidence) {
       communityPreferenceHydratedAt = 0
@@ -2207,7 +2238,9 @@ export const hydrateCommunityPreferences = async ({
 
     if (requestId !== communityPreferenceHydrationRequestId) return
 
-    const reportFilters = definitions.flatMap(makeCommunityReportFilters)
+    const reportFilters = definitions.flatMap(definition =>
+      makeCommunityReportFilters(definition.pointer),
+    )
 
     if (reportFilters.length === 0) return
 
@@ -2249,26 +2282,44 @@ export const hydratePreferredCommunities = async ({
   ])
 }
 
-export const getProfileListRefs = (definition: CommunityDefinition) =>
+export const getProfileListRefs = (definition: CommunityDefinitionV2) =>
   definition.sections.flatMap(section => section.profileLists)
 
-const makeAddressRefFilter = ({
-  kind,
-  pubkey,
-  identifier,
-}: {
-  kind: number
-  pubkey: string
-  identifier: string
-}) => ({
-  kinds: [kind],
-  authors: [pubkey],
-  "#d": [identifier],
-  limit: 1,
-})
+export const selectCurrentDefinitionProfileListEvents = (
+  definitions: CommunityDefinitionV2[],
+  events: TrustedEvent[],
+) =>
+  Array.from(
+    new Map(
+      definitions.flatMap(getProfileListRefs).flatMap(ref => {
+        const event = findCommunityProfileListEvent(ref, events)
+        return event ? [[ref.address, event] as const] : []
+      }),
+    ).values(),
+  )
 
-export const makeCommunityProfileListFilters = (definition: CommunityDefinition): Filter[] =>
-  getProfileListRefs(definition).map(ref => makeAddressRefFilter(ref))
+const makeAddressRefFilter = (ref: {address: string}): Filter => {
+  const address = parseAddressRef(ref.address)
+  if (!address) return {ids: []}
+
+  return {
+    kinds: [address.kind],
+    authors: [address.pubkey],
+    "#d": [address.identifier],
+    limit: 1,
+  }
+}
+
+export const makeCommunityProfileListFilters = (definition: CommunityDefinitionV2): Filter[] =>
+  getProfileListRefs(definition).flatMap(ref => {
+    const address = parseAddressRef(ref.address)
+    if (!address) return []
+
+    return [
+      makeAddressRefFilter(ref),
+      {kinds: [DELETE], authors: [address.pubkey], "#a": [ref.address], limit: 1},
+    ]
+  })
 
 export const activeUserCommunityProfileListEvents: Readable<TrustedEvent[]> = derived(
   activeUserCommunityRefs,
@@ -2287,39 +2338,38 @@ export const activeUserCommunityProfileListEvents: Readable<TrustedEvent[]> = de
   [] as TrustedEvent[],
 )
 
-export const getAdmissionFormModeratorPubkeys = (definition: CommunityDefinition) =>
-  Array.from(new Set([definition.pubkey, ...getCommunityModeratorRefPubkeys({definition})]))
+export const getAdmissionFormModeratorPubkeys = (definition: CommunityDefinitionV2) =>
+  Array.from(
+    new Set([definition.controllerPubkey, ...getCommunityModeratorRefPubkeys({definition})]),
+  )
 
-export const makeCommunityAdmissionFormFilters = (definition: CommunityDefinition): Filter[] => {
+export const makeCommunityAdmissionFormFilters = (definition: CommunityDefinitionV2): Filter[] => {
   const authors = getAdmissionFormModeratorPubkeys(definition)
-  const communityAddress = makeCommunityDefinitionAddress(definition.pubkey)
 
-  return authors.length && communityAddress
-    ? [{kinds: [FORM_TEMPLATE_KIND], authors, "#a": [communityAddress]}]
+  return authors.length
+    ? [{kinds: [FORM_TEMPLATE_KIND], authors, "#a": [definition.pointer.address]}]
     : []
 }
 
 export const makeCommunityModeratorRequestFilters = (
-  definition: CommunityDefinition,
+  definition: CommunityDefinitionV2,
   options: {authors?: string[]; limit?: number} = {},
 ): Filter[] => {
-  const communityAddress = makeCommunityDefinitionAddress(definition.pubkey)
   const authors = options.authors?.map(normalizePubkey).filter(Boolean)
 
-  return communityAddress
-    ? [
-        {
-          kinds: [PROFILE_LIST_KIND],
-          "#a": [communityAddress],
-          ...(authors?.length ? {authors} : {}),
-          limit: options.limit ?? 200,
-        },
-      ]
-    : []
+  return [
+    {
+      kinds: [PROFILE_LIST_KIND],
+      "#h": [definition.communityId],
+      "#a": [definition.pointer.address],
+      ...(authors?.length ? {authors} : {}),
+      limit: options.limit ?? 200,
+    },
+  ]
 }
 
 export const makeCommunityModeratorRequestReactionFilters = (
-  definition: CommunityDefinition,
+  definition: CommunityDefinitionV2,
   requests: ModeratorPromotionRequest[],
 ): Filter[] => {
   const eventIds = Array.from(
@@ -2327,12 +2377,20 @@ export const makeCommunityModeratorRequestReactionFilters = (
   )
 
   return eventIds.length
-    ? [{kinds: [MODERATOR_REQUEST_REACTION_KIND], authors: [definition.pubkey], "#e": eventIds}]
+    ? [
+        {
+          kinds: [MODERATOR_REQUEST_REACTION_KIND],
+          authors: [definition.controllerPubkey],
+          "#h": [definition.communityId],
+          "#a": [definition.pointer.address],
+          "#e": eventIds,
+        },
+      ]
     : []
 }
 
 export const makeCommunityModeratorRequestDeleteFilters = (
-  definition: CommunityDefinition,
+  definition: CommunityDefinitionV2,
   reactionEvents: TrustedEvent[],
 ): Filter[] => {
   const reactionIds = Array.from(new Set(reactionEvents.map(event => event.id).filter(Boolean)))
@@ -2341,18 +2399,23 @@ export const makeCommunityModeratorRequestDeleteFilters = (
     ? [
         {
           kinds: [DELETE],
-          authors: [definition.pubkey],
+          authors: [definition.controllerPubkey],
+          "#h": [definition.communityId],
+          "#a": [definition.pointer.address],
           "#e": reactionIds,
         },
       ]
     : []
 }
 
-export const makeCommunityReportFilters = (definition: CommunityDefinition): Filter[] => {
-  return definition.pubkey
-    ? [{kinds: [COMMUNITY_REPORT_KIND], "#h": [definition.pubkey], limit: 500}]
-    : []
-}
+export const makeCommunityReportFilters = (community: CommunityPointer): Filter[] => [
+  {
+    kinds: [COMMUNITY_REPORT_KIND],
+    "#h": [community.communityId],
+    "#a": [community.address],
+    limit: 500,
+  },
+]
 
 export const makeCommunityReportDeleteFilters = (reportEvents: TrustedEvent[]): Filter[] => {
   const reportIds = Array.from(new Set(reportEvents.map(event => event.id).filter(Boolean)))
@@ -2361,16 +2424,17 @@ export const makeCommunityReportDeleteFilters = (reportEvents: TrustedEvent[]): 
 }
 
 export const makeCommunityReportReviewFilters = (
-  definition: CommunityDefinition,
+  community: CommunityPointer,
   reportEvents: TrustedEvent[],
 ): Filter[] => {
   const reportIds = Array.from(new Set(reportEvents.map(event => event.id).filter(Boolean)))
 
-  return definition.pubkey && reportIds.length
+  return reportIds.length
     ? [
         {
           kinds: [COMMUNITY_REPORT_REVIEW_LABEL_KIND],
-          "#h": [definition.pubkey],
+          "#h": [community.communityId],
+          "#a": [community.address],
           "#e": reportIds,
           "#L": [COMMUNITY_REPORT_REVIEW_NAMESPACE],
           limit: 500,
@@ -2426,10 +2490,10 @@ export const hydrateCommunityReportDeleteEvents = async ({
 }
 
 const deriveActiveCommunityEvents = (
-  makeFilters: (definition: CommunityDefinition) => Filter[],
+  makeFilters: (definition: CommunityDefinitionV2) => Filter[],
 ): Readable<TrustedEvent[]> =>
   derived(
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     ($activeCommunityDefinition, set) => {
       if (!$activeCommunityDefinition) {
         set([])
@@ -2450,16 +2514,38 @@ const deriveActiveCommunityEvents = (
 export const activeCommunityProfileListEvents: Readable<TrustedEvent[]> =
   deriveActiveCommunityEvents(makeCommunityProfileListFilters)
 
-export const activeCommunityAdmissionFormEvents: Readable<TrustedEvent[]> =
-  deriveActiveCommunityEvents(makeCommunityAdmissionFormFilters)
+export const activeCommunityAdmissionFormEvents: Readable<TrustedEvent[]> = derived(
+  activeExactCommunityDefinition,
+  ($definition, set) => {
+    if (!$definition) {
+      set([])
+      return
+    }
 
-export const activeCommunityReportEvents: Readable<TrustedEvent[]> = deriveActiveCommunityEvents(
-  makeCommunityReportFilters,
+    const filters = makeCommunityAdmissionFormFilters($definition)
+    return deriveEventsAsc(deriveEventsById({repository, filters})).subscribe(set)
+  },
+  [] as TrustedEvent[],
+)
+
+export const activeCommunityReportEvents: Readable<TrustedEvent[]> = derived(
+  activeExactCommunityPointer,
+  ($community, set) => {
+    if (!$community) {
+      set([])
+      return
+    }
+
+    return deriveEventsAsc(
+      deriveEventsById({repository, filters: makeCommunityReportFilters($community)}),
+    ).subscribe(set)
+  },
+  [] as TrustedEvent[],
 )
 
 export const activeCommunityReportDeleteEvents: Readable<TrustedEvent[]> = derived(
-  [activeCommunityReportEvents, activeCommunityRelays],
-  ([$activeCommunityReportEvents, $activeCommunityRelays], set) => {
+  [activeCommunityReportEvents, activeExactCommunityRelays],
+  ([$activeCommunityReportEvents, $activeExactCommunityRelays], set) => {
     const filters = makeCommunityReportDeleteFilters($activeCommunityReportEvents)
     if (filters.length === 0) {
       set([])
@@ -2467,7 +2553,7 @@ export const activeCommunityReportDeleteEvents: Readable<TrustedEvent[]> = deriv
     }
 
     void hydrateCommunityReportDeleteEvents({
-      relays: $activeCommunityRelays,
+      relays: $activeExactCommunityRelays,
       reportEvents: $activeCommunityReportEvents,
     }).catch(error => {
       console.warn("[community] Failed to hydrate moderation report deletes", error)
@@ -2479,17 +2565,14 @@ export const activeCommunityReportDeleteEvents: Readable<TrustedEvent[]> = deriv
 )
 
 export const activeCommunityReportReviewEvents: Readable<TrustedEvent[]> = derived(
-  [activeCommunityDefinition, activeCommunityReportEvents],
-  ([$activeCommunityDefinition, $activeCommunityReportEvents], set) => {
-    if (!$activeCommunityDefinition) {
+  [activeExactCommunityPointer, activeCommunityReportEvents],
+  ([$community, $activeCommunityReportEvents], set) => {
+    if (!$community) {
       set([])
       return
     }
 
-    const filters = makeCommunityReportReviewFilters(
-      $activeCommunityDefinition,
-      $activeCommunityReportEvents,
-    )
+    const filters = makeCommunityReportReviewFilters($community, $activeCommunityReportEvents)
     if (filters.length === 0) {
       set([])
       return
@@ -2502,7 +2585,7 @@ export const activeCommunityReportReviewEvents: Readable<TrustedEvent[]> = deriv
 
 export const activeCommunityReportState: Readable<EffectiveCommunityReportState> = derived(
   [
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
     activeCommunityReportEvents,
     activeCommunityReportDeleteEvents,
@@ -2515,6 +2598,7 @@ export const activeCommunityReportState: Readable<EffectiveCommunityReportState>
   ]) =>
     $activeCommunityDefinition
       ? getEffectiveCommunityReportState({
+          community: $activeCommunityDefinition.pointer,
           definition: $activeCommunityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           reportEvents: $activeCommunityReportEvents,
@@ -2524,25 +2608,36 @@ export const activeCommunityReportState: Readable<EffectiveCommunityReportState>
   {eventReports: [], personReports: []} as EffectiveCommunityReportState,
 )
 
-export const activeCommunityModeratorRequestEvents: Readable<TrustedEvent[]> =
-  deriveActiveCommunityEvents(makeCommunityModeratorRequestFilters)
+export const activeCommunityModeratorRequestEvents: Readable<TrustedEvent[]> = derived(
+  activeExactCommunityDefinition,
+  (definition, set) => {
+    if (!definition) {
+      set([])
+      return
+    }
+    return deriveEventsAsc(
+      deriveEventsById({repository, filters: makeCommunityModeratorRequestFilters(definition)}),
+    ).subscribe(set)
+  },
+  [] as TrustedEvent[],
+)
 
 export const activeCommunityModeratorRequests: Readable<ModeratorPromotionRequest[]> = derived(
-  [activeCommunityDefinition, activeCommunityModeratorRequestEvents],
+  [activeExactCommunityDefinition, activeCommunityModeratorRequestEvents],
   ([$activeCommunityDefinition, $activeCommunityModeratorRequestEvents]) =>
     $activeCommunityDefinition
       ? getModeratorPromotionRequests({
           profileListEvents: $activeCommunityModeratorRequestEvents.filter(
             event => event.kind === PROFILE_LIST_KIND,
           ),
-          communityPubkey: $activeCommunityDefinition.pubkey,
+          community: $activeCommunityDefinition.pointer,
         })
       : [],
   [] as ModeratorPromotionRequest[],
 )
 
 export const activeCommunityModeratorRequestReactionEvents: Readable<TrustedEvent[]> = derived(
-  [activeCommunityDefinition, activeCommunityModeratorRequests],
+  [activeExactCommunityDefinition, activeCommunityModeratorRequests],
   ([$activeCommunityDefinition, $activeCommunityModeratorRequests], set) => {
     if (!$activeCommunityDefinition) {
       set([])
@@ -2564,7 +2659,7 @@ export const activeCommunityModeratorRequestReactionEvents: Readable<TrustedEven
 )
 
 export const activeCommunityModeratorRequestDeleteEvents: Readable<TrustedEvent[]> = derived(
-  [activeCommunityDefinition, activeCommunityModeratorRequestReactionEvents],
+  [activeExactCommunityDefinition, activeCommunityModeratorRequestReactionEvents],
   ([$activeCommunityDefinition, $activeCommunityModeratorRequestReactionEvents], set) => {
     if (!$activeCommunityDefinition) {
       set([])
@@ -2588,7 +2683,7 @@ export const activeCommunityModeratorRequestDeleteEvents: Readable<TrustedEvent[
 export const activeCommunityModeratorRequestStates: Readable<ModeratorPromotionRequestState[]> =
   derived(
     [
-      activeCommunityDefinition,
+      activeExactCommunityDefinition,
       activeCommunityModeratorRequests,
       activeCommunityModeratorRequestReactionEvents,
       activeCommunityModeratorRequestDeleteEvents,
@@ -2619,7 +2714,7 @@ export const activeCommunityPendingModeratorRequestCount: Readable<number> = der
 )
 
 export const activeCommunityUserModeratorRequestEvents: Readable<TrustedEvent[]> = derived(
-  [activeCommunityDefinition, pubkey],
+  [activeExactCommunityDefinition, pubkey],
   ([$activeCommunityDefinition, $pubkey], set) => {
     if (!$activeCommunityDefinition || !$pubkey) {
       set([])
@@ -2641,21 +2736,21 @@ export const activeCommunityUserModeratorRequestEvents: Readable<TrustedEvent[]>
 )
 
 export const activeCommunityUserModeratorRequests: Readable<ModeratorPromotionRequest[]> = derived(
-  [activeCommunityDefinition, activeCommunityUserModeratorRequestEvents],
+  [activeExactCommunityDefinition, activeCommunityUserModeratorRequestEvents],
   ([$activeCommunityDefinition, $activeCommunityUserModeratorRequestEvents]) =>
     $activeCommunityDefinition
       ? getModeratorPromotionRequests({
           profileListEvents: $activeCommunityUserModeratorRequestEvents.filter(
             event => event.kind === PROFILE_LIST_KIND,
           ),
-          communityPubkey: $activeCommunityDefinition.pubkey,
+          community: $activeCommunityDefinition.pointer,
         })
       : [],
   [] as ModeratorPromotionRequest[],
 )
 
 export const activeCommunityUserModeratorRequestReactionEvents: Readable<TrustedEvent[]> = derived(
-  [activeCommunityDefinition, activeCommunityUserModeratorRequests],
+  [activeExactCommunityDefinition, activeCommunityUserModeratorRequests],
   ([$activeCommunityDefinition, $activeCommunityUserModeratorRequests], set) => {
     if (!$activeCommunityDefinition) {
       set([])
@@ -2677,7 +2772,7 @@ export const activeCommunityUserModeratorRequestReactionEvents: Readable<Trusted
 )
 
 export const activeCommunityUserModeratorRequestDeleteEvents: Readable<TrustedEvent[]> = derived(
-  [activeCommunityDefinition, activeCommunityUserModeratorRequestReactionEvents],
+  [activeExactCommunityDefinition, activeCommunityUserModeratorRequestReactionEvents],
   ([$activeCommunityDefinition, $activeCommunityUserModeratorRequestReactionEvents], set) => {
     if (!$activeCommunityDefinition) {
       set([])
@@ -2701,7 +2796,7 @@ export const activeCommunityUserModeratorRequestDeleteEvents: Readable<TrustedEv
 export const activeCommunityUserModeratorRequestStates: Readable<ModeratorPromotionRequestState[]> =
   derived(
     [
-      activeCommunityDefinition,
+      activeExactCommunityDefinition,
       activeCommunityUserModeratorRequests,
       activeCommunityUserModeratorRequestReactionEvents,
       activeCommunityUserModeratorRequestDeleteEvents,
@@ -2730,11 +2825,11 @@ let userModeratorRequestHydrationRequestId = 0
 let userModeratorRequestHydratedAt = 0
 
 export const hydrateActiveCommunityUserModeratorRequests = async ({
-  definition = get(activeCommunityDefinition),
-  relays = get(activeCommunityRelays),
+  definition = get(activeExactCommunityDefinition),
+  relays = get(activeExactCommunityRelays),
   force = false,
 }: {
-  definition?: CommunityDefinition
+  definition?: CommunityDefinitionV2
   relays?: string[]
   force?: boolean
 } = {}) => {
@@ -2769,22 +2864,13 @@ export const hydrateActiveCommunityUserModeratorRequests = async ({
   activeCommunityUserModeratorRequestsLoading.set(true)
 
   try {
-    const [loadedRequestEvents] = await Promise.all([
-      withTimeout(
-        loadCommunityEvents(normalizedRelays, requestFilters, {
-          timeout: COMMUNITY_MODERATOR_REQUEST_LOAD_TIMEOUT,
-        }),
-        COMMUNITY_MODERATOR_REQUEST_LOAD_TIMEOUT + 500,
-        [] as TrustedEvent[],
-      ),
-      withTimeout(
-        loadCommunityEvents(normalizedRelays, [makeCommunityDefinitionFilter(definition.pubkey)], {
-          timeout: COMMUNITY_MODERATOR_REQUEST_LOAD_TIMEOUT,
-        }),
-        COMMUNITY_MODERATOR_REQUEST_LOAD_TIMEOUT + 500,
-        [] as TrustedEvent[],
-      ),
-    ])
+    const loadedRequestEvents = await withTimeout(
+      loadCommunityEvents(normalizedRelays, requestFilters, {
+        timeout: COMMUNITY_MODERATOR_REQUEST_LOAD_TIMEOUT,
+      }),
+      COMMUNITY_MODERATOR_REQUEST_LOAD_TIMEOUT + 500,
+      [] as TrustedEvent[],
+    )
 
     if (requestId !== userModeratorRequestHydrationRequestId) return
 
@@ -2794,7 +2880,7 @@ export const hydrateActiveCommunityUserModeratorRequests = async ({
     ]
     const requests = getModeratorPromotionRequests({
       profileListEvents: requestEvents.filter(event => event.kind === PROFILE_LIST_KIND),
-      communityPubkey: definition.pubkey,
+      community: definition.pointer,
     })
     const reactionFilters = makeCommunityModeratorRequestReactionFilters(definition, requests)
     const loadedReactionEvents = reactionFilters.length
@@ -2832,7 +2918,8 @@ export const hydrateActiveCommunityUserModeratorRequests = async ({
 }
 
 export const selectCommunityAdmissionForms = (
-  definition: CommunityDefinition,
+  community: CommunityPointer,
+  definition: CommunityDefinitionV2,
   events: TrustedEvent[],
   profileListEvents?: TrustedEvent[],
   reportState?: EffectiveCommunityReportState,
@@ -2841,7 +2928,7 @@ export const selectCommunityAdmissionForms = (
     definition.sections.flatMap(section => {
       const form = selectActiveAdmissionForm({
         events,
-        communityPubkey: definition.pubkey,
+        community,
         sectionName: section.name,
         moderatorPubkeys: getGrantCapableSectionModeratorPubkeys({
           definition,
@@ -2860,7 +2947,7 @@ export const selectCommunityAdmissionForms = (
 export const activeCommunityAdmissionForms: Readable<Record<string, CommunityAdmissionForm>> =
   derived(
     [
-      activeCommunityDefinition,
+      activeExactCommunityDefinition,
       activeCommunityAdmissionFormEvents,
       activeCommunityProfileListEvents,
       activeCommunityReportState,
@@ -2873,6 +2960,7 @@ export const activeCommunityAdmissionForms: Readable<Record<string, CommunityAdm
     ]) =>
       $activeCommunityDefinition
         ? selectCommunityAdmissionForms(
+            $activeCommunityDefinition.pointer,
             $activeCommunityDefinition,
             $activeCommunityAdmissionFormEvents,
             $activeCommunityProfileListEvents,
@@ -2884,9 +2972,9 @@ export const activeCommunityAdmissionForms: Readable<Record<string, CommunityAdm
 // Look up a community definition synchronously in the repository cache
 // (IndexedDB warm-start populates this before any effect runs). Returns
 // undefined if not cached.
-const readCachedCommunityDefinition = (communityPubkey: string) => {
-  const cachedEvents = repository.query([makeCommunityDefinitionFilter(communityPubkey)])
-  return selectLatestCommunityDefinition(cachedEvents, communityPubkey)
+const readCachedCommunityDefinition = (pointer: CommunityPointer) => {
+  const cachedEvents = repository.query([makeExactCommunityDefinitionFilter(pointer)])
+  return selectExactCommunityDefinition(cachedEvents, pointer)
 }
 
 const loadCommunityPermissionEvents = async ({
@@ -2896,7 +2984,7 @@ const loadCommunityPermissionEvents = async ({
   loadAuthority = true,
   loadAdmissionForms = true,
 }: {
-  definition: CommunityDefinition
+  definition: CommunityDefinitionV2
   relays: string[]
   context: CommunityPermissionLoadContext
   loadAuthority?: boolean
@@ -2987,11 +3075,12 @@ const loadCommunityPermissionEvents = async ({
 }
 
 export const loadCommunityBootstrap = async (
-  session: CommunitySession,
+  session: ExactCommunitySession,
 ): Promise<CommunityBootstrap> => {
   const bootstrapViewerPubkey = normalizePubkey(pubkey.get() || "")
-  const mayClaimUnownedCommunity = !get(activeCommunitySession)
-  const definitionFilter = makeCommunityDefinitionFilter(session.communityPubkey)
+  const pointer = getExactCommunitySessionPointer(session)
+  const mayClaimUnownedCommunity = !get(activeExactCommunitySession)
+  const definitionFilter = makeExactCommunityDefinitionFilter(pointer)
 
   // Do not block on relay auth before we know the community definition. Once
   // definition relays are known below, they get a bounded auth head start
@@ -3001,23 +3090,26 @@ export const loadCommunityBootstrap = async (
   // IndexedDB, a prior visit, or a parallel path), use it immediately and
   // fire the network refresh in the background. This is the biggest win
   // for perceived speed: warm cache paths never wait on a round-trip.
-  let definition = readCachedCommunityDefinition(session.communityPubkey)
+  let definition = readCachedCommunityDefinition(pointer)
   const cacheHit = Boolean(definition)
   let refreshedDefinitionId = definition?.event.id || ""
 
-  const hydrateRefreshedDefinition = (refreshed: CommunityDefinition | undefined) => {
+  const hydrateRefreshedDefinition = (refreshed: CommunityDefinitionV2 | undefined) => {
     if (!refreshed) return
 
-    const latest = readCachedCommunityDefinition(session.communityPubkey) || refreshed
+    const latest = readCachedCommunityDefinition(pointer) || refreshed
     if (latest.event.id === refreshedDefinitionId) return
 
     refreshedDefinitionId = latest.event.id
-    const currentSession = get(activeCommunitySession)
+    const currentSession = get(activeExactCommunitySession)
+    const currentPointer = currentSession
+      ? getExactCommunitySessionPointer(currentSession)
+      : undefined
     if (
-      currentSession?.communityPubkey === session.communityPubkey ||
+      currentPointer?.address === pointer.address ||
       (!currentSession && mayClaimUnownedCommunity)
     ) {
-      setActiveCommunityDefinition(latest)
+      setActiveExactCommunityDefinition(latest)
     } else {
       repository.publish(latest.event)
       return
@@ -3025,7 +3117,7 @@ export const loadCommunityBootstrap = async (
 
     const refreshedRelays = latest.relays.length
       ? latest.relays
-      : getCommunityBootstrapRelays(session.communityRelayHints)
+      : getCommunityBootstrapRelays(session.relayHints)
     const context = startCommunityPermissionLoadContext()
     void loadCommunityPermissionEvents({
       definition: latest,
@@ -3037,20 +3129,20 @@ export const loadCommunityBootstrap = async (
   if (cacheHit) {
     // Background refresh - non-awaited. The repository will emit updates
     // when a newer definition arrives, and reactive stores will pick it up.
-    void loadCommunityDefinitionWithOutboxFallback(session.communityPubkey, {
-      relayHints: session.communityRelayHints,
+    void loadCommunityDefinitionWithOutboxFallback(pointer, {
+      relayHints: session.relayHints,
     })
       .then(hydrateRefreshedDefinition)
       .catch(() => undefined)
   } else {
-    definition = await loadCommunityDefinitionWithOutboxFallback(session.communityPubkey, {
-      relayHints: session.communityRelayHints,
+    definition = await loadCommunityDefinitionWithOutboxFallback(pointer, {
+      relayHints: session.relayHints,
     })
 
     if (!definition) {
       // Final chance: the network fetch may have populated the cache during
       // its await (e.g. via the outbox path emitting to the repository).
-      definition = readCachedCommunityDefinition(session.communityPubkey)
+      definition = readCachedCommunityDefinition(pointer)
 
       if (!definition) throw new Error("Community definition unavailable")
     }
@@ -3061,10 +3153,13 @@ export const loadCommunityBootstrap = async (
   const definitionEvents = [definition.event]
   let communityRelays = definition.relays
   const ownsActiveBootstrap = () => {
-    const currentSession = get(activeCommunitySession)
+    const currentSession = get(activeExactCommunitySession)
+    const currentPointer = currentSession
+      ? getExactCommunitySessionPointer(currentSession)
+      : undefined
 
     return (
-      (currentSession?.communityPubkey === session.communityPubkey ||
+      (currentPointer?.address === pointer.address ||
         (!currentSession && mayClaimUnownedCommunity)) &&
       normalizePubkey(pubkey.get() || "") === bootstrapViewerPubkey
     )
@@ -3075,10 +3170,7 @@ export const loadCommunityBootstrap = async (
     // begin their own feeds. Without this, warm-cache boot can mark bootstrap
     // complete and let feed requests settle empty while NIP-42 is still signing.
     await authenticateCommunityRelays(communityRelays, {
-      priorityRelays: normalizeRelays([
-        ...session.communityRelayHints,
-        ...getDefaultCommunityRelayHints(),
-      ]),
+      priorityRelays: normalizeRelays([...session.relayHints, ...getDefaultCommunityRelayHints()]),
       timeout: COMMUNITY_PRIORITY_RELAY_AUTH_TIMEOUT,
     })
 
@@ -3088,19 +3180,15 @@ export const loadCommunityBootstrap = async (
       void loadCommunityEvents(communityRelays, [definitionFilter], {
         settle: "first-non-empty",
       })
-        .then(events =>
-          hydrateRefreshedDefinition(
-            selectLatestCommunityDefinition(events, session.communityPubkey),
-          ),
-        )
+        .then(events => hydrateRefreshedDefinition(selectExactCommunityDefinition(events, pointer)))
         .catch(() => undefined)
     } else {
       const relayDefinitionEvents = await loadCommunityEvents(communityRelays, [definitionFilter], {
         settle: "first-non-empty",
       })
-      const communityRelayDefinition = selectLatestCommunityDefinition(
+      const communityRelayDefinition = selectExactCommunityDefinition(
         [...definitionEvents, ...relayDefinitionEvents],
-        session.communityPubkey,
+        pointer,
       )
 
       if (communityRelayDefinition) {
@@ -3110,13 +3198,13 @@ export const loadCommunityBootstrap = async (
     }
   }
 
-  const latestCachedDefinition = readCachedCommunityDefinition(session.communityPubkey)
+  const latestCachedDefinition = readCachedCommunityDefinition(pointer)
   if (latestCachedDefinition && latestCachedDefinition.event.id !== definition.event.id) {
     hydrateRefreshedDefinition(latestCachedDefinition)
     definition = latestCachedDefinition
     communityRelays = definition.relays.length
       ? definition.relays
-      : getCommunityBootstrapRelays(session.communityRelayHints)
+      : getCommunityBootstrapRelays(session.relayHints)
   }
 
   const authorityFilters: Filter[] = []
@@ -3124,19 +3212,28 @@ export const loadCommunityBootstrap = async (
   const reportFilters: Filter[] = []
 
   if (definition) {
-    const currentSession = get(activeCommunitySession)
+    const currentSession = get(activeExactCommunitySession)
+    const currentPointer = currentSession
+      ? getExactCommunitySessionPointer(currentSession)
+      : undefined
 
     if (
-      currentSession?.communityPubkey === session.communityPubkey ||
+      currentPointer?.address === pointer.address ||
       (!currentSession && mayClaimUnownedCommunity)
     ) {
-      setActiveCommunityDefinition(definition)
+      setActiveExactCommunityDefinition(definition)
     } else {
       repository.publish(definition.event)
     }
-    authorityFilters.push(...makeCommunityProfileListFilters(definition))
-    admissionFormFilters.push(...makeCommunityAdmissionFormFilters(definition))
-    reportFilters.push(...makeCommunityReportFilters(definition))
+    const exactDefinition = get(activeExactCommunityDefinition)
+    if (exactDefinition?.pointer.address === pointer.address) {
+      authorityFilters.push(...makeCommunityProfileListFilters(exactDefinition))
+      admissionFormFilters.push(...makeCommunityAdmissionFormFilters(exactDefinition))
+    }
+    const community = get(activeExactCommunityPointer)
+    if (community) {
+      reportFilters.push(...makeCommunityReportFilters(community))
+    }
   }
 
   const tracksActivePermissionStatus = ownsActiveBootstrap()
@@ -3208,8 +3305,9 @@ export const loadCommunityBootstrap = async (
     )
   }
 
-  const reportReviewFilters = definition
-    ? makeCommunityReportReviewFilters(definition, reportEvents)
+  const community = get(activeExactCommunityPointer)
+  const reportReviewFilters = community
+    ? makeCommunityReportReviewFilters(community, reportEvents)
     : []
 
   let reportReviewEvents: TrustedEvent[]
@@ -3233,7 +3331,9 @@ export const loadCommunityBootstrap = async (
 
   const bootstrap = {
     definition,
-    profileListEvents: authorityEvents.filter(event => event.kind === PROFILE_LIST_KIND),
+    profileListEvents: authorityEvents.filter(
+      event => event.kind === PROFILE_LIST_KIND || event.kind === DELETE,
+    ),
     admissionFormEvents: admissionFormEvents.filter(event => event.kind === FORM_TEMPLATE_KIND),
     reportEvents: reportEvents.filter(event => event.kind === COMMUNITY_REPORT_KIND),
     reportDeleteEvents: [],
@@ -3246,21 +3346,21 @@ export const loadCommunityBootstrap = async (
 }
 
 const ensureCompletedCommunityPermissionHydration = (
-  session: CommunitySession,
+  session: ExactCommunitySession,
   bootstrap: CommunityBootstrap,
 ) => {
-  const definition = readCachedCommunityDefinition(session.communityPubkey) || bootstrap.definition
+  const definition = bootstrap.definition
   if (!definition) return
 
   const relays = definition.relays.length
     ? definition.relays
-    : getCommunityBootstrapRelays(session.communityRelayHints)
+    : getCommunityBootstrapRelays(session.relayHints)
   const viewerPubkey = normalizePubkey(pubkey.get() || "")
   const keyPrefix = getCommunityPermissionStatusKeyPrefix(definition, relays, viewerPubkey)
   const authorityStatus = get(activeCommunityPermissionStatus)
   const admissionFormStatus = get(activeCommunityAdmissionFormStatus)
   const statusMatches = (status: CommunityPermissionStatus) =>
-    status.communityPubkey === definition.pubkey && status.key.startsWith(keyPrefix)
+    status.communityPubkey === definition.controllerPubkey && status.key.startsWith(keyPrefix)
   const loadAuthority =
     !statusMatches(authorityStatus) || (!authorityStatus.loading && !authorityStatus.complete)
   const loadAdmissionForms =
@@ -3280,7 +3380,7 @@ const ensureCompletedCommunityPermissionHydration = (
 }
 
 export const ensureCommunityBootstrap = async (
-  session: CommunitySession,
+  session: ExactCommunitySession,
   options: {key?: string; updateStatus?: boolean} = {},
 ): Promise<CommunityBootstrap> => {
   const key = options.key || getCommunityBootstrapKey(session, pubkey.get() || "")
@@ -3390,7 +3490,7 @@ export const ensureCommunityBootstrap = async (
 }
 
 export const recoverCommunityBootstrap = async (
-  session: CommunitySession,
+  session: ExactCommunitySession,
   options: {
     recoverAuth?: boolean
     authTimeout?: number
@@ -3398,19 +3498,20 @@ export const recoverCommunityBootstrap = async (
   } = {},
 ) => {
   const viewerPubkey = normalizePubkey(pubkey.get() || "")
+  const pointer = getExactCommunitySessionPointer(session)
   const isCurrentRecovery = () =>
-    get(activeCommunitySession)?.communityPubkey === session.communityPubkey &&
+    get(activeExactCommunityPointer)?.address === pointer.address &&
     normalizePubkey(pubkey.get() || "") === viewerPubkey
 
   if (!isCurrentRecovery()) throw new Error("Community recovery was superseded")
 
-  clearCommunityBootstrapCache(session.communityPubkey)
+  clearCommunityBootstrapCache(pointer.address)
   startCommunityPermissionLoadContext()
 
   if (options.recoverAuth && get(pubkey)) {
     await recoverActiveNip46Receiver().catch(() => false)
-    const definition = readCachedCommunityDefinition(session.communityPubkey)
-    const relays = normalizeRelays([...(definition?.relays || []), ...session.communityRelayHints])
+    const definition = readCachedCommunityDefinition(pointer)
+    const relays = normalizeRelays([...(definition?.relays || []), ...session.relayHints])
 
     await Promise.allSettled(
       relays.map(relay => recoverCommunityRelayAuth(relay, {timeout: options.authTimeout})),

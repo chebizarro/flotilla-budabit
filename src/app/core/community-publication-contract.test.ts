@@ -6,7 +6,6 @@ const readProjectFile = (path: string) => readFileSync(new URL(path, import.meta
 describe("strict community publication source contracts", () => {
   it("uses definition-only relays in direct community route publishers", () => {
     const routes = [
-      "../../routes/c/[community]/+page.svelte",
       "../../routes/c/[community]/threads/create/+page.svelte",
       "../../routes/c/[community]/threads/[thread]/+page.svelte",
       "../../routes/c/[community]/rooms/[room]/+page.svelte",
@@ -20,8 +19,12 @@ describe("strict community publication source contracts", () => {
     for (const route of routes) {
       const source = readProjectFile(route)
 
-      expect(source, route).toContain("const relays = $activeCommunityPublishRelays")
+      expect(source, route).toContain("const relays = $activeExactCommunityRelays")
     }
+
+    expect(readProjectFile("../../routes/c/[community]/+page.svelte")).toContain(
+      "const relays = routeCommunityDefinition?.relays || []",
+    )
   })
 
   it("keeps read relays separate from action relays on community social surfaces", () => {
@@ -38,8 +41,8 @@ describe("strict community publication source contracts", () => {
     for (const route of routes) {
       const source = readProjectFile(route)
 
-      expect(source, route).toContain("$activeCommunityRelays")
-      expect(source, route).toContain("$activeCommunityPublishRelays")
+      expect(source, route).toContain("$activeExactCommunityRelays")
+      expect(source, route).toContain("$activeExactCommunityRelays")
     }
   })
 
@@ -87,8 +90,9 @@ describe("strict community publication source contracts", () => {
     expect(widgets).toContain("const baseRelays: string[] = []")
     expect(widgets).not.toContain("SMART_WIDGET_RELAYS")
     expect(widgets).not.toContain("Router.get().FromUser()")
-    expect(explore).toContain("publishRelayHints={item.publishRelayHints}")
-    expect(explore).toContain("getLoadedCommunityPublishRelays")
+    expect(explore).toContain("CommunityLinkCard value={DEFAULT_COMMUNITY_POINTER}")
+    expect(explore).not.toContain("CommunityStarButton")
+    expect(explore).not.toContain("publishRelayHints")
   })
 
   it("keeps pending community stars outside the canonical repository", () => {
@@ -97,7 +101,7 @@ describe("strict community publication source contracts", () => {
     expect(star).toContain("startPublication({")
     expect(star).toContain('preview: "rollback-on-failure"')
     expect(star).toContain("$publicationOperations.values()")
-    expect(star).toContain('tags: supersededStarEventId ? [["e", supersededStarEventId]] : []')
+    expect(star).toContain("makeCommunityStarDeleteV2(community, star.reaction.id)")
     expect(star).not.toContain("publishThunk({")
     expect(star).not.toContain("repository.publish(")
     expect(star).not.toContain("publishDelete(")
@@ -188,10 +192,10 @@ describe("strict community publication source contracts", () => {
       "../../routes/c/[community]/calendar/[event]/+page.svelte",
     )
 
-    expect(goals).toContain('"#h": [communityPubkey]')
+    expect(goals).toContain('"#h": [communityId]')
     expect(goal).toContain("directGoalFilterPlan.localFilters")
     expect(goal).toContain("matchFilters(goalFilters, event)")
-    expect(calendar).toContain('"#h": [communityPubkey]')
+    expect(calendar).toContain('"#h": [communityId]')
     expect(calendar).toContain("calendarProjection.events.toSorted(")
     expect(calendarEvent).toContain("directEventFilterPlan.localFilters")
     expect(calendarEvent).toContain("matchFilters(eventFilters, event)")

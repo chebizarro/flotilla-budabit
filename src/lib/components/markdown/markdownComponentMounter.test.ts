@@ -88,6 +88,29 @@ describe("markdownComponentMounter", () => {
       expect(mockMount).not.toHaveBeenCalled()
     })
 
+    it("mounts community placeholders from one exact definition naddr", () => {
+      const naddr =
+        "naddr1qvzqqqramcpzqxuyc4t8kynygzv460k442aq2ewhrcvrgczgr8lec9l4a82a6pu0qyfhwumn8ghj7un9d3shjtn90psk6urvv5qyqe3exvcrscfsxyunydfcvvenzvp58yengdrx8q6kvwpevs6nyv3evg6nxvtr8q6r2wpnxenrjwtzxqurvvp3vccnzvmzvdjnqvekvcusayrxs5"
+      const container = document.createElement("div")
+      container.innerHTML = `<span class="markdown-community-placeholder" data-naddr="${naddr}"></span>`
+
+      const result = mountPlaceholderComponents(container, {})
+
+      expect(mockMount).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          props: {
+            value: expect.objectContaining({
+              address:
+                "32222:1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f:f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+            }),
+          },
+        }),
+      )
+      expect(result).toHaveLength(1)
+      expect(container.querySelector(".markdown-community-placeholder")).toBeNull()
+    })
+
     it("does not mount link block placeholders when event not provided", () => {
       const container = document.createElement("div")
       container.innerHTML = `<span class="markdown-link-block-placeholder" data-url="https://example.com/img.jpg" data-event-id="evt1"></span>`

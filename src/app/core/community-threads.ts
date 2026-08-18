@@ -1,6 +1,6 @@
 import type {EventContent, TrustedEvent} from "@welshman/util"
 import {COMMENT, THREAD, getTag, getTagValue} from "@welshman/util"
-import {normalizePubkey} from "@app/core/community"
+import {makeCommunityScopeTagsV2, parseCommunityId} from "@app/core/community"
 import {eventTargetsCommunity} from "@app/core/community-feeds"
 
 export type CommunityThread = {
@@ -31,7 +31,7 @@ export const makeCommunityThread = ({
   tags?: string[][]
 }): EventContent => ({
   content,
-  tags: [["h", normalizePubkey(communityPubkey)], ["title", title], ...tags],
+  tags: makeCommunityScopeTagsV2(communityPubkey, [["title", title], ...tags]),
 })
 
 export const readCommunityThread = (
@@ -42,7 +42,7 @@ export const readCommunityThread = (
   if (getTag("room", event.tags)) return undefined
   if (communityPubkey && !eventTargetsCommunity(event, communityPubkey)) return undefined
 
-  const scopedCommunity = normalizePubkey(getTagValue("h", event.tags) || "")
+  const scopedCommunity = parseCommunityId(getTagValue("h", event.tags) || "")
   const title = getTagValue("title", event.tags) || "Untitled"
   if (!scopedCommunity) return undefined
 
@@ -77,7 +77,6 @@ export const makeCommunityThreadReply = ({
   tags?: string[][]
 }): EventContent => {
   const eventTags = [
-    ["h", normalizePubkey(communityPubkey)],
     ["E", thread.id, relay || "", thread.creatorPubkey],
     ["K", String(THREAD)],
     ["P", thread.creatorPubkey, relay || ""],
@@ -93,7 +92,7 @@ export const makeCommunityThreadReply = ({
     )
   }
 
-  return {content, tags: [...eventTags, ...tags]}
+  return {content, tags: makeCommunityScopeTagsV2(communityPubkey, [...eventTags, ...tags])}
 }
 
 export const readCommunityThreadReply = (

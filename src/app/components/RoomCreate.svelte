@@ -13,10 +13,11 @@
   import ModalHeader from "@lib/components/ModalHeader.svelte"
   import ModalFooter from "@lib/components/ModalFooter.svelte"
   import {canCreateRoomByPlatformPolicy, createBudaBitRoom, loadRoom} from "@app/core/state"
-  import {makeSpacePath} from "@app/util/routes"
+  import {makeExactCommunityRoomPath, parseExactCommunityRouteParam} from "@app/util/routes"
   import {pushToast} from "@app/util/toast"
 
   const {url} = $props()
+  const community = $derived(parseExactCommunityRouteParam(url))
 
   const relay = deriveRelay(url)
   const owner = $derived($relay?.pubkey)
@@ -46,7 +47,7 @@
 
     await loadRoom(url, room.h)
 
-    goto(makeSpacePath(url, room.name || room.h))
+    if (community) goto(makeExactCommunityRoomPath(community, room.h))
   }
 
   const create = async () => {

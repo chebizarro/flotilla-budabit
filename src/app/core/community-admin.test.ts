@@ -1,6 +1,13 @@
 import {describe, expect, it} from "vitest"
+import {getPublicKey} from "nostr-tools/pure"
 import {type TrustedEvent} from "@welshman/util"
-import {PROFILE_LIST_KIND, getProfileListPubkeys, parseCommunityDefinition} from "./community"
+import {
+  COMMUNITY_DEFINITION_KIND_V2,
+  PROFILE_LIST_KIND,
+  buildCommunityDefinitionV2,
+  getProfileListPubkeys,
+  parseCommunityDefinitionV2,
+} from "./community"
 import {
   addPubkeyToCommunityProfileList,
   applyCommunityBootstrapGrants,
@@ -17,9 +24,12 @@ import {
   removePubkeyFromCommunityProfileList,
 } from "./community-admin"
 
-const managerPubkey = "a".repeat(64)
-const memberPubkey = "c".repeat(64)
-const otherPubkey = "d".repeat(64)
+const managerPubkey = getPublicKey(new Uint8Array(32).fill(5))
+const memberPubkey = getPublicKey(new Uint8Array(32).fill(4))
+const otherPubkey = getPublicKey(new Uint8Array(32).fill(6))
+const v2Controller = getPublicKey(new Uint8Array(32).fill(1))
+const v2CommunityId = getPublicKey(new Uint8Array(32).fill(2))
+const v2ListController = getPublicKey(new Uint8Array(32).fill(3))
 
 const profileList = {
   kind: PROFILE_LIST_KIND,
@@ -40,6 +50,25 @@ const profileListEvent = {
   content: "",
   sig: "sig",
 } as TrustedEvent
+
+const makeDefinition = (profileLists: Array<{address: string; relay?: string}>) => {
+  const template = buildCommunityDefinitionV2({
+    communityId: v2CommunityId,
+    name: "Community",
+    relays: ["wss://relay.example.com"],
+    sections: [{name: "General", kinds: [{kind: 1111}], profileLists}],
+  })
+
+  return parseCommunityDefinitionV2({
+    id: "definition",
+    kind: COMMUNITY_DEFINITION_KIND_V2,
+    pubkey: managerPubkey,
+    created_at: 1,
+    tags: template.tags,
+    content: "",
+    sig: "sig",
+  } as TrustedEvent)!
+}
 
 describe("community admin helpers", () => {
   it("builds profile lists with normalized unique pubkeys", () => {
@@ -98,24 +127,12 @@ describe("community admin helpers", () => {
   })
 
   it("applies manual member grants to community-owned section lists", () => {
-    const definition = parseCommunityDefinition({
-      id: "definition",
-      kind: 10222,
-      pubkey: managerPubkey,
-      created_at: 1,
-      tags: [
-        ["r", "wss://relay.example.com"],
-        ["content", "General"],
-        ["k", "1111"],
-        ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:General`],
-      ],
-      content: "",
-      sig: "sig",
-    } as TrustedEvent)!
+    const definition = makeDefinition([{address: `${PROFILE_LIST_KIND}:${managerPubkey}:General`}])
 
     const result = applyCommunityBootstrapGrants({
       sections: definition.sections,
-      communityPubkey: managerPubkey,
+      communityId: definition.communityId,
+      controllerPubkey: managerPubkey,
       relays: definition.relays,
       profileListEvents: [profileListEvent],
       grants: [{pubkey: memberPubkey, role: "member", sectionNames: ["General"]}],
@@ -127,87 +144,76 @@ describe("community admin helpers", () => {
     ])
   })
 
-  it("creates an owner-managed member grant list only when a grant needs one", () => {
-    const moderatorRef = makeManualModeratorProfileListRef({
-      moderatorPubkey: memberPubkey,
-      sectionName: "Threads",
+  it("preserves the exact V2 definition envelope and opaque tags when adding an owner grant list", () => {
+    const template = buildCommunityDefinitionV2({
+      communityId: v2CommunityId,
+      name: "Sibling community",
       relays: ["wss://relay.example.com"],
-    })
-    const definition = parseCommunityDefinition({
-      id: "definition",
-      kind: 10222,
-      pubkey: managerPubkey,
-      created_at: 1,
-      tags: [
-        ["r", "wss://relay.example.com"],
-        ["grasp", "wss://grasp.example.com"],
-        [
-          "service",
-          "email-digest",
-          memberPubkey,
-          "wss://digest-requests.example.com",
-          `31990:${otherPubkey}:daily`,
-          "wss://digest-handler.example.com",
-        ],
-        [
-          "service",
-          "community-alerts",
-          memberPubkey,
-          "wss://alerts-requests.example.com",
-          `31990:${otherPubkey}:alerts`,
-          "wss://alerts-handler.example.com",
-        ],
-        ["service", "future-provider", "opaque"],
-        ["content", "Threads"],
-        ["k", "11", "threads"],
-        ["a", moderatorRef.address, moderatorRef.relay || ""],
+      graspServers: ["wss://grasp.example.com"],
+      sections: [
+        {
+          name: "Threads",
+          kinds: [{kind: 11, subtype: "threads"}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${v2ListController}:existing`}],
+        },
       ],
+    })
+    const unknownTag = ["future-extension", "opaque", "value"]
+    const definition = parseCommunityDefinitionV2({
+      id: "definition",
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      pubkey: v2Controller,
+      created_at: 1,
+      tags: [...template.tags.slice(0, 2), unknownTag, ...template.tags.slice(2)],
       content: "",
       sig: "sig",
     } as TrustedEvent)!
     const result = getOwnerMembershipGrantProfileList({
       definition,
       sectionName: "Threads",
-      relays: ["wss://relay.example.com"],
+      relays: definition.relays,
     })
+    const update = result.definitionUpdate!
+    const reparsed = parseCommunityDefinitionV2({
+      ...definition.event,
+      id: "updated-definition",
+      kind: update.kind,
+      tags: update.tags,
+    } as TrustedEvent)!
 
-    expect(result.profileList).toMatchObject({pubkey: managerPubkey})
-    expect(result.definitionUpdate?.tags).toContainEqual([
+    expect(update.kind).toBe(COMMUNITY_DEFINITION_KIND_V2)
+    expect(result.profileList?.address.split(":")[1]).toBe(v2Controller)
+    expect(update.tags).toContainEqual(["d", v2CommunityId])
+    expect(update.tags).toContainEqual(unknownTag)
+    expect(update.tags).toContainEqual([
       "a",
       result.profileList!.address,
-      "wss://relay.example.com/",
+      "wss://relay.example.com",
     ])
-    expect(result.definitionUpdate?.tags).toContainEqual(["grasp", "wss://grasp.example.com"])
-    expect(result.definitionUpdate?.tags).toContainEqual([
-      "service",
-      "email-digest",
-      memberPubkey,
-      "wss://digest-requests.example.com/",
-      `31990:${otherPubkey}:daily`,
-      "wss://digest-handler.example.com/",
-    ])
-    expect(result.definitionUpdate?.tags).toContainEqual([
-      "service",
-      "community-alerts",
-      memberPubkey,
-      "wss://alerts-requests.example.com/",
-      `31990:${otherPubkey}:alerts`,
-      "wss://alerts-handler.example.com/",
-    ])
-    expect(result.definitionUpdate?.tags).toContainEqual(["service", "future-provider", "opaque"])
+    expect(reparsed.controllerPubkey).toBe(v2Controller)
+    expect(reparsed.communityId).toBe(v2CommunityId)
+    expect(reparsed.pointer.address).toBe(definition.pointer.address)
   })
 
   it("reuses an existing owner member grant list ref", () => {
-    const definition = parseCommunityDefinition({
-      id: "definition",
-      kind: 10222,
-      pubkey: managerPubkey,
-      created_at: 1,
-      tags: [
-        ["content", "General"],
-        ["k", "1111"],
-        ["a", profileList.address],
+    const template = buildCommunityDefinitionV2({
+      communityId: v2CommunityId,
+      name: "Sibling community",
+      relays: ["wss://relay.example.com"],
+      sections: [
+        {
+          name: "General",
+          kinds: [{kind: 1111}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${v2Controller}:General`}],
+        },
       ],
+    })
+    const definition = parseCommunityDefinitionV2({
+      id: "definition",
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      pubkey: v2Controller,
+      created_at: 1,
+      tags: template.tags,
       content: "",
       sig: "sig",
     } as TrustedEvent)!
@@ -217,7 +223,7 @@ describe("community admin helpers", () => {
       relays: ["wss://relay.example.com"],
     })
 
-    expect(result.profileList).toEqual(definition.sections[0].profileLists[0])
+    expect(result.profileList?.address).toEqual(definition.sections[0].profileLists[0].address)
     expect(result.definitionUpdate).toBeUndefined()
   })
 
@@ -237,7 +243,8 @@ describe("community admin helpers", () => {
           retention: [],
         },
       ],
-      communityPubkey: managerPubkey,
+      communityId: v2CommunityId,
+      controllerPubkey: managerPubkey,
       relays: ["wss://relay.example.com"],
       grants: [{pubkey: memberPubkey, role: "moderator", sectionNames: ["General"]}],
     })
@@ -263,25 +270,61 @@ describe("community admin helpers", () => {
     expect(findCommunityProfileListEvent(profileList, [profileListEvent, newer])).toBe(newer)
   })
 
+  it("rejects malformed profile-list coordinates and applies exact authority tombstones", () => {
+    const malformed = {
+      ...profileListEvent,
+      id: "malformed",
+      created_at: 4,
+      tags: [
+        ["d", "General"],
+        ["d", "Other"],
+        ["p", memberPubkey],
+      ],
+    }
+    const deletion = {
+      ...profileListEvent,
+      id: "deletion",
+      kind: 5,
+      created_at: 1,
+      tags: [["a", profileList.address]],
+    }
+    const newerDeletion = {...deletion, id: "newer-deletion", created_at: 2}
+    const recreated = {...profileListEvent, id: "recreated", created_at: 3}
+    const foreignDeletion = {...deletion, id: "foreign-deletion", pubkey: memberPubkey}
+    const multiAddressDeletion = {
+      ...deletion,
+      id: "multi-address-deletion",
+      tags: [
+        ["a", profileList.address],
+        ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Other`],
+      ],
+    }
+
+    expect(findCommunityProfileListEvent(profileList, [profileListEvent, malformed])).toBe(
+      profileListEvent,
+    )
+    expect(findCommunityProfileListEvent(profileList, [profileListEvent, deletion])).toBeUndefined()
+    expect(
+      findCommunityProfileListEvent(profileList, [profileListEvent, newerDeletion]),
+    ).toBeUndefined()
+    expect(
+      findCommunityProfileListEvent(profileList, [profileListEvent, deletion, recreated]),
+    ).toBe(recreated)
+    expect(findCommunityProfileListEvent(profileList, [profileListEvent, foreignDeletion])).toBe(
+      profileListEvent,
+    )
+    expect(
+      findCommunityProfileListEvent(profileList, [profileListEvent, multiAddressDeletion]),
+    ).toBe(profileListEvent)
+  })
+
   it("detects pending moderator invites until the moderator responds", () => {
     const moderatorRef = makeManualModeratorProfileListRef({
       moderatorPubkey: memberPubkey,
       sectionName: "General",
       relays: ["wss://relay.example.com"],
     })
-    const definition = parseCommunityDefinition({
-      id: "definition",
-      kind: 10222,
-      pubkey: managerPubkey,
-      created_at: 1,
-      tags: [
-        ["content", "General"],
-        ["k", "1111"],
-        ["a", moderatorRef.address, moderatorRef.relay || ""],
-      ],
-      content: "",
-      sig: "sig",
-    } as TrustedEvent)!
+    const definition = makeDefinition([moderatorRef])
     const accepted = {
       ...makeModeratorInviteResponseProfileList({profileList: moderatorRef}),
       id: "accepted",
@@ -347,20 +390,7 @@ describe("community admin helpers", () => {
       sectionName: "General",
       relays: ["wss://relay.example.com"],
     })
-    const definition = parseCommunityDefinition({
-      id: "definition",
-      kind: 10222,
-      pubkey: managerPubkey,
-      created_at: 1,
-      tags: [
-        ["content", "General"],
-        ["k", "1111"],
-        ["a", moderatorRef.address, moderatorRef.relay || ""],
-        ["a", otherModeratorRef.address, otherModeratorRef.relay || ""],
-      ],
-      content: "",
-      sig: "sig",
-    } as TrustedEvent)!
+    const definition = makeDefinition([moderatorRef, otherModeratorRef])
 
     expect(
       getCommunityModeratorInviteProfileListRefs({

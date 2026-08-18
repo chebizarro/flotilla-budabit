@@ -1,26 +1,42 @@
 import type { RepoCommunityBinding } from "@nostr-git/core/events";
 
 export type RepoCommunityOption = {
-  pubkey: string;
+  controllerPubkey: string;
+  address: string;
+  communityId: string;
+  name?: string;
+  about?: string;
   label?: string;
   relay?: string;
   relays?: string[];
   graspServers?: string[];
 };
 
-export const getRepoCommunityOptionLabel = (option: RepoCommunityOption): string =>
-  option.label || `${option.pubkey.slice(0, 8)}...${option.pubkey.slice(-6)}`;
+export const getRepoCommunityOptionKey = (option: RepoCommunityOption): string =>
+  option.address;
+
+export const getRepoCommunityOptionLabel = (option: RepoCommunityOption): string => {
+  if (option.name && option.about) return `${option.name} - ${option.about}`;
+  return (
+    option.name ||
+    option.label ||
+    `${option.communityId.slice(0, 8)}...${option.communityId.slice(-6)}`
+  );
+};
 
 export const getRepoCommunityOptionBinding = (
   option: RepoCommunityOption | undefined
 ): RepoCommunityBinding | undefined => {
-  if (!option?.pubkey) return undefined;
+  if (!option?.communityId) return undefined;
   const relay = option.relay || option.relays?.[0];
 
-  return relay ? { pubkey: option.pubkey, relay } : { pubkey: option.pubkey };
+  return relay
+    ? { address: option.address, communityId: option.communityId, relay }
+    : { address: option.address, communityId: option.communityId };
 };
 
 export const findRepoCommunityOption = (
   options: RepoCommunityOption[],
-  pubkey: string | undefined
-): RepoCommunityOption | undefined => options.find((option) => option.pubkey === pubkey);
+  key: string | undefined
+): RepoCommunityOption | undefined =>
+  options.find((option) => getRepoCommunityOptionKey(option) === key);

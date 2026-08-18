@@ -30,7 +30,6 @@
     type SharedProfileCommunityRole,
   } from "@app/core/profile-trust-badges"
   import {makeEventNevent} from "@app/util/event-links"
-  import {getCommunityReportTargetPath} from "@app/util/routes"
   import ProfileCircle from "@app/components/ProfileCircle.svelte"
   import ProfileName from "@app/components/ProfileName.svelte"
 
@@ -185,9 +184,6 @@
   }
 
   const getFlaggedContentPath = (item: ProfileFlagReportEvidenceItem) => {
-    const communityPath = getCommunityReportTargetPath(item.communityPubkey, item)
-    if (communityPath) return communityPath
-
     const address = parseReportTargetAddress(item.targetAddress)
     if (address) {
       return `/${nip19.naddrEncode({...address, relays: item.relayHints})}`

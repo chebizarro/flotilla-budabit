@@ -2,6 +2,7 @@
 
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import * as nip19 from "nostr-tools/nip19"
+import {getPublicKey} from "nostr-tools/pure"
 import {get} from "svelte/store"
 import {repository} from "@welshman/app"
 import * as welshmanApp from "@welshman/app"
@@ -13,13 +14,19 @@ import {
   defaultBlossomDashboardState,
   defaultBlossomSettings,
   type BlossomServerTarget,
+  type BlossomUploadContext,
 } from "./blossom"
-import {COMMUNITY_DEFINITION_KIND, parseCommunityDefinition} from "./community"
 import {
-  activeCommunitySession,
-  clearActiveCommunity,
-  setActiveCommunityDefinition,
-  setActiveCommunityInput,
+  COMMUNITY_DEFINITION_KIND_V2,
+  buildCommunityDefinitionV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
+} from "./community"
+import {
+  activeExactCommunitySession,
+  clearActiveCommunityState,
+  setActiveExactCommunityDefinition,
+  setActiveExactCommunityPointer,
 } from "./community-state"
 
 const utilMocks = vi.hoisted(() => ({
@@ -175,19 +182,33 @@ const makeBlossomTarget = (url: string, priority: number): BlossomServerTarget =
   label: priority === 1 ? "Primary Blossom server" : "Mirror candidate",
 })
 
-const communityPubkey = "f".repeat(64)
+const communityPubkey = getPublicKey(new Uint8Array(32).fill(31))
+const communityId = getPublicKey(new Uint8Array(32).fill(32))
+const communityPointer = makeCommunityPointer({controllerPubkey: communityPubkey, communityId})!
+const exactCommunityUploadContext = {
+  type: "community",
+  communityAddress: communityPointer.address,
+} satisfies BlossomUploadContext
+void exactCommunityUploadContext
 const makeCommunityDefinition = (id: string, blossomServers: string[] = []) =>
-  parseCommunityDefinition({
+  parseCommunityDefinitionV2({
     id,
     pubkey: communityPubkey,
     created_at: 1,
-    kind: COMMUNITY_DEFINITION_KIND,
-    tags: [
-      ["r", "wss://relay.example.com"],
-      ...blossomServers.map(server => ["blossom", server]),
-      ["content", "General"],
-      ["k", "9", "room-message"],
-    ],
+    kind: COMMUNITY_DEFINITION_KIND_V2,
+    tags: buildCommunityDefinitionV2({
+      communityId,
+      name: "Community",
+      relays: ["wss://relay.example.com"],
+      blossomServers,
+      sections: [
+        {
+          name: "General",
+          kinds: [{kind: 9, subtype: "room-message"}],
+          profileLists: [{address: `30000:${communityPubkey}:General`}],
+        },
+      ],
+    }).tags,
     content: "",
     sig: "sig",
   } as any)!
@@ -247,7 +268,7 @@ describe("commands", () => {
   })
 
   afterEach(() => {
-    clearActiveCommunity()
+    clearActiveCommunityState()
     repository.removeEvent("definition-with-blossom")
     repository.removeEvent("definition-without-blossom")
     repository.removeEvent("30033:" + "a".repeat(64) + ":weather")
@@ -259,14 +280,14 @@ describe("commands", () => {
 
   it("logout clears local Git token caches", async () => {
     localStorage.setItem("budabit:git-auth:v1:pk999", "cached")
-    setActiveCommunityInput(communityPubkey)
+    setActiveExactCommunityPointer(communityPointer)
 
     const {logout} = await import("./commands")
 
     await logout()
 
     expect(localStorage.getItem("budabit:git-auth:v1:pk999")).toBeNull()
-    expect(get(activeCommunitySession)).toBeUndefined()
+    expect(get(activeExactCommunitySession)).toBeUndefined()
     expect(netMocks.poolClear).toHaveBeenCalledTimes(1)
   })
 
@@ -744,7 +765,7 @@ describe("commands", () => {
     const communityBlossom = normalizeBlossomUrl("https://community-blossom.example")
     const file = makeUploadTestFile()
 
-    setActiveCommunityDefinition(
+    setActiveExactCommunityDefinition(
       makeCommunityDefinition("definition-with-blossom", [communityBlossom]),
     )
     utilMocks.uploadBlob.mockResolvedValue(
@@ -753,7 +774,7 @@ describe("commands", () => {
 
     const {error, result} = await uploadFile(file, {
       url: relay,
-      blossomContext: {type: "community", communityPubkey},
+      blossomContext: {type: "community", communityAddress: communityPointer.address},
     })
 
     expect(error).toBeUndefined()
@@ -763,20 +784,44 @@ describe("commands", () => {
     expect(utilMocks.uploadBlob.mock.calls[0][0]).not.toBe(normalizeBlossomUrl(relay))
   })
 
+  it("does not select active definition Blossom servers for a sibling community address", async () => {
+    const {uploadFile, normalizeBlossomUrl} = await import("./commands")
+    const activeCommunityBlossom = normalizeBlossomUrl("https://active-community.example")
+    const siblingPointer = makeCommunityPointer({
+      controllerPubkey: communityPubkey,
+      communityId: getPublicKey(new Uint8Array(32).fill(33)),
+    })!
+
+    setActiveExactCommunityDefinition(
+      makeCommunityDefinition("definition-with-blossom", [activeCommunityBlossom]),
+    )
+    utilMocks.uploadBlob.mockResolvedValue(
+      new Response(JSON.stringify({uploaded: 1, url: "https://fallback.example/blob"})),
+    )
+
+    await uploadFile(makeUploadTestFile(), {
+      blossomContext: {type: "community", communityAddress: siblingPointer.address},
+    })
+
+    expect(utilMocks.uploadBlob.mock.calls.some(call => call[0] === activeCommunityBlossom)).toBe(
+      false,
+    )
+  })
+
   it("uploadFile ignores relay urls when community context has no Blossom servers", async () => {
     const {uploadFile, normalizeBlossomUrl} = await import("./commands")
     const relay = "wss://relay.example.com"
     const relayAsHttp = normalizeBlossomUrl(relay)
     const file = makeUploadTestFile()
 
-    setActiveCommunityDefinition(makeCommunityDefinition("definition-without-blossom"))
+    setActiveExactCommunityDefinition(makeCommunityDefinition("definition-without-blossom"))
     utilMocks.uploadBlob.mockResolvedValue(
       new Response(JSON.stringify({uploaded: 1, url: "https://fallback.example/blob"})),
     )
 
     await uploadFile(file, {
       url: relay,
-      blossomContext: {type: "community", communityPubkey},
+      blossomContext: {type: "community", communityAddress: communityPointer.address},
     })
 
     expect(utilMocks.uploadBlob.mock.calls.some(call => call[0] === relayAsHttp)).toBe(false)

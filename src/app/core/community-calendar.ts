@@ -1,6 +1,6 @@
 import type {EventContent, TrustedEvent} from "@welshman/util"
 import {COMMENT, EVENT_DATE, EVENT_TIME, getTagValue} from "@welshman/util"
-import {normalizePubkey} from "@app/core/community"
+import {makeCommunityScopeTagsV2} from "@app/core/community"
 import {eventTargetsCommunity} from "@app/core/community-feeds"
 
 export type CommunityCalendarReplyParent = {
@@ -39,7 +39,6 @@ export const makeCommunityCalendarEventReply = ({
     ? calendarEvent.kind
     : EVENT_TIME
   const eventTags: string[][] = [
-    ["h", normalizePubkey(communityPubkey)],
     ["E", calendarEvent.id, relayHint, calendarEvent.pubkey],
     ["K", String(calendarKind)],
     ["P", calendarEvent.pubkey, relayHint],
@@ -69,7 +68,7 @@ export const makeCommunityCalendarEventReply = ({
     }
   }
 
-  return {content, tags: [...eventTags, ...tags]}
+  return {content, tags: makeCommunityScopeTagsV2(communityPubkey, [...eventTags, ...tags])}
 }
 
 export const readCommunityCalendarEventReply = (

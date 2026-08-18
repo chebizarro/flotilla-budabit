@@ -56,7 +56,7 @@ import {
   communityMemberProfileListEvents,
   communityModeratorProfileListEvents,
   makeCommunityAdmissionFormFilters,
-  makeCommunityDefinitionFilter,
+  makeExactCommunityDefinitionFilter,
   makeCommunityProfileListFilters,
   makeCommunityReportDeleteFilters,
   makeCommunityReportFilters,
@@ -68,16 +68,16 @@ import {
   type UserCommunityReportStates,
 } from "@app/core/community-membership"
 import {
-  COMMUNITY_DEFINITION_KIND,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
-  TARGETED_PUBLICATION_KIND,
+  TARGETED_PUBLICATION_KIND_V2,
   TARGETED_PUBLICATION_KINDS,
   normalizeCommunitySectionName,
   normalizePubkey,
-  parseCommunityDefinition,
-  parseTargetedPublication,
-  type CommunityDefinition,
+  parseCommunityDefinitionV2,
+  parseTargetedPublicationV2,
+  type CommunityDefinitionV2,
+  type CommunityPointer,
 } from "@app/core/community"
 import {
   COMMUNITY_FORM_REVIEW_KIND,
@@ -104,7 +104,6 @@ import {
   COMMUNITY_CALENDAR_WRITE_TARGETS,
   COMMUNITY_WRITE_TARGETS,
   canWriteCommunityTarget,
-  filterAuthorizedCommunityTargetingEvents,
   getCommunityCalendarTargetWriterPubkeys,
   getCommunityCalendarWriteTargetSections,
   getGrantCapability,
@@ -143,13 +142,14 @@ import {
 } from "@app/util/notification-history"
 import {
   makeChatPath,
-  makeCommunityCalendarPath,
-  makeCommunityGoalPath,
-  getCommunityReportTargetPath,
   getCommunityEventPath,
-  makeCommunityPath,
-  makeCommunityRoomPath,
-  makeCommunityThreadPath,
+  getExactCommunityEventPath,
+  getExactCommunityReportTargetPath,
+  makeExactCommunityCalendarPath,
+  makeExactCommunityGoalPath,
+  makeExactCommunityPath,
+  makeExactCommunityRoomPath,
+  makeExactCommunityThreadPath,
   makeGitPath,
 } from "@app/util/routes"
 import {
@@ -178,7 +178,7 @@ import {
   type CommunityLiveOwnership,
 } from "@app/core/community-live"
 import {notificationBackgroundEnabled} from "@app/util/notification-background"
-import {userRenouncedCommunityPubkeys} from "@app/core/community-renunciations"
+import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
 import {
   getNotificationEventRelays,
   notificationEventRepository,
@@ -267,7 +267,7 @@ export type BuildGlobalCommunityNotificationFiltersOptions = {
 }
 
 export type CommunityNotificationFilterSource = {
-  communityPubkey: string
+  communityAddress: string
   relays: string[]
   filters: Filter[]
   localFilters?: Filter[]
@@ -365,14 +365,23 @@ export const groupCommunityNotificationFiltersByRelay = (
 ): NotificationRelayFilterGroup[] => {
   const groupsByRelay = new Map<
     string,
-    {filters: Filter[]; localFilters: Filter[]; liveFilters: Filter[]}
+    {
+      relay: string
+      scope?: string
+      filters: Filter[]
+      localFilters: Filter[]
+      liveFilters: Filter[]
+    }
   >()
 
   for (const source of sources) {
     const relays = source.relays.map(normalizeNotificationRelay).filter(Boolean)
     if (relays.length === 0 && source.filters.length > 0) {
-      const key = preserveCommunityScope ? `${source.communityPubkey}:` : ""
+      const scope = preserveCommunityScope ? source.communityAddress : undefined
+      const key = JSON.stringify([scope, ""])
       const group = groupsByRelay.get(key) || {
+        relay: "",
+        scope,
         filters: [],
         localFilters: [],
         liveFilters: [],
@@ -383,24 +392,27 @@ export const groupCommunityNotificationFiltersByRelay = (
     }
 
     for (const relay of relays) {
-      const key = preserveCommunityScope ? `${source.communityPubkey}:${relay}` : relay
+      const scope = preserveCommunityScope ? source.communityAddress : undefined
+      const key = JSON.stringify([scope, relay])
       const group = groupsByRelay.get(key) || {
+        relay,
+        scope,
         filters: [],
         localFilters: [],
         liveFilters: [],
       }
       group.filters.push(...source.filters)
       group.localFilters.push(...(source.localFilters || source.filters))
-      if (!isCommunityLiveOwned(foregroundOwnership, source.communityPubkey, relay)) {
+      if (!isCommunityLiveOwned(foregroundOwnership, source.communityAddress, relay)) {
         group.liveFilters.push(...source.filters)
       }
       groupsByRelay.set(key, group)
     }
   }
 
-  return Array.from(groupsByRelay, ([key, group]) => ({
-    relay: preserveCommunityScope ? key.slice(key.indexOf(":") + 1) : key,
-    ...(preserveCommunityScope ? {scope: key.slice(0, key.indexOf(":"))} : {}),
+  return Array.from(groupsByRelay.values(), group => ({
+    relay: group.relay,
+    ...(group.scope ? {scope: group.scope} : {}),
     filters: dedupeNotificationFilters(group.filters),
     localFilters: dedupeNotificationFilters(group.localFilters),
     liveFilters: dedupeNotificationFilters(group.liveFilters),
@@ -414,25 +426,30 @@ const getEventPreview = (event: TrustedEvent, plaintext: string | undefined) => 
   return "Direct message"
 }
 
-const getReportState = (states: UserCommunityReportStates | undefined, communityPubkey: string) =>
-  states instanceof Map ? states.get(communityPubkey) : states?.[communityPubkey]
+const getReportState = (states: UserCommunityReportStates | undefined, communityAddress: string) =>
+  states instanceof Map ? states.get(communityAddress) : states?.[communityAddress]
 
 const hasReportStateEvidence = (
   states: UserCommunityReportStates | undefined,
-  communityPubkey: string,
-) => Boolean(getReportState(states, communityPubkey))
+  communityAddress: string,
+) => Boolean(getReportState(states, communityAddress))
 
-const getCommunityRef = (refs: ActiveUserCommunityRef[], communityPubkey: string) => {
-  const normalizedCommunityPubkey = normalizePubkey(communityPubkey)
+const getCommunityRef = (refs: ActiveUserCommunityRef[], communityId: string) =>
+  refs.find(ref => ref.community.communityId === communityId)
 
-  return refs.find(ref => normalizePubkey(ref.communityPubkey) === normalizedCommunityPubkey)
-}
+const getCommunityDefinitionAddress = (ref: ActiveUserCommunityRef) => ref.community.address
+
+const getCommunityDefinitionId = (ref: ActiveUserCommunityRef) => ref.community.communityId
+
+const targetsCommunityDefinition = (event: TrustedEvent, ref: ActiveUserCommunityRef) =>
+  Boolean(
+    parseTargetedPublicationV2(event)?.communities.some(
+      community => community.address === getCommunityDefinitionAddress(ref),
+    ),
+  )
 
 const hasCommunityDefinitionEvidence = (ref: ActiveUserCommunityRef) =>
-  Boolean(
-    ref.definition?.event?.id &&
-    normalizePubkey(ref.definition.pubkey) === normalizePubkey(ref.communityPubkey),
-  )
+  Boolean(ref.definition?.event?.id && ref.definition.pointer.address === ref.community.address)
 
 const hasCommunitySectionEvidence = ({
   ref,
@@ -444,7 +461,7 @@ const hasCommunitySectionEvidence = ({
   reportStates?: UserCommunityReportStates
 }) => {
   if (!hasCommunityDefinitionEvidence(ref)) return false
-  if (!hasReportStateEvidence(reportStates, ref.communityPubkey)) return false
+  if (!hasReportStateEvidence(reportStates, ref.community.address)) return false
 
   const normalizedSectionName = normalizeCommunitySectionName(sectionName)
   const section = ref.definition.sections.find(
@@ -540,7 +557,7 @@ const isCommunityEventAdmitted = ({
   reportStates?: UserCommunityReportStates
   requireCompleteEvidence?: boolean
 }) => {
-  const target = getCommunityEventWriteTarget(event, ref.communityPubkey)
+  const target = getCommunityEventWriteTarget(event, ref.community.communityId)
   if (!target) return false
   if (
     requireCompleteEvidence &&
@@ -554,7 +571,7 @@ const isCommunityEventAdmitted = ({
     profileListEvents,
     userPubkey: event.pubkey,
     target,
-    reportState: getReportState(reportStates, ref.communityPubkey),
+    reportState: getReportState(reportStates, ref.community.address),
   })
 }
 
@@ -583,12 +600,27 @@ const isTargetableCommunityOriginalAdmitted = ({
     return false
   }
 
-  const authorizedTargetingEvents = filterAuthorizedCommunityTargetingEvents({
-    definition: ref.definition,
-    profileListEvents,
-    events: targetingEvents,
-    reportState: getReportState(reportStates, ref.communityPubkey),
-    kinds: [event.kind],
+  const targets =
+    event.kind === EVENT_DATE || event.kind === EVENT_TIME
+      ? COMMUNITY_CALENDAR_WRITE_TARGETS
+      : target
+        ? [target]
+        : []
+  const authorizedTargetingEvents = targetingEvents.filter(targetingEvent => {
+    const targeting = parseTargetedPublicationV2(targetingEvent)
+    return (
+      targeting?.kind === event.kind &&
+      targetsCommunityDefinition(targetingEvent, ref) &&
+      targets.some(target =>
+        canWriteCommunityTarget({
+          definition: ref.definition,
+          profileListEvents,
+          userPubkey: targetingEvent.pubkey,
+          target,
+          reportState: getReportState(reportStates, ref.community.address),
+        }),
+      )
+    )
   })
   const filters = makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents).localFilters
 
@@ -767,16 +799,17 @@ const selectCurrentCommunityDefinitions = (
   refs: ActiveUserCommunityRef[],
   definitionEvents: TrustedEvent[],
 ) => {
-  const definitions = new Map<string, CommunityDefinition>()
+  const definitions = new Map<string, CommunityDefinitionV2>()
 
-  for (const ref of refs) definitions.set(ref.communityPubkey, ref.definition)
+  for (const ref of refs) definitions.set(getCommunityDefinitionAddress(ref), ref.definition)
   for (const event of definitionEvents) {
-    const definition = parseCommunityDefinition(event)
+    const definition = parseCommunityDefinitionV2(event)
     if (!definition) continue
 
-    const current = definitions.get(definition.pubkey)
+    const address = definition.pointer.address
+    const current = definitions.get(address)
     if (isPreferredEvent(definition.event, current?.event)) {
-      definitions.set(definition.pubkey, definition)
+      definitions.set(address, definition)
     }
   }
 
@@ -785,17 +818,17 @@ const selectCurrentCommunityDefinitions = (
 
 const getCommunityEvidenceRef = (
   refs: ActiveUserCommunityRef[],
-  definitions: Map<string, CommunityDefinition>,
-  communityPubkey: string,
+  definitions: Map<string, CommunityDefinitionV2>,
+  communityAddress: string,
 ) => {
-  const definition = definitions.get(normalizePubkey(communityPubkey))
+  const definition = definitions.get(communityAddress)
   if (!definition) return undefined
 
-  const activeRef = getCommunityRef(refs, definition.pubkey)
+  const activeRef = refs.find(ref => ref.community.address === communityAddress)
   if (activeRef?.definition.event.id === definition.event.id) return activeRef
 
   return {
-    communityPubkey: definition.pubkey,
+    community: definition.pointer,
     definition,
     relayHints: definition.relays,
     roles: [],
@@ -819,7 +852,7 @@ const mapAdmissionFormsBySection = ({
   for (const event of admissionFormEvents) {
     const form = parseAdmissionForm(event)
     const sectionName = form?.sectionName || ""
-    if (!form || form.communityPubkey !== ref.communityPubkey || !sectionName) continue
+    if (!form || form.community.address !== ref.community.address || !sectionName) continue
 
     const moderators = getGrantCapableSectionModeratorPubkeys({
       definition: ref.definition,
@@ -892,6 +925,17 @@ const hasSingleTagValue = (
 ) => {
   const tags = event.tags.filter(tag => tag[0] === name)
   return tags.length === 1 && normalize(tags[0][1] || "") === normalize(value)
+}
+
+const hasSingleMarkedTagValue = (
+  event: TrustedEvent,
+  name: string,
+  value: string,
+  markerIndex: number,
+  marker: string,
+) => {
+  const tags = event.tags.filter(tag => tag[0] === name && tag[markerIndex] === marker)
+  return tags.length === 1 && tags[0][1] === value
 }
 
 const getReplyTargetRefs = (event: TrustedEvent) => {
@@ -1167,12 +1211,12 @@ const getEngagementEventContext = (
 
 const getTargetedOriginalCommunityPath = (
   event: TrustedEvent,
-  communityPubkey: string,
+  community: CommunityPointer,
 ): string | undefined => {
   if (event.kind === EVENT_DATE || event.kind === EVENT_TIME) {
-    return makeCommunityCalendarPath(communityPubkey, getTagValue("d", event.tags) || event.id)
+    return makeExactCommunityCalendarPath(community, getTagValue("d", event.tags) || event.id)
   }
-  if (event.kind === ZAP_GOAL) return makeCommunityGoalPath(communityPubkey, event.id)
+  if (event.kind === ZAP_GOAL) return makeExactCommunityGoalPath(community, event.id)
 }
 
 const getEngagementRowContext = ({
@@ -1284,17 +1328,17 @@ const getImportantCommunityRootRow = ({
   currentPubkey: string
   admitTarget: (event: TrustedEvent) => boolean
 }) => {
-  const threadReply = readCommunityThreadReply(event, ref.communityPubkey)
+  const threadReply = readCommunityThreadReply(event, ref.community.communityId)
   if (threadReply) {
     const root = targetEventsById.get(threadReply.threadId)
-    const rootThread = root ? readCommunityThread(root, ref.communityPubkey) : undefined
+    const rootThread = root ? readCommunityThread(root, ref.community.communityId) : undefined
     if (!root || !rootThread || !admitTarget(root)) return undefined
     const ownerPubkey = getCommunityRootOwnerPubkey({event, root})
     if (ownerPubkey !== currentPubkey) return undefined
 
     return {
-      path: makeCommunityThreadPath(ref.communityPubkey, threadReply.threadId),
-      readPath: makeCommunityThreadPath(ref.communityPubkey),
+      path: makeExactCommunityThreadPath(ref.community, threadReply.threadId),
+      readPath: makeExactCommunityThreadPath(ref.community),
       title: "New thread comment",
       preview: getTextPreview(event, "Thread comment"),
       target: COMMUNITY_WRITE_TARGETS.comment,
@@ -1308,7 +1352,7 @@ const getImportantCommunityRootRow = ({
     }
   }
 
-  const calendarReply = readCommunityCalendarEventReply(event, ref.communityPubkey)
+  const calendarReply = readCommunityCalendarEventReply(event, ref.community.communityId)
   if (calendarReply) {
     const root =
       targetEventsByRef.get(calendarReply.calendarEventId) ||
@@ -1321,7 +1365,7 @@ const getImportantCommunityRootRow = ({
       getAddressIdentifier(calendarReply.calendarAddress) || calendarReply.calendarEventId
 
     return {
-      path: makeCommunityCalendarPath(ref.communityPubkey, calendarId),
+      path: makeExactCommunityCalendarPath(ref.community, calendarId),
       title: "New calendar comment",
       preview: getTextPreview(event, "Calendar comment"),
       target: COMMUNITY_WRITE_TARGETS.comment,
@@ -1335,7 +1379,7 @@ const getImportantCommunityRootRow = ({
     }
   }
 
-  const goalReply = readCommunityGoalReply(event, ref.communityPubkey)
+  const goalReply = readCommunityGoalReply(event, ref.community.communityId)
   if (goalReply) {
     const root =
       targetEventsByRef.get(goalReply.goalId) || targetEventsByRef.get(goalReply.goalAddress)
@@ -1346,7 +1390,7 @@ const getImportantCommunityRootRow = ({
     const goalId = getAddressIdentifier(goalReply.goalAddress) || goalReply.goalId
 
     return {
-      path: makeCommunityGoalPath(ref.communityPubkey, goalId),
+      path: makeExactCommunityGoalPath(ref.community, goalId),
       title: "New goal comment",
       preview: getTextPreview(event, "Goal comment"),
       target: COMMUNITY_WRITE_TARGETS.comment,
@@ -1465,11 +1509,11 @@ export const areNotificationAuthorityLoadsComplete = (
 ) => loads.every(load => load.complete)
 
 const isNotificationCommunitySourceComplete = (
-  communityPubkey: string,
+  communityAddress: string,
   sources: CommunityNotificationFilterSource[],
   load: LoadedNotificationEvents,
 ) => {
-  const communitySources = sources.filter(source => source.communityPubkey === communityPubkey)
+  const communitySources = sources.filter(source => source.communityAddress === communityAddress)
   if (communitySources.length === 0) return false
 
   return communitySources.every(source => {
@@ -1477,7 +1521,7 @@ const isNotificationCommunitySourceComplete = (
     const relays = source.relays.map(normalizeNotificationRelay).filter(Boolean)
     return (
       relays.length > 0 &&
-      relays.every(relay => load.completeScopes.has(`${communityPubkey}:${relay}`))
+      relays.every(relay => load.completeScopes.has(`${communityAddress}:${relay}`))
     )
   })
 }
@@ -1865,7 +1909,7 @@ export const buildCommunityNotificationRows = ({
   const targetEventsById = mapEventsById([...events, ...targetEvents])
   const targetEventsByRef = mapEventsByRef([...events, ...targetEvents])
   const targetingEvents = selectCurrentTargetingWrapperEvents(
-    [...events, ...targetEvents].filter(event => event.kind === TARGETED_PUBLICATION_KIND),
+    [...events, ...targetEvents].filter(event => event.kind === TARGETED_PUBLICATION_KIND_V2),
     [...events, ...targetEvents].filter(event => event.kind === DELETE),
   )
 
@@ -1911,7 +1955,7 @@ export const buildCommunityNotificationRows = ({
       return
     }
 
-    const reportState = getReportState(reportStates, ref.communityPubkey)
+    const reportState = getReportState(reportStates, ref.community.address)
     if (isCommunityPersonBanned(reportState, event.pubkey)) return
 
     const resolvedSectionName =
@@ -1981,14 +2025,14 @@ export const buildCommunityNotificationRows = ({
         title,
         preview,
         event.pubkey,
-        ref.communityPubkey,
+        ref.community.address,
         path,
       ),
     })
   }
 
   for (const ref of refs) {
-    const reportState = getReportState(reportStates, ref.communityPubkey)
+    const reportState = getReportState(reportStates, ref.community.address)
     const admitTarget = (targetEvent: TrustedEvent) =>
       isCommunityContextTargetAdmitted({
         event: targetEvent,
@@ -2000,13 +2044,13 @@ export const buildCommunityNotificationRows = ({
       })
 
     for (const event of events) {
-      const message = readCommunityRoomMessage(event, ref.communityPubkey)
+      const message = readCommunityRoomMessage(event, ref.community.communityId)
       if (message) {
         const parentMessage = message.parentMessageId
           ? targetEventsById.get(message.parentMessageId)
           : undefined
         const parentRoomMessage = parentMessage
-          ? readCommunityRoomMessage(parentMessage, ref.communityPubkey, message.roomRootId)
+          ? readCommunityRoomMessage(parentMessage, ref.community.communityId, message.roomRootId)
           : undefined
         const isReplyToViewer =
           normalizedCurrentPubkey &&
@@ -2020,7 +2064,7 @@ export const buildCommunityNotificationRows = ({
           addRow({
             ref,
             event,
-            path: makeCommunityRoomPath(ref.communityPubkey, message.roomRootId),
+            path: makeExactCommunityRoomPath(ref.community, message.roomRootId),
             title: "New room reply",
             preview: getTextPreview(event, "Room message"),
             target: COMMUNITY_WRITE_TARGETS.roomMessage,
@@ -2042,7 +2086,7 @@ export const buildCommunityNotificationRows = ({
           addRow({
             ref,
             event,
-            path: makeCommunityRoomPath(ref.communityPubkey, message.roomRootId),
+            path: makeExactCommunityRoomPath(ref.community, message.roomRootId),
             title: "New room mention",
             preview: getTextPreview(event, "Room mention"),
             target: COMMUNITY_WRITE_TARGETS.roomMessage,
@@ -2057,13 +2101,13 @@ export const buildCommunityNotificationRows = ({
         continue
       }
 
-      const threadReply = readCommunityThreadReply(event, ref.communityPubkey)
+      const threadReply = readCommunityThreadReply(event, ref.community.communityId)
       if (threadReply) {
         const parentReply = threadReply.parentReplyId
           ? targetEventsById.get(threadReply.parentReplyId)
           : undefined
         const parentThreadReply = parentReply
-          ? readCommunityThreadReply(parentReply, ref.communityPubkey, threadReply.threadId)
+          ? readCommunityThreadReply(parentReply, ref.community.communityId, threadReply.threadId)
           : undefined
         const isReplyToViewer =
           normalizedCurrentPubkey &&
@@ -2077,8 +2121,8 @@ export const buildCommunityNotificationRows = ({
           addRow({
             ref,
             event,
-            path: makeCommunityThreadPath(ref.communityPubkey, threadReply.threadId),
-            readPath: makeCommunityThreadPath(ref.communityPubkey),
+            path: makeExactCommunityThreadPath(ref.community, threadReply.threadId),
+            readPath: makeExactCommunityThreadPath(ref.community),
             title: "New thread comment reply",
             preview: getTextPreview(event, "Thread comment reply"),
             target: COMMUNITY_WRITE_TARGETS.comment,
@@ -2113,8 +2157,8 @@ export const buildCommunityNotificationRows = ({
           addRow({
             ref,
             event,
-            path: makeCommunityThreadPath(ref.communityPubkey, threadReply.threadId),
-            readPath: makeCommunityThreadPath(ref.communityPubkey),
+            path: makeExactCommunityThreadPath(ref.community, threadReply.threadId),
+            readPath: makeExactCommunityThreadPath(ref.community),
             title: "New thread mention",
             preview: getTextPreview(event, "Thread mention"),
             target: COMMUNITY_WRITE_TARGETS.comment,
@@ -2164,7 +2208,7 @@ export const buildCommunityNotificationRows = ({
       addRow({
         ref,
         event,
-        path: makeCommunityPath(ref.communityPubkey, "access"),
+        path: makeExactCommunityPath(ref.community, "access"),
         title: "Community membership updated",
         preview: "Your community membership changed.",
         sectionName: "access",
@@ -2185,7 +2229,7 @@ export const buildCommunityNotificationRows = ({
         addRow({
           ref,
           event: report.event,
-          path: makeCommunityPath(ref.communityPubkey, "access"),
+          path: makeExactCommunityPath(ref.community, "access"),
           title: "Community ban",
           preview: report.event.content || "You were banned from this community.",
           sectionName: "moderation",
@@ -2206,8 +2250,8 @@ export const buildCommunityNotificationRows = ({
           ref,
           event: report.event,
           path:
-            getCommunityReportTargetPath(ref.communityPubkey, report) ||
-            makeCommunityPath(ref.communityPubkey, "moderation"),
+            getExactCommunityReportTargetPath(ref.community, report) ||
+            makeExactCommunityPath(ref.community, "moderation"),
           title: "Content moderated",
           preview:
             report.targetEventTitle ||
@@ -2338,7 +2382,7 @@ export const buildCommunityApplicationNotificationRows = ({
   }
 
   for (const ref of refs) {
-    const reportState = getReportState(reportStates, ref.communityPubkey)
+    const reportState = getReportState(reportStates, ref.community.address)
     if (!reportState) continue
     const formsBySection = mapAdmissionFormsBySection({
       ref,
@@ -2363,7 +2407,7 @@ export const buildCommunityApplicationNotificationRows = ({
         profileListEvents,
         reportState,
       })
-      const path = makeCommunityPath(ref.communityPubkey, "moderation")
+      const path = makeExactCommunityPath(ref.community, "moderation")
 
       for (const event of dedupedResponseEvents) {
         const response = parseAdmissionResponse(event)
@@ -2371,6 +2415,7 @@ export const buildCommunityApplicationNotificationRows = ({
         if (isCommunityPersonBanned(reportState, response.event.pubkey)) continue
 
         const submission = getAdmissionSubmissionState({
+          community: form.community,
           responseEvents: dedupedResponseEvents,
           deleteEvents: dedupedDeleteEvents,
           reviewEvents: dedupedReviewEvents,
@@ -2407,32 +2452,32 @@ export const buildCommunityApplicationNotificationRows = ({
     const review = parseAdmissionReview(event)
     const applicantPubkey = normalizePubkey(review?.applicantPubkey || "")
     if (!review || applicantPubkey !== normalizedCurrentPubkey) return []
-    if (!review.formAddress || !review.communityPubkey || !review.sectionName) return []
+    if (!review.formAddress || !review.sectionName) return []
 
     const form = formsByAddress.get(review.formAddress)
-    const ref = getCommunityEvidenceRef(refs, currentDefinitions, review.communityPubkey)
+    const ref = getCommunityEvidenceRef(refs, currentDefinitions, review.community.address)
     const response = responsesById.get(review.responseId)
     if (!form || !ref || !response) return []
     if (isAdmissionResponseDeleted(response, dedupedDeleteEvents)) return []
     if (form.address !== review.formAddress || response.formAddress !== form.address) return []
     if (normalizePubkey(response.event.pubkey) !== normalizedCurrentPubkey) return []
-    if (form.communityPubkey !== ref.communityPubkey) return []
+    if (form.community.address !== review.community.address) return []
 
     const sectionName = normalizeCommunitySectionName(review.sectionName)
     if (!sectionName || normalizeCommunitySectionName(form.sectionName || "") !== sectionName) {
       return []
     }
-    const communityAddress = `${COMMUNITY_DEFINITION_KIND}:${ref.communityPubkey}:`
+    const communityAddress = review.community.address
     if (
-      !hasSingleTagValue(event, "e", response.event.id) ||
+      !hasSingleMarkedTagValue(event, "e", response.event.id, 4, "response") ||
       !hasSingleTagValue(event, "p", normalizedCurrentPubkey, normalizePubkey) ||
-      !hasSingleTagValue(event, "a", form.address) ||
-      !hasSingleTagValue(event, "h", ref.communityPubkey, normalizePubkey) ||
+      !hasSingleMarkedTagValue(event, "a", form.address, 3, "form") ||
+      !hasSingleTagValue(event, "h", review.community.communityId) ||
       !hasSingleTagValue(event, "k", String(FORM_RESPONSE_KIND)) ||
       !hasSingleTagValue(event, "content", sectionName, normalizeCommunitySectionName) ||
-      !hasSingleTagValue(form.event, "a", communityAddress) ||
+      !hasSingleMarkedTagValue(form.event, "a", communityAddress, 3, "community") ||
       !hasSingleTagValue(form.event, "content", sectionName, normalizeCommunitySectionName) ||
-      !hasSingleTagValue(response.event, "a", form.address)
+      !hasSingleMarkedTagValue(response.event, "a", form.address, 3, "form")
     ) {
       return []
     }
@@ -2450,15 +2495,15 @@ export const buildCommunityApplicationNotificationRows = ({
       definition: ref.definition,
       sectionName,
       profileListEvents,
-      reportState: getReportState(outcomeReportStates, ref.communityPubkey),
+      reportState: getReportState(outcomeReportStates, ref.community.address),
     })
     if (!moderatorPubkeys.includes(normalizePubkey(form.pubkey))) return []
     if (!moderatorPubkeys.includes(normalizePubkey(event.pubkey))) return []
 
-    return [{event, review, form, communityPubkey: ref.communityPubkey}]
+    return [{event, review, form, community: ref.community}]
   })
 
-  for (const {event, review, form, communityPubkey} of admittedOutcomes) {
+  for (const {event, review, form, community} of admittedOutcomes) {
     const accepted = review.status === "granted"
     const revoked =
       !accepted &&
@@ -2472,7 +2517,7 @@ export const buildCommunityApplicationNotificationRows = ({
     addRow({
       id: `community-application-review:${event.id}`,
       event,
-      path: makeCommunityPath(communityPubkey, "access"),
+      path: makeExactCommunityPath(community, "access"),
       title: accepted
         ? "Publishing request approved"
         : revoked
@@ -2594,9 +2639,9 @@ export const buildCommunityModerationNotificationRows = ({
   }
 
   for (const ref of refs) {
-    const reportState = getReportState(reportStates, ref.communityPubkey)
+    const reportState = getReportState(reportStates, ref.community.address)
     if (!reportState) continue
-    const moderationPath = makeCommunityPath(ref.communityPubkey, "moderation")
+    const moderationPath = makeExactCommunityPath(ref.community, "moderation")
     const contentReports = getCommunityContentReports({
       definition: ref.definition,
       reportEvents: dedupedReportEvents,
@@ -2607,7 +2652,7 @@ export const buildCommunityModerationNotificationRows = ({
     })
 
     for (const report of contentReports) {
-      const targetPath = getCommunityReportTargetPath(ref.communityPubkey, report) || moderationPath
+      const targetPath = getExactCommunityReportTargetPath(ref.community, report) || moderationPath
       const preview =
         report.targetEventTitle || report.targetEventContent || "Community content was reported."
 
@@ -2668,7 +2713,7 @@ export const buildCommunityModerationNotificationRows = ({
     if (reportState) {
       for (const report of reportState.eventReports) {
         const targetPath =
-          getCommunityReportTargetPath(ref.communityPubkey, report) || moderationPath
+          getExactCommunityReportTargetPath(ref.community, report) || moderationPath
         const preview =
           report.targetEventTitle || report.targetEventContent || "Community content was moderated."
         const sectionModerators = report.sectionName
@@ -2720,7 +2765,7 @@ export const buildCommunityModerationNotificationRows = ({
         addRow({
           id: `${targetsCurrentUser ? "community-ban-user" : "community-ban-member"}:${report.event.id}`,
           event: report.event,
-          path: makeCommunityPath(ref.communityPubkey, "access"),
+          path: makeExactCommunityPath(ref.community, "access"),
           title: targetsCurrentUser ? "Community ban" : "Member banned",
           preview:
             report.event.content ||
@@ -2943,7 +2988,7 @@ export const buildEngagementNotificationRows = ({
 
   const muted = new Set(mutedPubkeys.map(normalizePubkey).filter(Boolean))
   const targetingEvents = selectCurrentTargetingWrapperEvents(
-    targetEvents.filter(event => event.kind === TARGETED_PUBLICATION_KIND),
+    targetEvents.filter(event => event.kind === TARGETED_PUBLICATION_KIND_V2),
     targetEvents.filter(event => event.kind === DELETE),
   )
   const targetEventsByRef = mapEventsByRef(targetEvents)
@@ -2951,15 +2996,15 @@ export const buildEngagementNotificationRows = ({
   const reactionGroups = new Map<string, {target: TrustedEvent; events: TrustedEvent[]}>()
   const zapGroups = new Map<string, {target: TrustedEvent; events: TrustedEvent[]}>()
 
-  const getDirectCommunityPubkey = (event: TrustedEvent) => {
+  const getDirectCommunityId = (event: TrustedEvent) => {
     if (COMMUNITY_TARGETABLE_KIND_SET.has(event.kind)) return ""
     if (![THREAD, MESSAGE, COMMENT, REACTION].includes(event.kind)) return ""
 
-    return normalizePubkey(getTagValue("h", event.tags) || "")
+    return getTagValue("h", event.tags) || ""
   }
   const getDirectCommunityEventRef = (event: TrustedEvent) => {
-    const communityPubkey = getDirectCommunityPubkey(event)
-    return communityPubkey ? getCommunityRef(refs, communityPubkey) : undefined
+    const communityId = getDirectCommunityId(event)
+    return communityId ? getCommunityRef(refs, communityId) : undefined
   }
   const getTargetedOriginalRef = (event: TrustedEvent) => {
     if (!COMMUNITY_TARGETABLE_KIND_SET.has(event.kind)) return undefined
@@ -2978,8 +3023,8 @@ export const buildEngagementNotificationRows = ({
   const getCommunityContextRef = (event: TrustedEvent) =>
     getDirectCommunityEventRef(event) || getTargetedOriginalRef(event)
   const admitTarget = (target: TrustedEvent) => {
-    const directCommunityPubkey = getDirectCommunityPubkey(target)
-    if (directCommunityPubkey) {
+    const directCommunityId = getDirectCommunityId(target)
+    if (directCommunityId) {
       const ref = getDirectCommunityEventRef(target)
       return Boolean(
         ref &&
@@ -2999,11 +3044,11 @@ export const buildEngagementNotificationRows = ({
     return true
   }
   const admitEngagementEvent = (event: TrustedEvent, target?: TrustedEvent) => {
-    const directCommunityPubkey = getDirectCommunityPubkey(event)
+    const directCommunityId = getDirectCommunityId(event)
     const eventRef = getDirectCommunityEventRef(event)
     const targetRef = target ? getCommunityContextRef(target) : undefined
-    if (directCommunityPubkey && !eventRef) return false
-    if (eventRef && targetRef && eventRef.communityPubkey !== targetRef.communityPubkey)
+    if (directCommunityId && !eventRef) return false
+    if (eventRef && targetRef && eventRef.community.address !== targetRef.community.address)
       return false
 
     const ref = eventRef || targetRef
@@ -3026,20 +3071,20 @@ export const buildEngagementNotificationRows = ({
       profileListEvents,
       userPubkey: event.pubkey,
       target: writeTarget,
-      reportState: getReportState(reportStates, ref.communityPubkey),
+      reportState: getReportState(reportStates, ref.community.address),
     })
   }
   const getAdmittedContext = (event: TrustedEvent): EngagementNotificationContext | undefined => {
-    const directCommunityPubkey = getDirectCommunityPubkey(event)
-    if (directCommunityPubkey) {
+    const directCommunityId = getDirectCommunityId(event)
+    if (directCommunityId) {
       const ref = getDirectCommunityEventRef(event)
       if (!ref || !admitTarget(event)) return undefined
-      const path = getCommunityEventPath(event)
+      const path = getExactCommunityEventPath(event, ref.community)
       return path ? {source: "community", path} : undefined
     }
     if (COMMUNITY_TARGETABLE_KIND_SET.has(event.kind)) {
       const ref = getTargetedOriginalRef(event)
-      const path = ref ? getTargetedOriginalCommunityPath(event, ref.communityPubkey) : undefined
+      const path = ref ? getTargetedOriginalCommunityPath(event, ref.community) : undefined
       return path ? {source: "community", path} : undefined
     }
 
@@ -3553,7 +3598,7 @@ export const buildGlobalCommunityNotificationFilterPlan = ({
   const boundedLimit = Math.max(COMMUNITY_NOTIFICATION_LOAD_LIMIT, limit)
 
   for (const ref of refs) {
-    const reportState = getReportState(reportStates, ref.communityPubkey)
+    const reportState = getReportState(reportStates, ref.community.address)
     const roomAuthors = getCommunityTargetWriterPubkeys({
       definition: ref.definition,
       profileListEvents,
@@ -3568,13 +3613,13 @@ export const buildGlobalCommunityNotificationFilterPlan = ({
     })
 
     const messageFilters = [
-      makeCommunityExclusiveFilter(ref.communityPubkey, [MESSAGE], {
+      makeCommunityExclusiveFilter(ref.community.communityId, [MESSAGE], {
         since,
         limit: boundedLimit,
       }),
     ]
     const commentFilters = [
-      makeCommunityExclusiveFilter(ref.communityPubkey, [COMMENT], {
+      makeCommunityExclusiveFilter(ref.community.communityId, [COMMENT], {
         since,
         limit: boundedLimit,
       }),
@@ -3582,14 +3627,14 @@ export const buildGlobalCommunityNotificationFilterPlan = ({
 
     if (normalizedCurrentPubkey) {
       messageFilters.push(
-        makeCommunityExclusiveFilter(ref.communityPubkey, [MESSAGE], {
+        makeCommunityExclusiveFilter(ref.community.communityId, [MESSAGE], {
           "#p": [normalizedCurrentPubkey],
           since,
           limit: boundedLimit,
         }),
       )
       commentFilters.push(
-        makeCommunityExclusiveFilter(ref.communityPubkey, [COMMENT], {
+        makeCommunityExclusiveFilter(ref.community.communityId, [COMMENT], {
           "#p": [normalizedCurrentPubkey],
           since,
           limit: boundedLimit,
@@ -3640,25 +3685,26 @@ const makeCommunityNotificationGroups = (
 export const buildNotificationCommunitySeedRefs = ({
   refs,
   definitionEvents,
-  renouncedCommunityPubkeys,
+  renouncedCommunityAddresses,
 }: {
   refs: ActiveUserCommunityRef[]
   definitionEvents: TrustedEvent[]
-  renouncedCommunityPubkeys: string[]
+  renouncedCommunityAddresses: string[]
 }) => {
-  const renounced = new Set(renouncedCommunityPubkeys.map(normalizePubkey))
-  const refsByPubkey = new Map(
+  const renounced = new Set(renouncedCommunityAddresses)
+  const refsByAddress = new Map(
     refs
-      .filter(ref => !renounced.has(normalizePubkey(ref.communityPubkey)))
-      .map(ref => [ref.communityPubkey, ref]),
+      .filter(ref => !renounced.has(ref.community.address))
+      .map(ref => [ref.community.address, ref]),
   )
   const definitions = selectCurrentCommunityDefinitions(refs, definitionEvents)
 
   for (const definition of definitions.values()) {
-    if (renounced.has(normalizePubkey(definition.pubkey))) continue
-    if (refsByPubkey.has(definition.pubkey)) continue
-    refsByPubkey.set(definition.pubkey, {
-      communityPubkey: definition.pubkey,
+    if (renounced.has(definition.pointer.address)) continue
+    const address = definition.pointer.address
+    if (refsByAddress.has(address)) continue
+    refsByAddress.set(address, {
+      community: definition.pointer,
       definition,
       relayHints: definition.relays,
       roles: [],
@@ -3666,24 +3712,24 @@ export const buildNotificationCommunitySeedRefs = ({
     })
   }
 
-  return Array.from(refsByPubkey.values())
+  return Array.from(refsByAddress.values())
 }
 
 const globalCommunitySeedRefs: Readable<ActiveUserCommunityRef[]> = derived(
-  [activeUserCommunityRefs, communityMemberDefinitionEvents, userRenouncedCommunityPubkeys],
-  ([$refs, $definitionEvents, $renouncedCommunityPubkeys]) =>
+  [activeUserCommunityRefs, communityMemberDefinitionEvents, userRenouncedCommunityAddresses],
+  ([$refs, $definitionEvents, $renouncedCommunityAddresses]) =>
     buildNotificationCommunitySeedRefs({
       refs: $refs,
       definitionEvents: $definitionEvents,
-      renouncedCommunityPubkeys: $renouncedCommunityPubkeys,
+      renouncedCommunityAddresses: $renouncedCommunityAddresses,
     }),
 )
 
 const globalCommunityDefinitionSources = derived(globalCommunitySeedRefs, $refs =>
   $refs.map(ref => ({
-    communityPubkey: ref.communityPubkey,
+    communityAddress: ref.community.address,
     relays: getCommunityNotificationRelays(ref),
-    filters: [makeCommunityDefinitionFilter(ref.communityPubkey)],
+    filters: [makeExactCommunityDefinitionFilter(ref.community)],
   })),
 )
 
@@ -3698,7 +3744,7 @@ const globalCommunityEvidenceRefs: Readable<ActiveUserCommunityRef[]> = derived(
     const definitions = selectCurrentCommunityDefinitions($refs, $load.events)
 
     return $refs.flatMap(ref => {
-      const definition = definitions.get(ref.communityPubkey)
+      const definition = definitions.get(getCommunityDefinitionAddress(ref))
       return definition
         ? [
             {
@@ -3714,7 +3760,7 @@ const globalCommunityEvidenceRefs: Readable<ActiveUserCommunityRef[]> = derived(
 
 const globalCommunityProfileListSources = derived(globalCommunityEvidenceRefs, $refs =>
   $refs.map(ref => ({
-    communityPubkey: ref.communityPubkey,
+    communityAddress: ref.community.address,
     relays: getCommunityProfileListRelays(ref),
     filters: makeCommunityProfileListFilters(ref.definition),
   })),
@@ -3746,9 +3792,9 @@ const globalCommunityProfileListEvents = derived(
 
 const globalCommunityReportSources = derived(globalCommunityEvidenceRefs, $refs =>
   $refs.map(ref => ({
-    communityPubkey: ref.communityPubkey,
+    communityAddress: ref.community.address,
     relays: getCommunityModerationRelays(ref),
-    filters: makeCommunityReportFilters(ref.definition),
+    filters: makeCommunityReportFilters(ref.community),
   })),
 )
 
@@ -3766,10 +3812,10 @@ const globalCommunityReportDeleteSources = derived(
   [globalCommunityEvidenceRefs, globalCommunityReportEvents],
   ([$refs, $events]) =>
     $refs.map(ref => ({
-      communityPubkey: ref.communityPubkey,
+      communityAddress: ref.community.address,
       relays: getCommunityModerationRelays(ref),
       filters: makeCommunityReportDeleteFilters(
-        $events.filter(event => eventTargetsCommunity(event, ref.communityPubkey)),
+        $events.filter(event => eventTargetsCommunity(event, ref.community.communityId)),
       ),
     })),
 )
@@ -3816,7 +3862,7 @@ const globalCommunityReportStates: Readable<Map<string, EffectiveCommunityReport
     const states = new Map<string, EffectiveCommunityReportState>()
 
     for (const ref of $refs) {
-      const communityPubkey = ref.communityPubkey
+      const communityAddress = ref.community.address
       const complete = [
         [$definitionSources, $definitions],
         [$profileListSources, $profileLists],
@@ -3824,7 +3870,7 @@ const globalCommunityReportStates: Readable<Map<string, EffectiveCommunityReport
         [$reportDeleteSources, $reportDeletes],
       ].every(([sources, load]) =>
         isNotificationCommunitySourceComplete(
-          communityPubkey,
+          communityAddress,
           sources as CommunityNotificationFilterSource[],
           load as LoadedNotificationEvents,
         ),
@@ -3832,8 +3878,9 @@ const globalCommunityReportStates: Readable<Map<string, EffectiveCommunityReport
       if (!complete) continue
 
       states.set(
-        communityPubkey,
+        communityAddress,
         getEffectiveCommunityReportState({
+          community: ref.community,
           definition: ref.definition,
           profileListEvents: $profileListEvents,
           reportEvents: $reportEvents,
@@ -3892,7 +3939,7 @@ const globalCommunityNotificationSources = derived(
       })
 
       return {
-        communityPubkey: ref.communityPubkey,
+        communityAddress: ref.community.address,
         relays: getCommunityNotificationRelays(ref),
         filters: plan.relayFilters,
         localFilters: plan.localFilters,
@@ -3911,11 +3958,15 @@ const globalCommunityNotificationEvents = deriveLoadedNotificationEventGroups({
 })
 
 const globalCommunityAdmissionFormSources = derived(notificationCommunityRefs, $refs =>
-  $refs.map(ref => ({
-    communityPubkey: ref.communityPubkey,
-    relays: getCommunityNotificationRelays(ref),
-    filters: makeCommunityAdmissionFormFilters(ref.definition),
-  })),
+  $refs.map(ref => {
+    const community = parseCommunityDefinitionV2(ref.definition.event)?.pointer
+
+    return {
+      communityAddress: ref.community.address,
+      relays: getCommunityNotificationRelays(ref),
+      filters: makeCommunityAdmissionFormFilters(ref.definition),
+    }
+  }),
 )
 
 const globalCommunityAdmissionFormLoad = deriveLoadedNotificationEventGroupsWithStatus({
@@ -3940,12 +3991,12 @@ const globalCommunityAdmissionResponseSources = derived(
       const addresses = uniqueStrings(
         $events
           .map(event => parseAdmissionForm(event))
-          .filter(form => form?.communityPubkey === ref.communityPubkey)
+          .filter(form => form?.community.address === ref.community.address)
           .map(form => form?.address || ""),
       )
 
       return {
-        communityPubkey: ref.communityPubkey,
+        communityAddress: ref.community.address,
         relays: getCommunityNotificationRelays(ref),
         filters: addresses.length
           ? [
@@ -3983,7 +4034,7 @@ const globalCommunityAdmissionDecisionSources = derived(
     const communityByFormAddress = new Map(
       $forms.flatMap(event => {
         const form = parseAdmissionForm(event)
-        return form?.communityPubkey ? [[form.address, form.communityPubkey] as const] : []
+        return form ? [[form.address, form.community.controllerPubkey] as const] : []
       }),
     )
 
@@ -3993,13 +4044,13 @@ const globalCommunityAdmissionDecisionSources = derived(
           .filter(
             event =>
               communityByFormAddress.get(parseAdmissionResponse(event)?.formAddress || "") ===
-              ref.communityPubkey,
+              ref.community.address,
           )
           .map(event => event.id),
       )
 
       return {
-        communityPubkey: ref.communityPubkey,
+        communityAddress: ref.community.address,
         relays: getCommunityNotificationRelays(ref),
         filters: responseIds.length
           ? [
@@ -4058,10 +4109,10 @@ const globalCommunityAdmissionCompletePubkeys = derived(
       $refs
         .filter(ref =>
           pairs.every(([sources, load]) =>
-            isNotificationCommunitySourceComplete(ref.communityPubkey, sources, load),
+            isNotificationCommunitySourceComplete(ref.community.address, sources, load),
           ),
         )
-        .map(ref => ref.communityPubkey),
+        .map(ref => ref.community.address),
     )
   },
 )
@@ -4097,10 +4148,10 @@ const communityApplicationOutcomeEvents = derived(
   $load => $load.events,
 )
 
-const getOutcomeWorkflowRelays = (definition: CommunityDefinition) =>
+const getOutcomeWorkflowRelays = (definition: CommunityDefinitionV2) =>
   normalizeRelayHints(definition.relays).slice(0, MAX_NOTIFICATION_OUTCOME_CONTEXT_RELAYS)
 
-const getOutcomeAuthorityRelays = (definition: CommunityDefinition) =>
+const getOutcomeAuthorityRelays = (definition: CommunityDefinitionV2) =>
   normalizeRelayHints(
     definition.sections.flatMap(section =>
       section.profileLists.flatMap(profileList => (profileList.relay ? [profileList.relay] : [])),
@@ -4108,8 +4159,8 @@ const getOutcomeAuthorityRelays = (definition: CommunityDefinition) =>
     definition.relays,
   ).slice(0, MAX_NOTIFICATION_OUTCOME_CONTEXT_RELAYS)
 
-const getOutcomeReviews = (events: TrustedEvent[], communityPubkey: string) =>
-  events.filter(event => parseAdmissionReview(event)?.communityPubkey === communityPubkey)
+const getOutcomeReviews = (events: TrustedEvent[], communityAddress: string) =>
+  events.filter(event => parseAdmissionReview(event)?.community.address === communityAddress)
 
 const communityApplicationOutcomeDefinitionBootstrapSources = derived(
   communityApplicationOutcomeEvents,
@@ -4118,8 +4169,8 @@ const communityApplicationOutcomeDefinitionBootstrapSources = derived(
     const sources: CommunityNotificationFilterSource[] = []
 
     for (const event of $events) {
-      const communityPubkey = parseAdmissionReview(event)?.communityPubkey
-      if (!communityPubkey) continue
+      const community = parseAdmissionReview(event)?.community
+      if (!community) continue
       const relays = normalizeRelayHints(getEventTagRelayHints(event)).filter(relay => {
         if (acceptedRelays.has(relay)) return true
         if (acceptedRelays.size >= MAX_NOTIFICATION_OUTCOME_BOOTSTRAP_RELAYS) return false
@@ -4128,9 +4179,9 @@ const communityApplicationOutcomeDefinitionBootstrapSources = derived(
       })
       if (relays.length === 0) continue
       sources.push({
-        communityPubkey,
+        communityAddress: community.address,
         relays,
-        filters: [makeCommunityDefinitionFilter(communityPubkey)],
+        filters: [makeExactCommunityDefinitionFilter(community)],
       })
     }
 
@@ -4156,9 +4207,9 @@ const communityApplicationOutcomeDefinitionRefreshSources = derived(
   communityApplicationOutcomeBootstrapDefinitions,
   $definitions =>
     $definitions.map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: getOutcomeWorkflowRelays(definition),
-      filters: [makeCommunityDefinitionFilter(definition.pubkey)],
+      filters: [makeExactCommunityDefinitionFilter(definition.pointer)],
     })),
 )
 
@@ -4187,7 +4238,7 @@ const communityApplicationOutcomeDefinitions = derived(
     )
 
     return Array.from(definitions.values()).filter(definition =>
-      isNotificationCommunitySourceComplete(definition.pubkey, $sources, $load),
+      isNotificationCommunitySourceComplete(definition.pointer.address, $sources, $load),
     )
   },
 )
@@ -4201,10 +4252,10 @@ const communityApplicationOutcomeFormSources = derived(
   [communityApplicationOutcomeEvents, communityApplicationOutcomeDefinitions],
   ([$events, $definitions]) =>
     $definitions.map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: getOutcomeWorkflowRelays(definition),
       filters: makeExactAddressFilters(
-        getOutcomeReviews($events, definition.pubkey).map(
+        getOutcomeReviews($events, definition.pointer.address).map(
           event => parseAdmissionReview(event)?.formAddress || "",
         ),
         FORM_TEMPLATE_KIND,
@@ -4231,11 +4282,11 @@ const communityApplicationOutcomeReviewHistorySources = derived(
   ],
   ([$pubkey, $events, $definitions, $notificationHistoryFilterLimit]) =>
     $definitions.map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: getOutcomeWorkflowRelays(definition),
       filters: getIdFilters(
         uniqueStrings(
-          getOutcomeReviews($events, definition.pubkey).map(
+          getOutcomeReviews($events, definition.pointer.address).map(
             event => parseAdmissionReview(event)?.responseId,
           ),
         ),
@@ -4263,11 +4314,11 @@ const communityApplicationOutcomeResponseSources = derived(
   [communityApplicationOutcomeEvents, communityApplicationOutcomeDefinitions],
   ([$events, $definitions]) =>
     $definitions.map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: getOutcomeWorkflowRelays(definition),
       filters: getIdFilters(
         uniqueStrings(
-          getOutcomeReviews($events, definition.pubkey).map(
+          getOutcomeReviews($events, definition.pointer.address).map(
             event => parseAdmissionReview(event)?.responseId,
           ),
         ),
@@ -4294,12 +4345,12 @@ const communityApplicationOutcomeResponseDeleteSources = derived(
   ([$reviews, $definitions, $responses]) =>
     $definitions.map(definition => {
       const responseIds = new Set(
-        getOutcomeReviews($reviews, definition.pubkey).map(
+        getOutcomeReviews($reviews, definition.pointer.address).map(
           event => parseAdmissionReview(event)?.responseId,
         ),
       )
       return {
-        communityPubkey: definition.pubkey,
+        communityAddress: definition.pointer.address,
         relays: getOutcomeWorkflowRelays(definition),
         filters: makeSameAuthorDeleteFilters($responses.filter(event => responseIds.has(event.id))),
       }
@@ -4322,7 +4373,7 @@ const communityApplicationOutcomeProfileListSources = derived(
   communityApplicationOutcomeDefinitions,
   $definitions =>
     $definitions.map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: getOutcomeAuthorityRelays(definition),
       filters: makeCommunityProfileListFilters(definition),
     })),
@@ -4342,9 +4393,9 @@ const communityApplicationOutcomeReportSources = derived(
   communityApplicationOutcomeDefinitions,
   $definitions =>
     $definitions.map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: getOutcomeWorkflowRelays(definition),
-      filters: makeCommunityReportFilters(definition),
+      filters: makeCommunityReportFilters(definition.pointer),
     })),
 )
 
@@ -4362,10 +4413,10 @@ const communityApplicationOutcomeReportDeleteSources = derived(
   [communityApplicationOutcomeDefinitions, communityApplicationOutcomeReportEvents],
   ([$definitions, $events]) =>
     $definitions.map(definition => ({
-      communityPubkey: definition.pubkey,
+      communityAddress: definition.pointer.address,
       relays: getOutcomeWorkflowRelays(definition),
       filters: makeCommunityReportDeleteFilters(
-        $events.filter(event => eventTargetsCommunity(event, definition.pubkey)),
+        $events.filter(event => eventTargetsCommunity(event, definition.communityId)),
       ),
     })),
 )
@@ -4424,7 +4475,7 @@ const communityApplicationOutcomeReportStates = derived(
     const states = new Map<string, EffectiveCommunityReportState>()
 
     for (const definition of $definitions) {
-      const communityPubkey = definition.pubkey
+      const communityAddress = definition.pointer.address
       const complete = [
         [$formSources, $formLoad],
         [$reviewSources, $reviewLoad],
@@ -4435,7 +4486,7 @@ const communityApplicationOutcomeReportStates = derived(
         [$reportDeleteSources, $reportDeleteLoad],
       ].every(([sources, load]) =>
         isNotificationCommunitySourceComplete(
-          communityPubkey,
+          communityAddress,
           sources as CommunityNotificationFilterSource[],
           load as LoadedNotificationEvents,
         ),
@@ -4443,8 +4494,9 @@ const communityApplicationOutcomeReportStates = derived(
       if (!complete) continue
 
       states.set(
-        communityPubkey,
+        communityAddress,
         getEffectiveCommunityReportState({
+          community: definition.pointer,
           definition,
           profileListEvents: $profileListEvents,
           reportEvents: $reportEvents,
@@ -4461,11 +4513,11 @@ const globalCommunityReportReviewSources = derived(
   [globalCommunityEvidenceRefs, globalCommunityReportEvents],
   ([$refs, $reportEvents]) =>
     $refs.map(ref => ({
-      communityPubkey: ref.communityPubkey,
+      communityAddress: ref.community.address,
       relays: getCommunityModerationRelays(ref),
       filters: makeCommunityReportReviewFilters(
-        ref.definition,
-        $reportEvents.filter(event => eventTargetsCommunity(event, ref.communityPubkey)),
+        ref.community,
+        $reportEvents.filter(event => eventTargetsCommunity(event, ref.community.communityId)),
       ),
     })),
 )
@@ -4508,10 +4560,10 @@ const globalCommunityModerationCompletePubkeys = derived(
       $refs
         .filter(ref =>
           pairs.every(([sources, load]) =>
-            isNotificationCommunitySourceComplete(ref.communityPubkey, sources, load),
+            isNotificationCommunitySourceComplete(ref.community.address, sources, load),
           ),
         )
-        .map(ref => ref.communityPubkey),
+        .map(ref => ref.community.address),
     )
   },
 )
@@ -4520,7 +4572,7 @@ const globalCommunityTargetingSources = derived(
   [notificationCommunityRefs, globalCommunityProfileListEvents, globalCommunityReportStates],
   ([$refs, $profileListEvents, $reportStates]) =>
     $refs.map(ref => {
-      const reportState = getReportState($reportStates, ref.communityPubkey)
+      const reportState = getReportState($reportStates, ref.community.address)
       const relayFilters: Filter[] = []
       const localFilters: Filter[] = []
       const calendarGrantEvidenceComplete = hasCommunityCalendarGrantEvidence({
@@ -4541,7 +4593,9 @@ const globalCommunityTargetingSources = derived(
         if (!target) continue
         const calendarKind = COMMUNITY_CALENDAR_WRITE_TARGETS.some(target => target.kind === kind)
 
-        const structuralFilters = [makeCommunityTargetingFilter(ref.communityPubkey, [kind])]
+        const structuralFilters = [
+          makeCommunityTargetingFilter(getCommunityDefinitionId(ref), [kind]),
+        ]
         relayFilters.push(...structuralFilters)
         if (
           calendarKind
@@ -4569,7 +4623,7 @@ const globalCommunityTargetingSources = derived(
       }
 
       return {
-        communityPubkey: ref.communityPubkey,
+        communityAddress: ref.community.address,
         relays: getCommunityNotificationRelays(ref),
         filters: relayFilters,
         localFilters,
@@ -4591,15 +4645,11 @@ const globalCommunityTargetingReplacementSources = derived(
   [notificationCommunityRefs, globalCommunityTargetingCandidateEvents],
   ([$refs, $events]) =>
     $refs.map(ref => {
-      const communityEvents = $events.filter(event =>
-        parseTargetedPublication(event)?.communities.some(
-          community => community.pubkey === ref.communityPubkey,
-        ),
-      )
+      const communityEvents = $events.filter(event => targetsCommunityDefinition(event, ref))
       const filters = makeTargetingWrapperReplacementFilters(communityEvents)
 
       return {
-        communityPubkey: ref.communityPubkey,
+        communityAddress: ref.community.address,
         relays: normalizeRelayHints(
           getCommunityNotificationRelays(ref),
           communityEvents.flatMap(event =>
@@ -4636,19 +4686,13 @@ const globalCommunityTargetingDeleteSources = derived(
   ([$refs, $candidateEvents, $events]) =>
     $refs.map(ref => {
       const addresses = new Set(
-        $candidateEvents
-          .filter(event =>
-            parseTargetedPublication(event)?.communities.some(
-              community => community.pubkey === ref.communityPubkey,
-            ),
-          )
-          .map(getAddress),
+        $candidateEvents.filter(event => targetsCommunityDefinition(event, ref)).map(getAddress),
       )
       const communityEvents = $events.filter(event => addresses.has(getAddress(event)))
       const filters = makeSameAuthorDeleteFilters(communityEvents)
 
       return {
-        communityPubkey: ref.communityPubkey,
+        communityAddress: ref.community.address,
         relays: normalizeRelayHints(
           getCommunityNotificationRelays(ref),
           communityEvents.flatMap(event =>
@@ -4696,42 +4740,44 @@ const globalCommunityTargetingEvents = derived(
     $events,
     $deleteEvents,
   ]) => {
-    const activePubkeys = new Set($refs.map(ref => ref.communityPubkey))
-    const completePubkeys = new Set(
+    const activeAddresses = new Set($refs.map(getCommunityDefinitionAddress).filter(Boolean))
+    const completeAddresses = new Set(
       $refs
         .filter(ref => {
-          const communityPubkey = ref.communityPubkey
+          const communityAddress = ref.community.address
           return (
             isNotificationCommunitySourceComplete(
-              communityPubkey,
+              communityAddress,
               $candidateSources,
               $candidates,
             ) &&
             isNotificationCommunitySourceComplete(
-              communityPubkey,
+              communityAddress,
               $replacementSources,
               $replacements,
             ) &&
-            isNotificationCommunitySourceComplete(communityPubkey, $deleteSources, $deletes)
+            isNotificationCommunitySourceComplete(communityAddress, $deleteSources, $deletes)
           )
         })
-        .map(ref => ref.communityPubkey),
+        .map(getCommunityDefinitionAddress)
+        .filter(Boolean),
     )
-    const targetPubkeysByAddress = new Map<string, Set<string>>()
+    const targetCommunityAddressesByWrapper = new Map<string, Set<string>>()
 
     for (const event of $candidateEvents) {
-      const targets = targetPubkeysByAddress.get(getAddress(event)) || new Set<string>()
-      for (const community of parseTargetedPublication(event)?.communities || []) {
-        if (activePubkeys.has(community.pubkey)) targets.add(community.pubkey)
+      const wrapperAddress = getAddress(event)
+      const targets = targetCommunityAddressesByWrapper.get(wrapperAddress) || new Set<string>()
+      for (const community of parseTargetedPublicationV2(event)?.communities || []) {
+        if (activeAddresses.has(community.address)) targets.add(community.address)
       }
-      targetPubkeysByAddress.set(getAddress(event), targets)
+      targetCommunityAddressesByWrapper.set(wrapperAddress, targets)
     }
 
     return dedupeTrustedEvents(
-      Array.from(completePubkeys).flatMap(communityPubkey => {
+      Array.from(completeAddresses).flatMap(communityAddress => {
         const addresses = new Set(
-          Array.from(targetPubkeysByAddress)
-            .filter(([, targets]) => targets.has(communityPubkey))
+          Array.from(targetCommunityAddressesByWrapper)
+            .filter(([, targets]) => targets.has(communityAddress))
             .map(([address]) => address),
         )
         return selectCurrentTargetingWrapperEvents(
@@ -4740,8 +4786,8 @@ const globalCommunityTargetingEvents = derived(
         )
       }),
     ).filter(event =>
-      Array.from(targetPubkeysByAddress.get(getAddress(event)) || []).every(communityPubkey =>
-        completePubkeys.has(communityPubkey),
+      Array.from(targetCommunityAddressesByWrapper.get(getAddress(event)) || []).every(
+        communityAddress => completeAddresses.has(communityAddress),
       ),
     )
   },
@@ -4774,12 +4820,12 @@ const globalCommunityNotificationTargetSources = derived(
   [notificationCommunityRefs, globalCommunityNotificationEvents, notificationHistoryFilterLimit],
   ([$refs, $events, $notificationHistoryFilterLimit]) =>
     $refs.map(ref => ({
-      communityPubkey: ref.communityPubkey,
+      communityAddress: ref.community.address,
       relays: getCommunityNotificationRelays(ref),
       filters: getIdFilters(
         uniqueStrings(
           $events
-            .filter(event => eventTargetsCommunity(event, ref.communityPubkey))
+            .filter(event => eventTargetsCommunity(event, ref.community.communityId))
             .flatMap(getCommunityNotificationTargetRefs),
         ),
       ).map(filter => ({
@@ -4867,7 +4913,7 @@ const globalCommunityApplicationRows = derived(
     const mutedPubkeys = $pubkey ? getMutes($pubkey) : []
     const activeRows = buildCommunityApplicationNotificationRows({
       refs: $notificationCommunityRefs.filter(ref =>
-        $globalCommunityAdmissionCompletePubkeys.has(ref.communityPubkey),
+        $globalCommunityAdmissionCompletePubkeys.has(ref.community.address),
       ),
       currentPubkey: $pubkey || undefined,
       profileListEvents: $globalCommunityProfileListEvents,
@@ -4924,7 +4970,7 @@ const globalCommunityModerationRows = derived(
   ]) => {
     return buildCommunityModerationNotificationRows({
       refs: $globalCommunityEvidenceRefs.filter(ref =>
-        $globalCommunityModerationCompletePubkeys.has(ref.communityPubkey),
+        $globalCommunityModerationCompletePubkeys.has(ref.community.address),
       ),
       currentPubkey: $pubkey || undefined,
       profileListEvents: $globalCommunityProfileListEvents,

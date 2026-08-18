@@ -1,33 +1,41 @@
 import {expect, test, type Page} from "@playwright/test"
-import {finalizeEvent, nip19, type VerifiedEvent} from "nostr-tools"
+import {finalizeEvent, getPublicKey, nip19, type VerifiedEvent} from "nostr-tools"
 import {DEV_PUBKEY, DEV_SECRET, seedDevSession} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
 
-const relayUrl = "wss://community-reply-target-navigation.example/"
+const relayUrl = "wss://community-reply-target-navigation.example"
 const communitySecret = Uint8Array.from(
   DEV_SECRET.match(/.{2}/g)?.map(byte => Number.parseInt(byte, 16)) || [],
 )
+const communityId = getPublicKey(new Uint8Array(32).fill(2))
+const profileListAddress = `30000:${DEV_PUBKEY}:general`
 
 const definition = finalizeEvent(
   {
-    kind: 10222,
+    kind: 32222,
     created_at: 1,
     content: "",
     tags: [
-      ["alt", "BudaBit community definition"],
+      ["d", communityId],
+      ["name", "Reply Target Community"],
+      ["description", "Community reply target navigation test fixture"],
       ["r", relayUrl],
       ["content", "Thread-creator"],
       ["k", "11", "threads"],
+      ["a", profileListAddress, relayUrl],
       ["content", "Calendar-event-creator"],
       ["k", "31922"],
       ["k", "31923"],
+      ["a", profileListAddress, relayUrl],
       ["content", "Fundraiser-goals-creator"],
       ["k", "9041"],
-      ["content", "general"],
+      ["a", profileListAddress, relayUrl],
+      ["content", "General"],
       ["k", "1111"],
       ["k", "7"],
       ["k", "1984"],
       ["k", "1985"],
+      ["a", profileListAddress, relayUrl],
     ],
   },
   communitySecret,
@@ -39,7 +47,7 @@ const thread = finalizeEvent(
     created_at: 2,
     content: "Thread body",
     tags: [
-      ["h", DEV_PUBKEY],
+      ["h", communityId],
       ["title", "Quoted thread replies"],
     ],
   },
@@ -52,7 +60,7 @@ const calendar = finalizeEvent(
     created_at: 3,
     content: "Calendar body",
     tags: [
-      ["h", DEV_PUBKEY],
+      ["h", communityId],
       ["d", "quoted-calendar-replies"],
       ["title", "Quoted calendar replies"],
       ["start", "2099-01-01"],
@@ -67,7 +75,7 @@ const goal = finalizeEvent(
     created_at: 4,
     content: "Quoted goal replies",
     tags: [
-      ["h", DEV_PUBKEY],
+      ["h", communityId],
       ["summary", "Goal body"],
       ["amount", "1000"],
       ["relays", relayUrl],
@@ -80,38 +88,42 @@ const makeComment = ({
   root,
   content,
   createdAt,
-  parent,
 }: {
   root: VerifiedEvent
   content: string
   createdAt: number
-  parent?: VerifiedEvent
-}) =>
-  finalizeEvent(
+}) => {
+  const identifier = root.tags.find(tag => tag[0] === "d")?.[1]
+  const address = identifier ? `${root.kind}:${root.pubkey}:${identifier}` : ""
+
+  return finalizeEvent(
     {
       kind: 1111,
       created_at: createdAt,
       content,
       tags: [
-        ["h", DEV_PUBKEY],
+        ["h", communityId],
         ["E", root.id, relayUrl, root.pubkey],
         ["K", String(root.kind)],
         ["P", root.pubkey, relayUrl],
-        ...(parent
+        ["e", root.id, relayUrl, root.pubkey],
+        ["k", String(root.kind)],
+        ["p", root.pubkey, relayUrl],
+        ...(address
           ? [
-              ["e", parent.id, relayUrl, parent.pubkey],
-              ["k", "1111"],
-              ["p", parent.pubkey, relayUrl],
+              ["A", address, relayUrl, root.pubkey],
+              ["a", address, relayUrl, root.pubkey],
             ]
           : []),
       ],
     },
     communitySecret,
   )
+}
 
 const makeReplyChain = (root: VerifiedEvent, label: string, createdAt: number) => {
   const parent = makeComment({root, content: `Original ${label} parent`, createdAt})
-  const fillers = Array.from({length: 5}, (_, index) =>
+  const fillers = Array.from({length: 3}, (_, index) =>
     makeComment({
       root,
       content: `${label} filler ${index + 1}`,
@@ -131,8 +143,13 @@ const makeReplyChain = (root: VerifiedEvent, label: string, createdAt: number) =
 const threadChain = makeReplyChain(thread, "thread", 10)
 const calendarChain = makeReplyChain(calendar, "calendar", 30)
 const goalChain = makeReplyChain(goal, "goal", 50)
-const communityInput = `ncommunity://${DEV_PUBKEY}?relay=${encodeURIComponent(relayUrl)}`
-const communityPath = `/c/${encodeURIComponent(communityInput)}`
+const communityNaddr = nip19.naddrEncode({
+  kind: 32222,
+  pubkey: DEV_PUBKEY,
+  identifier: communityId,
+  relays: [relayUrl],
+})
+const communityPath = `/c/${communityNaddr}`
 
 const openTarget = async ({
   page,

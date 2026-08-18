@@ -152,7 +152,7 @@ describe("NewRepoWizard modal surface", () => {
     const forkDialog = await readPackageSource("src/lib/components/git/ForkRepoDialog.svelte");
     const newRepoWizard = await readPackageSource("src/lib/components/git/NewRepoWizard.svelte");
     const progressStep = await readPackageSource("src/lib/components/git/RepoProgressStep.svelte");
-    const repoLayout = await readWorkspaceSource("src/routes/git/[id=naddr]/+layout.svelte");
+    const repoSession = await readWorkspaceSource("src/routes/git/[id=naddr]/RepoSession.svelte");
 
     for (const source of [importDialog, forkDialog, newRepoWizard]) {
       expect(source).toContain("dvh");
@@ -165,7 +165,7 @@ describe("NewRepoWizard modal surface", () => {
     expect(forkDialog).toContain("min-h-0 flex-1");
     expect(newRepoWizard).toContain("modalLayout={true}");
     expect(progressStep).toContain('modalLayout ? "contents"');
-    expect(repoLayout).toContain("{fullscreen: true, noEscape: true}");
+    expect(repoSession).toContain("{fullscreen: true, noEscape: true}");
   });
 
   it("stacks modal actions on mobile and preserves desktop rows", async () => {
@@ -223,7 +223,8 @@ describe("NewRepoWizard modal surface", () => {
     const contextType = await readPackageSource("src/lib/types/profile-search.ts");
     const packageIndex = await readPackageSource("src/lib/index.ts");
 
-    expect(contextType).toContain("communityPubkey?: string;");
+    expect(contextType).toContain("communityAddress?: string;");
+    expect(contextType).not.toContain("communityPubkey");
     expect(contextType).toContain("ProfileSearchUpdateSignal");
     expect(packageIndex).toContain("ProfileSearchContext, ProfileSearchUpdateSignal");
     for (const source of [newRepoWizard, advancedStep, forkDialog, editPanel]) {
@@ -231,9 +232,9 @@ describe("NewRepoWizard modal surface", () => {
     }
 
     expect(newRepoWizard).toContain("communityPubkey={selectedCommunityPubkey}");
-    expect(advancedStep).toContain("communityPubkey: communityPubkey || undefined");
-    expect(forkDialog).toContain("communityPubkey: selectedCommunityPubkey || undefined");
-    expect(editPanel).toContain("communityPubkey: formData.communityPubkey || undefined");
+    expect(advancedStep).toContain("communityAddress: communityPubkey || undefined");
+    expect(forkDialog).toContain("communityAddress: selectedCommunityPubkey || undefined");
+    expect(editPanel).toContain("communityAddress: formData.communityAddress || undefined");
     for (const source of [advancedStep, forkDialog, editPanel]) {
       expect(source).toContain("searchProfilesUpdateSignal");
       expect(source).toContain("searchProfilesContextKey");

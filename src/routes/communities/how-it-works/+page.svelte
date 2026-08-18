@@ -273,7 +273,7 @@
           <h2 class="text-2xl font-bold">Owners delegate by section</h2>
         </div>
         <p class="mt-3 text-sm leading-relaxed opacity-75 sm:text-base">
-          The community owner can add any number of moderators to each section. Moderators help
+          The community controller can add any number of moderators to each section. Moderators help
           manage publishing access, application forms, reports, and moderation work.
         </p>
 

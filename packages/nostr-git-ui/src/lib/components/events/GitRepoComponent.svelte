@@ -28,7 +28,7 @@
   const createdDate = $derived(new Date(event.created_at * 1000));
   const community = $derived(parseRepoCommunityBinding(event));
   const communityLabel = $derived(
-    community ? `${community.pubkey.slice(0, 8)}...${community.pubkey.slice(-6)}` : ""
+    community ? `${community.communityId.slice(0, 8)}...${community.communityId.slice(-6)}` : ""
   );
 
   // Parse event tags to extract repository information

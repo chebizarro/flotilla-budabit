@@ -2,11 +2,13 @@ import {synced} from "@welshman/store"
 import {kv} from "@app/core/storage"
 
 export type NotificationReadState = {
+  version: 2
   lastReadTimestamp: number
   latestNotificationTimestamp: number
 }
 
 export const defaultNotificationReadState = (): NotificationReadState => ({
+  version: 2,
   lastReadTimestamp: 0,
   latestNotificationTimestamp: 0,
 })
@@ -20,10 +22,16 @@ export const normalizeNotificationTimestamp = (timestamp: unknown) => {
 
 export const normalizeNotificationReadState = (
   state: Partial<NotificationReadState> | undefined,
-): NotificationReadState => ({
-  lastReadTimestamp: normalizeNotificationTimestamp(state?.lastReadTimestamp),
-  latestNotificationTimestamp: normalizeNotificationTimestamp(state?.latestNotificationTimestamp),
-})
+): NotificationReadState =>
+  state?.version === 2
+    ? {
+        version: 2,
+        lastReadTimestamp: normalizeNotificationTimestamp(state.lastReadTimestamp),
+        latestNotificationTimestamp: normalizeNotificationTimestamp(
+          state.latestNotificationTimestamp,
+        ),
+      }
+    : defaultNotificationReadState()
 
 export const rememberLatestNotificationTimestampState = (
   state: Partial<NotificationReadState> | undefined,
@@ -47,6 +55,7 @@ export const markNotificationsReadState = (
     normalizeNotificationTimestamp(timestamp) || current.latestNotificationTimestamp
 
   return {
+    version: 2,
     latestNotificationTimestamp: current.latestNotificationTimestamp,
     lastReadTimestamp: Math.max(current.lastReadTimestamp, readTimestamp),
   }
@@ -59,7 +68,7 @@ export const hasUnreadNotificationsState = (state: Partial<NotificationReadState
 }
 
 export const notificationReadState = synced<NotificationReadState>({
-  key: "notificationCenter.readState",
+  key: "notificationCenter.readState.v2",
   defaultValue: defaultNotificationReadState(),
   storage: kv,
 })

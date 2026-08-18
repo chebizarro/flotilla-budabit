@@ -24,13 +24,15 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunitySession,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
-    activeCommunityRelays,
     hasCommunityHydrationCompleted,
     markCommunityHydrationCompleted,
+    recoverCommunityBootstrap,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
   import {
@@ -52,7 +54,7 @@
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {setChecked} from "@app/util/notifications"
-  import {makeCommunityGoalPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityGoalPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const REQUEST_HARD_TIMEOUT_MS = 10_000
 
@@ -71,28 +73,36 @@
   let emptyStateSettleTimer: ReturnType<typeof setTimeout> | undefined
   let lastFeedKey = ""
   let historicalLoadRetryVersion = $state(0)
+  let retryingCommunityAccess = $state(false)
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
   const goalsPath = $derived(
-    communityPubkey ? makeCommunityGoalPath(communityPubkey) : $page.url.pathname,
+    routeCommunity ? makeExactCommunityGoalPath(routeCommunity) : $page.url.pathname,
   )
   const createPath = $derived(
-    communityPubkey ? makeCommunityGoalPath(communityPubkey, "create") : "",
+    routeCommunity ? makeExactCommunityGoalPath(routeCommunity, "create") : "",
   )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -104,23 +114,23 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const goalSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.goal,
     ),
   )
   const targetingFilters = $derived(
-    communityAuthorityReady && communityPubkey
-      ? [makeCommunityTargetingFilter(communityPubkey, [ZAP_GOAL])]
+    communityAuthorityReady && routeCommunity
+      ? [makeCommunityTargetingFilter(communityId, [ZAP_GOAL])]
       : [],
   )
   const goalAuthorPubkeys = $derived(
-    $activeCommunityDefinition
+    communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.goal,
           reportState: $activeCommunityReportState,
@@ -136,9 +146,10 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition && routeCommunity
       ? filterAuthorizedCommunityTargetingEvents({
-          definition: $activeCommunityDefinition,
+          community: routeCommunity,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           events: $targetingEvents,
           reportState: $activeCommunityReportState,
@@ -147,9 +158,9 @@
       : [],
   )
   const commentAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.comment,
           reportState: $activeCommunityReportState,
@@ -157,9 +168,9 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.reaction,
           reportState: $activeCommunityReportState,
@@ -167,9 +178,9 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
@@ -190,9 +201,9 @@
       : readable<TrustedEvent[]>([]),
   )
   const directGoalFilterPlan = $derived(
-    communityAuthorityReady && communityPubkey
+    communityAuthorityReady && communityId
       ? makeCommunityContentFilterPlan(
-          [{kinds: [ZAP_GOAL], "#h": [communityPubkey]}],
+          [{kinds: [ZAP_GOAL], "#h": [communityId]}],
           goalAuthorPubkeys,
         )
       : {relayFilters: [], localFilters: []},
@@ -202,9 +213,9 @@
     localFilters: [...directGoalFilterPlan.localFilters, ...targetedGoalFilterPlan.localFilters],
   })
   const commentFilterPlan = $derived(
-    communityAuthorityReady && communityPubkey
+    communityAuthorityReady && communityId
       ? makeCommunityContentFilterPlan(
-          [{kinds: [COMMENT], "#K": [String(ZAP_GOAL)], "#h": [communityPubkey]}],
+          [{kinds: [COMMENT], "#K": [String(ZAP_GOAL)], "#h": [communityId]}],
           commentAuthorPubkeys,
         )
       : {relayFilters: [], localFilters: []},
@@ -218,12 +229,12 @@
   ] as Filter[])
   const feedKey = $derived.by(() =>
     communityAuthorityReady &&
-    communityPubkey &&
+    communityAddress &&
     goalFeedFilters.length &&
-    $activeCommunityRelays.length
+    $activeExactCommunityRelays.length
       ? [
-          communityPubkey,
-          ...$activeCommunityRelays,
+          communityAddress,
+          ...$activeExactCommunityRelays,
           JSON.stringify(goalFeedFilters),
           ...authorizedTargetingEvents.map(event => event.id),
         ].join("|")
@@ -234,9 +245,9 @@
     Boolean(
       $pubkey &&
       communityAuthorityReady &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.reaction,
@@ -307,7 +318,7 @@
       !key ||
       goalFeedFilters.length === 0 ||
       goalFeedRelayFilters.length === 0 ||
-      $activeCommunityRelays.length === 0
+      $activeExactCommunityRelays.length === 0
     )
       return
 
@@ -322,7 +333,7 @@
 
     const feed = makeFeed({
       element,
-      relays: $activeCommunityRelays,
+      relays: $activeExactCommunityRelays,
       feedFilters: goalFeedFilters,
       relayFilters: goalFeedRelayFilters,
       subscriptionFilters: goalFeedFilters,
@@ -347,11 +358,11 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
     const relayFilters = targetingFilterPlan.relayFilters
     const localFilters = targetingFilterPlan.localFilters
 
-    if (!communityBootstrapReady || !communityPubkey) {
+    if (!communityBootstrapReady || !communityId) {
       loadingTargets = false
       targetLoadStatus = "idle"
       emptyStateSettled = false
@@ -380,7 +391,7 @@
       localFilters,
       timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `community-goal-targets:${communityPubkey}`,
+      owner: `community-goal-targets:${communityAddress}`,
       signal: controller.signal,
     })
       .then(result => {
@@ -423,7 +434,7 @@
           ...plan,
           timeoutMs: REQUEST_HARD_TIMEOUT_MS,
           priority: RELAY_REQUEST_PRIORITY.interactive,
-          owner: `community-goal-target-originals:${communityPubkey}`,
+          owner: `community-goal-target-originals:${communityAddress}`,
           signal: controller.signal,
         }),
       ),
@@ -460,9 +471,20 @@
     }
   })
 
-  const retryHistoricalLoad = () => {
+  const retryHistoricalLoad = async () => {
     if (communityBootstrapFailed || communityAuthorityUnavailable) {
-      window.location.reload()
+      if (!routeCommunity || retryingCommunityAccess) return
+
+      retryingCommunityAccess = true
+      try {
+        const session = $activeExactCommunitySession
+        if (!session || $activeExactCommunityPointer?.address !== routeCommunity.address) return
+        await recoverCommunityBootstrap(session, {recoverAuth: true})
+      } catch (error) {
+        console.warn("[community-goals] Failed to recover community access", error)
+      } finally {
+        retryingCommunityAccess = false
+      }
       return
     }
 
@@ -503,7 +525,7 @@
         <Icon icon={NotesMinimalistic} />
         Create
       </PublishGate>
-      <CommunityMenuButton community={communityPubkey} />
+      <CommunityMenuButton community={routeCommunity?.naddr} />
     </div>
   {/snippet}
 </PageBar>
@@ -511,10 +533,11 @@
 <PageContent bind:element class="flex flex-col gap-2 p-2 pt-4">
   {#each items as event (event.id)}
     <GoalItem
-      url={communityPubkey}
-      relays={$activeCommunityRelays}
-      publishRelays={$activeCommunityPublishRelays}
-      scopeH={communityPubkey}
+      url={communityId}
+      community={routeCommunity}
+      relays={$activeExactCommunityRelays}
+      publishRelays={$activeExactCommunityRelays}
+      scopeH={communityId}
       activityLiveCovered
       communitySectionName={goalSectionName}
       allowedAuthors={commentAuthorPubkeys}

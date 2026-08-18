@@ -77,7 +77,6 @@
 
 <script lang="ts">
   import * as nip19 from "nostr-tools/nip19"
-  import {profilesByPubkey} from "@welshman/app"
   import {Router} from "@welshman/router"
   import type {TrustedEvent} from "@welshman/util"
   import {Address, EVENT_DATE, EVENT_TIME, MESSAGE, THREAD, ZAP_GOAL} from "@welshman/util"
@@ -91,6 +90,7 @@
   import {deriveEvent, entityLink} from "@app/core/state"
   import {activeCommunityReportState} from "@app/core/community-state"
   import {getRepoPublicationAddress} from "@app/core/repo-publication"
+  import {parseCommunityDefinitionAddress} from "@app/core/community"
   import {
     getCommunityCensorReason,
     getCommunityReportEventAddress,
@@ -517,10 +517,9 @@
 
   const getRepoCommunityMeta = (evt: TrustedEvent) => {
     const community = parseRepoCommunityBinding(evt)
-    if (!community) return ""
-    const profile = $profilesByPubkey.get(community.pubkey)
-    const label = profile?.display_name || profile?.name || `${community.pubkey.slice(0, 8)}...`
-    return `Community: ${label}`
+    const pointer = community ? parseCommunityDefinitionAddress(community.address) : undefined
+    if (!pointer) return ""
+    return `Community: ${pointer.controllerPubkey.slice(0, 6)}:${pointer.communityId.slice(0, 6)}...`
   }
 
   const getGitShareCard = (evt: TrustedEvent, relays: string[] = []) => {

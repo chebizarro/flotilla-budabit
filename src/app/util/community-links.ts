@@ -1,8 +1,8 @@
 import type {Parsed, ParsedLink} from "@welshman/content"
 import {isLink} from "@welshman/content"
-import {parseCommunityInput, type ParsedCommunityInput} from "@app/core/community"
+import {parseCommunityNaddr, type CommunityPointer} from "@app/core/community"
 
-const NCOMMUNITY_CANDIDATE_RE = /ncommunity:\/\/[^\s<>"'`]+/gi
+const COMMUNITY_CANDIDATE_RE = /(?:nostr:)?naddr1[ac-hj-np-z02-9]{6,}/gi
 
 const ALLOWED_BOUNDARY_BEFORE = new Set([
   "",
@@ -42,7 +42,7 @@ const ALLOWED_BOUNDARY_AFTER = new Set([
 
 export type CommunityLinkToken = {
   type: "community"
-  value: ParsedCommunityInput
+  value: CommunityPointer
   raw: string
 }
 
@@ -59,50 +59,39 @@ const hasValidBoundaryAfter = (src: string, index: number) =>
 
 const trimTrailingBoundary = (value: string) => {
   let next = value
-
   while (/[.,!?;:]$/.test(next)) next = next.slice(0, -1)
   while (/[)\]}]$/.test(next)) next = next.slice(0, -1)
-
   return next
 }
 
-export const parseNcommunityLink = (value: string): ParsedCommunityInput | undefined => {
-  const trimmed = trimTrailingBoundary(value.trim())
-
-  return trimmed.startsWith("ncommunity://") ? parseCommunityInput(trimmed) : undefined
+export const parseCommunityLink = (value: string): CommunityPointer | undefined => {
+  const trimmed = trimTrailingBoundary(value.trim()).replace(/^nostr:/i, "")
+  return parseCommunityNaddr(trimmed)
 }
 
-export const findNcommunityLinkStart = (src: string) => {
-  NCOMMUNITY_CANDIDATE_RE.lastIndex = 0
-
+export const findCommunityLinkStart = (src: string) => {
+  COMMUNITY_CANDIDATE_RE.lastIndex = 0
   let match: RegExpExecArray | null
-  while ((match = NCOMMUNITY_CANDIDATE_RE.exec(src))) {
+  while ((match = COMMUNITY_CANDIDATE_RE.exec(src))) {
     const index = match.index
     const raw = trimTrailingBoundary(match[0])
-    const parsed = parseNcommunityLink(raw)
-
-    if (!parsed) continue
+    if (!parseCommunityLink(raw)) continue
     if (!hasValidBoundaryBefore(src, index)) continue
     if (!hasValidBoundaryAfter(src, index + raw.length)) continue
-
-    NCOMMUNITY_CANDIDATE_RE.lastIndex = 0
+    COMMUNITY_CANDIDATE_RE.lastIndex = 0
     return index
   }
-
   return -1
 }
 
-export const getNcommunityLinkAtStart = (src: string): CommunityLinkToken | undefined => {
-  NCOMMUNITY_CANDIDATE_RE.lastIndex = 0
-  const match = NCOMMUNITY_CANDIDATE_RE.exec(src)
-  NCOMMUNITY_CANDIDATE_RE.lastIndex = 0
+export const getCommunityLinkAtStart = (src: string): CommunityLinkToken | undefined => {
+  COMMUNITY_CANDIDATE_RE.lastIndex = 0
+  const match = COMMUNITY_CANDIDATE_RE.exec(src)
+  COMMUNITY_CANDIDATE_RE.lastIndex = 0
   if (!match || match.index !== 0) return undefined
-
   const raw = trimTrailingBoundary(match[0])
-  const value = parseNcommunityLink(raw)
-  if (!value) return undefined
-  if (!hasValidBoundaryAfter(src, raw.length)) return undefined
-
+  const value = parseCommunityLink(raw)
+  if (!value || !hasValidBoundaryAfter(src, raw.length)) return undefined
   return {type: "community", value, raw}
 }
 
@@ -110,8 +99,7 @@ export const communityLinkTokenFromParsedLink = (
   parsed: ParsedLink,
 ): CommunityLinkToken | undefined => {
   const raw = parsed.raw || parsed.value.url.toString()
-  const value = parseNcommunityLink(raw)
-
+  const value = parseCommunityLink(raw)
   return value ? {type: "community", value, raw: trimTrailingBoundary(raw)} : undefined
 }
 

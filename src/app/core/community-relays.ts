@@ -1,15 +1,21 @@
 import {Router} from "@welshman/router"
 import {derived, get, type Readable} from "svelte/store"
-import {normalizePubkey, normalizeRelays, type CommunityDefinition} from "@app/core/community"
+import {normalizePubkey, normalizeRelays, type CommunityDefinitionV2} from "@app/core/community"
 import {INDEXER_RELAYS} from "@app/core/state"
 import {activeUserCommunityRefs} from "@app/core/community-state"
 import {logPublishRelaySummary} from "@app/core/diagnostics"
 import type {ActiveUserCommunityRef} from "@app/core/community-membership"
 
 export type CommunityRelayRef = {
-  communityPubkey: string
+  communityId: string
+  communityAddress: string
   relayHints: string[]
-  definition?: Pick<CommunityDefinition, "relays">
+  definition?: Pick<CommunityDefinitionV2, "relays">
+}
+
+export type CommunityRelayScope = {
+  communityId: string
+  communityAddress?: string
 }
 
 export const getPubkeyOutboxRelays = (pubkey: string | undefined) => {
@@ -24,7 +30,7 @@ export const getPubkeyOutboxRelays = (pubkey: string | undefined) => {
 }
 
 export const getCommunityScopedPublishRelays = (
-  definition: Pick<CommunityDefinition, "relays"> | undefined,
+  definition: Pick<CommunityDefinitionV2, "relays"> | undefined,
 ) => normalizeRelays(definition?.relays || [])
 
 export const getCommunityRootPublishRelays = (
@@ -38,12 +44,13 @@ export const getCommunityRootPublishRelays = (
     ...(options.outboxRelays ?? getPubkeyOutboxRelays(communityPubkey)),
   ])
 
-export const getActiveUserCommunityRelaysFromRefs = (refs: CommunityRelayRef[]) =>
-  normalizeRelays(refs.flatMap(ref => ref.relayHints))
+export const getActiveUserCommunityRelaysFromRefs = (
+  refs: Pick<CommunityRelayRef, "relayHints">[],
+) => normalizeRelays(refs.flatMap(ref => ref.relayHints))
 
 export const activeUserCommunityRelays: Readable<string[]> = derived(
   activeUserCommunityRefs,
-  getActiveUserCommunityRelaysFromRefs,
+  refs => getActiveUserCommunityRelaysFromRefs(refs),
   [] as string[],
 )
 
@@ -53,28 +60,31 @@ export const PROFILE_COMMUNITY_RELAY_LIMIT = 4
 export const PROFILE_RELAYS_PER_COMMUNITY_LIMIT = 2
 
 export const getProfileCommunityRelaysFromRefs = (
-  refs: Pick<ActiveUserCommunityRef, "communityPubkey" | "definition">[],
+  refs: Pick<ActiveUserCommunityRef, "community" | "definition">[],
 ) => {
   const relaysByCommunity = new Map<string, string[]>()
 
   for (const ref of refs) {
-    const communityPubkey = normalizePubkey(ref.communityPubkey)
-    if (!communityPubkey) continue
+    const communityAddress = ref.community.address
+    if (!communityAddress) continue
 
     relaysByCommunity.set(
-      communityPubkey,
-      normalizeRelays([...(relaysByCommunity.get(communityPubkey) || []), ...ref.definition.relays])
+      communityAddress,
+      normalizeRelays([
+        ...(relaysByCommunity.get(communityAddress) || []),
+        ...ref.definition.relays,
+      ])
         .sort((a, b) => a.localeCompare(b))
         .slice(0, PROFILE_RELAYS_PER_COMMUNITY_LIMIT),
     )
   }
 
-  const communities = Array.from(relaysByCommunity, ([communityPubkey, relays]) => ({
-    communityPubkey,
+  const communities = Array.from(relaysByCommunity, ([communityAddress, relays]) => ({
+    communityAddress,
     relays,
   }))
     .filter(ref => ref.relays.length > 0)
-    .sort((a, b) => a.communityPubkey.localeCompare(b.communityPubkey))
+    .sort((a, b) => a.communityAddress.localeCompare(b.communityAddress))
   const selected: string[] = []
 
   for (let relayIndex = 0; relayIndex < PROFILE_RELAYS_PER_COMMUNITY_LIMIT; relayIndex += 1) {
@@ -89,9 +99,7 @@ export const getProfileCommunityRelaysFromRefs = (
 }
 
 export const getProfileCommunityRelays = (
-  refs: Pick<ActiveUserCommunityRef, "communityPubkey" | "definition">[] = get(
-    activeUserCommunityRefs,
-  ),
+  refs: Pick<ActiveUserCommunityRef, "community" | "definition">[] = get(activeUserCommunityRefs),
 ) => getProfileCommunityRelaysFromRefs(refs)
 
 export const getUserDataPublishRelays = (
@@ -111,15 +119,32 @@ export const getUserDataPublishRelays = (
 }
 
 export const getScopedCommunityPublishRelays = (
-  communityPubkeys: string[] = [],
-  communityRefs: CommunityRelayRef[] = get(activeUserCommunityRefs),
+  communityScopes: CommunityRelayScope[] = [],
+  communityRefs: CommunityRelayRef[] = get(activeUserCommunityRefs).map(ref => ({
+    communityId: ref.community.communityId,
+    communityAddress: ref.community.address,
+    relayHints: ref.relayHints,
+    definition: ref.definition,
+  })),
 ) => {
-  const scopedPubkeys = new Set(communityPubkeys.map(normalizePubkey).filter(Boolean))
-  if (scopedPubkeys.size === 0) return []
+  const scopes = communityScopes
+    .map(scope => ({
+      communityId: normalizePubkey(scope.communityId),
+      communityAddress: scope.communityAddress?.trim().toLowerCase(),
+    }))
+    .filter(scope => scope.communityId)
+  if (scopes.length === 0) return []
 
   return normalizeRelays(
     communityRefs.flatMap(ref =>
-      scopedPubkeys.has(normalizePubkey(ref.communityPubkey)) ? ref.definition?.relays || [] : [],
+      scopes.some(
+        scope =>
+          scope.communityId === normalizePubkey(ref.communityId) &&
+          (!scope.communityAddress ||
+            scope.communityAddress === ref.communityAddress.trim().toLowerCase()),
+      )
+        ? ref.definition?.relays || []
+        : [],
     ),
   )
 }

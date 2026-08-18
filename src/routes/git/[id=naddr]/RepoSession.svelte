@@ -164,7 +164,7 @@
   import PageBar from "@src/lib/components/PageBar.svelte"
   import Button from "@src/lib/components/Button.svelte"
   import Icon from "@src/lib/components/Icon.svelte"
-  import {getGitParentTarget, makeCommunityPath, makeGitPath} from "@app/util/routes"
+  import {getGitParentTarget, makeExactCommunityPath, makeGitPath} from "@app/util/routes"
   import {makeRepoNaddrFromEvent} from "@app/util/repo-links"
   import {getInitializedGitWorker, subscribeGitWorkerProgress} from "@app/core/worker-singleton"
   import {fetchRelayEventsWithTimeout} from "@app/util/fetch-relay-events"
@@ -181,17 +181,23 @@
   } from "@app/util/bookmarks"
   import {activeRepoStars, hydrateRepoStars} from "@app/core/repo-stars-state"
   import {
-    activeCommunitySession,
+    activeExactCommunityPointer,
     activeUserCommunityRefs,
-    setActiveCommunityInput,
+    clearActiveExactCommunity,
+    setActiveExactCommunityPointer,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
+  import {
+    TARGETED_PUBLICATION_KIND_V2,
+    makeCommunityPointer,
+    parseCommunityDefinitionAddress,
+  } from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
     communityWritableSectionsSupportTarget,
   } from "@app/core/community-permissions"
   import {
-    makeTargetedPublicationForCommunity,
+    makeEventPublicationRef,
+    makeTargetedPublicationForCommunityV2,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -200,7 +206,6 @@
     type RepoStarRef,
   } from "@app/util/repo-stars"
   import {randomId} from "@welshman/lib"
-  import {makeCommunityInputValue} from "@app/util/community-stars"
   import {registerRepoLiveOwnership} from "@app/core/repo-live-ownership"
   import {
     buildRepoExactThreadLiveFilters,
@@ -276,8 +281,10 @@
         }),
       )
       .map(ref => ({
-        pubkey: ref.communityPubkey,
-        label: getCommunityOptionLabel(ref.communityPubkey),
+        controllerPubkey: ref.definition.controllerPubkey,
+        address: ref.community.address,
+        communityId: ref.community.communityId,
+        label: getCommunityOptionLabel(ref.definition.controllerPubkey),
         relays: ref.definition.relays,
         graspServers: ref.definition.graspServers,
       })),
@@ -292,14 +299,22 @@
   const repoCommunityLabel = $derived.by(() => {
     const community = repoClass?.community
     if (!community) return ""
-    return getCommunityOptionLabel(community.pubkey)
+    const option = repoCommunityOptions.find(item => item.address === community.address)
+    const branch = parseCommunityDefinitionAddress(community.address)
+    return branch
+      ? getCommunityOptionLabel(option?.controllerPubkey || branch.controllerPubkey)
+      : ""
+  })
+  const repoCommunityPointer = $derived.by(() => {
+    const community = repoClass?.community
+    return community ? parseCommunityDefinitionAddress(community.address) : undefined
   })
   const repoCommunityProfileRelays = $derived.by(() => {
     const community = repoClass?.community
     if (!community) return []
 
-    const option = repoCommunityOptions.find(item => item.pubkey === community.pubkey)
-    const ref = $activeUserCommunityRefs.find(ref => ref.communityPubkey === community.pubkey)
+    const option = repoCommunityOptions.find(item => item.address === community.address)
+    const ref = $activeUserCommunityRefs.find(ref => ref.community.address === community.address)
     return Array.from(
       new Set(
         [
@@ -906,7 +921,7 @@
   const isWatching = $derived(Boolean(watchOptions))
   const repoHasCommunity = $derived.by(() =>
     Boolean(
-      repoClass?.community?.pubkey ||
+      repoClass?.community?.communityId ||
       getTagValue("h", ((repoClass as any)?.repoEvent?.tags || []) as string[][]),
     ),
   )
@@ -1918,22 +1933,28 @@
       ($repoEventStore ? parseRepoCommunityBinding($repoEventStore) : undefined),
   )
   const repoPageWidthClass = $derived(
-    $activeCommunitySession?.communityPubkey || repoBoundCommunity?.pubkey ? "" : "cw-full",
+    $activeExactCommunityPointer || repoBoundCommunity?.communityId ? "" : "cw-full",
   )
-  let autoAppliedRepoCommunityPubkey = ""
+  let autoAppliedRepoCommunityAddress = ""
 
   $effect(() => {
-    const activeCommunityPubkey = $activeCommunitySession?.communityPubkey || ""
+    const activeCommunityAddress = $activeExactCommunityPointer?.address || ""
     const community = repoBoundCommunity
 
-    if (activeCommunityPubkey || !community?.pubkey) return
+    if (activeCommunityAddress || !community?.communityId) return
+    const option = repoCommunityOptions.find(item => item.address === community.address)
+    const branch = parseCommunityDefinitionAddress(community.address)
+    if (!branch) return
 
-    const relayHints = [community.relay || ""].filter(Boolean)
-    const input =
-      makeCommunityInputValue({pubkey: community.pubkey, relayHints}) || community.pubkey
-    const session = setActiveCommunityInput(input)
+    const pointer = makeCommunityPointer({
+      controllerPubkey: branch.controllerPubkey,
+      communityId: branch.communityId,
+      relayHints: [community.relay || "", ...(option?.relays || [])],
+    })
+    if (!pointer) return
 
-    if (session?.communityPubkey) autoAppliedRepoCommunityPubkey = session.communityPubkey
+    setActiveExactCommunityPointer(pointer)
+    autoAppliedRepoCommunityAddress = pointer.address
   })
   const repoStateEventsStore = deriveRepoStateEvents(repoName, repoOwnerStore)
   const repoStateEventStore: Readable<RepoStateEvent | undefined> = derived(
@@ -2795,12 +2816,12 @@
     }
 
     if (
-      autoAppliedRepoCommunityPubkey &&
-      getStore(activeCommunitySession)?.communityPubkey === autoAppliedRepoCommunityPubkey
+      autoAppliedRepoCommunityAddress &&
+      getStore(activeExactCommunityPointer)?.address === autoAppliedRepoCommunityAddress
     ) {
-      activeCommunitySession.set(undefined)
+      clearActiveExactCommunity()
     }
-    autoAppliedRepoCommunityPubkey = ""
+    autoAppliedRepoCommunityAddress = ""
 
     stopRepoLiveSubscription()
     repoRootHistoryController?.abort()
@@ -2916,7 +2937,7 @@
   }
 
   const getRepoCollectionCommunityLabel = (community: RepoCommunityOption) =>
-    community.label || getCommunityOptionLabel(community.pubkey)
+    community.label || getCommunityOptionLabel(community.controllerPubkey)
 
   const publishPersonalRepoStar = ({
     event,
@@ -2965,6 +2986,14 @@
     if (communityRelays.length === 0) {
       throw new Error("Selected community must declare at least one relay.")
     }
+    const communityPointer = makeCommunityPointer({
+      controllerPubkey: community.controllerPubkey,
+      communityId: community.communityId,
+      relayHints: communityRelays,
+    })
+    if (!communityPointer || communityPointer.address !== community.address) {
+      throw new Error("Selected community is unavailable.")
+    }
     const starEvent = withPublicationTargetingId(
       {...makeRepoStarReaction({event, address, relayHints: [relayHint]}), created_at: createdAt},
       targetingId,
@@ -2972,12 +3001,18 @@
     const starThunk = publishEvent(starEvent as any, relays, address)
     if (starThunk?.event) repository.publish(starThunk.event as TrustedEvent)
 
-    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND, {
-      ...makeTargetedPublicationForCommunity({
+    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
+      ...makeTargetedPublicationForCommunityV2({
         targetingId,
         originalKind: REACTION,
-        communityPubkey: community.pubkey,
-        communityRelay: community.relay || community.relays?.[0],
+        originalRef: starThunk?.event?.id
+          ? makeEventPublicationRef({
+              id: starThunk.event.id,
+              relay: relays[0],
+              pubkey: starThunk.event.pubkey,
+            })
+          : undefined,
+        community: communityPointer,
       }),
       created_at: createdAt + 1,
     })
@@ -3010,10 +3045,10 @@
       onCancel: clearModals,
       onCollect: async ({
         personal,
-        communityPubkeys,
+        communityAddresses,
       }: {
         personal: boolean
-        communityPubkeys: string[]
+        communityAddresses: string[]
       }) => {
         if (isTogglingBookmark) return
         isTogglingBookmark = true
@@ -3055,8 +3090,10 @@
             })
           }
 
-          for (const [index, communityPubkey] of communityPubkeys.entries()) {
-            const community = repoCommunityOptions.find(option => option.pubkey === communityPubkey)
+          for (const [index, communityAddress] of communityAddresses.entries()) {
+            const community = repoCommunityOptions.find(
+              option => option.address === communityAddress,
+            )
             if (!community) continue
 
             actions.push({
@@ -3343,11 +3380,15 @@
 
   const searchRepoProfiles = async (
     query: string,
-    {communityPubkey}: ProfileSearchContext = {},
+    {communityAddress}: ProfileSearchContext = {},
   ) => {
     const repoEvent = getStore(repoEventStore) || repoClass?.repoEvent
-    const selectedCommunityPubkey =
-      communityPubkey && communityPubkey !== repoBoundCommunity?.pubkey ? communityPubkey : ""
+    const boundCommunityController = repoCommunityOptions.find(
+      option => option.address === repoBoundCommunity?.address,
+    )?.controllerPubkey
+    const selectedCommunity = repoCommunityOptions.find(
+      option => option.address === communityAddress,
+    )
 
     const pubkeys = getStore(peopleDiscoverySearch).searchValues(query, {
       context: {
@@ -3356,8 +3397,14 @@
         authority: repoEvent
           ? {source: "announcement", event: repoEvent}
           : {source: "draft", ownerPubkey: repoPubkey},
-        ...(selectedCommunityPubkey
-          ? {community: {scope: "community" as const, communityPubkey: selectedCommunityPubkey}}
+        ...(selectedCommunity && selectedCommunity.controllerPubkey !== boundCommunityController
+          ? {
+              community: {
+                scope: "community" as const,
+                communityAddress: selectedCommunity.address,
+                communityPubkey: selectedCommunity.controllerPubkey,
+              },
+            }
           : {}),
       },
       allowEmptyQuery: true,
@@ -3740,7 +3787,9 @@
         sourceCloneUrls,
         defaultMaintainers,
         communityOptions: repoCommunityOptions,
-        defaultCommunityPubkey: repoClass.community?.pubkey || "",
+        defaultCommunityPubkey:
+          repoCommunityOptions.find(option => option.address === repoClass.community?.address)
+            ?.address || "",
         getProfile: getRepoProfile,
         searchProfiles: searchRepoProfiles,
         searchProfilesUpdateSignal: peopleDiscoverySearch,
@@ -4141,9 +4190,9 @@
         data-testid="repo-topbar-home">
         {displayRepoName}
       </button>
-      {#if repoClass?.community}
+      {#if repoClass?.community && repoCommunityPointer}
         <a
-          href={makeCommunityPath(repoClass.community.pubkey)}
+          href={makeExactCommunityPath(repoCommunityPointer)}
           class="ml-1 shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/15"
           title={`Community: ${repoCommunityLabel}`}>
           {repoCommunityLabel}

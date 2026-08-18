@@ -1,11 +1,13 @@
 import {describe, expect, it} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   PROFILE_LIST_KIND,
+  buildCommunityDefinitionV2,
   normalizeRelays,
-  parseCommunityDefinition,
+  parseCommunityDefinitionV2,
 } from "./community"
+import {getPublicKey} from "nostr-tools/pure"
 import type {ActiveUserCommunityRef} from "./community-membership"
 import {
   CASHU_MINT_LIST_KIND,
@@ -25,27 +27,46 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     sig: overrides.sig || "sig",
   }) as TrustedEvent
 
+const communityIds = new Map<string, string>(
+  ["community", "first", "second", "shared-id"].map((id, index) => [
+    id,
+    getPublicKey(new Uint8Array(32).fill(42 + index)),
+  ]),
+)
+const fallbackProfileListOwner = getPublicKey(new Uint8Array(32).fill(60))
+
 const makeDefinition = ({
   communityPubkey,
   mintUrl,
   listAddresses = [],
+  identifier = "community",
 }: {
   communityPubkey: string
   mintUrl?: string
   listAddresses?: string[]
+  identifier?: string
 }) =>
-  parseCommunityDefinition(
+  parseCommunityDefinitionV2(
     makeEvent({
       id: communityPubkey.slice(0, 8),
       pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://relay.example.com"],
-        ...(mintUrl ? [["mint", mintUrl, "cashu"]] : []),
-        ["content", "Repositories"],
-        ["k", "30617"],
-        ...listAddresses.map(address => ["a", address]),
-      ],
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      tags: buildCommunityDefinitionV2({
+        communityId: communityIds.get(identifier)!,
+        name: identifier,
+        relays: ["wss://relay.example.com"],
+        mints: mintUrl ? [{url: mintUrl.replace(/\/$/, ""), type: "cashu"}] : [],
+        sections: [
+          {
+            name: "Repositories",
+            kinds: [{kind: 30617}],
+            profileLists: (listAddresses.length
+              ? listAddresses
+              : [`${PROFILE_LIST_KIND}:${fallbackProfileListOwner}:Repositories`]
+            ).map(address => ({address})),
+          },
+        ],
+      }).tags,
     }),
   )!
 
@@ -73,14 +94,13 @@ const makeProfileList = ({
 const makeCommunityRef = (
   definition: ReturnType<typeof makeDefinition>,
   roles: ActiveUserCommunityRef["roles"] = ["member"],
-): ActiveUserCommunityRef =>
-  ({
-    communityPubkey: definition.pubkey,
-    definition,
-    relayHints: definition.relays,
-    roles,
-    writableSections: ["Repositories"],
-  }) as ActiveUserCommunityRef
+): ActiveUserCommunityRef => ({
+  community: definition.pointer,
+  definition,
+  relayHints: definition.relays,
+  roles,
+  writableSections: ["Repositories"],
+})
 
 const makeMintList = ({
   pubkey,
@@ -138,6 +158,15 @@ describe("cashu mint recommendations", () => {
       "https://follow.example.com",
     ])
     expect(recommendations[0].counts.communities).toBe(1)
+    expect(recommendations[0].evidence[0]).toEqual(
+      expect.objectContaining({
+        source: "32222",
+        pubkey: definition.controllerPubkey,
+        communityPubkey: definition.controllerPubkey,
+        communityAddress: definition.pointer.address,
+      }),
+    )
+    expect(recommendations[0].evidence[0].pubkey).not.toBe(definition.communityId)
     expect(recommendations[1].counts.ownNutzap).toBe(1)
     expect(recommendations[2].counts.members).toBe(1)
     expect(recommendations[3].counts.follows).toBe(1)
@@ -183,7 +212,7 @@ describe("cashu mint recommendations", () => {
     )
   })
 
-  it("orders direct 10222 community mints before community-owned 10019 mints", () => {
+  it("orders direct 32222 community mints before controller-owned 10019 mints", () => {
     const viewer = "1".repeat(64)
     const community = "2".repeat(64)
     const listOwner = "3".repeat(64)
@@ -204,12 +233,12 @@ describe("cashu mint recommendations", () => {
       "https://zzz-community.example.com",
       "https://aaa-10019.example.com",
     ])
-    expect(recommendations[0].evidence.some(evidence => evidence.source === "10222")).toBe(true)
+    expect(recommendations[0].evidence.some(evidence => evidence.source === "32222")).toBe(true)
     expect(recommendations[1].evidence.every(evidence => evidence.source === "10019")).toBe(true)
   })
 
   it("dedupes mints and excludes already trusted mints", () => {
-    const viewer = "1".repeat(64)
+    const viewer = getPublicKey(new Uint8Array(32).fill(61))
     const community = viewer
     const definition = makeDefinition({
       communityPubkey: community,
@@ -260,5 +289,78 @@ describe("cashu mint recommendations", () => {
     })
 
     expect(authors.slice(0, 5)).toEqual([viewer, community, moderator, "5".repeat(64), member])
+  })
+
+  it("keeps same-controller sibling recommendation evidence on exact addresses", () => {
+    const viewer = "1".repeat(64)
+    const controller = "2".repeat(64)
+    const moderatorA = "3".repeat(64)
+    const moderatorB = "4".repeat(64)
+    const recommender = "5".repeat(64)
+    const first = makeDefinition({
+      communityPubkey: controller,
+      identifier: "first",
+      mintUrl: "https://first.example.com",
+      listAddresses: [`${PROFILE_LIST_KIND}:${moderatorA}:Repositories`],
+    })
+    const second = makeDefinition({
+      communityPubkey: controller,
+      identifier: "second",
+      mintUrl: "https://second.example.com",
+      listAddresses: [`${PROFILE_LIST_KIND}:${moderatorB}:Repositories`],
+    })
+    const recommendations = buildCashuMintRecommendations({
+      viewerPubkey: viewer,
+      communityRefs: [makeCommunityRef(first), makeCommunityRef(second)],
+      profileListEvents: [
+        makeProfileList({pubkey: moderatorA, members: [viewer, recommender]}),
+        makeProfileList({pubkey: moderatorB, members: [viewer]}),
+      ],
+      mintListEvents: [
+        makeMintList({pubkey: recommender, mints: ["https://recommended.example.com"]}),
+      ],
+    })
+
+    expect(recommendations.map(item => item.mintUrl)).toEqual(
+      expect.arrayContaining(["https://first.example.com", "https://second.example.com"]),
+    )
+    expect(
+      recommendations.find(item => item.mintUrl === "https://recommended.example.com")?.evidence,
+    ).toEqual([expect.objectContaining({communityAddress: first.pointer.address})])
+    expect(
+      recommendations.find(item => item.mintUrl === "https://second.example.com")?.evidence,
+    ).toEqual([expect.objectContaining({communityAddress: second.pointer.address})])
+  })
+
+  it("keeps same-ID branches distinct by controller address", () => {
+    const viewer = "1".repeat(64)
+    const firstController = "2".repeat(64)
+    const secondController = "3".repeat(64)
+    const firstModerator = getPublicKey(new Uint8Array(32).fill(54))
+    const secondModerator = getPublicKey(new Uint8Array(32).fill(55))
+    const first = makeDefinition({
+      communityPubkey: firstController,
+      identifier: "shared-id",
+      mintUrl: "https://first-id.example.com",
+      listAddresses: [`${PROFILE_LIST_KIND}:${firstModerator}:Repositories`],
+    })
+    const second = makeDefinition({
+      communityPubkey: secondController,
+      identifier: "shared-id",
+      mintUrl: "https://second-id.example.com",
+      listAddresses: [`${PROFILE_LIST_KIND}:${secondModerator}:Repositories`],
+    })
+    const recommendations = buildCashuMintRecommendations({
+      viewerPubkey: viewer,
+      communityRefs: [makeCommunityRef(first), makeCommunityRef(second)],
+      profileListEvents: [
+        makeProfileList({pubkey: firstModerator, members: [viewer]}),
+        makeProfileList({pubkey: secondModerator, members: [viewer]}),
+      ],
+    })
+
+    expect(recommendations.map(item => item.evidence[0].communityAddress)).toEqual(
+      expect.arrayContaining([first.pointer.address, second.pointer.address]),
+    )
   })
 })

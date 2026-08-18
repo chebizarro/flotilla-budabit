@@ -1,13 +1,13 @@
 import {writable} from "svelte/store"
 
 export type ActiveCommunityRoomLoad = {
-  communityPubkey: string
+  communityAddress: string
   roomId: string
   pending: boolean
 }
 
 const emptyActiveCommunityRoomLoad = (): ActiveCommunityRoomLoad => ({
-  communityPubkey: "",
+  communityAddress: "",
   roomId: "",
   pending: false,
 })
@@ -16,9 +16,9 @@ export const activeCommunityRoomLoad = writable<ActiveCommunityRoomLoad>(
   emptyActiveCommunityRoomLoad(),
 )
 
-export const clearActiveCommunityRoomLoad = (communityPubkey: string, roomId: string) =>
+export const clearActiveCommunityRoomLoad = (communityAddress: string, roomId: string) =>
   activeCommunityRoomLoad.update(current =>
-    current.communityPubkey === communityPubkey && current.roomId === roomId
+    current.communityAddress === communityAddress && current.roomId === roomId
       ? emptyActiveCommunityRoomLoad()
       : current,
   )

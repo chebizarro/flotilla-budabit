@@ -1,12 +1,15 @@
 import {describe, expect, it} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
+import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND_V2,
   PROFILE_LIST_KIND,
-  TARGETED_PUBLICATION_KIND,
-  buildTargetedPublication,
-  parseCommunityDefinition,
+  TARGETED_PUBLICATION_KIND_V2,
+  buildCommunityDefinitionV2,
+  buildTargetedPublicationV2,
+  makeCommunityPointer,
+  parseCommunityDefinitionV2,
 } from "./community"
 import {
   COMMUNITY_REPORT_KIND,
@@ -19,13 +22,18 @@ import {
   isEndorsedRepoCommunityContext,
 } from "./repo-community-context"
 
-const repoOwnerPubkey = "1".repeat(64)
-const communityPubkey = "2".repeat(64)
-const moderatorPubkey = "3".repeat(64)
-const granteePubkey = "4".repeat(64)
-const outsiderPubkey = "5".repeat(64)
-const otherCommunityPubkey = "6".repeat(64)
+const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+const repoOwnerPubkey = key(1)
+const communityPubkey = key(2)
+const moderatorPubkey = key(3)
+const granteePubkey = key(4)
+const outsiderPubkey = key(5)
+const otherCommunityPubkey = key(6)
 const repoAddress = `${GIT_REPO_ANNOUNCEMENT}:${repoOwnerPubkey}:demo`
+const reportCommunity = makeCommunityPointer({
+  controllerPubkey: communityPubkey,
+  communityId: moderatorPubkey,
+})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -39,20 +47,29 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const makeDefinition = (pubkey = communityPubkey, sectionName = "Code-curator") =>
-  parseCommunityDefinition(
+const makeDefinition = (pubkey = communityPubkey, sectionName = "Code-curator") => {
+  return parseCommunityDefinitionV2(
     makeEvent({
       id: `definition-${pubkey}`,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND,
-      tags: [
-        ["r", "wss://relay.example.com"],
-        ["content", sectionName],
-        ["k", String(GIT_REPO_ANNOUNCEMENT)],
-        ["a", `${PROFILE_LIST_KIND}:${moderatorPubkey}:${sectionName}`],
-      ],
+      kind: COMMUNITY_DEFINITION_KIND_V2,
+      tags: buildCommunityDefinitionV2({
+        communityId: moderatorPubkey,
+        name: "Community",
+        relays: ["wss://relay.example.com"],
+        sections: [
+          {
+            name: sectionName,
+            kinds: [{kind: GIT_REPO_ANNOUNCEMENT}],
+            profileLists: [
+              {address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${sectionName}`},
+            ],
+          },
+        ],
+      }).tags,
     }),
   )!
+}
 
 const makeProfileList = ({members = [granteePubkey], sectionName = "Code-curator"} = {}) =>
   makeEvent({
@@ -73,28 +90,31 @@ const makeRepo = (overrides: Partial<TrustedEvent> = {}) =>
 
 const makeAssociation = ({
   pubkey,
-  community = communityPubkey,
+  community = makeCommunityPointer({
+    controllerPubkey: communityPubkey,
+    communityId: moderatorPubkey,
+  })!,
   createdAt = 10,
 }: {
   pubkey: string
-  community?: string
+  community?: NonNullable<ReturnType<typeof makeCommunityPointer>>
   createdAt?: number
 }) =>
   makeEvent({
-    id: `association-${pubkey}-${community}`,
+    id: `association-${pubkey}-${community.address}`,
     pubkey,
     created_at: createdAt,
-    kind: TARGETED_PUBLICATION_KIND,
-    tags: buildTargetedPublication({
-      id: `target-${community}`,
+    kind: TARGETED_PUBLICATION_KIND_V2,
+    tags: buildTargetedPublicationV2({
+      id: `target-${community.address}`,
       kind: GIT_REPO_ANNOUNCEMENT,
-      ref: {type: "a", value: repoAddress},
-      communities: [{pubkey: community, relay: "wss://community.example.com/"}],
+      source: {type: "a", value: repoAddress},
+      communities: [community],
     }).tags,
   })
 
 describe("repo community context", () => {
-  it("endorses direct community repos only for current repository writers", () => {
+  it("does not treat legacy direct repository tags as V2 associations", () => {
     const definition = makeDefinition()
     const tags = [
       ["d", "demo"],
@@ -111,10 +131,8 @@ describe("repo community context", () => {
       profileListEvents: [makeProfileList()],
     })
 
-    expect(granteeContext).toMatchObject({validation: "valid", communityPubkey})
-    expect(isEndorsedRepoCommunityContext(granteeContext)).toBe(true)
-    expect(outsiderContext).toMatchObject({validation: "weak", communityPubkey})
-    expect(isEndorsedRepoCommunityContext(outsiderContext)).toBe(false)
+    expect(granteeContext).toBeUndefined()
+    expect(outsiderContext).toBeUndefined()
   })
 
   it("strongly validates repo associations from community admins and repo moderators", () => {
@@ -195,11 +213,11 @@ describe("repo community context", () => {
     const association = makeEvent({
       id: "implicit-association",
       pubkey: granteePubkey,
-      kind: TARGETED_PUBLICATION_KIND,
-      tags: buildTargetedPublication({
+      kind: TARGETED_PUBLICATION_KIND_V2,
+      tags: buildTargetedPublicationV2({
         id: targetingId,
         kind: GIT_REPO_ANNOUNCEMENT,
-        communities: [{pubkey: communityPubkey}],
+        communities: [reportCommunity],
       }).tags,
     })
     const externalRepo = makeRepo({
@@ -241,13 +259,13 @@ describe("repo community context", () => {
       id: "ban-associator",
       pubkey: communityPubkey,
       kind: COMMUNITY_REPORT_KIND,
-      tags: makeCommunityPersonReport({communityPubkey, pubkey: granteePubkey}).tags,
+      tags: makeCommunityPersonReport({community: reportCommunity, pubkey: granteePubkey}).tags,
     })
     const banOwner = makeEvent({
       id: "ban-owner",
       pubkey: communityPubkey,
       kind: COMMUNITY_REPORT_KIND,
-      tags: makeCommunityPersonReport({communityPubkey, pubkey: repoOwnerPubkey}).tags,
+      tags: makeCommunityPersonReport({community: reportCommunity, pubkey: repoOwnerPubkey}).tags,
     })
     const reportState = getEffectiveCommunityReportState({
       definition,
@@ -260,7 +278,7 @@ describe("repo community context", () => {
       associationEvents: [makeAssociation({pubkey: granteePubkey})],
       definitions: [definition],
       profileListEvents: [makeProfileList()],
-      reportStates: new Map([[communityPubkey, reportState]]),
+      reportStates: new Map([[reportCommunity.address, reportState]]),
     })
 
     expect(context).toMatchObject({validation: "invalid", suppressed: true})
@@ -277,10 +295,13 @@ describe("repo community context", () => {
       repoEvent,
       repoAddress,
       associationEvents: [
-        makeAssociation({pubkey: communityPubkey, community: communityPubkey, createdAt: 10}),
+        makeAssociation({pubkey: communityPubkey, community: reportCommunity, createdAt: 10}),
         makeAssociation({
           pubkey: otherCommunityPubkey,
-          community: otherCommunityPubkey,
+          community: makeCommunityPointer({
+            controllerPubkey: otherCommunityPubkey,
+            communityId: moderatorPubkey,
+          })!,
           createdAt: 20,
         }),
       ],
@@ -293,5 +314,8 @@ describe("repo community context", () => {
       communityPubkey,
       otherCommunityPubkey,
     ])
+    expect(new Set(contexts.map(context => context.communityAddress))).toEqual(
+      new Set([reportCommunity.address, `32222:${otherCommunityPubkey}:${moderatorPubkey}`]),
+    )
   })
 })

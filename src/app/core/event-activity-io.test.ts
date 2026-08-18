@@ -368,7 +368,7 @@ describe("activity request ownership", () => {
 
     expect(activity).toContain("registerEventActivity")
     expect(activity).not.toContain('from "@welshman/net"')
-    expect(menu).not.toContain("request({relays: $activeCommunityRelays, filters: roomFilters")
+    expect(menu).not.toContain("request({relays: $activeExactCommunityRelays, filters: roomFilters")
     expect(menu).toContain("deriveEventsById({repository, filters: roomFilters})")
   })
 

@@ -11,15 +11,17 @@
   import ModalFooter from "@lib/components/ModalFooter.svelte"
   import RoomName from "@app/components/RoomName.svelte"
   import {channelsByUrl} from "@app/core/state"
-  import {makeRoomPath} from "@app/util/routes"
+  import {makeExactCommunityRoomPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const {url, noun, event}: {url: string; noun: string; event: TrustedEvent} = $props()
+  const community = $derived(parseExactCommunityRouteParam(url))
 
   const back = () => history.back()
 
   const onSubmit = () => {
+    if (!community || !selection) return
     setKey("share", event)
-    goto(makeRoomPath(url, selection), {replaceState: true})
+    goto(makeExactCommunityRoomPath(community, selection), {replaceState: true})
   }
 
   const toggleRoom = (h: string) => {

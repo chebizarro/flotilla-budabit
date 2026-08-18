@@ -112,11 +112,10 @@ import {getQuoteEventTags} from "@app/util/git-quote"
 import {getEventRelayHints, makeEventNevent} from "@app/util/event-links"
 import {makeBudabitBlossomAuthEvent, makeBudabitBlossomAuthHeader} from "@app/util/blossom-auth"
 import {
-  activeCommunityDefinition,
+  activeExactCommunityDefinition,
   activeUserCommunityBlossomRefs,
-  clearActiveCommunity,
+  clearActiveCommunityState,
   clearCommunityBootstrapCache,
-  getCommunityBlossomServers,
 } from "@app/core/community-state"
 import {getProfileCommunityRelays, getUserDataPublishRelays} from "@app/core/community-relays"
 import {normalizeRelays} from "@app/core/community"
@@ -504,7 +503,7 @@ export const logout = async () => {
   clearPublicationOperations()
   if ($pubkey) dropSession($pubkey)
 
-  clearActiveCommunity()
+  clearActiveCommunityState()
   clearCommunityBootstrapCache()
   Pool.get().clear()
 
@@ -1037,17 +1036,19 @@ export const normalizeBlossomUrls = (urls: Array<string | undefined | null>) =>
   )
 
 const getBlossomContextServers = (context?: BlossomUploadContext) => {
-  const communityPubkey = context?.communityPubkey
-  if (!communityPubkey) return []
+  const communityAddress = context?.communityAddress
+  if (communityAddress) {
+    const definition = get(activeExactCommunityDefinition)
+    return definition?.pointer.address === communityAddress
+      ? normalizeBlossomUrls(definition.blossomServers)
+      : []
+  }
 
-  const definition = get(activeCommunityDefinition)
-  if (definition?.pubkey !== communityPubkey) return []
-
-  return getCommunityBlossomServers(definition)
+  return []
 }
 
 const usesCommunityBlossomContext = (context?: BlossomUploadContext) =>
-  Boolean(context?.communityPubkey)
+  Boolean(context?.communityAddress)
 
 export const fetchHasBlossomSupport = async (url: string) => {
   const server = normalizeBlossomUrl(url)

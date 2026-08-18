@@ -32,6 +32,7 @@ import {
 
 const communityPubkey = "a".repeat(64)
 const otherCommunityPubkey = "b".repeat(64)
+const communityId = "c".repeat(64)
 
 describe("community relay policies", () => {
   beforeEach(() => {
@@ -70,7 +71,7 @@ describe("community relay policies", () => {
     ).toEqual(["wss://community.example/", "wss://indexer.example/", "wss://outbox.example/"])
   })
 
-  it("uses the community pubkey outbox for root community definition publishes", () => {
+  it("uses the controller outbox for root community definition publishes", () => {
     expect(getCommunityRootPublishRelays(["wss://community.example"], communityPubkey)).toEqual([
       "wss://community.example/",
       "wss://indexer.example/",
@@ -79,7 +80,7 @@ describe("community relay policies", () => {
     expect(routerMocks.fromPubkeys).toHaveBeenCalledWith([communityPubkey])
   })
 
-  it("does not invent root outbox relays for invalid community pubkeys", () => {
+  it("does not invent root outbox relays for invalid controller pubkeys", () => {
     expect(
       getCommunityRootPublishRelays(["wss://community.example"], "not-a-pubkey", {
         indexerRelays: [],
@@ -91,9 +92,9 @@ describe("community relay policies", () => {
   it("derives active user community relays from eligible refs", () => {
     expect(
       getActiveUserCommunityRelaysFromRefs([
-        {communityPubkey, relayHints: ["wss://community.example", "bad-relay"]},
-        {communityPubkey: otherCommunityPubkey, relayHints: ["wss://other.example"]},
-        {communityPubkey: "not-a-pubkey", relayHints: ["wss://fallback.example"]},
+        {relayHints: ["wss://community.example", "bad-relay"]},
+        {relayHints: ["wss://other.example"]},
+        {relayHints: ["wss://fallback.example"]},
       ]),
     ).toEqual(["wss://community.example/", "wss://other.example/", "wss://fallback.example/"])
   })
@@ -111,7 +112,7 @@ describe("community relay policies", () => {
     const communityC = "c".repeat(64)
     const makeRef = (pubkey: string, relays: string[]) =>
       ({
-        communityPubkey: pubkey,
+        community: {address: `32222:${pubkey}:community`},
         definition: {relays},
       }) as Parameters<typeof getProfileCommunityRelaysFromRefs>[0][number]
     const refs = [
@@ -135,7 +136,7 @@ describe("community relay policies", () => {
     expect(
       getProfileCommunityRelaysFromRefs([
         {
-          communityPubkey,
+          community: {address: `32222:${communityPubkey}:community`},
           definition: {relays: ["wss://definition.example"]},
           relayHints: ["wss://route-hint.example"],
         } as unknown as Parameters<typeof getProfileCommunityRelaysFromRefs>[0][number],
@@ -146,7 +147,7 @@ describe("community relay policies", () => {
   it("never selects more than two profile relays for duplicate community refs", () => {
     const makeRef = (relays: string[]) =>
       ({
-        communityPubkey,
+        community: {address: `32222:${communityPubkey}:community`},
         definition: {relays},
       }) as Parameters<typeof getProfileCommunityRelaysFromRefs>[0][number]
 
@@ -161,20 +162,47 @@ describe("community relay policies", () => {
   it("resolves scoped community publish relays without adding unrelated communities", () => {
     expect(
       getScopedCommunityPublishRelays(
-        [communityPubkey],
+        [{communityId}],
         [
           {
-            communityPubkey,
+            communityId,
+            communityAddress: `32222:${communityPubkey}:${communityId}`,
             relayHints: ["wss://route-hint.example"],
             definition: {relays: ["wss://community.example", "wss://shared.example"]},
           },
           {
-            communityPubkey: otherCommunityPubkey,
+            communityId: otherCommunityPubkey,
+            communityAddress: `32222:${otherCommunityPubkey}:${otherCommunityPubkey}`,
             relayHints: ["wss://other.example", "wss://shared.example"],
             definition: {relays: ["wss://other.example", "wss://shared.example"]},
           },
         ],
       ),
     ).toEqual(["wss://community.example/", "wss://shared.example/"])
+  })
+
+  it("keeps same-ID community branches independent when the exact address is known", () => {
+    const firstAddress = `32222:${communityPubkey}:${communityId}`
+    const secondAddress = `32222:${otherCommunityPubkey}:${communityId}`
+
+    expect(
+      getScopedCommunityPublishRelays(
+        [{communityId, communityAddress: secondAddress}],
+        [
+          {
+            communityId,
+            communityAddress: firstAddress,
+            relayHints: [],
+            definition: {relays: ["wss://first.example"]},
+          },
+          {
+            communityId,
+            communityAddress: secondAddress,
+            relayHints: [],
+            definition: {relays: ["wss://second.example"]},
+          },
+        ],
+      ),
+    ).toEqual(["wss://second.example/"])
   })
 })

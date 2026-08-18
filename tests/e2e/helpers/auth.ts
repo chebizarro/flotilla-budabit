@@ -68,23 +68,11 @@ async function loginWithLocalDev(page: Page, options: LoginOptions): Promise<str
 
   phaseHooks?.changePhase?.(PHASE_A_LOGIN_SCREEN)
 
-  // Wait for Landing component with login-screen testid
-  const loginScreen = page.getByTestId("login-screen")
-  await expect(loginScreen).toBeVisible({timeout: 15000})
+  const loginModal = page.getByTestId("login-modal")
+  await expect(loginModal).toBeVisible({timeout: 15000})
   phaseHooks?.recordPhaseSnapshot?.(PHASE_A_LOGIN_SCREEN)
 
   phaseHooks?.changePhase?.(PHASE_B_LOGIN_SUBMIT)
-
-  // Click the login button
-  const loginCta = page.getByTestId("identity-cta-login")
-  await expect(loginCta).toBeVisible()
-  await loginCta.click()
-
-  // Wait for login modal to appear (triggered by hash change)
-  await page.waitForTimeout(500)
-
-  const loginModal = page.getByTestId("login-modal")
-  await expect(loginModal).toBeVisible({timeout: 5000})
 
   // Click bunker/remote signer option
   const remoteSignerOption = page.getByTestId("login-option-bunker")
@@ -136,9 +124,8 @@ async function loginWithLocalDev(page: Page, options: LoginOptions): Promise<str
 
   // Verify logged in by checking for logged-in UI content
   // PrimaryNav uses <div> not <nav>, so we check for content that only appears when logged in
-  // The desktop nav has "Settings" link which only shows when user is authenticated
-  const settingsLink = page.locator('a[href="/settings"]').first()
-  await expect(settingsLink).toBeVisible({timeout: 10000})
+  const settingsButton = page.getByRole("button", {name: "Settings", exact: true})
+  await expect(settingsButton).toBeVisible({timeout: 10000})
   phaseHooks?.recordPhaseSnapshot?.(PHASE_C_IDENTITY_VISIBLE)
 
   return "logged-in"

@@ -25,7 +25,8 @@
   import CommunityBadgeAwardForm from "@app/components/CommunityBadgeAwardForm.svelte"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
+    activeExactCommunityPointer,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
   } from "@app/core/community-state"
@@ -51,12 +52,13 @@
   const profile = $derived(deriveBudabitProfile(pubkey, {url, relays}))
   const canAwardCommunityBadges = $derived(
     Boolean(
-      $activeCommunityDefinition &&
+      $activeExactCommunityDefinition &&
+      $activeExactCommunityPointer &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
       $sessionPubkey &&
       canCreateCommunityBadge({
-        definition: $activeCommunityDefinition,
+        definition: $activeExactCommunityDefinition,
         pubkey: $sessionPubkey,
         profileListEvents: $activeCommunityProfileListEvents,
         reportState: $activeCommunityReportState,
@@ -91,12 +93,7 @@
 
 <div class="flex flex-col gap-4">
   <div class="flex justify-between">
-    <Profile
-      showPubkey
-      avatarSize={14}
-      {pubkey}
-      url={profileUrl}
-      relays={relayHints} />
+    <Profile showPubkey avatarSize={14} {pubkey} url={profileUrl} relays={relayHints} />
     {#if $profile}
       <div class="relative">
         <Button class="btn btn-circle btn-ghost btn-sm" onclick={() => toggleMenu(pubkey)}>
@@ -167,11 +164,14 @@
 
       {#if awardPanelOpen}
         <div class="border-t border-base-300/50 px-4 py-4">
-          <CommunityBadgeAwardForm
-            recipientPubkey={pubkey}
-            title="Award this profile"
-            description="Choose one of your active badges to award to this profile."
-            showHeader={false} />
+          {#if $activeExactCommunityPointer}
+            <CommunityBadgeAwardForm
+              community={$activeExactCommunityPointer}
+              recipientPubkey={pubkey}
+              title="Award this profile"
+              description="Choose one of your active badges to award to this profile."
+              showHeader={false} />
+          {/if}
         </div>
       {/if}
     </div>

@@ -37,11 +37,10 @@
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
-    activeCommunityDefinition,
+    activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
-    activeCommunityPublishRelays,
+    activeExactCommunityRelays,
     activeCommunityReportState,
-    activeCommunityRelays,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
   import {
@@ -74,7 +73,7 @@
   import {pushToast} from "@app/util/toast"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {loadBoundedCommunityHistory} from "@app/core/requests"
-  import {makeCommunityGoalPath, parseCommunityRouteParam} from "@app/util/routes"
+  import {makeExactCommunityGoalPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const REQUEST_HARD_TIMEOUT_MS = 10_000
 
@@ -96,28 +95,35 @@
   let hashTarget = $state({id: "", request: 0})
   let revealedHashTargetKey = ""
 
-  const parsedCommunity = $derived(parseCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.pubkey || "")
+  const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
+  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityId = $derived(routeCommunity?.communityId || "")
+  const communityAddress = $derived(routeCommunity?.address || "")
+  const communityDefinition = $derived(
+    $activeExactCommunityDefinition?.pointer.address === communityAddress
+      ? $activeExactCommunityDefinition
+      : undefined,
+  )
   const goalId = $derived($page.params.goal || "")
   const goalsPath = $derived(
-    communityPubkey ? makeCommunityGoalPath(communityPubkey) : $page.url.pathname,
+    routeCommunity ? makeExactCommunityGoalPath(routeCommunity) : $page.url.pathname,
   )
   const goalPath = $derived(
-    communityPubkey && goalId ? makeCommunityGoalPath(communityPubkey, goalId) : goalsPath,
+    routeCommunity && goalId ? makeExactCommunityGoalPath(routeCommunity, goalId) : goalsPath,
   )
   const communityBootstrapReady = $derived(
     Boolean(
-      communityPubkey &&
-      $activeCommunityDefinition?.pubkey === communityPubkey &&
+      communityAddress &&
+      communityDefinition &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -129,25 +135,25 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
-    Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+    Boolean(communityAddress && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const goalSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.goal,
     ),
   )
   const commentSectionName = $derived(
     getCommunityWriteTargetSectionName(
-      communityAuthorityReady ? $activeCommunityDefinition : undefined,
+      communityAuthorityReady ? communityDefinition : undefined,
       COMMUNITY_WRITE_TARGETS.comment,
     ),
   )
   const commentAccessMessage = $derived(`Request ${commentSectionName} access to comment.`)
   const goalAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.goal,
           reportState: $activeCommunityReportState,
@@ -155,9 +161,9 @@
       : [],
   )
   const commentAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.comment,
           reportState: $activeCommunityReportState,
@@ -165,9 +171,9 @@
       : [],
   )
   const reactionAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.reaction,
           reportState: $activeCommunityReportState,
@@ -175,9 +181,9 @@
       : [],
   )
   const reportAuthorPubkeys = $derived(
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition
       ? getCommunityTargetWriterPubkeys({
-          definition: $activeCommunityDefinition,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           target: COMMUNITY_WRITE_TARGETS.report,
           reportState: $activeCommunityReportState,
@@ -185,8 +191,8 @@
       : [],
   )
   const targetingFilters = $derived<Filter[]>(
-    communityAuthorityReady && communityPubkey
-      ? [makeCommunityTargetingFilter(communityPubkey, [ZAP_GOAL])]
+    communityAuthorityReady && routeCommunity
+      ? [makeCommunityTargetingFilter(communityId, [ZAP_GOAL])]
       : [],
   )
   const targetingFilterPlan = $derived(
@@ -198,9 +204,10 @@
     deriveEventsAsc(deriveEventsById({repository, filters: targetingFilterPlan.localFilters})),
   )
   const authorizedTargetingEvents = $derived.by(() =>
-    communityAuthorityReady && $activeCommunityDefinition
+    communityAuthorityReady && communityDefinition && routeCommunity
       ? filterAuthorizedCommunityTargetingEvents({
-          definition: $activeCommunityDefinition,
+          community: routeCommunity,
+          definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
           events: $targetingEvents,
           reportState: $activeCommunityReportState,
@@ -215,9 +222,9 @@
     makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
   )
   const directGoalFilterPlan = $derived(
-    communityAuthorityReady && communityPubkey && goalId
+    communityAuthorityReady && communityId && goalId
       ? makeCommunityContentFilterPlan(
-          [{kinds: [ZAP_GOAL], ids: [goalId], "#h": [communityPubkey]}],
+          [{kinds: [ZAP_GOAL], ids: [goalId], "#h": [communityId]}],
           goalAuthorPubkeys,
         )
       : {relayFilters: [], localFilters: []},
@@ -266,7 +273,7 @@
               kinds: [COMMENT],
               "#E": [approvedGoal.id],
               "#K": [String(ZAP_GOAL)],
-              "#h": [communityPubkey],
+              "#h": [communityId],
             },
           ],
           commentAuthorPubkeys,
@@ -288,7 +295,7 @@
         event.kind === COMMENT &&
         getTagValue("E", event.tags) === approvedGoal?.id &&
         getTagValue("K", event.tags) === String(ZAP_GOAL) &&
-        getTagValue("h", event.tags) === communityPubkey,
+        getTagValue("h", event.tags) === communityId,
     }),
   )
   const replies = $derived(
@@ -307,9 +314,9 @@
       communityAuthorityReady &&
       !approvedGoalCensorReason &&
       $pubkey &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.comment,
@@ -324,9 +331,9 @@
       communityAuthorityReady &&
       !approvedGoalCensorReason &&
       $pubkey &&
-      $activeCommunityDefinition &&
+      communityDefinition &&
       canWriteCommunityTarget({
-        definition: $activeCommunityDefinition,
+        definition: communityDefinition,
         profileListEvents: $activeCommunityProfileListEvents,
         userPubkey: $pubkey,
         target: COMMUNITY_WRITE_TARGETS.reaction,
@@ -342,7 +349,7 @@
       pushToast({theme: "error", message: commentAccessMessage})
       return false
     }
-    if ($activeCommunityPublishRelays.length === 0) {
+    if ($activeExactCommunityRelays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return false
     }
@@ -353,8 +360,8 @@
           event: eventToEdit,
           content: trimmed,
           tags,
-          relays: $activeCommunityPublishRelays,
-          url: communityPubkey,
+          relays: $activeExactCommunityRelays,
+          url: communityId,
         })
       } catch (error) {
         pushToast({
@@ -368,14 +375,14 @@
       return true
     }
 
-    const relays = $activeCommunityPublishRelays
+    const relays = $activeExactCommunityRelays
 
     try {
       startPublication({
         event: makeComment({
           event: approvedGoal,
           content: trimmed,
-          tags: [["h", communityPubkey], ...tags],
+          tags: [["h", communityId], ...tags],
         }),
         relays,
         label: "Goal comment",
@@ -446,7 +453,7 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
 
     if (!communityBootstrapReady) {
       loadingGoal = false
@@ -474,7 +481,7 @@
       localFilters: goalFilters,
       timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `community-goal:${communityPubkey}:${goalId}`,
+      owner: `community-goal:${communityAddress}:${goalId}`,
       signal: controller.signal,
     })
       .then(result => {
@@ -495,7 +502,7 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
     const relayFilters = targetingFilterPlan.relayFilters
     const localFilters = targetingFilterPlan.localFilters
 
@@ -525,7 +532,7 @@
       localFilters,
       timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `community-goal-targets:${communityPubkey}:${goalId}`,
+      owner: `community-goal-targets:${communityAddress}:${goalId}`,
       signal: controller.signal,
     })
       .then(result => {
@@ -568,7 +575,7 @@
           ...plan,
           timeoutMs: REQUEST_HARD_TIMEOUT_MS,
           priority: RELAY_REQUEST_PRIORITY.interactive,
-          owner: `community-goal-originals:${communityPubkey}:${goalId}`,
+          owner: `community-goal-originals:${communityAddress}:${goalId}`,
           signal: controller.signal,
         }),
       ),
@@ -593,7 +600,7 @@
 
   $effect(() => {
     void historicalLoadRetryVersion
-    const relays = $activeCommunityRelays
+    const relays = $activeExactCommunityRelays
 
     if (!communityBootstrapReady) {
       loadingReplies = false
@@ -621,7 +628,7 @@
       localFilters: replyFilters,
       timeoutMs: REQUEST_HARD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `community-goal-replies:${communityPubkey}:${goalId}`,
+      owner: `community-goal-replies:${communityAddress}:${goalId}`,
       signal: controller.signal,
     })
       .then(result => {
@@ -675,7 +682,7 @@
     <strong>{approvedGoalCensorReason ? "Moderated goal" : approvedGoal?.content || "Goal"}</strong>
   {/snippet}
   {#snippet action()}
-    <CommunityMenuButton community={communityPubkey} />
+    <CommunityMenuButton community={routeCommunity?.naddr} />
   {/snippet}
 </PageBar>
 
@@ -685,22 +692,22 @@
       {#if approvedGoalCensorReason}
         <ModeratedContent reason={approvedGoalCensorReason} />
       {:else}
-        <NoteCard event={approvedGoal} relays={$activeCommunityRelays}>
+        <NoteCard event={approvedGoal} relays={$activeExactCommunityRelays}>
           <div class="col-3 ml-12">
             <Content
               event={{
                 content: getTagValue("summary", approvedGoal.tags) || "",
                 tags: approvedGoal.tags,
               }}
-              url={communityPubkey}
+              url={communityId}
               communitySectionName={goalSectionName}
               showEntire />
             <GoalSummary
               event={approvedGoal}
-              url={communityPubkey}
-              relays={$activeCommunityRelays}
-              publishRelays={$activeCommunityPublishRelays}
-              scopeH={communityPubkey}
+              url={communityId}
+              relays={$activeExactCommunityRelays}
+              publishRelays={$activeExactCommunityRelays}
+              scopeH={communityId}
               disableContributions={Boolean(goalOperationId)} />
             {#if goalOperationId}
               <PublicationStatus operationId={goalOperationId} />
@@ -710,10 +717,11 @@
                 <GoalActions
                   showRoom={false}
                   event={approvedGoal}
-                  url={communityPubkey}
-                  relays={$activeCommunityRelays}
-                  publishRelays={$activeCommunityPublishRelays}
-                  scopeH={communityPubkey}
+                  url={communityId}
+                  community={routeCommunity}
+                  relays={$activeExactCommunityRelays}
+                  publishRelays={$activeExactCommunityRelays}
+                  scopeH={communityId}
                   communitySectionName={goalSectionName}
                   allowedAuthors={commentAuthorPubkeys}
                   reactionAllowedAuthors={reactionAuthorPubkeys}
@@ -752,18 +760,18 @@
           {:else}
             <div class="card2 bg-alt z-feature w-full">
               <ChannelMessage
-                url={communityPubkey}
+                url={communityId}
                 event={replyEvent}
                 operationId={replyProjection.operationIds.get(replyEvent.id)}
                 showPubkey
                 readOnly={!canReact}
-                interactionRelays={$activeCommunityRelays}
-                actionRelays={$activeCommunityPublishRelays}
-                profileRelays={$activeCommunityRelays}
+                interactionRelays={$activeExactCommunityRelays}
+                actionRelays={$activeExactCommunityRelays}
+                profileRelays={$activeExactCommunityRelays}
                 allowedAuthors={commentAuthorPubkeys}
                 reactionAllowedAuthors={reactionAuthorPubkeys}
                 reportAllowedAuthors={reportAuthorPubkeys}
-                scopeH={communityPubkey}
+                scopeH={communityId}
                 communitySectionName={commentSectionName}
                 canEdit={canEditReply}
                 onEdit={openEditPrompt} />
@@ -793,9 +801,14 @@
         {/if}
         {#key eventToEdit}
           <RoomCompose
-            url={$activeCommunityRelays[0] || communityPubkey}
-            h={communityPubkey}
-            blossomContext={{type: "community", communityPubkey}}
+            url={$activeExactCommunityRelays[0] || communityId}
+            h={communityId}
+            blossomContext={communityDefinition
+              ? {
+                  type: "community",
+                  communityAddress: communityDefinition.pointer.address,
+                }
+              : undefined}
             showMenu={false}
             onSubmit={sendReply}
             onEscape={closeReply}
