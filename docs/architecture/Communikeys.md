@@ -1,317 +1,287 @@
-# Communikeys
+# Communikeys V2
 
-Defines a standard for creating, managing and publishing to communities by leveraging existing key pairs and relays.
+## Status
 
-This approach uniquely allows:
+This is the normative Communikeys V2 wire specification used by Budabit. The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, and MAY are interpreted as described in BCP 14.
 
-- Any existing npub to become a community (identity + manager)
-- Any existing publication to be targeted at any community
-- Communities to have their own selected content types
+V2 is a clean protocol generation. This document does not define V1 discovery, mappings, aliases, route compatibility, state conversion, or dual publication. Historical V1 behavior is archived in `history/Communikeys-v1-kind-10222.md`.
 
-## Motivation
+## Identity Model
 
-Current community management solutions on Nostr often require complex relay-specific implementations, lack proper decentralization and don't allow publications to be targeted at more than one community.
+```text
+communityId       = random throwaway secp256k1 x-only public key hex
+definition d      = communityId
+community event h = communityId
+controller        = definition event author
+definitionAddress = 32222:<controllerPubkey>:<communityId>
+canonical pointer = naddr(definitionAddress, relay hints)
+```
 
-This proposal aims to simplify community management by utilizing existing Nostr primitives (key pairs and relays) while adding minimal new event kinds.
+There is one stable community ID. A definition address identifies one exact controller branch. Different controllers MAY publish definitions with the same community ID; those definitions are distinct branches and MUST NOT replace one another. A controller MAY publish any number of definitions with distinct community IDs.
 
-## Community Creation Event (kind:10222)
+### Community ID
 
-A community is created when a key pair publishes a [[kind-10222]] event. The pubkey of this key pair becomes the unique identifier for that community. One key pair can only represent one community. The latest valid event is authoritative for community infrastructure.
+A community ID MUST contain exactly 64 lowercase hexadecimal characters and represent an x-coordinate that can be lifted to a point on secp256k1.
 
-The community's name, picture, and description are derived from the pubkey's [[kind-0]] metadata event.
+For a new community, the creator MUST use a cryptographically secure random source to generate a secp256k1 keypair, retain the x-only public key as the community ID, and immediately discard the private key. The discarded key MUST NOT be persisted, logged, backed up, exported, or used to sign an event.
+
+A community ID is not a person or signing identity. It MUST NOT be used as a controller, event author, person `p` tag, outbox or profile identity, DM recipient, NIP-05 identity, `kind:0` profile identity, administrator, or permission-list signer.
+
+### Controller And Branch
+
+The controller is the `pubkey` that signs a community definition. Controller authority applies only to that exact definition address.
+
+Branch identity is the tuple `(kind=32222, controllerPubkey, communityId)`. Relay hints are retrieval hints and are not part of branch equality.
+
+## Community Definition
+
+A community definition is an addressable `kind:32222` event.
 
 ```json
 {
-  "id": "<event-id>",
-  "pubkey": "<community-pubkey>",
-  "created_at": 1675642635,
-  "kind": 10222,
+  "kind": 32222,
+  "pubkey": "<controller-pubkey>",
   "tags": [
-    // at least one main relay for the community + other optional backup relays
-    ["r", "<relay-url>"],
-
-    // one or more blossom servers
-    ["blossom", "<blossom-url>"],
-
-    // ordered GRASP servers endorsed or offered to members
-    ["grasp", "wss://preferred-grasp.example"],
-    ["grasp", "wss://backup-grasp.example"],
-
-    // one or more ecash mints
-    ["mint", "<mint-url>", "cashu"],
-
-    // General section for comments, reactions, and labels (recommended for all communities)
+    ["d", "<community-id>"],
+    ["name", "Buda Builders"],
+    ["description", "A community for builders"],
+    ["picture", "https://example.com/picture.png"],
+    ["banner", "https://example.com/banner.png"],
+    ["website", "https://example.com"],
+    ["r", "wss://relay.example"],
+    ["blossom", "https://blossom.example"],
     ["content", "General"],
-    ["k", "1111"], // comments
-    ["k", "7"], // reactions
-    ["k", "1985"], // labels
-    ["a", "30000:<pubkey>:General", "<relay-url>"], // profile list with whitelisted pubkeys
-    ["badge", "<badge-definition>"], // optional badge/engagement reference
-
-    // one or more content sections for publishing
-    ["content", "Chat"],
-    ["k", "9"],
-    ["a", "30000:<pubkey>:Chat", "<relay-url>"],
-    ["badge", "<badge-definition>"],
-
-    ["content", "Thread-creator"],
-    ["k", "11", "threads"],
-    ["a", "30000:<pubkey>:Thread-creator", "<relay-url>"],
-    ["badge", "<badge-definition>"],
-
-    ["content", "Apps"],
-    ["k", "32267"],
-    ["a", "30000:<pubkey>:Apps", "<relay-url>"],
-    ["badge", "<badge-definition-member>"],
-    ["badge", "<badge-definition-pro>"],
-    ["badge", "<badge-definition-team>"],
-
-    // Optional terms of service, points to another event
-    ["tos", "<event-id-or-address>", "<relay-url>"],
-
-    // Optional location; g is a geohash, not a GRASP server
-    ["location", "<location>"],
-    ["g", "<geo-hash>"],
-
-    // Optional description
-    ["description", "A description text that overwrites the profile's description, if needed"]
+    ["k", "1111"],
+    ["k", "7"],
+    ["k", "1985"],
+    ["a", "30000:<list-controller>:<community-scoped-list-id>", "wss://relay.example"]
   ],
-  "content": "",
-  "sig": "<signature>"
+  "content": ""
 }
 ```
 
-### Tag definitions
+### Definition Validity
 
-| Tag           | Description                                                                                                                                                                                                                                                                                                          |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `r`           | URLs of relays where community content should be published. First one is considered main relay.                                                                                                                                                                                                                      |
-| `blossom`     | (optional) URLs of blossom servers for additional community features.                                                                                                                                                                                                                                                |
-| `grasp`       | (optional) Ordered WebSocket URLs of GRASP servers the community endorses or offers to members. Earlier tags are preferred.                                                                                                                                                                                          |
-| `mint`        | (optional) URL of community mint for token/payment features.                                                                                                                                                                                                                                                         |
-| `content`     | Name of Content Type section that the Communikey works with.                                                                                                                                                                                                                                                         |
-| `k`           | Event kind, within a content type section.                                                                                                                                                                                                                                                                           |
-| `a`           | (within content section, one or more) Exact addressable reference to a profile-list shard [[kind-30000]]. The section grant set is the union of the current `p` tags in all referenced shards. Format: `30000:<pubkey>:<d-tag>`.                                                                                     |
-| `badge`       | Optional community badge reference for endorsements, achievements, onboarding, or other engagement. References a Badge Definition event, see [[NIP-58]]. Format: `30009:<pubkey>:<d-tag>`. Multiple `badge` tags can be specified per content section, but Budabit does not treat them as publish permission inputs. |
-| `retention`   | (optional) Retention policy in format [kind, value, type] where type is either "time" (seconds) or "count" (number of events).                                                                                                                                                                                       |
-| `tos`         | (optional) Reference to the community's posting policy.                                                                                                                                                                                                                                                              |
-| `location`    | (optional) Location of the community.                                                                                                                                                                                                                                                                                |
-| `g`           | (optional) Geohash of the community. It is not a GRASP server tag.                                                                                                                                                                                                                                                   |
-| `description` | (optional) Description of the community.                                                                                                                                                                                                                                                                             |
+A valid definition MUST satisfy all of these rules:
 
-### Infrastructure authority and recommendations
+1. Its kind is `32222`, and its signature and ID are valid.
+2. Its content is the empty string.
+3. It has exactly one `d` tag with exactly two values and a valid community ID.
+4. It has no community-identifying `h` tag.
+5. It has exactly one valid `name` tag and at least one valid `r` tag.
+6. Every recognized singleton tag satisfies its cardinality and validation rule.
+7. It has at least one content section, and every content section satisfies the section rules below.
 
-The latest valid `kind:10222` definition is the source of truth for infrastructure declared by the community. A user's `kind:10063` Blossom list describes where that user hosts blobs, and `kind:10317` describes that user's preferred GRASP servers. NIP-61 `kind:10019` is Nutzap receiving configuration, including receiving mints and a P2PK pubkey; Budabit may use its mint tags as person-level recommendation evidence, but it is not a generic community mint list. None of these events overrides the community definition.
+A missing, empty, malformed, or duplicate `d` invalidates the definition. Readers MUST reject invalid definitions rather than partially interpreting them.
 
-Budabit does not automatically dual-publish community declarations and those personal list events. Infrastructure from an eligible, non-renounced community may be shown as a viable recommendation, but it is not configured until the user explicitly selects **Add**.
+### Definition Metadata
 
-### Section kind uniqueness
+Lengths are UTF-8 bytes after trimming leading and trailing ASCII whitespace. URLs are measured after normalization.
 
-Within one community definition, each exact `(kind, subtype)` pair belongs to at most one content section. The subtype is the third value in a `k` tag. An empty subtype is an exact empty subtype, not a wildcard.
+URL normalization uses the WHATWG URL parser and serializer. A URL is invalid if it has credentials, a fragment, or an empty host. Scheme and host are lowercase and default ports are removed by serialization. A terminal `/` is removed only when it is the complete path and there is no query. Other paths and queries are retained. Relay and GRASP URLs require `wss:`; HTTPS resources require `https:`. Duplicate comparison uses this normalized string.
 
-Examples:
+| Tag           | Cardinality | Rule                                                                    |
+| ------------- | ----------: | ----------------------------------------------------------------------- |
+| `d`           | Exactly one | Valid community ID; exactly two tag values.                             |
+| `name`        | Exactly one | 1 to 100 bytes.                                                         |
+| `description` | Zero or one | At most 4096 bytes.                                                     |
+| `picture`     | Zero or one | Absolute HTTPS URL, at most 2048 bytes.                                 |
+| `banner`      | Zero or one | Absolute HTTPS URL, at most 2048 bytes.                                 |
+| `website`     | Zero or one | Absolute HTTP or HTTPS URL, at most 2048 bytes.                         |
+| `r`           |   One to 20 | Normalized `wss://` relay URL, at most 2048 bytes.                      |
+| `blossom`     |  Zero to 20 | Absolute HTTPS URL, at most 2048 bytes.                                 |
+| `grasp`       |  Zero to 20 | Normalized `wss://` URL, at most 2048 bytes; order is preference order. |
+| `mint`        |  Zero to 20 | Absolute HTTPS URL; optional type is at most 32 ASCII bytes.            |
+| `location`    | Zero or one | At most 256 bytes.                                                      |
+| `g`           | Zero or one | Lowercase geohash, 1 to 12 characters.                                  |
+| `tos`         | Zero or one | Non-empty event ID or address and optional normalized relay hint.       |
+| `service`     |  Zero to 50 | Service extension described below.                                      |
 
-- `["k", "11", "room"]` and `["k", "11", "threads"]` are different permissions.
-- `["k", "11"]` does not cover `["k", "11", "room"]` or `["k", "11", "threads"]`.
-- `["k", "30033"]` can be assigned to only one section in a community.
+Duplicate singleton tags invalidate the definition. Exceeding a stated maximum cardinality invalidates the definition. Within the maximum, readers MUST ignore duplicate normalized relay, Blossom, GRASP, mint, or service declarations after the first occurrence. Editors SHOULD remove these duplicates when intentionally updating a definition.
 
-Clients should reject new definitions that duplicate an exact `(kind, subtype)` pair. Existing malformed definitions may still be parsed defensively, but permission resolution should use a single direct section for each exact pair.
+Recognized top-level tags have exact arity: `d`, `name`, `description`, `picture`, `banner`, `website`, `r`, `blossom`, `grasp`, `location`, and `g` contain exactly two values; `mint` and `tos` contain two or three; `service` contains exactly six. Extra values make a recognized tag invalid and therefore invalidate a definition in which it appears.
 
-### Section lifecycle safety
+Community metadata comes only from definition tags. A controller's `kind:0` is a personal profile and MUST NOT override or fill community metadata.
 
-Section names and profile-list identifiers are operational permission state. Renaming a section, moving a `(kind, subtype)` pair to another section, or removing a section can disconnect existing permission shards, moderator ownership, application forms, and pending requests.
+### Service Tags
 
-Budabit treats those edits as dangerous changes:
+Budabit service declarations use:
 
-- Immediate warning modals protect against accidental edits and can reset only the triggering draft change.
-- Final publish confirmation summarizes what changed, what can be migrated, and what will be dropped.
-- Permission migration, when chosen, publishes and verifies replacement permission updates before publishing the new community definition.
-
-Migration preserves admin-authoritative state only. Granted members are merged into a new admin-owned profile list for the new section. Active moderators receive new section permission requests and must accept them again. Active application forms may be copied as admin-authored forms for the new section. Pending requests are not migrated. Applicant-authored submissions and user-authored reports are never recreated or impersonated.
-
-The pubkey of the key pair that creates this event serves as the unique identifier for the community. This means:
-
-1. Each key pair can only represent one community
-2. Communities can be easily discovered by querying for the most recent [[kind-10222]] event for a given pubkey
-3. Community managers can update their settings by publishing a new [[kind-10222]] event
-
-## Community Identifier Format
-
-Communities can be referenced using an "ncommunity" format:
-
-```
-ncommunity://<pubkey>?relay=<url-encoded-relay-1>&relay=<url-encoded-relay-2>
+```text
+["service", <name>, <servicePubkey>, <requestRelay>, <handlerAddress>, <handlerRelay>]
 ```
 
-This format follows the same principles as nprofile, but specifically for community identification. While the ncommunity format is recommended for complete relay information, the standard pubkey format can also be used when relay discovery is not needed.
+The service name MUST match `[a-z0-9][a-z0-9-]{0,31}`. `email-digest` and `community-alerts` are the currently interpreted names. Other valid names are preserved extensions and are not interpreted by a reader that does not implement them.
 
-## Listing a User's Communities
+`servicePubkey` MUST be a real signing pubkey. `handlerAddress` MUST be a valid addressable-event coordinate with a real signing pubkey and a non-empty identifier of at most 200 UTF-8 bytes. Request and handler relays MUST be normalized `wss://` URLs. Duplicate identity is the complete normalized six-value tuple; declarations that differ in any field are distinct.
 
-Since communities are just pubkeys, existing Nostr primitives can be used to list which communities a user is part of.
+### Content Sections
 
-### Profile Lists
+A section starts with `["content", <sectionName>]` and extends until the next `content` tag or the end of the definition. Names MUST be 1 to 100 UTF-8 bytes and unique under ASCII case-folding.
 
-- **Follow list** [[kind-3]] — users can follow community pubkeys publicly, or privately in the encrypted content section
-- **Bookmarks** [[kind-10003]] — users can bookmark community pubkeys publicly, or privately in the encrypted content section
+The following tags belong to the current section:
 
-Clients can filter these lists to show only pubkeys that have a [[kind-10222]] community definition event.
+| Tag         | Rule                                                                   |
+| ----------- | ---------------------------------------------------------------------- |
+| `k`         | Event kind in value 1 and optional subtype in value 2.                 |
+| `a`         | Exact `kind:pubkey:d` profile-list reference with optional relay hint. |
+| `badge`     | Exact badge-definition address with optional relay hint.               |
+| `retention` | Kind, positive integer value, and `time` or `count`.                   |
 
-### Community Badges
+Each section MUST have at least one valid `k` and one valid profile-list `a`. Each exact `(kind, subtype)` pair MUST occur in at most one section. Empty subtype is exact, not a wildcard.
 
-Clients can look at a user's accepted community badges in their Profile Badges [[kind-30008]] event. Badge Definitions can include a `p` tag specifying which community the badge belongs to, see [[NIP-58]]. This gives clients engagement and endorsement context, but does not grant publishing rights in Budabit.
+`content` contains exactly two values. `k` contains two or three values. Its kind is canonical unsigned decimal with no sign or leading zero except `0`, in the range 0 through 65535; its optional subtype is 1 to 64 UTF-8 bytes. A profile-list `a` contains two or three values, parses as exact kind `30000`, has a real signer pubkey and non-empty identifier, and has an optional normalized relay. A `badge` follows the same arity and address rules with kind `30009`. `retention` contains exactly four values; its kind follows the `k` integer rule, its value is canonical positive decimal within JavaScript's safe-integer range, and its type is exactly `time` or `count`.
 
-## Targeted Publication Event (kind:30222)
+A recognized section-local tag before the first `content` tag invalidates the definition. Unknown tags before the first section remain top-level extensions. Unknown tags after a `content` tag belong to that section.
 
-To target an existing publication at specific communities, users create a [[kind-30222]] event:
+Profile-list tags reference real signer-owned `kind:30000` coordinates. The effective grant set is the union of current valid `p` tags from all referenced lists. Missing evidence contributes no grant.
+
+### Unknown Tags And Editing
+
+Readers MUST ignore unknown definition tags. Editors MUST preserve them byte-for-byte and in original relative order unless the user explicitly removes them.
+
+An editor update replaces the recognized tags it exposes while merging untouched unknown top-level and section-local tags from the accepted current definition. Automated controller or moderator updates follow the same rule.
+
+Section-local unknown tags are attached to the original section's case-folded name. Reordering sections moves those tags with their section and preserves their relative order. Renaming a section moves its unknown tags to the renamed section. Removing a section removes its section-local unknown tags only after the explicit user confirmation required for section removal. An editor MUST NOT publish an ambiguous merge from an invalid definition with duplicate case-folded section names.
+
+## Replacement And Deletion
+
+Definitions replace only events at the same exact definition address. The current valid definition is selected by greatest `created_at`, then lexicographically lowest event ID when timestamps are equal. Selection MUST be independent of relay and arrival order.
+
+A branch deletion is a valid controller-authored `kind:5` containing exactly one unmarked `a` for the exact definition address. A `k=32222` SHOULD be included. It tombstones definitions at that address with `created_at` less than or equal to the deletion timestamp. A later definition with greater `created_at` recreates the branch. At equal timestamps deletion wins. An `e`-only deletion does not delete the branch coordinate.
+
+Controllers do not gain authority to rewrite, re-sign, reattribute, or globally delete other authors' events.
+
+### Authority Event Replacement
+
+Every replaceable or addressable event used to derive Communikey authority, including profile lists, forms, moderator requests, settings, and service state, uses greatest `created_at` and then lexicographically lowest event ID at one exact coordinate. Consumers MUST validate event signature, event ID, expected kind, author, and exact `d` before comparison.
+
+A profile-list authority event is a valid signed `kind:30000` event at a coordinate referenced by the selected definition, with exactly one matching non-empty `d`. Only valid real signing pubkeys from its `p` tags contribute grants; malformed `p` tags are ignored.
+
+A same-author `kind:5` address deletion tombstones an authority coordinate through its deletion timestamp. A later valid replacement recreates it; deletion wins at an equal timestamp. Event-ID-only deletion removes only that exact event version from consideration. These rules apply before a current authority event or grant set is derived.
+
+## Stable Association And Exact Authority
+
+```text
+h=<communityId>
+a=<definitionAddress> with marker "community"
+```
+
+A community-native event acquired through `#h` MUST carry exactly one `h=<communityId>` unless a workflow below explicitly defines repeated target pairs.
+
+An authority-sensitive event MUST also carry exactly one branch reference:
+
+```text
+["a", "32222:<controller>:<communityId>", "<optional-relay>", "community"]
+```
+
+The address identifier MUST equal the community `h`. A mismatch invalidates the event for Communikeys processing. Unmarked and differently marked `a` tags retain their workflow-specific meanings.
+
+| Event class                                | Stable association                    | Exact branch reference                           |
+| ------------------------------------------ | ------------------------------------- | ------------------------------------------------ |
+| Definition                                 | `d=<communityId>`                     | Its own address.                                 |
+| Room/thread roots                          | Exactly one `h`                       | Not required.                                    |
+| Room messages and replies                  | Exactly one `h`                       | Not required.                                    |
+| Comments, reactions, labels, deletes       | Exactly one `h` when community-scoped | Required when branch authority is evaluated.     |
+| Reports and report reviews                 | Exactly one `h`                       | Required marked community `a`.                   |
+| Admission forms, responses, and reviews    | Exactly one `h`                       | Required marked community `a`.                   |
+| Moderator requests, decisions, and deletes | Exactly one `h`                       | Required marked community `a`.                   |
+| Permission lists                           | Community-scoped child `d`            | Referenced by the accepted definition.           |
+| Badge definitions, awards, and moderation  | Exactly one `h`                       | Required marked community `a`.                   |
+| Stars, bookmarks, and renunciations        | Exactly one `h`                       | Required marked community `a`; no community `p`. |
+| Targeting wrappers                         | One `h` per target pair               | One marked community `a` per pair.               |
+
+Real authors, recipients, members, moderators, controllers, services, and report targets MAY appear in `p` tags. A community ID MUST NOT.
+
+## Targeted Publications
+
+Targetable originals retain their targeting ID in `h`; community associations are resolved through addressable `kind:30222` wrappers.
 
 ```json
 {
-  "id": "<event-id>",
-  "pubkey": "<pubkey>",
-  "created_at": 1675642635,
   "kind": 30222,
   "tags": [
-    ["d", "<random-id>"],
-    ["e", "<event-id-of-original-publication>"],
-    ["k", "<kind-of-original-publication>"],
-    ["p", "<community1-pubkey>"],
-    ["r", "<main-relay1-url>"],
-    ["p", "<community2-pubkey>"],
-    ["r", "<main-relay2-url>"]
+    ["d", "<targeting-id>"],
+    ["a", "31922:<publication-author>:<publication-d>", "wss://author-relay", "source"],
+    ["k", "31922"],
+    ["h", "<community-id-1>"],
+    ["a", "32222:<controller-1>:<community-id-1>", "wss://community-relay-1", "community"],
+    ["h", "<community-id-2>"],
+    ["a", "32222:<controller-2>:<community-id-2>", "wss://community-relay-2", "community"]
   ],
-  "content": "",
-  "sig": "<signature>"
+  "content": ""
 }
 ```
 
-The targeted publication event can identify the original publication in three ways:
+A wrapper MUST contain exactly one non-empty `d` and one valid `k`. An explicit address source is `["a", <address>, <optionalRelay>, "source"]`. An explicit event source is `["e", <eventId>, <optionalRelay>, <optionalAuthorPubkey>, "source"]`; empty placeholders preserve the marker position. A wrapper has at most one marked source of either form. Without a marked source, the original MUST use the wrapper `d` as its targeting `h` and have the same author as the wrapper.
 
-1. Using an `e` tag with the event ID, relay hint, and pubkey hint
-2. Using an `a` tag with the event address and relay hint
-3. Omitting both explicit references and using the wrapper's `d` value as the original publication's `h` targeting ID
+Each community target is an adjacent ordered pair:
 
-The `k` tag specifies the kind of the original publication, and the `p` tags list the communities that this publication is targeting.
-
-Currently, we work with a maximum of 12 communities that can be tagged for one publication.
-
-**Note:** For the implicit form, clients SHOULD create the Targeted Publication event first and reference its `d` targeting ID with an `h` tag in the original event.
-
-### Targeting authority
-
-The `kind:30222` wrapper author is the community curator. Clients discover wrappers structurally with `#p = <community-pubkey>` and admit a wrapper only when its author has the current grant for the wrapper's declared original kind.
-
-An explicit `e` reference identifies the original by event ID, and an explicit `a` reference identifies it by its exact `kind:pubkey:d` coordinate. Either explicit form may curate an original signed by an external author; the wrapper grant, not original-author membership, authorizes the community association. Without `e` or `a`, the original is implicit: it uses `h = <wrapper-d-targeting-id>` and MUST be signed by the same pubkey as the wrapper.
-
-## Community-Exclusive Publications
-
-Chat messages [[kind-9]] and thread posts [[kind-11]] are exclusive by default. They can only belong to one community and cannot be targeted to multiple communities.
-
-For these exclusive content types, we don't need a Targeted Publication event. Instead, they use an `h` tag to reference their community directly.
-
-For chat messages within a community, users should use [[kind-9]] events with a community tag:
-
-```json
-{
-  "id": "<event-id>",
-  "pubkey": "<pubkey>",
-  "created_at": 1675642635,
-  "kind": 9,
-  "tags": [["h", "<community-pubkey>"]],
-  "content": "<message>",
-  "sig": "<signature>"
-}
+```text
+["h", <communityId>]
+["a", <definitionAddress>, <optionalRelay>, "community"]
 ```
 
-The same pattern applies to thread posts, see [[kind-11]].
+The marked `a` MUST immediately follow its `h`; its address kind MUST be `32222`, and its identifier MUST equal that `h`. An unmatched, malformed, duplicate-address, or mismatched pair invalidates the wrapper. A wrapper MUST contain 1 to 12 pairs. Two branches with the same community ID MAY both be targets.
 
-## Profile-List Write Access And Badges
+Target identity is the exact definition address. Removing a target publishes a newer wrapper at the same wrapper address without that complete pair. Source tags and remaining target order MUST be preserved. Wrappers are discovered by `#h=<communityId>`. `p=<communityId>` targeting is invalid.
 
-Communities use profile lists for publishing permissions. Each content section has one or more `a` tags referencing allowed pubkeys. `badge` tags can reference [[NIP-58|Badge]] definitions for recognition or engagement around a section, but holding a badge does not make a user writable in Budabit.
+## Workflow Reference Markers
 
-```json
-["content", "Apps"],
-["k", "32267"],
-["a", "30000:community-pubkey:Apps"],
-["badge", "30009:community-pubkey:member"],
-["badge", "30009:community-pubkey:pro"],
-["badge", "30009:community-pubkey:team"]
+Workflows use markers so branch authority is not confused with another target:
+
+- `community`: exact community definition;
+- `source`: targeted-publication original;
+- `form`: admission form;
+- `response`: admission response;
+- `report`: community report;
+- `badge`: badge definition; and
+- `request`: moderator request.
+
+Address role markers occupy tag index 3: `["a", <address>, <optionalRelay>, <marker>]`. Event role markers occupy index 4 after the optional relay and author hints. Empty placeholders preserve marker position. Each required role occurs exactly once. Duplicate or conflicting marked references invalidate the event for that workflow. Reports MAY retain reason-bearing `e`, `p`, or `a` targets; those are not community references.
+
+## Generated Child Coordinates
+
+Budabit-generated addressable child events use:
+
+```text
+budabit:<communityId>:<purpose>:<slug>
 ```
 
-In this example, Apps publishing is controlled by the profile list. "Member", "Pro", and "Team" badges can drive display, onboarding, achievements, or other engagement around Apps.
+The complete community ID MUST NOT be truncated or hashed. `purpose` is a lowercase ASCII token such as `profile-list`, `form`, `moderator-request`, `badge`, `shared-config`, or `alert`. `slug` contains lowercase ASCII letters, digits, and hyphens, is 1 to 80 characters, and has no leading, trailing, or repeated hyphen. An empty normalized input uses the purpose as its slug. The result MUST be at most 200 bytes.
 
-Admission forms can collect information before a moderator grants profile-list access. Badges may still be awarded after review as recognition, but they are not the permission check.
+The child event author remains a real signer. The community ID is only part of `d`.
 
-### Profile Lists
+## Canonical Naddr And Routing
 
-Each content section includes one or more `a` tags referencing profile lists [[kind-30000]]. Clients fetch each exact address and use the union of the current `p` tags as the section grant set. A missing or unresolved shard contributes no grants; clients must not treat missing evidence as permission.
+The canonical pointer is a NIP-19 `naddr` containing kind `32222`, the controller pubkey, the community ID as identifier, and zero to three normalized relay hints.
 
-Repeated references allow a large section to shard its grants across several addressable events. This avoids depending on one event fitting every relay's maximum event-size and tag-count limits. Shards need distinct `kind:pubkey:d` coordinates, and changing any current shard changes the effective grant set.
+Pointer equality compares kind, controller, and community ID and ignores hints. State keys use the structured coordinate or canonical address, not the hint-bearing naddr string.
 
-**Granting access:** Because profile lists are the access source, awarding or revoking a badge does not change publish rights. Admin interfaces that grant or revoke access must update profile lists directly. Badge awards can be handled separately by:
+Canonical emission includes at most the first three valid definition `r` relays in declared order. Duplicate normalized hints are removed by first occurrence. Fallback, indexer, tracker, and untrusted input relays MUST NOT be added to share output.
 
-- **Automated systems:** A hot-key solution that processes badge programs without exposing the community root key
-- **Manual admin interfaces:** Apps that let admins award badges as recognition while keeping profile-list edits as the permission step
+The canonical Budabit route is `/c/<community-definition-naddr>/<optional-suffix>`.
 
-### Delegated Badge Awarding
+An event containing only `h=<communityId>` does not identify a branch. A client MUST use an explicit branch reference, the selected branch context that admitted the event, or a branch chooser. It MUST NOT silently select a branch from ID-only association.
 
-The pubkey that awards badges does **not** have to be the same as the community's pubkey. The `badge` tag in a content section simply references a Badge Definition for engagement context — this badge can be created and awarded by any pubkey.
+## Discovery, Permissions, And Retrieval
 
-This enables important security patterns:
+Exact resolution queries kind `32222`, the naddr controller, and `#d=<communityId>`. Controller discovery MAY return all authored definitions. ID discovery MAY query `#d`, but MUST expose all matching branches and MUST NOT choose one silently.
 
-- **Separate award key:** Communities can use a dedicated pubkey for handling badge awards. This key can run on a live server to process badge programs without exposing the main community keypair.
-- **Multiple award authorities:** Different badges can be managed by different pubkeys, allowing delegation of badge and engagement workflows.
-- **Cold storage for community key:** The main community keypair can remain in cold storage, only used for updating the community definition event.
+Results are grouped and replaced by exact definition address. Bounded discovery exposes incomplete state rather than claiming an exhaustive sibling list.
 
-Example: A community's "builder" badge could be defined and awarded by a separate badge-bot pubkey that processes recognition workflows automatically, while the community's main key stays secure offline.
+Relays provide transport, not Communikey grant enforcement. For a selected branch, a client resolves its exact definition, loads every referenced list coordinate, selects replacements deterministically, unions real-person grants, discovers stable content with `#h=<communityId>`, and admits events locally using the selected branch's current authority and moderation state.
 
-## Comments, Reactions, Labels, and Zaps
+The controller has root authority for its branch. Referenced list authors are real delegated signers. The community ID grants no authority.
 
-Communities SHOULD include a "General" content section that handles comments ([[kind-1111]]), reactions ([[kind-7]]), and labels ([[kind-1985]]) with one shared profile-list grant set. Optional badges can recognize contributors, but profile-list membership controls filtered interaction.
+## Same-ID Branches And Future Fork Flow
 
-When a publication targets multiple communities, members from all those communities participate together:
+Same-ID branches are valid independent definitions selected by different naddrs. Clients MUST keep their metadata, relays, permissions, moderation, services, state, and navigation separate.
 
-**Comments, reactions, and labels** — apply the current General section profile-list union from each targeted community. Members from different communities meet in one shared discussion around the publication. No duplicates, no fragmented conversations across multiple places.
+A future unilateral fork may copy original signed events, commit to exact imported event IDs in a cryptographic snapshot, publish a same-ID definition under another controller, and reference its predecessor and snapshot. Such a fork is not authorized succession and does not rewrite authorship.
 
-NOTE: Communities that don't want to be part of discussions with certain other communities can just not accept the events regarding them.
+This records the identity model only. Snapshot encoding, fork tooling, import validation, succession, and recovery are not specified or required for V2 application conformance.
 
-**Zaps** — anyone can zap community content. Query zap receipts on the community relays. No filtering — external appreciation is always welcome.
+## Conformance Summary
 
-## Implementation Notes
-
-Unlike [[NIP-29]] (Relay-based Groups), Communikeys work on **any standard Nostr relay**. Relays provide transport and storage; clients enforce Communikey visibility and publishing policy. Clients must not assume that a relay applied the community's grants.
-
-**Client filtering workflow:**
-
-1. Fetch the community's [[kind-10222]] event with the exact community author to get content sections and their `k` tags.
-2. Fetch every profile-list address referenced by the selected section and union the current `p` tags. Missing definition or grant evidence fails closed.
-3. Discover exclusive content with stable structural filters such as `#h = <community-pubkey>`. Discover targeted wrappers with `#p = <community-pubkey>` and the declared `#k`; do not send the section's potentially large grant set as a relay `authors` ACL.
-4. Admit every relay, cache, live-subscription, notification, and extension result locally against the current grant set and required structural tags.
-5. For an admitted wrapper, load an explicit `e` original by exact ID, an explicit `a` original by exact coordinate author plus `#d`, or an implicit original by `h = <targeting-id>` plus the wrapper author.
-
-Current grants govern both historical and live Budabit visibility. Revoking a grant hides that author's previously admitted content and wrappers; regranting restarts structural acquisition so matching history can be refetched and reappear. This is current-state curation, not relay deletion or confidentiality.
-
-Broad history is scanned with bounded raw-event cursors per relay and per structural filter. Page-budget exhaustion, timeout, disconnect, or a full page that may omit more events at the oldest timestamp makes the result incomplete. An incomplete zero-admission result is not an authoritative empty section.
-
-An `authors` filter remains correct when authorship is the identity or authority being requested rather than a section ACL. Examples include the community definition, exact profile-list and form authorities, personal profile/list metadata, explicit `kind:pubkey:d` coordinates, implicit originals bound to their wrapper signer, and deletion requests constrained to the same author as their target. Addressable wrappers honor same-author NIP-09 deletion by either exact event ID or `kind:pubkey:d` coordinate.
-
-**Media fallback:**
-
-Community blossom servers SHOULD back up all media files referenced in community publications — even when the original URLs point to different servers. By storing files by their content hash, the community server becomes a reliable fallback when external URLs suffer link rot. Clients can try the community's blossom server when the original media URL fails.
-
-**Additional recommendations:**
-
-- Clients MAY cache community metadata and badge awards to reduce relay queries
-- Clients SHOULD check current profile-list membership before attempting to publish
-- Relays MAY have independent storage and retention policies, but clients must still perform Communikey admission themselves
-
-## Benefits
-
-1. No special relay required — works on any standard Nostr relay, unlike [[NIP-29]]
-2. Easy onboarding — new users don't need to set up any personal relay or media server to join Nostr via a community. They can use the community's relay and blossom server immediately.
-3. Any existing npub can become a community
-4. Any existing publication can be targeted at communities (backwards compatible)
-5. Communities are not permanently tied to specific relays
-6. Communities can define their own content types with profile-list-based write access
-7. Cross-community interaction via Targeted Publications
-8. Users can request access by submitting Form Responses
-9. Delegated badge awarding — separate keys can run community badge programs without exposing the main community keypair
+A conforming client MUST use exact definition coordinates for branches, `d` and stable `h` for community ID, definition-native metadata, marked branch references for authority workflows, deterministic replacement/deletion, lossless unknown-tag edits, and definition naddr pointers. It MUST keep same-controller siblings and same-ID branches independent and keep community IDs out of person/signing paths.

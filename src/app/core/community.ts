@@ -10,6 +10,8 @@ import {
 import {randomId} from "@welshman/lib"
 import {normalizeUserGraspServerUrls} from "@nostr-git/core/events"
 
+export * from "./community-v2"
+
 export const COMMUNITY_DEFINITION_KIND = 10222
 export const TARGETED_PUBLICATION_KIND = 30222
 export const PROFILE_LIST_KIND = 30000
