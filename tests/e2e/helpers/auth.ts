@@ -68,11 +68,18 @@ async function loginWithLocalDev(page: Page, options: LoginOptions): Promise<str
 
   phaseHooks?.changePhase?.(PHASE_A_LOGIN_SCREEN)
 
+  const loginScreen = page.getByTestId("login-screen")
   const loginModal = page.getByTestId("login-modal")
-  await expect(loginModal).toBeVisible({timeout: 15000})
+  const publicLogin = page.getByRole("button", {name: "Log in", exact: true})
+  await expect(loginScreen.or(loginModal).or(publicLogin)).toBeVisible({timeout: 15000})
   phaseHooks?.recordPhaseSnapshot?.(PHASE_A_LOGIN_SCREEN)
 
   phaseHooks?.changePhase?.(PHASE_B_LOGIN_SUBMIT)
+
+  if (!(await loginModal.isVisible())) {
+    await publicLogin.click()
+  }
+  await expect(loginModal).toBeVisible({timeout: 5000})
 
   // Click bunker/remote signer option
   const remoteSignerOption = page.getByTestId("login-option-bunker")

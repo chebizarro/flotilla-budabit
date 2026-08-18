@@ -36,11 +36,10 @@ test("finds communities by name, link, npub, and NIP-05", async ({page}) => {
   )
   await page.goto("/explore")
 
-  const search = page.getByLabel("Search communities")
-  const submit = page.getByRole("button", {name: "Search", exact: true})
+  const search = page.getByLabel("Search or paste a community")
   for (const query of ["Searchable Builders", naddr, npub, "alice@example.com"]) {
     await search.fill(query)
-    await submit.click()
+    await search.press("Enter")
     await expect(page.getByText("Searchable Builders", {exact: true})).toBeVisible({
       timeout: 15_000,
     })

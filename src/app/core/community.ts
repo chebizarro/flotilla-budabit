@@ -146,20 +146,6 @@ export type TargetedPublication = {
   communities: CommunityTarget[]
 }
 
-export type CommunitySetupSection = {
-  name: string
-  kinds: CommunitySectionKind[]
-  profileList: CommunityProfileListRef
-  profileLists?: CommunityProfileListRef[]
-  retention?: CommunityRetentionPolicy[]
-}
-
-export type CommunitySetupRefs = {
-  communityPubkey: string
-  relays: string[]
-  sections: CommunitySetupSection[]
-}
-
 export type CommunityDefinitionSectionInput = {
   name: string
   kinds: CommunitySectionKind[]
@@ -333,16 +319,6 @@ export const normalizeGeohash = (value?: string) => {
   return normalized && GEOHASH_RE.test(normalized) ? normalized : ""
 }
 
-const slugifyCommunityValue = (value: string) =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "section"
-
-export const makeCommunityScopedIdentifier = (communityPubkey: string, value: string) =>
-  `budabit-${normalizePubkey(communityPubkey).slice(0, 16)}-${slugifyCommunityValue(value)}`
-
 export const getCommunitySectionKindAssignments = (
   sections: Array<Pick<CommunitySection, "name" | "kinds">>,
 ): CommunitySectionKindAssignment[] =>
@@ -421,71 +397,6 @@ export const DEFAULT_COMMUNITY_SECTION_NAMES = [
 
 export const makeAddress = (kind: number, pubkey: string, identifier: string) =>
   `${kind}:${normalizePubkey(pubkey)}:${identifier}`
-
-export const makeCommunitySetupSection = ({
-  communityPubkey,
-  profileListPubkey,
-  relays,
-  name,
-  kinds = getDefaultCommunitySectionKinds(name),
-}: {
-  communityPubkey: string
-  profileListPubkey: string
-  relays: string[]
-  name: string
-  kinds?: CommunitySectionKind[]
-}): CommunitySetupSection => {
-  const normalizedCommunityPubkey = normalizePubkey(communityPubkey)
-  const normalizedProfileListPubkey = normalizePubkey(profileListPubkey)
-  const normalizedRelays = normalizeRelays(relays)
-  const normalizedName = normalizeCommunitySectionName(name)
-  const normalizedKinds = kinds.map(normalizeCommunitySectionKind)
-  const identifier = makeCommunityScopedIdentifier(normalizedCommunityPubkey, normalizedName)
-  const profileListAddress = makeAddress(PROFILE_LIST_KIND, normalizedProfileListPubkey, identifier)
-  const profileList = {
-    kind: PROFILE_LIST_KIND,
-    pubkey: normalizedProfileListPubkey,
-    identifier,
-    address: profileListAddress,
-    relay: normalizedRelays[0],
-  }
-
-  return {
-    name: normalizedName,
-    kinds: normalizedKinds,
-    profileList,
-    profileLists: [profileList],
-  }
-}
-
-export const makeCommunitySetupRefs = ({
-  communityPubkey,
-  profileListPubkey,
-  relays,
-  sectionNames = DEFAULT_COMMUNITY_SECTION_NAMES,
-}: {
-  communityPubkey: string
-  profileListPubkey: string
-  relays: string[]
-  sectionNames?: readonly string[]
-}): CommunitySetupRefs => {
-  const normalizedCommunityPubkey = normalizePubkey(communityPubkey)
-  const normalizedProfileListPubkey = normalizePubkey(profileListPubkey)
-  const normalizedRelays = normalizeRelays(relays)
-
-  return {
-    communityPubkey: normalizedCommunityPubkey,
-    relays: normalizedRelays,
-    sections: sectionNames.map(name =>
-      makeCommunitySetupSection({
-        communityPubkey: normalizedCommunityPubkey,
-        profileListPubkey: normalizedProfileListPubkey,
-        relays: normalizedRelays,
-        name,
-      }),
-    ),
-  }
-}
 
 export const makeCommunityBadgeDefinition = ({
   badge,

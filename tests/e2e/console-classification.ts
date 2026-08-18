@@ -55,13 +55,22 @@ export function classifyConsoleMessages(
     const text = message.text
     const type = message.type
     const count = occurrences.get(text) ?? 0
+    const externalUrl = /^https?:\/\/(?!localhost(?::|\/)|127\.0\.0\.1(?::|\/))/i
+    const externalUrlInText = /https?:\/\/(?!localhost(?::|\/)|127\.0\.0\.1(?::|\/))/i
     const externalResourceFailure =
-      /^https?:\/\//.test(message.location?.url || "") &&
-      /Failed to load resource: net::ERR_FAILED/i.test(text)
+      (externalUrl.test(message.location?.url || "") && /Failed to load resource:/i.test(text)) ||
+      (/blocked by CORS policy/i.test(text) && externalUrlInText.test(text))
+    const unavailableDevSigner =
+      /^http:\/\/127\.0\.0\.1:7777\/?$/.test(message.location?.url || "") &&
+      /Failed to load resource: net::ERR_CONNECTION_REFUSED/i.test(text)
 
     let classification: ConsoleClassification
 
-    if (externalResourceFailure || ignorablePatterns.some(pattern => pattern.test(text))) {
+    if (
+      externalResourceFailure ||
+      unavailableDevSigner ||
+      ignorablePatterns.some(pattern => pattern.test(text))
+    ) {
       classification = "ignorable"
     } else if (type === "error") {
       if (count > 1 || blockingPatterns.some(pattern => pattern.test(text))) {

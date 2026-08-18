@@ -46,7 +46,7 @@ const definition = finalizeEvent(
 const profile = nip19.npubEncode(DEV_PUBKEY)
 
 const deepLinks: Array<{path: string; expectedText?: string; component?: string}> = [
-  {path: "/explore", expectedText: "Explore communities"},
+  {path: "/explore", expectedText: "Explore Communities"},
   {path: "/settings/about", expectedText: "Thanks for using BudaBit!"},
   {path: "/settings/relays", expectedText: "Messaging Relays"},
   {path: "/git", expectedText: "Git Repositories"},

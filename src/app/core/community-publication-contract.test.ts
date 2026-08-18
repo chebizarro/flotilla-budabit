@@ -90,9 +90,13 @@ describe("strict community publication source contracts", () => {
     expect(widgets).toContain("const baseRelays: string[] = []")
     expect(widgets).not.toContain("SMART_WIDGET_RELAYS")
     expect(widgets).not.toContain("Router.get().FromUser()")
-    expect(explore).toContain("CommunityLinkCard value={DEFAULT_COMMUNITY_POINTER}")
-    expect(explore).not.toContain("CommunityStarButton")
-    expect(explore).not.toContain("publishRelayHints")
+    expect(explore).toContain(
+      "const previewPublishRelayHints = $derived(normalizeRelays(previewDefinition?.relays || []))",
+    )
+    expect(explore).toContain(
+      "const defaultPublishRelayHints = $derived(normalizeRelays(defaultDefinition?.relays || []))",
+    )
+    expect(explore).toContain("publishRelayHints={item.publishRelayHints}")
   })
 
   it("keeps pending community stars outside the canonical repository", () => {
