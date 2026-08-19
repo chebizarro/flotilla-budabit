@@ -88,8 +88,8 @@
             How BudaBit communities work
           </h1>
           <p class="mt-5 max-w-3xl text-base leading-relaxed text-base-content/90 sm:text-lg">
-            A BudaBit community is anchored by a Nostr key, shaped by content sections, and free to
-            swap the infrastructure around it.
+            A BudaBit community has a stable community ID, is shaped by content sections, and is
+            free to swap the infrastructure around it.
           </p>
           <div class="mt-6 flex flex-wrap gap-2">
             {#each benefits as benefit}
@@ -108,10 +108,10 @@
               class="mx-auto rounded-2xl border border-primary bg-primary p-5 text-primary-content shadow-sm">
               <KeyRound size={44} />
             </div>
-            <strong class="text-xl text-base-content">One Nostr keypair</strong>
+            <strong class="text-xl text-base-content">Stable community ID</strong>
             <p class="text-sm leading-relaxed text-base-content/85">
-              The community identity is globally unique. Content can move between relays and apps
-              without becoming ambiguous.
+              An owner key can create multiple communities without making their identities
+              ambiguous.
             </p>
           </div>
           <div class="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-sm">
@@ -124,7 +124,7 @@
             </div>
           </div>
           <p class="mt-3 text-center text-xs text-base-content/75">
-            Same community, same key, no confusion.
+            Same community ID across relays, no confusion.
           </p>
         </div>
       </div>
@@ -167,17 +167,16 @@
       <article class="rounded-[1.5rem] border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
         <div class="flex items-center gap-3 text-info">
           <KeyRound size={28} />
-          <h2 class="text-2xl font-bold">One community, one key</h2>
+          <h2 class="text-2xl font-bold">Stable ID, explicit owner</h2>
         </div>
         <p class="mt-3 text-sm leading-relaxed opacity-75 sm:text-base">
-          Each community is tied to one Nostr keypair. That gives leaders one clear public identity
-          for publishing the community definition and policy.
+          Each community has its own stable ID and a definition signed by its owner key.
         </p>
         <div class="mt-5 rounded-2xl border border-info/25 bg-info/10 p-4">
           <div class="flex flex-wrap items-center justify-center gap-3 text-sm font-semibold">
-            <span class="rounded-full bg-base-100 px-4 py-2">npub...</span>
+            <span class="rounded-full bg-base-100 px-4 py-2">Community ID + owner</span>
             <ArrowRight size={18} />
-            <span class="rounded-full bg-base-100 px-4 py-2">Community definition</span>
+            <span class="rounded-full bg-base-100 px-4 py-2">Signed definition</span>
             <ArrowRight size={18} />
             <span class="rounded-full bg-base-100 px-4 py-2">Shared context</span>
           </div>
@@ -189,11 +188,11 @@
       <div class="max-w-4xl">
         <div class="flex items-center gap-3 text-primary">
           <Blocks size={28} />
-          <h2 class="text-2xl font-bold">Default content sections</h2>
+          <h2 class="text-2xl font-bold">Content sections</h2>
         </div>
         <p class="mt-3 text-sm leading-relaxed opacity-75 sm:text-base">
-          BudaBit starts communities with useful default sections. Owners can redefine those
-          sections later to match how their group actually works.
+          BudaBit communities are divided into "Content Sections." They define the types of content
+          the community handles, and moderation is scoped to each section.
         </p>
       </div>
 
@@ -273,7 +272,7 @@
           <h2 class="text-2xl font-bold">Owners delegate by section</h2>
         </div>
         <p class="mt-3 text-sm leading-relaxed opacity-75 sm:text-base">
-          The community controller can add any number of moderators to each section. Moderators help
+          The community owner can add any number of moderators to each section. Moderators help
           manage publishing access, application forms, reports, and moderation work.
         </p>
 
@@ -431,9 +430,7 @@
           <div class="rounded-2xl bg-base-200 p-4">
             <FileText class="text-warning" size={22} />
             <strong class="mt-3 block">Content access</strong>
-            <p class="mt-1 text-sm opacity-70">
-              Who can publish in each default or custom section.
-            </p>
+            <p class="mt-1 text-sm opacity-70">Who can publish in each section.</p>
           </div>
           <div class="rounded-2xl bg-base-200 p-4">
             <Flag class="text-error" size={22} />
@@ -448,9 +445,9 @@
       class="rounded-[1.5rem] border border-primary/25 bg-primary/10 p-5 text-center shadow-sm sm:p-6">
       <strong class="text-xl text-primary">The short version</strong>
       <p class="mx-auto mt-2 max-w-3xl text-sm leading-relaxed opacity-80 sm:text-base">
-        A BudaBit community is a portable Nostr identity with editable content sections, delegated
-        moderation, and optional infrastructure that the group can trust, replace, and share. This
-        enables fully portable and permissionless collaboration over open protocols.
+        A BudaBit community consists of portable Nostr identities, editable content sections,
+        delegated moderation, and optional infrastructure that the group can trust, replace, and
+        share. This enables fully portable and permissionless collaboration over open protocols.
       </p>
     </section>
 

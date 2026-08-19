@@ -269,13 +269,14 @@
   const SUBTYPE_HELP =
     "Optional third value in a k tag. Use it when one event kind supports multiple sections, like 11/room, 11/threads, or 9/room-message."
   const RECOMMENDED_COMMUNITY_RELAYS = normalizeRelays([
-    "wss://budabit.nostr1.com",
+    "wss://relay.budabit.club",
     "wss://nos.lol",
-    "wss://relay.damus.io",
   ])
   const STRFRY_RELAY_URL = "https://github.com/hoytech/strfry"
   const BLOSSOM_SERVER_URL =
     "https://budabit.club/git/naddr1qvzqqqrhnypzqfngzhsvjggdlgeycm96x4emzjlwf8dyyzdfg4hefp89zpkdgz99qyvhwumn8ghj7emfwsh8x6rpddjhxur9v9ex2tnyd9usz9rhwden5te0wfjkccte9ehxw6t59ejx2aspr9mhxue69uhhq7tjv9kkjepwve5kzar2v9nzucm0d5qqucnvdaehxmmd94ek2unkv4eqs93a9j"
+  const EMAIL_DIGEST_PROVIDER_IMPLEMENTATION_URL =
+    "https://budabit.club/git/naddr1qvzqqqrhnypzp5zweue6xqa9npf0md5pak95zgsph2za35sentk88jmzdqwk925sqyxhwumn8ghj7mn0wvhxcmmvqyv8wumn8ghj7cn4v3sky6t59ehx7um5wgcjucm0d5q3samnwvaz7tm8wfshxupwvf6kgctzd96zucmvw43qqpnpde3ksmmjdnfhh0"
   const KNOWN_SECTION_KIND_OPTIONS = [
     {label: "Room Messages", kind: 9, subtype: "room-message"},
     {label: "Rooms", kind: 11, subtype: "room"},
@@ -3133,140 +3134,158 @@
                 >{/snippet}
             </Field>
           </div>
-          <div class="mt-5 rounded-2xl border border-base-300 bg-base-200/40 p-4 sm:p-5">
-            <div class="mb-4">
-              <p class="font-semibold">
-                Email digest provider <span class="opacity-60">(optional)</span>
-              </p>
-              <p class="mt-1 text-sm leading-relaxed text-base-content/70">
+          <details class="mt-5 rounded-2xl border border-base-300 bg-base-200/40 p-4 sm:p-5">
+            <summary class="cursor-pointer select-none font-semibold">
+              Email digest providers <span class="opacity-60">(optional)</span>
+            </summary>
+            <div class="mt-4 border-t border-base-300 pt-4">
+              <p class="text-sm leading-relaxed text-base-content/70">
                 Declaring a provider is a community endorsement only. Users opt in separately and
                 share their email address directly with that provider.
               </p>
-              {#if additionalEmailDigestServices.length > 0}
-                <p class="mt-2 text-xs font-medium text-info">
-                  {additionalEmailDigestServices.length} additional provider declaration{additionalEmailDigestServices.length ===
-                  1
-                    ? " is"
-                    : "s are"} preserved unchanged.
-                </p>
-              {/if}
-            </div>
-            <div class="grid gap-4 md:grid-cols-2">
-              <Field error={errors.emailDigestServicePubkey}>
-                {#snippet label()}<p>Service pubkey</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={emailDigestServicePubkey}
-                    class="input input-bordered w-full {errors.emailDigestServicePubkey
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("emailDigestServicePubkey")}
-                    type="text"
-                    spellcheck="false"
-                    placeholder="64-character hex pubkey" />{/snippet}
-              </Field>
-              <Field error={errors.emailDigestRequestRelay}>
-                {#snippet label()}<p>Request/status relay</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={emailDigestRequestRelay}
-                    class="input input-bordered w-full {errors.emailDigestRequestRelay
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("emailDigestRequestRelay")}
-                    type="url"
-                    placeholder="wss://digest.example.com" />{/snippet}
-              </Field>
-              <Field error={errors.emailDigestHandlerAddress}>
-                {#snippet label()}<p>Handler address</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={emailDigestHandlerAddress}
-                    class="input input-bordered w-full {errors.emailDigestHandlerAddress
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("emailDigestHandlerAddress")}
-                    type="text"
-                    spellcheck="false"
-                    placeholder="31990:<handler pubkey>:<id>" />{/snippet}
-              </Field>
-              <Field error={errors.emailDigestHandlerRelay}>
-                {#snippet label()}<p>Handler relay</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={emailDigestHandlerRelay}
-                    class="input input-bordered w-full {errors.emailDigestHandlerRelay
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("emailDigestHandlerRelay")}
-                    type="url"
-                    placeholder="wss://handlers.example.com" />{/snippet}
-              </Field>
-            </div>
-          </div>
-          <div class="mt-5 rounded-2xl border border-base-300 bg-base-200/40 p-4 sm:p-5">
-            <div class="mb-4">
-              <p class="font-semibold">
-                Community alerts provider <span class="opacity-60">(optional)</span>
+              <p class="mt-2 text-sm leading-relaxed text-base-content/70">
+                See open source email digest provider implementation
+                <a
+                  class="link font-medium"
+                  href={EMAIL_DIGEST_PROVIDER_IMPLEMENTATION_URL}
+                  target="_blank"
+                  rel="noopener noreferrer">here</a
+                >.
               </p>
-              <p class="mt-1 text-sm leading-relaxed text-base-content/70">
-                This service declaration is a community endorsement. Only members can opt in, and
-                they share their email address directly with the provider.
-              </p>
-              {#if additionalCommunityAlertServices.length > 0}
-                <p class="mt-2 text-xs font-medium text-info">
-                  {additionalCommunityAlertServices.length} additional provider declaration{additionalCommunityAlertServices.length ===
-                  1
-                    ? " is"
-                    : "s are"} preserved unchanged.
-                </p>
-              {/if}
+
+              <div class="mt-5 rounded-2xl border border-base-300 bg-base-100/60 p-4">
+                <div class="mb-4">
+                  <p class="font-semibold">Repository digest provider</p>
+                  <p class="mt-1 text-sm leading-relaxed text-base-content/70">
+                    Users receive email digests about watched repositories. Each user selects one
+                    global provider.
+                  </p>
+                  {#if additionalEmailDigestServices.length > 0}
+                    <p class="mt-2 text-xs font-medium text-info">
+                      {additionalEmailDigestServices.length} additional provider declaration{additionalEmailDigestServices.length ===
+                      1
+                        ? " is"
+                        : "s are"} preserved unchanged.
+                    </p>
+                  {/if}
+                </div>
+                <div class="grid gap-4 md:grid-cols-2">
+                  <Field error={errors.emailDigestServicePubkey}>
+                    {#snippet label()}<p>Service pubkey</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={emailDigestServicePubkey}
+                        class="input input-bordered w-full {errors.emailDigestServicePubkey
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("emailDigestServicePubkey")}
+                        type="text"
+                        spellcheck="false"
+                        placeholder="64-character hex pubkey" />{/snippet}
+                  </Field>
+                  <Field error={errors.emailDigestRequestRelay}>
+                    {#snippet label()}<p>Request/status relay</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={emailDigestRequestRelay}
+                        class="input input-bordered w-full {errors.emailDigestRequestRelay
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("emailDigestRequestRelay")}
+                        type="url"
+                        placeholder="wss://digest.example.com" />{/snippet}
+                  </Field>
+                  <Field error={errors.emailDigestHandlerAddress}>
+                    {#snippet label()}<p>Handler address</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={emailDigestHandlerAddress}
+                        class="input input-bordered w-full {errors.emailDigestHandlerAddress
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("emailDigestHandlerAddress")}
+                        type="text"
+                        spellcheck="false"
+                        placeholder="31990:<handler pubkey>:<id>" />{/snippet}
+                  </Field>
+                  <Field error={errors.emailDigestHandlerRelay}>
+                    {#snippet label()}<p>Handler relay</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={emailDigestHandlerRelay}
+                        class="input input-bordered w-full {errors.emailDigestHandlerRelay
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("emailDigestHandlerRelay")}
+                        type="url"
+                        placeholder="wss://handlers.example.com" />{/snippet}
+                  </Field>
+                </div>
+              </div>
+
+              <div class="mt-5 rounded-2xl border border-base-300 bg-base-100/60 p-4">
+                <div class="mb-4">
+                  <p class="font-semibold">Community digest provider</p>
+                  <p class="mt-1 text-sm leading-relaxed text-base-content/70">
+                    This provider sends activity digests only about the community that advertises
+                    it. Users opt in per community.
+                  </p>
+                  {#if additionalCommunityAlertServices.length > 0}
+                    <p class="mt-2 text-xs font-medium text-info">
+                      {additionalCommunityAlertServices.length} additional provider declaration{additionalCommunityAlertServices.length ===
+                      1
+                        ? " is"
+                        : "s are"} preserved unchanged.
+                    </p>
+                  {/if}
+                </div>
+                <div class="grid gap-4 md:grid-cols-2">
+                  <Field error={errors.communityAlertServicePubkey}>
+                    {#snippet label()}<p>Service pubkey</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={communityAlertServicePubkey}
+                        class="input input-bordered w-full {errors.communityAlertServicePubkey
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("communityAlertServicePubkey")}
+                        type="text"
+                        spellcheck="false"
+                        placeholder="64-character hex pubkey" />{/snippet}
+                  </Field>
+                  <Field error={errors.communityAlertRequestRelay}>
+                    {#snippet label()}<p>Request/status relay</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={communityAlertRequestRelay}
+                        class="input input-bordered w-full {errors.communityAlertRequestRelay
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("communityAlertRequestRelay")}
+                        type="url"
+                        placeholder="wss://alerts.example.com" />{/snippet}
+                  </Field>
+                  <Field error={errors.communityAlertHandlerAddress}>
+                    {#snippet label()}<p>Handler address</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={communityAlertHandlerAddress}
+                        class="input input-bordered w-full {errors.communityAlertHandlerAddress
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("communityAlertHandlerAddress")}
+                        type="text"
+                        spellcheck="false"
+                        placeholder="31990:<handler pubkey>:<id>" />{/snippet}
+                  </Field>
+                  <Field error={errors.communityAlertHandlerRelay}>
+                    {#snippet label()}<p>Handler relay</p>{/snippet}
+                    {#snippet input()}<input
+                        bind:value={communityAlertHandlerRelay}
+                        class="input input-bordered w-full {errors.communityAlertHandlerRelay
+                          ? 'input-error'
+                          : ''}"
+                        onblur={() => validateField("communityAlertHandlerRelay")}
+                        type="url"
+                        placeholder="wss://handlers.example.com" />{/snippet}
+                  </Field>
+                </div>
+              </div>
             </div>
-            <div class="grid gap-4 md:grid-cols-2">
-              <Field error={errors.communityAlertServicePubkey}>
-                {#snippet label()}<p>Service pubkey</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={communityAlertServicePubkey}
-                    class="input input-bordered w-full {errors.communityAlertServicePubkey
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("communityAlertServicePubkey")}
-                    type="text"
-                    spellcheck="false"
-                    placeholder="64-character hex pubkey" />{/snippet}
-              </Field>
-              <Field error={errors.communityAlertRequestRelay}>
-                {#snippet label()}<p>Request/status relay</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={communityAlertRequestRelay}
-                    class="input input-bordered w-full {errors.communityAlertRequestRelay
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("communityAlertRequestRelay")}
-                    type="url"
-                    placeholder="wss://alerts.example.com" />{/snippet}
-              </Field>
-              <Field error={errors.communityAlertHandlerAddress}>
-                {#snippet label()}<p>Handler address</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={communityAlertHandlerAddress}
-                    class="input input-bordered w-full {errors.communityAlertHandlerAddress
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("communityAlertHandlerAddress")}
-                    type="text"
-                    spellcheck="false"
-                    placeholder="31990:<handler pubkey>:<id>" />{/snippet}
-              </Field>
-              <Field error={errors.communityAlertHandlerRelay}>
-                {#snippet label()}<p>Handler relay</p>{/snippet}
-                {#snippet input()}<input
-                    bind:value={communityAlertHandlerRelay}
-                    class="input input-bordered w-full {errors.communityAlertHandlerRelay
-                      ? 'input-error'
-                      : ''}"
-                    onblur={() => validateField("communityAlertHandlerRelay")}
-                    type="url"
-                    placeholder="wss://handlers.example.com" />{/snippet}
-              </Field>
-            </div>
-          </div>
+          </details>
         </section>
       </div>
 
