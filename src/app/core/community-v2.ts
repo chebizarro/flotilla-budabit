@@ -1,4 +1,3 @@
-import {schnorr} from "@noble/curves/secp256k1"
 import * as nip19 from "nostr-tools/nip19"
 import type {EventContent, Filter, TrustedEvent} from "@welshman/util"
 
@@ -120,34 +119,11 @@ const SECTION_SHARD = /^(?:[2-9]|[1-9][0-9]+)$/
 const SERVICE_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 const MINT_TYPE = /^[\x21-\x7e]{1,32}$/
 const utf8Length = (value: string) => new TextEncoder().encode(value).length
-const liftableXOnlyKeyCache = new Map<string, boolean>()
-const MAX_LIFTABLE_KEY_CACHE = 4_096
-
-const isLiftableXOnlyKey = (value: string) => {
-  if (!LOWER_HEX_64.test(value)) return false
-  const cached = liftableXOnlyKeyCache.get(value)
-  if (cached !== undefined) return cached
-
-  let liftable = false
-  try {
-    schnorr.utils.lift_x(BigInt(`0x${value}`))
-    liftable = true
-  } catch {
-    liftable = false
-  }
-
-  if (liftableXOnlyKeyCache.size >= MAX_LIFTABLE_KEY_CACHE) {
-    liftableXOnlyKeyCache.delete(liftableXOnlyKeyCache.keys().next().value!)
-  }
-  liftableXOnlyKeyCache.set(value, liftable)
-  return liftable
-}
-
 export const parseCommunityId = (value: string): CommunityId | undefined =>
-  isLiftableXOnlyKey(value) ? (value as CommunityId) : undefined
+  LOWER_HEX_64.test(value) ? (value as CommunityId) : undefined
 
 export const parseControllerPubkey = (value: string): ControllerPubkey | undefined =>
-  isLiftableXOnlyKey(value) ? (value as ControllerPubkey) : undefined
+  LOWER_HEX_64.test(value) ? (value as ControllerPubkey) : undefined
 
 const normalizeUrl = (
   value: string | undefined,

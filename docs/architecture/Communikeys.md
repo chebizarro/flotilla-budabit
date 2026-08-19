@@ -9,7 +9,7 @@ V2 is a clean protocol generation. This document does not define V1 discovery, m
 ## Identity Model
 
 ```text
-communityId       = stable secp256k1 x-only public key hex
+communityId       = stable 32-byte identifier encoded as lowercase hex
 definition d      = communityId
 community event h = communityId
 controller        = definition event author
@@ -21,9 +21,11 @@ There is one stable community ID. A definition address identifies one exact cont
 
 ### Community ID
 
-A community ID MUST contain exactly 64 lowercase hexadecimal characters and represent an x-coordinate that can be lifted to a point on secp256k1.
+A community ID MUST contain exactly 64 lowercase hexadecimal characters. Current creation derives this identifier from a secp256k1 public key for uniqueness, but readers MUST treat it as an opaque identifier and MUST NOT require it to lift to a curve point.
 
 For a new community, the creator MUST use a cryptographically secure random source to generate a secp256k1 keypair, retain the x-only public key as the community ID, and immediately discard the private key. The discarded key MUST NOT be persisted, logged, backed up, exported, or used to sign an event. A migrated community MAY instead retain the stable pubkey value already present in immutable community references.
+
+Controller and community-reference parsers validate canonical lowercase 64-character hexadecimal encoding only. Whether a controller is a usable signing key is established by verification of the referenced definition event, not by curve-lifting the reference. Likewise, targeting-wrapper admission resolves and admits the referenced original publication; parsing the wrapper does not repeat cryptographic validation of cached trusted events.
 
 A value read from a community-ID position, including definition `d`, content `h`, or the identifier of a marked community `a`, grants no signing, person, profile, relay, or administrative meaning. Implementations MUST NOT use that field value by itself as an event author, person `p` tag, outbox or profile lookup, DM recipient, NIP-05 identity, administrator, or permission-list signer.
 

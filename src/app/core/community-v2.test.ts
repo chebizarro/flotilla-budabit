@@ -17,6 +17,7 @@ import {
   makeCommunityScopeTagsV2,
   parseCommunityId,
   parseCommunityNaddr,
+  parseControllerPubkey,
   parseTargetedPublicationV2,
   removeTargetedCommunityV2,
   selectCurrentAddressableEvent,
@@ -52,12 +53,14 @@ const section = {
 }
 
 describe("Communikeys V2 identity", () => {
-  it("accepts only lowercase liftable x-only community IDs", () => {
+  it("accepts canonical lowercase 32-byte community IDs without curve validation", () => {
     expect(parseCommunityId(communityId)).toBe(communityId)
     expect(parseCommunityId(communityId.toUpperCase())).toBeUndefined()
-    expect(parseCommunityId("f".repeat(64))).toBeUndefined()
-    expect(parseCommunityId("0".repeat(64))).toBeUndefined()
+    expect(parseCommunityId("f".repeat(64))).toBe("f".repeat(64))
+    expect(parseCommunityId("0".repeat(64))).toBe("0".repeat(64))
     expect(parseCommunityId("abc")).toBeUndefined()
+    expect(parseControllerPubkey("f".repeat(64))).toBe("f".repeat(64))
+    expect(parseControllerPubkey("F".repeat(64))).toBeUndefined()
   })
 
   it("derives coherent pointers and ignores relay hints for equality", () => {
