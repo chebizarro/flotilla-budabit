@@ -341,67 +341,6 @@
         class="grid min-w-0 gap-4 lg:items-start {showPreferredCommunities
           ? 'lg:grid-cols-[minmax(0,1fr)_minmax(24rem,28rem)]'
           : 'lg:grid-cols-[minmax(24rem,28rem)] lg:justify-center'}">
-        <div
-          class="flex min-w-0 flex-col gap-4 lg:row-start-1 {showPreferredCommunities
-            ? 'lg:col-start-2'
-            : ''}">
-          <CommunityPreviewCard
-            community={previewCommunity}
-            definition={previewDefinition}
-            relayHints={previewRelayHints}
-            shareRelayHints={previewRelayHints}
-            publishRelayHints={previewPublishRelayHints}
-            label={previewLabel}
-            emptyInfo={previewEmptyInfo}
-            onOpen={openPreviewCommunity}
-            bind:inputValue={communitySearchInput}
-            showInput
-            inputLabel="Search or paste a community"
-            inputPlaceholder="Search names, naddr1..., npub1..., or NIP-05"
-            showActions={previewHasCommunityDefinition}
-            loading={previewLoading}
-            opening={previewOpening}
-            notFound={previewCommunityNotFound}
-            unavailable={previewCommunityUnavailable}
-            inputSearch={searchCommunityInputProfiles}
-            inputSuggestionDefinitions={communityDefinitions}
-            onInputSelect={selectCommunityInputProfile}
-            onSubmit={submitCommunityInput} />
-
-          {#if defaultCommunity}
-            <CommunityPreviewCard
-              community={defaultCommunity}
-              definition={defaultDefinition}
-              relayHints={defaultRelayHints}
-              shareRelayHints={defaultRelayHints}
-              publishRelayHints={defaultPublishRelayHints}
-              label="Brand new? Start here:"
-              emptyInfo="Start with the recommended community."
-              onOpen={() => enterCommunity(defaultCommunity)}
-              showActions={defaultHasCommunityDefinition}
-              loading={defaultLoading}
-              opening={defaultOpening}
-              notFound={defaultCommunityNotFound}
-              unavailable={defaultCommunityUnavailable} />
-          {/if}
-
-          <div class="flex min-w-0 flex-col gap-2 sm:flex-row">
-            <Button
-              onclick={createCommunity}
-              class="btn btn-neutral min-h-10 min-w-0 flex-1 items-center justify-start gap-2 rounded-box px-3 py-2 text-sm sm:min-h-16 sm:gap-4 sm:px-6 sm:py-4 sm:text-base">
-              <Icon icon={AddCircle} size={7} />
-              <span class="min-w-0 truncate font-bold leading-none">Create Community</span>
-            </Button>
-            {#if hasOwnCommunity}
-              <Button
-                onclick={editOwnCommunity}
-                class="btn btn-primary min-h-10 rounded-box px-4 py-2 text-sm font-bold sm:min-h-16 sm:px-6 sm:py-4 sm:text-base">
-                Edit
-              </Button>
-            {/if}
-          </div>
-        </div>
-
         {#if showPreferredCommunities}
           <div class="card2 card2-sm bg-alt col-3 min-w-0 shadow-md lg:col-start-1 lg:row-start-1">
             <div class="flex flex-col gap-2">
@@ -436,6 +375,67 @@
             </div>
           </div>
         {/if}
+
+        <div
+          class="flex min-w-0 flex-col gap-4 lg:row-start-1 {showPreferredCommunities
+            ? 'lg:col-start-2'
+            : ''}">
+          {#if defaultCommunity}
+            <CommunityPreviewCard
+              community={defaultCommunity}
+              definition={defaultDefinition}
+              relayHints={defaultRelayHints}
+              shareRelayHints={defaultRelayHints}
+              publishRelayHints={defaultPublishRelayHints}
+              label="Brand new? Start here:"
+              emptyInfo="Start with the recommended community."
+              onOpen={() => enterCommunity(defaultCommunity)}
+              showActions={defaultHasCommunityDefinition}
+              loading={defaultLoading}
+              opening={defaultOpening}
+              notFound={defaultCommunityNotFound}
+              unavailable={defaultCommunityUnavailable} />
+          {/if}
+
+          <CommunityPreviewCard
+            community={previewCommunity}
+            definition={previewDefinition}
+            relayHints={previewRelayHints}
+            shareRelayHints={previewRelayHints}
+            publishRelayHints={previewPublishRelayHints}
+            label={previewLabel}
+            emptyInfo={previewEmptyInfo}
+            onOpen={openPreviewCommunity}
+            bind:inputValue={communitySearchInput}
+            showInput
+            inputLabel="Search or paste a community"
+            inputPlaceholder="Search names, naddr1..., npub1..., or NIP-05"
+            showActions={previewHasCommunityDefinition}
+            loading={previewLoading}
+            opening={previewOpening}
+            notFound={previewCommunityNotFound}
+            unavailable={previewCommunityUnavailable}
+            inputSearch={searchCommunityInputProfiles}
+            inputSuggestionDefinitions={communityDefinitions}
+            onInputSelect={selectCommunityInputProfile}
+            onSubmit={submitCommunityInput} />
+
+          <div class="flex min-w-0 flex-col gap-2 sm:flex-row">
+            <Button
+              onclick={createCommunity}
+              class="btn btn-neutral min-h-10 min-w-0 flex-1 items-center justify-start gap-2 rounded-box px-3 py-2 text-sm sm:min-h-16 sm:gap-4 sm:px-6 sm:py-4 sm:text-base">
+              <Icon icon={AddCircle} size={7} />
+              <span class="min-w-0 truncate font-bold leading-none">Create Community</span>
+            </Button>
+            {#if hasOwnCommunity}
+              <Button
+                onclick={editOwnCommunity}
+                class="btn btn-primary min-h-10 rounded-box px-4 py-2 text-sm font-bold sm:min-h-16 sm:px-6 sm:py-4 sm:text-base">
+                Edit
+              </Button>
+            {/if}
+          </div>
+        </div>
       </div>
     </div>
   </div>
