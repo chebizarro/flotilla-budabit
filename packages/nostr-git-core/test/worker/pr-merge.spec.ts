@@ -88,6 +88,9 @@ describe("pr-merge", () => {
       merge: vi.fn().mockResolvedValue({oid: "merge-commit-oid-789"}),
       listRemotes: vi.fn().mockResolvedValue([]),
       deleteRef: vi.fn().mockResolvedValue(undefined),
+      TREE: vi.fn((args: any) => args),
+      walk: vi.fn().mockResolvedValue([]),
+      readBlob: vi.fn().mockResolvedValue({blob: new TextEncoder().encode("clean\n")}),
     } as any
 
     const baseDeps = {
@@ -145,6 +148,78 @@ describe("pr-merge", () => {
       )
     })
 
+    it("blocks the merge before mutation when changed files contain a secret", async () => {
+      const before = {
+        type: async () => "blob",
+        oid: async () => "before-oid",
+      }
+      const after = {
+        type: async () => "blob",
+        oid: async () => "after-oid",
+      }
+      vi.mocked(mockGit.walk).mockImplementationOnce(async ({map}: any) => [
+        await map("config.env", [before, after]),
+      ])
+      vi.mocked(mockGit.readBlob).mockResolvedValueOnce({
+        blob: new TextEncoder().encode(
+          "REMOTE=https://maintainer:planted-secret-value@example.org\n",
+        ),
+      } as any)
+
+      const result = await mergePRAndPushUtil(
+        mockGit,
+        {
+          repoId: "test-repo",
+          cloneUrls: ["https://github.com/user/repo.git"],
+          tipCommitOid: "tip-oid-456",
+          targetBranch: "main",
+          skipPush: true,
+        } as MergePRAndPushOptions,
+        baseDeps as any,
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Secret scan blocked merge")
+      expect(result.secretFindings).toHaveLength(1)
+      expect(result.secretFindings?.[0]?.maskedSnippet).not.toContain("planted-secret-value")
+      expect(mockGit.merge).not.toHaveBeenCalled()
+    })
+
+    it("blocks and restores the target when the merged tree synthesizes a secret", async () => {
+      const before = {type: async () => "blob", oid: async () => "before-oid"}
+      const after = {type: async () => "blob", oid: async () => "merged-oid"}
+      vi.mocked(mockGit.walk)
+        .mockResolvedValueOnce([])
+        .mockImplementationOnce(async ({map}: any) => [await map("config.env", [before, after])])
+      vi.mocked(mockGit.readBlob).mockResolvedValueOnce({
+        blob: new TextEncoder().encode(
+          "REMOTE=https://maintainer:synthesized-secret-value@example.org\n",
+        ),
+      } as any)
+
+      const result = await mergePRAndPushUtil(
+        mockGit,
+        {
+          repoId: "test-repo",
+          cloneUrls: ["https://github.com/user/repo.git"],
+          tipCommitOid: "tip-oid-456",
+          targetBranch: "main",
+          skipPush: true,
+        } as MergePRAndPushOptions,
+        baseDeps as any,
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Secret scan blocked merge")
+      expect(mockGit.merge).toHaveBeenCalledOnce()
+      expect(mockGit.writeRef).toHaveBeenCalledWith({
+        dir: "/tmp/repos/test-repo",
+        ref: "refs/heads/main",
+        value: "target-oid-123",
+        force: true,
+      })
+    })
+
     it("materializes merged tree before returning a deferred push result", async () => {
       const fs = createTestFs("pr-merge-skip-push-clean")
       const dir = "/tmp/repos/test-repo"
@@ -174,6 +249,12 @@ describe("pr-merge", () => {
         listRemotes: vi.fn(async (args: any) => await isogit.listRemotes({fs: fs as any, ...args})),
         deleteRef: vi.fn(
           async (args: any) => await (isogit as any).deleteRef({fs: fs as any, ...args}),
+        ),
+        TREE: (args: any) => (isogit as any).TREE(args),
+        walk: vi.fn(async (args: any) => await isogit.walk({fs: fs as any, ...args})),
+        readBlob: vi.fn(async (args: any) => await isogit.readBlob({fs: fs as any, ...args})),
+        findMergeBase: vi.fn(
+          async (args: any) => await (isogit as any).findMergeBase({fs: fs as any, ...args}),
         ),
       } as any as GitProvider
 
@@ -365,6 +446,9 @@ describe("pr-merge", () => {
       findMergeBase: vi.fn().mockResolvedValue("base-oid"),
       isDescendent: vi.fn().mockResolvedValue(false),
       listBranches: vi.fn().mockResolvedValue(["main"]),
+      TREE: vi.fn((args: any) => args),
+      walk: vi.fn().mockResolvedValue([]),
+      readBlob: vi.fn().mockResolvedValue({blob: new TextEncoder().encode("clean\n")}),
     } as any
 
     const baseDeps = {
@@ -399,12 +483,15 @@ describe("pr-merge", () => {
         log: vi.fn(async (args: any) => await isogit.log({fs, ...args})),
         resolveRef: vi.fn(async (args: any) => await isogit.resolveRef({fs, ...args})),
         merge: vi.fn(async (args: any) => await isogit.merge({fs, ...args})),
-        findMergeBase: vi.fn(async (args: any) => await (isogit as any).findMergeBase({fs, ...args})),
+        findMergeBase: vi.fn(
+          async (args: any) => await (isogit as any).findMergeBase({fs, ...args}),
+        ),
         isDescendent: vi.fn(async (args: any) => await isogit.isDescendent({fs, ...args})),
         listBranches: vi.fn(async (args: any) => await isogit.listBranches({fs, ...args})),
         statusMatrix: vi.fn(async (args: any) => await isogit.statusMatrix({fs, ...args})),
         walk: vi.fn(async (args: any) => await isogit.walk({fs, ...args})),
-      } as any as GitProvider)
+        readBlob: vi.fn(async (args: any) => await isogit.readBlob({fs, ...args})),
+      }) as any as GitProvider
 
     const dirtyRows = (matrix: any[]) =>
       matrix.filter(([, head, workdir, stage]) => workdir !== head || stage !== head)
@@ -462,6 +549,36 @@ describe("pr-merge", () => {
       )
     })
 
+    it("marks merge analysis blocked when changed files contain a secret", async () => {
+      const before = {type: async () => "blob", oid: async () => "before-oid"}
+      const after = {type: async () => "blob", oid: async () => "after-oid"}
+      vi.mocked(mockGit.walk)
+        .mockImplementationOnce(async ({map}: any) => [await map("config.env", [before, after])])
+        .mockImplementationOnce(async ({map}: any) => [await map("config.env", [before, after])])
+      vi.mocked(mockGit.readBlob).mockResolvedValueOnce({
+        blob: new TextEncoder().encode(
+          "REMOTE=https://reviewer:planted-secret-value@example.org\n",
+        ),
+      } as any)
+
+      const result = await analyzePRMergeUtil(
+        mockGit,
+        {
+          repoId: "repo",
+          prCloneUrls: ["https://github.com/user/fork.git"],
+          targetCloneUrls: ["https://github.com/upstream/repo.git"],
+          tipCommitOid: "tip-oid",
+          targetBranch: "main",
+        } as AnalyzePRMergeOptions,
+        baseDeps as any,
+      )
+
+      expect(result.analysis).toBe("blocked")
+      expect(result.canMerge).toBe(false)
+      expect(result.secretFindings).toHaveLength(1)
+      expect(result.secretFindings?.[0]?.maskedSnippet).not.toContain("planted-secret-value")
+    })
+
     it("keeps analysis clean after a real conflict analysis in the same repo", async () => {
       const fs = createTestFs("pr-analysis-conflict-then-clean")
       const dir = "/tmp/repos/test-repo"
@@ -504,12 +621,7 @@ describe("pr-merge", () => {
         force: true,
       })
       await checkout(harness, "clean-pr")
-      const cleanTip = await commitFile(
-        harness,
-        "/docs/feature.txt",
-        "feature\n",
-        "clean feature",
-      )
+      const cleanTip = await commitFile(harness, "/docs/feature.txt", "feature\n", "clean feature")
       await checkout(harness, "main")
 
       const conflict = await analyzePRMergeability(realGit, dir, {

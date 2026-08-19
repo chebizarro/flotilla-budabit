@@ -1021,6 +1021,7 @@ export class WorkerManager {
     skippedRemotes?: string[];
     warning?: string;
     pushErrors?: Array<{ remote: string; url: string; error: string; code: string; stack: string }>;
+    secretFindings?: import("@nostr-git/core/git").SecretFinding[];
   }> {
     await this.initialize();
 

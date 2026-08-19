@@ -2,6 +2,7 @@ import type {GitProvider} from "./provider.js"
 import {createMergeMetadataEvent, createConflictMetadataEvent} from "../events/index.js"
 import {wrapError, type GitErrorContext} from "../errors/index.js"
 import {fetchPrSourceTip} from "./pr-source-fetch.js"
+import type {SecretFinding} from "./secret-findings.js"
 
 /**
  * Build a Merge Metadata event (kind 30411) from a merge analysis result.
@@ -69,8 +70,9 @@ export interface MergeAnalysisResult {
   targetCommit?: string
   remoteCommit?: string
   patchCommits: string[]
-  analysis: "clean" | "conflicts" | "up-to-date" | "diverged" | "error"
+  analysis: "clean" | "conflicts" | "up-to-date" | "diverged" | "blocked" | "error"
   errorMessage?: string
+  secretFindings?: SecretFinding[]
 }
 
 export interface ConflictDetail {
@@ -608,6 +610,9 @@ export async function analyzePRMergeability(
           const filesChanged = baseForDiff
             ? await getChangedFilesBetween(git, repoDir, baseForDiff, prTipRef)
             : []
+          const secretFindings = baseForDiff
+            ? await scanChangedFilesForSecrets(git, repoDir, baseForDiff, prTipOid)
+            : []
           const prCommits = await getPRCommitsOnly(
             git,
             repoDir,
@@ -621,7 +626,7 @@ export async function analyzePRMergeability(
               : await getCommitMetadataForOids(git, repoDir, [prTipRef])
           const patchCommitOids = effectivePrCommits.map(commit => commit.oid)
           return {
-            canMerge: true,
+            canMerge: secretFindings.length === 0,
             hasConflicts: false,
             conflictFiles: [],
             conflictDetails: [],
@@ -631,7 +636,12 @@ export async function analyzePRMergeability(
             targetCommit,
             remoteCommit: undefined,
             patchCommits: patchCommitOids.length > 0 ? patchCommitOids : patchCommits,
-            analysis: "clean",
+            analysis: secretFindings.length > 0 ? "blocked" : "clean",
+            errorMessage:
+              secretFindings.length > 0
+                ? `Secret scan blocked merge: ${secretFindings.length} potential secret(s) detected.`
+                : undefined,
+            secretFindings,
             filesChanged,
             usedTargetCloneUrl,
             usedCloneUrl: url,
@@ -650,6 +660,9 @@ export async function analyzePRMergeability(
         const filesChanged = baseForDiff
           ? await getChangedFilesBetween(git, repoDir, baseForDiff, prTipRef)
           : []
+        const secretFindings = baseForDiff
+          ? await scanChangedFilesForSecrets(git, repoDir, baseForDiff, prTipOid)
+          : []
         const prCommits = await getPRCommitsOnly(
           git,
           repoDir,
@@ -667,7 +680,7 @@ export async function analyzePRMergeability(
         )
 
         return {
-          canMerge: !mergeResult.hasConflicts,
+          canMerge: !mergeResult.hasConflicts && secretFindings.length === 0,
           hasConflicts: mergeResult.hasConflicts,
           conflictFiles: mergeResult.conflictFiles,
           conflictDetails: mergeResult.conflictDetails,
@@ -677,7 +690,17 @@ export async function analyzePRMergeability(
           targetCommit,
           remoteCommit: undefined,
           patchCommits: patchCommitOids.length > 0 ? patchCommitOids : patchCommits,
-          analysis: mergeResult.hasConflicts ? "conflicts" : "clean",
+          analysis:
+            secretFindings.length > 0
+              ? "blocked"
+              : mergeResult.hasConflicts
+                ? "conflicts"
+                : "clean",
+          errorMessage:
+            secretFindings.length > 0
+              ? `Secret scan blocked merge: ${secretFindings.length} potential secret(s) detected.`
+              : undefined,
+          secretFindings,
           filesChanged,
           usedTargetCloneUrl,
           usedCloneUrl: url,
@@ -705,23 +728,23 @@ export async function analyzePRMergeability(
   return result.result
 }
 
-/**
- * Get list of files that differ between two commits (fromOid -> toOid).
- * Uses git walk to compare tree blobs; only returns leaf files (not directories).
- * Used for PR diff display (files changed in the PR).
- */
-async function getChangedFilesBetween(
+interface ChangedFileEntry {
+  path: string
+  existsAtTip: boolean
+}
+
+const MAX_SECRET_SCAN_FILES = 1000
+const MAX_SECRET_SCAN_FILE_BYTES = 1024 * 1024
+const MAX_SECRET_SCAN_TOTAL_BYTES = 10 * 1024 * 1024
+
+async function getChangedFileEntriesBetween(
   git: GitProvider,
   repoDir: string,
   fromOid: string,
   toOid: string,
-): Promise<string[]> {
+): Promise<ChangedFileEntry[]> {
   try {
-    if (!git.TREE) {
-      console.warn("[getChangedFilesBetween] GitProvider has no TREE, returning []")
-      return []
-    }
-    // Must call git.TREE() so `this` is bound; extracted TREE() loses context (e.g. CachedGitProvider.inner)
+    if (!git.TREE) throw new Error("Git provider cannot enumerate changed files")
     const results = await git.walk({
       dir: repoDir,
       trees: [git.TREE({ref: fromOid}), git.TREE({ref: toOid})],
@@ -729,19 +752,84 @@ async function getChangedFilesBetween(
         if (filepath === ".") return
         const Atype = await A?.type?.()
         const Btype = await B?.type?.()
-        if (Atype === "tree" || Btype === "tree") return // Skip directories
+        if (Atype === "tree" || Btype === "tree") return
         const Aoid = await A?.oid?.()
         const Boid = await B?.oid?.()
-        if (Aoid === Boid) return // Same content, not changed
-        return filepath
+        if (Aoid === Boid) return
+        return {path: filepath, existsAtTip: Btype === "blob"}
       },
     })
-    const files = (results || []).filter(Boolean)
-    return files
+    return (results || []).filter(Boolean) as ChangedFileEntry[]
   } catch (err) {
     console.warn("[getChangedFilesBetween] Failed:", err)
-    return []
+    throw new Error(
+      `Failed to enumerate changed files: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
+}
+
+/** Get all leaf paths that differ between two commits, including deletions. */
+export async function getChangedFilesBetween(
+  git: GitProvider,
+  repoDir: string,
+  fromOid: string,
+  toOid: string,
+): Promise<string[]> {
+  return (await getChangedFileEntriesBetween(git, repoDir, fromOid, toOid)).map(entry => entry.path)
+}
+
+/** Scan the PR-tip tree relative to its merge base with the target. */
+export async function scanPRTipForSecrets(
+  git: GitProvider,
+  repoDir: string,
+  targetOid: string,
+  tipOid: string,
+): Promise<SecretFinding[]> {
+  const mergeBase = await findMergeBase(git, repoDir, tipOid, targetOid)
+  return scanChangedFilesForSecrets(git, repoDir, mergeBase ?? targetOid, tipOid)
+}
+
+/** Scan changed files as they exist at the tip, failing closed on limits or read errors. */
+export async function scanChangedFilesForSecrets(
+  git: GitProvider,
+  repoDir: string,
+  fromOid: string,
+  toOid: string,
+): Promise<SecretFinding[]> {
+  const changes = (await getChangedFileEntriesBetween(git, repoDir, fromOid, toOid)).filter(
+    entry => entry.existsAtTip,
+  )
+  if (changes.length > MAX_SECRET_SCAN_FILES) {
+    throw new Error(`Secret scan blocked: PR changes exceed ${MAX_SECRET_SCAN_FILES} files.`)
+  }
+
+  const {scanTextForSecrets} = await import("./secret-scan.js")
+  const decoder = new TextDecoder("utf-8")
+  const findings: SecretFinding[] = []
+  let totalBytes = 0
+
+  for (const {path} of changes) {
+    let blob: Uint8Array
+    try {
+      const result = await git.readBlob({dir: repoDir, oid: toOid, filepath: path})
+      blob = result.blob instanceof Uint8Array ? result.blob : new Uint8Array(result.blob)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to read changed file "${path}" for secret scan: ${message}`)
+    }
+
+    if (blob.byteLength > MAX_SECRET_SCAN_FILE_BYTES) {
+      throw new Error(`Secret scan blocked: "${path}" exceeds the 1 MiB scan limit.`)
+    }
+    totalBytes += blob.byteLength
+    if (totalBytes > MAX_SECRET_SCAN_TOTAL_BYTES) {
+      throw new Error("Secret scan blocked: PR changes exceed the 10 MiB aggregate scan limit.")
+    }
+
+    findings.push(...(await scanTextForSecrets({path, content: decoder.decode(blob)})))
+  }
+
+  return findings
 }
 
 /**
@@ -778,7 +866,12 @@ async function getPRCommitsOnly(
   stopAtOidOrRef: string,
   maxDepth: number,
 ): Promise<
-  Array<{oid: string; message: string; author?: {name?: string; email?: string}; parents?: string[]}>
+  Array<{
+    oid: string
+    message: string
+    author?: {name?: string; email?: string}
+    parents?: string[]
+  }>
 > {
   try {
     const log = await git.log({dir: repoDir, ref: prTipRef, depth: maxDepth})
@@ -813,7 +906,12 @@ async function getCommitMetadataForOids(
   repoDir: string,
   oids: string[],
 ): Promise<
-  Array<{oid: string; message: string; author?: {name?: string; email?: string}; parents?: string[]}>
+  Array<{
+    oid: string
+    message: string
+    author?: {name?: string; email?: string}
+    parents?: string[]
+  }>
 > {
   const result: Array<{
     oid: string
@@ -1143,7 +1241,9 @@ async function handleMergeConflicts(
   }
 
   if (conflictFiles.length === 0) {
-    throw new Error(`Merge failed but no conflict files could be identified: ${getErrorMessage(err)}`)
+    throw new Error(
+      `Merge failed but no conflict files could be identified: ${getErrorMessage(err)}`,
+    )
   }
 
   // Parse conflict markers from conflicted files
@@ -1287,6 +1387,7 @@ export interface PRPreviewData {
   commits: Array<{oid: string; message: string; author?: {name?: string; email?: string}}>
   commitOids: string[]
   filesChanged: string[]
+  secretFindings: SecretFinding[]
 }
 
 /**
@@ -1311,7 +1412,13 @@ export async function getPRPreviewData(
   targetBranch: string,
   opts?: GetPRPreviewOptions,
 ): Promise<PRPreviewData> {
-  const empty: PRPreviewData = {success: false, commits: [], commitOids: [], filesChanged: []}
+  const empty: PRPreviewData = {
+    success: false,
+    commits: [],
+    commitOids: [],
+    filesChanged: [],
+    secretFindings: [],
+  }
   const {sourceRemote, preferRemoteRefs} = opts ?? {}
 
   const resolveBranchRef = async (branch: string, forSource: boolean): Promise<string | null> => {
@@ -1364,6 +1471,8 @@ export async function getPRPreviewData(
 
     const filesChanged =
       stopAt && tipCommit ? await getChangedFilesBetween(git, repoDir, stopAt, tipCommit) : []
+    const secretFindings =
+      stopAt && tipCommit ? await scanChangedFilesForSecrets(git, repoDir, stopAt, tipCommit) : []
 
     return {
       success: true,
@@ -1372,6 +1481,7 @@ export async function getPRPreviewData(
       commits,
       commitOids,
       filesChanged,
+      secretFindings,
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

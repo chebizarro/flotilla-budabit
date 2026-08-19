@@ -4,6 +4,7 @@
   import { useRegistry } from "../../useRegistry";
   import { createPullRequestEvent } from "@nostr-git/core/events";
   import type { PullRequestEvent, PullRequestTag } from "@nostr-git/core/events";
+  import { getSecretGateMessage, type SecretFinding } from "@nostr-git/core/git";
   import type {
     RichComposerContext,
     RichContentPayload,
@@ -61,6 +62,7 @@
     tipCommit?: string;
     filesChanged: string[];
     mergeBase?: string;
+    secretFindings: SecretFinding[];
   } | null>(null);
   let previewLoading = $state(false);
 
@@ -157,6 +159,7 @@
         commits: [],
         commitOids: [],
         filesChanged: [],
+        secretFindings: [],
       };
       previewLoading = false;
       return;
@@ -182,6 +185,7 @@
           commits: [],
           commitOids: [],
           filesChanged: [],
+          secretFindings: [],
         };
         previewLoading = false;
       });
@@ -221,7 +225,8 @@
     const urls = fromFork ? parseForkCloneUrls() : cloneUrls;
 
     try {
-      content = RichDescriptionEditor && descriptionEditor ? await descriptionEditor.getText() : content;
+      content =
+        RichDescriptionEditor && descriptionEditor ? await descriptionEditor.getText() : content;
     } catch (error) {
       errors.general = error instanceof Error ? error.message : "Failed to read PR description";
       isSubmitting = false;
@@ -250,6 +255,12 @@
       isSubmitting = false;
       return;
     }
+    const secretGateMessage = getSecretGateMessage(prPreview.secretFindings || [], "PR creation");
+    if (secretGateMessage) {
+      errors.general = secretGateMessage;
+      isSubmitting = false;
+      return;
+    }
     const tipCommitOid = prPreview.tipCommit || prPreview.commitOids[0];
     if (!tipCommitOid) {
       errors.general = "Unable to determine PR tip commit";
@@ -259,9 +270,10 @@
 
     let descriptionPayload: RichContentPayload;
     try {
-      descriptionPayload = RichDescriptionEditor && descriptionEditor
-        ? await descriptionEditor.getContent()
-        : { content: result.data.content, tags: [] };
+      descriptionPayload =
+        RichDescriptionEditor && descriptionEditor
+          ? await descriptionEditor.getContent()
+          : { content: result.data.content, tags: [] };
     } catch (error) {
       errors.general = error instanceof Error ? error.message : "Failed to read PR description";
       isSubmitting = false;
@@ -435,6 +447,30 @@
               </ul>
             </div>
           {/if}
+          {#if prPreview.secretFindings?.length}
+            <div
+              class="rounded-md border border-rose-300 bg-rose-50 p-3 text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-100"
+            >
+              <div class="flex items-center gap-2 font-medium">
+                <CircleAlert class="h-4 w-4" />
+                Secret scan blocked PR creation
+              </div>
+              <p class="mt-1 text-xs">Remove every detected credential before creating this PR.</p>
+              <ul class="mt-2 max-h-40 space-y-2 overflow-y-auto text-xs">
+                {#each prPreview.secretFindings as finding, index (`${finding.path}:${finding.line}:${finding.column}:${finding.ruleId}:${index}`)}
+                  <li
+                    class="rounded border border-rose-200 bg-background/70 p-2 dark:border-rose-900"
+                  >
+                    <div class="font-mono font-medium">
+                      {finding.path}:{finding.line}:{finding.column}
+                    </div>
+                    <div>{finding.ruleId}</div>
+                    <code class="mt-1 block break-all text-[11px]">{finding.maskedSnippet}</code>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
@@ -522,7 +558,11 @@
 
   <div class="flex justify-end gap-3">
     <Button type="button" variant="outline" onclick={back} disabled={isSubmitting}>Cancel</Button>
-    <Button type="submit" variant="git" disabled={isSubmitting}>
+    <Button
+      type="submit"
+      variant="git"
+      disabled={isSubmitting || (prPreview?.secretFindings?.length ?? 0) > 0}
+    >
       {isSubmitting ? "Creating…" : "Create PR"}
     </Button>
   </div>

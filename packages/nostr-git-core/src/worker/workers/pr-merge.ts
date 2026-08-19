@@ -1,7 +1,12 @@
 import type {GitProvider} from "../../git/provider.js"
 import type {GitMergeResult} from "../../git/provider.js"
 import type {PRMergeAnalysisResult} from "../../git/merge-analysis.js"
-import {analyzePRMergeability} from "../../git/merge-analysis.js"
+import {
+  analyzePRMergeability,
+  scanChangedFilesForSecrets,
+  scanPRTipForSecrets,
+} from "../../git/merge-analysis.js"
+import {getSecretGateMessage, type SecretFinding} from "../../git/secret-findings.js"
 import {fetchPrSourceTip} from "../../git/pr-source-fetch.js"
 import {withUrlFallback, filterValidCloneUrls} from "../../utils/clone-url-fallback.js"
 import {isGraspRepoHttpUrl} from "../../utils/grasp-url.js"
@@ -44,6 +49,7 @@ export interface MergePRAndPushResult {
   skippedRemotes?: string[]
   warning?: string
   pushErrors?: Array<{remote: string; url: string; error: string; code: string; stack: string}>
+  secretFindings?: SecretFinding[]
 }
 
 /** Push to a GRASP remote after its signed state event has been published. */
@@ -209,6 +215,15 @@ export async function mergePRAndPushUtil(
     await git.checkout({dir, ref: effectiveTargetBranch})
 
     const preMergeTargetOid = await git.resolveRef({dir, ref: effectiveTargetBranch})
+    const restorePreMergeTarget = async () => {
+      await git.writeRef({
+        dir,
+        ref: `refs/heads/${effectiveTargetBranch}`,
+        value: preMergeTargetOid,
+        force: true,
+      })
+      await git.checkout({dir, ref: effectiveTargetBranch, force: true})
+    }
 
     // Log merge state for debugging
     const prTipOid = usedTempRef ? tipOid : await git.resolveRef({dir, ref: prTipRef!})
@@ -216,12 +231,31 @@ export async function mergePRAndPushUtil(
       `[mergePRAndPush] About to merge: target=${preMergeTargetOid.substring(0, 8)} (${effectiveTargetBranch}) + PR=${prTipOid.substring(0, 8)} (${prTipRef})`,
     )
 
+    onProgress("Scanning PR changes for secrets...", 45)
+    const secretFindings = await scanPRTipForSecrets(git, dir, preMergeTargetOid, prTipOid)
+    const secretGateMessage = getSecretGateMessage(secretFindings, "merge")
+    if (secretGateMessage) {
+      return {
+        success: false,
+        error: secretGateMessage,
+        secretFindings,
+      }
+    }
+
     onProgress("Merging PR...", 50)
 
     // Validate that our references are still valid before attempting merge
     try {
-      // Ensure target branch ref exists
-      await git.resolveRef({dir, ref: `refs/heads/${effectiveTargetBranch}`})
+      const currentTargetOid = await git.resolveRef({
+        dir,
+        ref: `refs/heads/${effectiveTargetBranch}`,
+      })
+      if (currentTargetOid !== preMergeTargetOid) {
+        return {
+          success: false,
+          error: "Target branch changed during secret scan. Re-run merge analysis and try again.",
+        }
+      }
 
       // Ensure PR tip ref exists (either fetched or temp)
       if (usedTempRef && prTipRef) {
@@ -295,6 +329,32 @@ export async function mergePRAndPushUtil(
       return {
         success: false,
         error: "Merge completed but no commit OID returned",
+      }
+    }
+
+    onProgress("Scanning merged tree for secrets...", 55)
+    let mergedSecretFindings: SecretFinding[]
+    try {
+      mergedSecretFindings = await scanChangedFilesForSecrets(
+        git,
+        dir,
+        preMergeTargetOid,
+        mergeCommitOid,
+      )
+    } catch (error) {
+      await restorePreMergeTarget()
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+    const mergedSecretGateMessage = getSecretGateMessage(mergedSecretFindings, "merge")
+    if (mergedSecretGateMessage) {
+      await restorePreMergeTarget()
+      return {
+        success: false,
+        error: mergedSecretGateMessage,
+        secretFindings: mergedSecretFindings,
       }
     }
 

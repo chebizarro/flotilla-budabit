@@ -10,11 +10,7 @@
     ChevronDown,
     ChevronRight,
   } from "@lucide/svelte";
-  import {
-    Collapsible,
-    CollapsibleContent,
-    CollapsibleTrigger,
-  } from "../../components";
+  import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components";
   import { useRegistry } from "../../useRegistry";
   import type { MergeAnalysisResult } from "@nostr-git/core/git";
 
@@ -51,7 +47,7 @@
 
   const getConflictRows = (result: ExtendedMergeAnalysisResult) => {
     const detailsByFile = new Map(
-      (result.conflictDetails ?? []).map((detail) => [detail.file, detail]),
+      (result.conflictDetails ?? []).map((detail) => [detail.file, detail])
     );
     const files =
       (result.conflictFiles?.length ?? 0) > 0
@@ -72,6 +68,8 @@
         return { icon: CheckCircle, color: "text-emerald-600 dark:text-emerald-300" };
       case "conflicts":
         return { icon: AlertTriangle, color: "text-amber-600 dark:text-amber-300" };
+      case "blocked":
+        return { icon: XCircle, color: "text-rose-600 dark:text-rose-300" };
       case "up-to-date":
         return { icon: Info, color: "text-sky-600 dark:text-sky-300" };
       case "diverged":
@@ -89,6 +87,8 @@
         return "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20";
       case "conflicts":
         return "border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20";
+      case "blocked":
+        return "border-rose-300 bg-rose-50/70 dark:border-rose-900 dark:bg-rose-950/30";
       case "up-to-date":
         return "border-sky-200 bg-sky-50/50 dark:border-sky-900 dark:bg-sky-950/20";
       case "diverged":
@@ -108,6 +108,8 @@
           : "This PR can be merged cleanly without conflicts.";
       case "conflicts":
         return `This PR has merge conflicts in ${result.conflictFiles?.length ?? 0} file(s) that need to be resolved.`;
+      case "blocked":
+        return result.errorMessage || "Secret scan blocked this merge.";
       case "up-to-date":
         return "This PR has already been merged to the target branch.";
       case "diverged":
@@ -165,6 +167,38 @@
         </div>
       {/if}
 
+      {#if result.analysis === "blocked"}
+        <div class="space-y-3">
+          <div class="flex items-start gap-2">
+            <XCircle class="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-300" />
+            <div>
+              <div class="text-sm font-medium">Merge blocked: secrets detected</div>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Remove every detected credential from the PR before merging. Secret values are
+                masked.
+              </p>
+            </div>
+          </div>
+          <ul class="max-h-56 space-y-2 overflow-y-auto">
+            {#each result.secretFindings ?? [] as finding, index (`${finding.path}:${finding.line}:${finding.column}:${finding.ruleId}:${index}`)}
+              <li
+                class="rounded-md border border-rose-200 bg-background/70 p-2 text-xs dark:border-rose-900"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-mono font-medium"
+                    >{finding.path}:{finding.line}:{finding.column}</span
+                  >
+                  <Badge variant="destructive" class="text-[10px]">{finding.ruleId}</Badge>
+                </div>
+                <code class="mt-1 block break-all text-[11px] text-muted-foreground"
+                  >{finding.maskedSnippet}</code
+                >
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
       {#if result.analysis === "conflicts"}
         <div class="space-y-3">
           <div class="space-y-1">
@@ -207,7 +241,9 @@
                   <Card class="min-w-0 overflow-hidden border-amber-200 dark:border-amber-900">
                     <CardContent class="min-w-0 p-3">
                       <div class="mb-2 flex min-w-0 items-center justify-between gap-2">
-                        <span class="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-sm">
+                        <span
+                          class="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-sm"
+                        >
                           {conflict.file}
                         </span>
                         {#if conflict.type === "content" && conflict.conflictMarkers && conflict.conflictMarkers.length > 0}

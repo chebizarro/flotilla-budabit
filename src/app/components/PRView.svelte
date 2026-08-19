@@ -89,7 +89,11 @@
     mergeRichEditorTags,
   } from "@app/core/event-edits"
   import {publishEditedReply} from "@app/core/event-edit-publish"
-  import {githubPermalinkDiffId, type PRMergeAnalysisResult} from "@nostr-git/core/git"
+  import {
+    githubPermalinkDiffId,
+    type PRMergeAnalysisResult,
+    type SecretFinding,
+  } from "@nostr-git/core/git"
   import {getCloneUrlsFromEvent, isGraspRepoHttpUrl} from "@nostr-git/core/utils"
   import {normalizeRelayUrl} from "@welshman/util"
   import Profile from "@src/app/components/Profile.svelte"
@@ -2646,6 +2650,7 @@
     pushedRemotes?: string[]
     skippedRemotes?: string[]
     pushErrors?: Array<{remote: string; url: string; error: string; code: string; stack: string}>
+    secretFindings?: SecretFinding[]
   } | null>(null)
   let showPrMergeDialog = $state(false)
   let showPrPushDialog = $state(false)
@@ -2686,6 +2691,9 @@
     }
     if (prCurrentMergeAnalysisResult.analysis === "error") {
       return "Retry Analyze and get a clean result before merging."
+    }
+    if (prCurrentMergeAnalysisResult.analysis === "blocked") {
+      return "Remove the detected secrets before merging this PR."
     }
     if (prCurrentMergeAnalysisResult.upToDate) return "This PR is already merged."
     if (!prHasCleanMergeAnalysis) return "Run Analyze and get a clean result before merging."
@@ -3086,6 +3094,18 @@
         await openPrPushDialog()
       } else {
         mergePrError = result.error || "Unknown merge error"
+        if (result.secretFindings?.length && prCurrentMergeAnalysisResult) {
+          const analysisKey = getPrAnalysisKey()
+          if (analysisKey) {
+            setPrMergeAnalysis(analysisKey, {
+              ...prCurrentMergeAnalysisResult,
+              canMerge: false,
+              analysis: "blocked",
+              errorMessage: mergePrError,
+              secretFindings: result.secretFindings,
+            })
+          }
+        }
         mergePrStep = "Merge failed"
         toast.push({
           message: `Merge failed: ${mergePrError}`,
