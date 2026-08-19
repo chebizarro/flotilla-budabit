@@ -121,6 +121,9 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
+const profileListIdentifier = (communityId: string, value: string) =>
+  `${communityId}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+
 const makeDefinition = (
   sections: CommunityDefinitionSectionInput[],
   id = "community-definition",
@@ -135,7 +138,16 @@ const makeDefinition = (
         communityId,
         name: "Test community",
         relays: ["wss://relay.example.com"],
-        sections,
+        sections: sections.map(section => ({
+          ...section,
+          profileLists: section.profileLists.map(ref => {
+            const [kind, owner] = ref.address.split(":")
+            return {
+              ...ref,
+              address: `${kind}:${owner}:${profileListIdentifier(communityId, section.name)}`,
+            }
+          }),
+        })),
       }).tags,
     }),
   )!
@@ -153,7 +165,7 @@ const calendarProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: calendarWriterPubkey,
   tags: [
-    ["d", "Events and meetups"],
+    ["d", profileListIdentifier(communityPointer.communityId, "Events and meetups")],
     ["p", calendarWriterPubkey],
     ["p", calendarMemberPubkey],
   ],
@@ -185,7 +197,7 @@ const partialCalendarProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: calendarWriterPubkey,
   tags: [
-    ["d", "Calendar"],
+    ["d", profileListIdentifier(communityPointer.communityId, "Calendar")],
     ["p", calendarWriterPubkey],
     ["p", calendarMemberPubkey],
   ],
@@ -1159,7 +1171,7 @@ describe("ExtensionBridge", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: calendarWriterPubkey,
       tags: [
-        ["d", "Events and meetups"],
+        ["d", profileListIdentifier(communityPointer.communityId, "Events and meetups")],
         ["p", calendarWriterPubkey],
       ],
     })
@@ -1407,9 +1419,18 @@ describe("ExtensionBridge", () => {
     )
     expect(profileListHydration?.[1]).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({authors: [calendarWriterPubkey], "#d": ["Calendar"]}),
-        expect.objectContaining({authors: [outsiderPubkey], "#d": ["Calls"]}),
-        expect.objectContaining({authors: [streamManagerPubkey], "#d": ["Streams"]}),
+        expect.objectContaining({
+          authors: [calendarWriterPubkey],
+          "#d": [profileListIdentifier(communityPointer.communityId, "Calendar")],
+        }),
+        expect.objectContaining({
+          authors: [outsiderPubkey],
+          "#d": [profileListIdentifier(communityPointer.communityId, "Calls")],
+        }),
+        expect.objectContaining({
+          authors: [streamManagerPubkey],
+          "#d": [profileListIdentifier(communityPointer.communityId, "Streams")],
+        }),
       ]),
     )
   })
@@ -1517,7 +1538,7 @@ describe("ExtensionBridge", () => {
         expect.objectContaining({
           kinds: [PROFILE_LIST_KIND],
           authors: [calendarWriterPubkey],
-          "#d": ["Events and meetups"],
+          "#d": [profileListIdentifier(communityPointer.communityId, "Events and meetups")],
         }),
       ]),
       expect.objectContaining({authenticate: true}),
@@ -1807,7 +1828,7 @@ describe("ExtensionBridge", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: outsiderPubkey,
       tags: [
-        ["d", "Threads"],
+        ["d", profileListIdentifier(communityPointer.communityId, "Threads")],
         ["p", outsiderPubkey],
       ],
     })
@@ -2472,7 +2493,7 @@ describe("ExtensionBridge", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: profileListOwner,
       tags: [
-        ["d", "Rooms"],
+        ["d", profileListIdentifier(communityPointer.communityId, "Rooms")],
         ["p", roomWriter],
       ],
     })
@@ -2481,7 +2502,7 @@ describe("ExtensionBridge", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: profileListOwner,
       tags: [
-        ["d", "Threads"],
+        ["d", profileListIdentifier(communityPointer.communityId, "Threads")],
         ["p", threadWriter],
       ],
     })
@@ -2740,7 +2761,16 @@ describe("ExtensionBridge", () => {
     })
 
     mocks.activeExactCommunityDefinition.set(streamCommunityDefinition)
-    mocks.activeCommunityProfileListEvents.set([calendarProfileList])
+    mocks.activeCommunityProfileListEvents.set([
+      {
+        ...calendarProfileList,
+        tags: calendarProfileList.tags.map(tag =>
+          tag[0] === "d"
+            ? ["d", profileListIdentifier(streamCommunityId, "Events and meetups")]
+            : tag,
+        ),
+      },
+    ])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
       if (!filters?.some((filter: any) => filter.kinds?.includes(30311))) return

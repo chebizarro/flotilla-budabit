@@ -67,6 +67,10 @@ const otherCommunityPointer = makeCommunityPointer({
   ownerPubkey: testPubkey(76),
   communityId: testPubkey(77),
 })!
+const profileListIdentifier = (sectionName: string) =>
+  `${communityPubkey}-${sectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+const generalIdentifier = profileListIdentifier("General")
+const repositoryIdentifier = profileListIdentifier("Code-curator")
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -88,7 +92,10 @@ const parseTestDefinition = (event: TrustedEvent) => {
   for (const tag of event.tags) {
     if (tag[0] === "content") {
       if (sectionTags.length > 0 && !sectionHasProfileList) {
-        sectionTags.push(["a", `${PROFILE_LIST_KIND}:${communityPubkey}:${sectionName}`])
+        sectionTags.push([
+          "a",
+          `${PROFILE_LIST_KIND}:${communityPubkey}:${profileListIdentifier(sectionName)}`,
+        ])
       }
       sectionName = tag[1] || "General"
       sectionHasProfileList = false
@@ -98,7 +105,10 @@ const parseTestDefinition = (event: TrustedEvent) => {
     sectionTags.push(tag)
   }
   if (sectionTags.length > 0 && !sectionHasProfileList) {
-    sectionTags.push(["a", `${PROFILE_LIST_KIND}:${communityPubkey}:${sectionName}`])
+    sectionTags.push([
+      "a",
+      `${PROFILE_LIST_KIND}:${communityPubkey}:${profileListIdentifier(sectionName)}`,
+    ])
   }
 
   return parseCommunityDefinition({
@@ -124,12 +134,12 @@ const definition = parseTestDefinition(
       ["k", "1111"],
       ["k", "7"],
       ["k", "1984"],
-      ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:General`],
+      ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:${generalIdentifier}`],
       ["badge", `${BADGE_DEFINITION}:${managerPubkey}:member`],
       ["content", "Code-curator"],
       ["k", "30617"],
       ["k", "1623"],
-      ["a", `${PROFILE_LIST_KIND}:${repoManagerPubkey}:Code-curator`],
+      ["a", `${PROFILE_LIST_KIND}:${repoManagerPubkey}:${repositoryIdentifier}`],
       ["badge", `${BADGE_DEFINITION}:${managerPubkey}:repo-curator`],
     ],
   }),
@@ -139,7 +149,7 @@ const generalProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: managerPubkey,
   tags: [
-    ["d", "General"],
+    ["d", generalIdentifier],
     ["p", memberPubkey],
   ],
 })
@@ -148,7 +158,7 @@ const repoProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: repoManagerPubkey,
   tags: [
-    ["d", "Code-curator"],
+    ["d", repositoryIdentifier],
     ["p", repoManagerPubkey],
   ],
 })
@@ -193,7 +203,7 @@ describe("community permissions", () => {
       pubkey: managerPubkey,
       created_at: 1,
       tags: [
-        ["d", "General"],
+        ["d", generalIdentifier],
         ["p", outsiderPubkey],
       ],
     })
@@ -203,7 +213,7 @@ describe("community permissions", () => {
       pubkey: managerPubkey,
       created_at: 2,
       tags: [
-        ["d", "General"],
+        ["d", generalIdentifier],
         ["p", memberPubkey],
       ],
     })
@@ -230,14 +240,14 @@ describe("community permissions", () => {
   })
 
   it("does not derive grants from malformed or tombstoned profile lists", () => {
-    const address = `${PROFILE_LIST_KIND}:${managerPubkey}:General`
+    const address = `${PROFILE_LIST_KIND}:${managerPubkey}:${generalIdentifier}`
     const list = {...generalProfileList, id: "grant-list", created_at: 2}
     const malformed = {
       ...list,
       id: "malformed-list",
       created_at: 4,
       tags: [
-        ["d", "General"],
+        ["d", generalIdentifier],
         ["d", "Other"],
         ["p", outsiderPubkey],
       ],
@@ -581,7 +591,7 @@ describe("community permissions", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: managerPubkey,
       tags: [
-        ["d", "General"],
+        ["d", generalIdentifier],
         ["status", "declined"],
         ["p", memberPubkey],
       ],
@@ -759,9 +769,9 @@ describe("community permissions", () => {
         tags: [
           ["content", "Apps"],
           ["k", "32267"],
-          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`],
+          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:${profileListIdentifier("Apps")}`],
           ["badge", `${BADGE_DEFINITION}:${managerPubkey}:member`],
-          ["a", `${PROFILE_LIST_KIND}:${repoManagerPubkey}:AppsPro`],
+          ["a", `${PROFILE_LIST_KIND}:${repoManagerPubkey}:${profileListIdentifier("AppsPro")}`],
           ["badge", `${BADGE_DEFINITION}:${repoManagerPubkey}:pro`],
         ],
       }),
@@ -770,7 +780,7 @@ describe("community permissions", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: managerPubkey,
       tags: [
-        ["d", "Apps"],
+        ["d", profileListIdentifier("Apps")],
         ["p", memberPubkey],
       ],
     })
@@ -778,7 +788,7 @@ describe("community permissions", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: repoManagerPubkey,
       tags: [
-        ["d", "AppsPro"],
+        ["d", profileListIdentifier("AppsPro")],
         ["p", secondMemberPubkey],
       ],
     })
@@ -809,7 +819,7 @@ describe("community permissions", () => {
         tags: [
           ["content", "Code"],
           ["k", "30617"],
-          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Code`],
+          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:${profileListIdentifier("Code")}`],
           ["badge", `${BADGE_DEFINITION}:${managerPubkey}:code`],
         ],
       }),
@@ -818,7 +828,7 @@ describe("community permissions", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: managerPubkey,
       tags: [
-        ["d", "Code"],
+        ["d", profileListIdentifier("Code")],
         ["p", memberPubkey],
       ],
     })
@@ -888,7 +898,7 @@ describe("community permissions", () => {
         tags: [
           ["content", "All-day events"],
           ["k", String(EVENT_DATE)],
-          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:All-day-events`],
+          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:${profileListIdentifier("All-day events")}`],
         ],
       }),
     )!
@@ -899,7 +909,7 @@ describe("community permissions", () => {
         tags: [
           ["content", "Timed events"],
           ["k", String(EVENT_TIME)],
-          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:Timed-events`],
+          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:${profileListIdentifier("Timed events")}`],
         ],
       }),
     )!
@@ -907,7 +917,7 @@ describe("community permissions", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: managerPubkey,
       tags: [
-        ["d", "All-day-events"],
+        ["d", profileListIdentifier("All-day events")],
         ["p", memberPubkey],
       ],
     })
@@ -915,7 +925,7 @@ describe("community permissions", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: managerPubkey,
       tags: [
-        ["d", "Timed-events"],
+        ["d", profileListIdentifier("Timed events")],
         ["p", memberPubkey],
       ],
     })
@@ -1054,7 +1064,7 @@ describe("community permissions", () => {
         tags: [
           ["content", "Apps"],
           ["k", "30033"],
-          ["a", `${PROFILE_LIST_KIND}:${repoManagerPubkey}:Apps`],
+          ["a", `${PROFILE_LIST_KIND}:${repoManagerPubkey}:${profileListIdentifier("Apps")}`],
         ],
       }),
     )!
@@ -1062,7 +1072,7 @@ describe("community permissions", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: repoManagerPubkey,
       tags: [
-        ["d", "Apps"],
+        ["d", profileListIdentifier("Apps")],
         ["p", memberPubkey],
       ],
     })

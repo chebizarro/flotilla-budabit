@@ -52,7 +52,8 @@ const makeCommunityRef = ({
   relay?: string
   identifier?: string
 }): ActiveUserCommunityRef => {
-  const listAddress = `${PROFILE_LIST_KIND}:${moderatorPubkey}:Repositories`
+  const communityId = communityIds.get(identifier)!
+  const listAddress = `${PROFILE_LIST_KIND}:${moderatorPubkey}:${communityId}-repositories`
 
   const definition = parseCommunityDefinition(
     makeEvent({
@@ -60,7 +61,7 @@ const makeCommunityRef = ({
       created_at: 1,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: communityIds.get(identifier)!,
+        communityId,
         name: identifier,
         relays: [relay],
         sections: [
@@ -83,12 +84,23 @@ const makeCommunityRef = ({
   }
 }
 
-const makeProfileList = ({pubkey, members = []}: {pubkey: string; members?: string[]}) =>
+const makeProfileList = ({
+  pubkey,
+  members = [],
+  community = "community",
+}: {
+  pubkey: string
+  members?: string[]
+  community?: string
+}) =>
   makeEvent({
     id: `${pubkey.slice(0, 8)}-profile-list`,
     pubkey,
     kind: PROFILE_LIST_KIND,
-    tags: [["d", "Repositories"], ...members.map(member => ["p", member])],
+    tags: [
+      ["d", `${communityIds.get(community)!}-repositories`],
+      ...members.map(member => ["p", member]),
+    ],
   })
 
 const makeMessagingRelayList = ({
@@ -478,8 +490,8 @@ describe("dm", () => {
         viewerPubkey: viewer,
         communityRefs: [first, second],
         profileListEvents: [
-          makeProfileList({pubkey: moderatorA, members: [recommender]}),
-          makeProfileList({pubkey: moderatorB, members: [recommender]}),
+          makeProfileList({pubkey: moderatorA, members: [recommender], community: "first"}),
+          makeProfileList({pubkey: moderatorB, members: [recommender], community: "second"}),
         ],
         messagingRelayListEvents: [
           makeMessagingRelayList({
@@ -516,8 +528,12 @@ describe("dm", () => {
           }),
         ],
         profileListEvents: [
-          makeProfileList({pubkey: firstModerator, members: [recommender]}),
-          makeProfileList({pubkey: secondModerator, members: [recommender]}),
+          makeProfileList({pubkey: firstModerator, members: [recommender], community: "shared-id"}),
+          makeProfileList({
+            pubkey: secondModerator,
+            members: [recommender],
+            community: "shared-id",
+          }),
         ],
         messagingRelayListEvents: [
           makeMessagingRelayList({pubkey: recommender, relays: ["wss://shared-id.example.com"]}),

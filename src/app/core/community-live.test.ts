@@ -53,17 +53,23 @@ const authorityDefinition = parseCommunityDefinition(
         {
           name: "General",
           kinds: [{kind: 1111}],
-          profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:General`}],
+          profileLists: [
+            {address: `${PROFILE_LIST_KIND}:${listPubkey}:${community.communityId}-general`},
+          ],
         },
         {
           name: "Projects",
           kinds: [{kind: 30617}],
-          profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:Projects`}],
+          profileLists: [
+            {address: `${PROFILE_LIST_KIND}:${listPubkey}:${community.communityId}-projects`},
+          ],
         },
         {
           name: "Calendar",
           kinds: [{kind: EVENT_TIME}],
-          profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:Calendar`}],
+          profileLists: [
+            {address: `${PROFILE_LIST_KIND}:${listPubkey}:${community.communityId}-calendar`},
+          ],
         },
       ],
     }).tags,
@@ -149,9 +155,11 @@ describe("community live filters", () => {
       profileFilters.some(
         filter =>
           filter.authors?.includes(listPubkey) &&
-          ["Calendar", "General", "Projects"].every(identifier =>
-            filter["#d"]?.includes(identifier),
-          ),
+          [
+            `${community.communityId}-calendar`,
+            `${community.communityId}-general`,
+            `${community.communityId}-projects`,
+          ].every(identifier => filter["#d"]?.includes(identifier)),
       ),
     ).toBe(true)
     expect(filters.some(filter => filter.ids?.includes("calendar-event"))).toBe(false)

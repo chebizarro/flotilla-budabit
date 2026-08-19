@@ -51,6 +51,9 @@ const applicantPubkey = testPubkey(33)
 const outsiderPubkey = testPubkey(34)
 const approvedCalendarPubkey = testPubkey(35)
 const unauthorizedCalendarPubkey = testPubkey(36)
+const generalIdentifier = `${communityPointer.communityId}-general`
+const repositoriesIdentifier = `${communityPointer.communityId}-repositories`
+const calendarIdentifier = `${communityPointer.communityId}-calendar-event-creator`
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -67,23 +70,23 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
 const generalListRef = {
   kind: PROFILE_LIST_KIND,
   pubkey: moderatorPubkey,
-  identifier: "General",
-  address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:General`,
+  identifier: generalIdentifier,
+  address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${generalIdentifier}`,
 }
 const ownerGeneralListRef = {
-  address: `${PROFILE_LIST_KIND}:${communityPubkey}:General`,
+  address: `${PROFILE_LIST_KIND}:${communityPubkey}:${generalIdentifier}`,
 }
 const repoListRef = {
   kind: PROFILE_LIST_KIND,
   pubkey: moderatorPubkey,
-  identifier: "Repositories",
-  address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:Repositories`,
+  identifier: repositoriesIdentifier,
+  address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${repositoriesIdentifier}`,
 }
 const calendarListRef = {
   kind: PROFILE_LIST_KIND,
   pubkey: moderatorPubkey,
-  identifier: "Calendar-event-creator",
-  address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:Calendar-event-creator`,
+  identifier: calendarIdentifier,
+  address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${calendarIdentifier}`,
 }
 const definition = parseCommunityDefinition(
   makeEvent({
@@ -358,7 +361,7 @@ describe("community admission lifecycle integration", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: moderatorPubkey,
       tags: [
-        ["d", "Calendar-event-creator"],
+        ["d", calendarIdentifier],
         ["p", approvedCalendarPubkey],
       ],
     })

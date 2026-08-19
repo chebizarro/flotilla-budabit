@@ -38,7 +38,7 @@ const template = buildCommunityDefinition({
     {
       name: "General",
       kinds: [{kind: 1111}],
-      profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:General`}],
+      profileLists: [{address: `${PROFILE_LIST_KIND}:${listPubkey}:${communityId}-general`}],
     },
   ],
 })
@@ -78,7 +78,7 @@ describe("community state helpers", () => {
     expect(makeCommunityProfileListFilters(definition)).toContainEqual({
       kinds: [PROFILE_LIST_KIND],
       authors: [listPubkey],
-      "#d": ["General"],
+      "#d": [`${communityId}-general`],
       limit: 1,
     })
     expect(makeCommunityAdmissionFormFilters(definition)[0]).toMatchObject({

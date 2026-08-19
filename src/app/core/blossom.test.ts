@@ -71,15 +71,19 @@ const makeBlossomDefinition = ({
   pubkey: string
   blossomServer: string
   profileListAddress?: string
-}) =>
-  parseCommunityDefinition(
+}) => {
+  const communityId = makeKey(id.charCodeAt(0))
+  const profileListOwner = profileListAddress?.split(":")[1] || pubkey
+  const profileListPurpose =
+    profileListAddress?.split(":").slice(2).join(":").toLowerCase() || "general"
+  return parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
       created_at: 2,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: makeKey(id.charCodeAt(0)),
+        communityId,
         name: id,
         relays: ["wss://relay.example"],
         blossomServers: [blossomServer],
@@ -88,13 +92,16 @@ const makeBlossomDefinition = ({
             name: "General",
             kinds: [{kind: 9, subtype: "room-message"}],
             profileLists: [
-              {address: profileListAddress || `${PROFILE_LIST_KIND}:${pubkey}:General`},
+              {
+                address: `${PROFILE_LIST_KIND}:${profileListOwner}:${communityId}-${profileListPurpose}`,
+              },
             ],
           },
         ],
       }).tags,
     }),
   )!
+}
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -422,7 +429,7 @@ describe("blossom server sources", () => {
       pubkey: memberListOwner,
       kind: PROFILE_LIST_KIND,
       tags: [
-        ["d", "General"],
+        ["d", `${memberDefinition.communityId}-general`],
         ["p", userPubkey],
         ["p", outsiderPubkey],
       ],

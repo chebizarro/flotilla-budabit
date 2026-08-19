@@ -48,7 +48,7 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const rootRef = {
-  address: `30000:${ownerPubkey}:budabit-${communityId}-general-root`,
+  address: `30000:${ownerPubkey}:${communityId}-general`,
   relay: "wss://relay.example",
 }
 
@@ -121,7 +121,7 @@ describe("Communikeys moderator requests", () => {
     })
 
     expect(makeModeratorRequestIdentifier({community, sectionName: "General"})).toBe(
-      `budabit-${communityId}-general-moderator`,
+      `${communityId}-general`,
     )
     expect(template.tags.filter(tag => tag[0] === "h")).toEqual([["h", communityId]])
     expect(template.tags.filter(tag => tag[0] === "a" && tag[3] === "community")).toEqual([

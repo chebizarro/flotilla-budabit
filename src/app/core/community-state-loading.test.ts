@@ -133,7 +133,10 @@ const requiredRelay = "wss://budabit.nostr1.com/"
 const publicRelay = "wss://relay.budabit.club/"
 const discoveryRelay = "wss://discovery.example.com/"
 const moderatorCommunityRelay = "wss://moderator-community.example.com/"
-const moderatorListIdentifier = "moderator-list"
+const generalListIdentifier = `${communityId}-general`
+const secondaryListIdentifier = `${communityId}-secondary`
+const moderatorCommunityId = getPublicKey(new Uint8Array(32).fill(8))
+const moderatorListIdentifier = `${moderatorCommunityId}-moderator-list`
 const community = makeCommunityPointer({
   ownerPubkey: communityPubkey,
   communityId,
@@ -169,7 +172,10 @@ const definitionEvent = makeEvent({
         name: "General",
         kinds: [{kind: 1111}],
         profileLists: [
-          {address: `${PROFILE_LIST_KIND}:${listPubkey}:General`, relay: relayA.slice(0, -1)},
+          {
+            address: `${PROFILE_LIST_KIND}:${listPubkey}:${generalListIdentifier}`,
+            relay: relayA.slice(0, -1),
+          },
         ],
       },
     ],
@@ -181,7 +187,7 @@ const profileListEvent = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: listPubkey,
   tags: [
-    ["d", "General"],
+    ["d", generalListIdentifier],
     ["p", memberPubkey],
   ],
 })
@@ -191,7 +197,7 @@ const secondProfileListEvent = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: secondListPubkey,
   tags: [
-    ["d", "Secondary"],
+    ["d", secondaryListIdentifier],
     ["p", memberPubkey],
   ],
 })
@@ -208,9 +214,12 @@ const twoListDefinitionEvent = makeEvent({
         name: "General",
         kinds: [{kind: 1111}],
         profileLists: [
-          {address: `${PROFILE_LIST_KIND}:${listPubkey}:General`, relay: relayA.slice(0, -1)},
           {
-            address: `${PROFILE_LIST_KIND}:${secondListPubkey}:Secondary`,
+            address: `${PROFILE_LIST_KIND}:${listPubkey}:${generalListIdentifier}`,
+            relay: relayA.slice(0, -1),
+          },
+          {
+            address: `${PROFILE_LIST_KIND}:${secondListPubkey}:${secondaryListIdentifier}`,
             relay: relayB.slice(0, -1),
           },
         ],
@@ -241,7 +250,10 @@ const singleRelayDefinitionEvent = makeEvent({
         name: "General",
         kinds: [{kind: 1111}],
         profileLists: [
-          {address: `${PROFILE_LIST_KIND}:${listPubkey}:General`, relay: relayA.slice(0, -1)},
+          {
+            address: `${PROFILE_LIST_KIND}:${listPubkey}:${generalListIdentifier}`,
+            relay: relayA.slice(0, -1),
+          },
         ],
       },
     ],
@@ -261,7 +273,7 @@ const requiredRelayDefinitionEvent = makeEvent({
         kinds: [{kind: 1111}],
         profileLists: [
           {
-            address: `${PROFILE_LIST_KIND}:${listPubkey}:General`,
+            address: `${PROFILE_LIST_KIND}:${listPubkey}:${generalListIdentifier}`,
             relay: requiredRelay.slice(0, -1),
           },
         ],
@@ -282,7 +294,10 @@ const preferenceDefinitionEvent = makeEvent({
         name: "General",
         kinds: [{kind: 1111}],
         profileLists: [
-          {address: `${PROFILE_LIST_KIND}:${listPubkey}:General`, relay: relayA.slice(0, -1)},
+          {
+            address: `${PROFILE_LIST_KIND}:${listPubkey}:${generalListIdentifier}`,
+            relay: relayA.slice(0, -1),
+          },
         ],
       },
     ],
@@ -294,7 +309,7 @@ const moderatorPreferenceDefinitionEvent = makeEvent({
   kind: COMMUNITY_DEFINITION_KIND,
   pubkey: moderatorCommunityPubkey,
   tags: buildCommunityDefinition({
-    communityId: getPublicKey(new Uint8Array(32).fill(8)),
+    communityId: moderatorCommunityId,
     name: "Moderator community",
     relays: [moderatorCommunityRelay.slice(0, -1)],
     sections: [
@@ -1670,7 +1685,10 @@ describe("community relay loading", () => {
         return Promise.resolve([preferenceDefinitionEvent])
       }
 
-      if (relays[0] === relayA && hasProfileListFilter(filters, listPubkey, "General")) {
+      if (
+        relays[0] === relayA &&
+        hasProfileListFilter(filters, listPubkey, generalListIdentifier)
+      ) {
         return Promise.resolve([profileListEvent])
       }
 
@@ -1690,7 +1708,9 @@ describe("community relay loading", () => {
     const memberDiscoveryRelays = loadMock.mock.calls.flatMap(call => {
       const {relays, filters} = call[0] as {relays: string[]; filters: Filter[]}
 
-      return hasMemberProfileListFilter(filters, listPubkey, "General", memberPubkey) ? relays : []
+      return hasMemberProfileListFilter(filters, listPubkey, generalListIdentifier, memberPubkey)
+        ? relays
+        : []
     })
 
     expect(memberDiscoveryRelays).toEqual([relayA])

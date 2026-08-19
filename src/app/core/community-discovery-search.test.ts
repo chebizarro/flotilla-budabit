@@ -34,7 +34,7 @@ const makeDefinition = ({
         ["r", "wss://bootstrap.example"],
         ["content", "General"],
         ["k", "1111"],
-        ["a", `30000:${getPublicKey(signingKey)}:members`],
+        ["a", `30000:${getPublicKey(signingKey)}:${communityId}-members`],
       ],
     },
     signingKey,
@@ -94,10 +94,7 @@ describe("community discovery search", () => {
       candidateOwnerPubkeys: [otherController, owner],
     })
 
-    expect(ranked.map(result => result.definition.ownerPubkey)).toEqual([
-      otherController,
-      owner,
-    ])
+    expect(ranked.map(result => result.definition.ownerPubkey)).toEqual([otherController, owner])
   })
 
   it("queries bootstrap and capped candidate outbox relays for names", async () => {

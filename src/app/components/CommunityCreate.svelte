@@ -407,7 +407,9 @@
     sectionDrafts: makeSectionDraftsFromDefinition(communityDefinition),
   })
 
-  const parseSectionDraftKind = (draft: SectionKindDraft): CommunityDefinitionSectionKind | undefined => {
+  const parseSectionDraftKind = (
+    draft: SectionKindDraft,
+  ): CommunityDefinitionSectionKind | undefined => {
     const kindValue = draft.kind.trim()
     const kind = Number.parseInt(kindValue, 10)
     const subtype = draft.subtype.trim()
@@ -424,7 +426,9 @@
     drafts.map(section => ({
       originalNameKey: section.originalNameKey,
       name: section.name.trim(),
-      kinds: section.kinds.map(parseSectionDraftKind).filter(Boolean) as CommunityDefinitionSectionKind[],
+      kinds: section.kinds
+        .map(parseSectionDraftKind)
+        .filter(Boolean) as CommunityDefinitionSectionKind[],
     }))
 
   const getSectionAssignmentMap = (
@@ -1389,6 +1393,7 @@
         sourceNames.flatMap(getActiveSectionModeratorPubkeys),
       ).map(moderatorPubkey =>
         makeManualModeratorProfileListRef({
+          communityId: definition.communityId,
           moderatorPubkey,
           sectionName: section.name,
           relays: validated.relays,
@@ -2702,8 +2707,8 @@
               <span class="mb-3 block">Publishing as</span>
               <Profile pubkey={activeCommunityPubkey} avatarSize={9} showPubkey />
               <span class="mt-3 block">
-                The active signer shown here controls and publishes this definition. Keep the
-                owner key in cold storage and sign with it
+                The active signer shown here controls and publishes this definition. Keep the owner
+                key in cold storage and sign with it
                 <a
                   class="link font-medium"
                   href="https://nostrapps.com#signers"

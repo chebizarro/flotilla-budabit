@@ -83,17 +83,21 @@ export const isActiveCommunityProfileListRef = (
 }
 
 export const makeManualModeratorProfileListRef = ({
+  communityId,
   moderatorPubkey,
   sectionName,
   relays = [],
 }: {
+  communityId: string
   moderatorPubkey: string
   sectionName: string
   relays?: string[]
 }): CommunityDefinitionProfileListRef => {
   const pubkey = normalizePubkey(moderatorPubkey)
-  const identifier = sectionName.trim()
+  const purpose = getCommunitySectionPurpose(communityId, {name: sectionName, profileLists: []})
+  const identifier = purpose ? makeCommunityProfileListIdentifier(communityId, purpose) : undefined
   const relay = normalizeRelays(relays)[0]
+  if (!pubkey || !identifier) throw new Error("Invalid moderator profile-list reference.")
 
   return {
     address: `${PROFILE_LIST_KIND}:${pubkey}:${identifier}`,
@@ -349,6 +353,7 @@ export const applyCommunityBootstrapGrants = ({
 
     for (const moderatorPubkey of moderatorPubkeys) {
       const profileList = makeManualModeratorProfileListRef({
+        communityId,
         moderatorPubkey,
         sectionName: section.name,
         relays: normalizedRelays,

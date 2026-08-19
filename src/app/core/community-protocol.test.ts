@@ -145,9 +145,7 @@ describe("Communikeys definitions", () => {
     expect(template.tags[0]).toEqual(["d", communityId])
     expect(definition.communityId).toBe(communityId)
     expect(definition.ownerPubkey).toBe(owner)
-    expect(definition.pointer.address).toBe(
-      `${COMMUNITY_DEFINITION_KIND}:${owner}:${communityId}`,
-    )
+    expect(definition.pointer.address).toBe(`${COMMUNITY_DEFINITION_KIND}:${owner}:${communityId}`)
     expect(definition.metadata).toEqual({
       name: "Buda Builders",
       description: "A builder community",
@@ -361,6 +359,23 @@ describe("Communikeys definitions", () => {
     ).toBeTruthy()
   })
 
+  it("rejects noncanonical section profile-list identifiers", () => {
+    const tags = buildCommunityDefinition({
+      communityId,
+      name: "Builders",
+      relays: ["wss://relay.example"],
+      sections: [section],
+    }).tags.map(tag =>
+      tag[0] === "a" && tag[1] === section.profileLists[0].address
+        ? ["a", `30000:${listController}:general`]
+        : tag,
+    )
+
+    expect(
+      parseCommunityDefinition(makeEvent({kind: COMMUNITY_DEFINITION_KIND, tags})),
+    ).toBeUndefined()
+  })
+
   it("losslessly rebuilds known fields while preserving the exact address and renamed-section extensions", () => {
     const base = parseCommunityDefinition(
       makeEvent({
@@ -437,7 +452,12 @@ describe("Communikeys definitions", () => {
         communityId: otherCommunityId,
         name: "Other",
         relays: ["wss://relay.example"],
-        sections: [{...section, profileLists: [{address: `30000:${listController}:other`}]}],
+        sections: [
+          {
+            ...section,
+            profileLists: [{address: `30000:${listController}:${otherCommunityId}-general`}],
+          },
+        ],
       }).tags,
     })
 
@@ -495,7 +515,7 @@ describe("Communikeys definitions", () => {
     expect(selectCurrentAddressableEvent([oldList, multiAddressDeletion], address)).toBeUndefined()
   })
 
-  it("ignores invalid newer definitions and exact-event-deleted authority versions", () => {
+  it("ignores invalid newer definitions and e tombstones for addressable authority", () => {
     const valid = makeEvent({
       id: "1".repeat(64),
       created_at: 10,
@@ -535,7 +555,7 @@ describe("Communikeys definitions", () => {
       kind: 5,
       tags: [["e", newer.id]],
     })
-    expect(selectCurrentAddressableEvent([older, newer, deletion], listAddress)).toBeUndefined()
+    expect(selectCurrentAddressableEvent([older, newer, deletion], listAddress)?.id).toBe(newer.id)
   })
 
   it("requires a single exact a tag for definition address tombstones", () => {
@@ -711,15 +731,24 @@ describe("Communikeys targeting", () => {
       kind: 5,
       tags: [["a", address]],
     })
-    const deletion = makeEvent({
+    const idDeletion = makeEvent({
       id: "4".repeat(64),
       created_at: 20,
       kind: 5,
       tags: [["e", replacement.id]],
     })
+    const deletion = makeEvent({
+      id: "6".repeat(64),
+      created_at: 20,
+      kind: 5,
+      tags: [["a", address]],
+    })
     const recreation = {...replacement, id: "5".repeat(64), created_at: 21}
 
     expect(selectCurrentTargetedPublicationEvents([original, replacement, staleDeletion])).toEqual([
+      replacement,
+    ])
+    expect(selectCurrentTargetedPublicationEvents([original, replacement, idDeletion])).toEqual([
       replacement,
     ])
     expect(selectCurrentTargetedPublicationEvents([original, replacement, deletion])).toEqual([])

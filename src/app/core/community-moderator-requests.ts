@@ -4,7 +4,6 @@ import {
   PROFILE_LIST_KIND,
   makeCommunityAuthorityTags,
   makeCommunityProfileListIdentifier,
-  makeCommunityChildIdentifier,
   getCommunitySectionPurpose,
   normalizeCommunityRelay,
   parseCommunityAuthority,
@@ -89,11 +88,13 @@ export const makeModeratorRequestIdentifier = ({
   community: CommunityPointer
   sectionName: string
 }) => {
-  const identifier = makeCommunityChildIdentifier(
-    community.communityId,
-    "moderator",
-    `${sectionName}-moderator`,
-  )
+  const purpose = getCommunitySectionPurpose(community.communityId, {
+    name: sectionName,
+    profileLists: [],
+  })
+  const identifier = purpose
+    ? makeCommunityProfileListIdentifier(community.communityId, purpose)
+    : undefined
   if (!identifier) throw new Error("Invalid moderator request identifier.")
   return identifier
 }
@@ -170,12 +171,7 @@ export const parseModeratorRequestEvent = (
     !sectionName ||
     sectionName !== sectionName.trim() ||
     role !== MODERATOR_REQUEST_ROLE ||
-    identifier !==
-      makeCommunityChildIdentifier(
-        authority.communityId,
-        "moderator",
-        `${sectionName}-moderator`,
-      ) ||
+    identifier !== makeModeratorRequestIdentifier({community: authority, sectionName}) ||
     (community && authority.address !== community.address)
   ) {
     return undefined

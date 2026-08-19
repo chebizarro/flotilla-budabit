@@ -52,28 +52,36 @@ const makeDefinition = ({
   sectionName?: string
   profileListAddress?: string
   relays?: string[]
-}) =>
-  parseCommunityDefinition(
+}) => {
+  const communityId = getCommunityId(id)
+  const [kind, owner, ...parts] = (
+    profileListAddress || `${PROFILE_LIST_KIND}:${pubkey}:${sectionName}`
+  ).split(":")
+  const purpose = parts
+    .join(":")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+  const canonicalAddress = `${kind}:${owner}:${communityId}-${purpose}`
+  return parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: getCommunityId(id),
+        communityId,
         name: id,
         relays,
         sections: [
           {
             name: sectionName,
             kinds: [{kind: 1111}],
-            profileLists: [
-              {address: profileListAddress || `${PROFILE_LIST_KIND}:${pubkey}:${sectionName}`},
-            ],
+            profileLists: [{address: canonicalAddress}],
           },
         ],
       }).tags,
     }),
   )!
+}
 
 const makeMultiSectionDefinition = ({
   id,
@@ -83,35 +91,46 @@ const makeMultiSectionDefinition = ({
   id: string
   pubkey: string
   sections: Array<{name: string; profileListAddresses: string[]}>
-}) =>
-  parseCommunityDefinition(
+}) => {
+  const communityId = getCommunityId(id)
+  return parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: getCommunityId(id),
+        communityId,
         name: id,
         relays: ["wss://relay.example.com"],
         sections: sections.map((section, index) => ({
           name: section.name,
           kinds: [{kind: 1111 + index}],
-          profileLists: section.profileListAddresses.map(address => ({address})),
+          profileLists: section.profileListAddresses.map(address => {
+            const [kind, owner, ...parts] = address.split(":")
+            const purpose = parts
+              .join(":")
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+            return {address: `${kind}:${owner}:${communityId}-${purpose}`}
+          }),
         })),
       }).tags,
     }),
   )!
+}
 
 const makeProfileList = ({
   id,
   pubkey,
   identifier,
+  communityId,
   members = [],
   createdAt = 1,
 }: {
   id: string
   pubkey: string
   identifier: string
+  communityId: string
   members?: string[]
   createdAt?: number
 }) =>
@@ -120,7 +139,10 @@ const makeProfileList = ({
     pubkey,
     created_at: createdAt,
     kind: PROFILE_LIST_KIND,
-    tags: [["d", identifier], ...members.map(member => ["p", member])],
+    tags: [
+      ["d", `${communityId}-${identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`],
+      ...members.map(member => ["p", member]),
+    ],
   })
 
 const makePersonBanState = (pubkey: string): EffectiveCommunityReportState =>
@@ -159,6 +181,7 @@ describe("community membership", () => {
           id: "old-general",
           pubkey: moderatorManyPubkey,
           identifier: "General",
+          communityId: definition.communityId,
           members: [removedPubkey],
           createdAt: 1,
         }),
@@ -166,6 +189,7 @@ describe("community membership", () => {
           id: "new-general",
           pubkey: moderatorManyPubkey,
           identifier: "General",
+          communityId: definition.communityId,
           members: [memberManyPubkey, memberFewPubkey, bannedPubkey],
           createdAt: 2,
         }),
@@ -173,18 +197,21 @@ describe("community membership", () => {
           id: "general-extra",
           pubkey: moderatorFewPubkey,
           identifier: "GeneralExtra",
+          communityId: definition.communityId,
           members: [memberManyPubkey],
         }),
         makeProfileList({
           id: "threads",
           pubkey: moderatorManyPubkey,
           identifier: COMMUNITY_SECTION_THREADS,
+          communityId: definition.communityId,
           members: [memberManyPubkey, moderatorManyPubkey],
         }),
         makeProfileList({
           id: "repos",
           pubkey: moderatorFewPubkey,
           identifier: "Repos",
+          communityId: definition.communityId,
           members: [memberManyPubkey, memberFewPubkey, moderatorManyPubkey, moderatorFewPubkey],
         }),
       ],
@@ -208,8 +235,8 @@ describe("community membership", () => {
       COMMUNITY_SECTION_THREADS,
     ])
     expect(members[3].sectionGrants[0].profileListAddresses).toEqual([
-      generalAddress,
-      generalExtraAddress,
+      definition.sections[0].profileLists[0].address,
+      definition.sections[0].profileLists[1].address,
     ])
     expect(members.some(member => member.pubkey === bannedPubkey)).toBe(false)
     expect(members.some(member => member.pubkey === removedPubkey)).toBe(false)
@@ -241,19 +268,23 @@ describe("community membership", () => {
         }),
       ],
       profileListEvents: [
-        makeProfileList({id: "moderator-list", pubkey: userPubkey, identifier: "Moderators"}),
+        makeProfileList({
+          id: "moderator-list",
+          pubkey: userPubkey,
+          identifier: "Moderators",
+          communityId: getCommunityId("moderator-definition"),
+        }),
         makeProfileList({
           id: "member-list",
           pubkey: memberListOwner,
           identifier: "Members",
+          communityId: getCommunityId("member-definition"),
           members: [userPubkey],
         }),
       ],
     })
 
-    expect(
-      Object.fromEntries(refs.map(ref => [ref.community.ownerPubkey, ref.roles])),
-    ).toEqual({
+    expect(Object.fromEntries(refs.map(ref => [ref.community.ownerPubkey, ref.roles]))).toEqual({
       [userPubkey]: ["admin"],
       [moderatorCommunityPubkey]: ["moderator", "member"],
       [memberCommunityPubkey]: ["member"],
@@ -277,6 +308,7 @@ describe("community membership", () => {
       id: "members",
       pubkey: listOwner,
       identifier: "Members",
+      communityId: definition.communityId,
       members: [userPubkey],
       createdAt: 2,
     })
@@ -295,7 +327,7 @@ describe("community membership", () => {
       pubkey: listOwner,
       created_at: 2,
       kind: DELETE,
-      tags: [["a", listAddress]],
+      tags: [["a", definition.sections[0].profileLists[0].address]],
     })
     const recreated = {...list, id: "recreated", created_at: 3}
     const foreignDelete = {...deletion, id: "foreign-delete", pubkey: owner}
@@ -303,7 +335,7 @@ describe("community membership", () => {
       ...deletion,
       id: "multi-delete",
       tags: [
-        ["a", listAddress],
+        ["a", definition.sections[0].profileLists[0].address],
         ["a", `${PROFILE_LIST_KIND}:${listOwner}:Other`],
       ],
     }
@@ -376,6 +408,7 @@ describe("community membership", () => {
           id: "members",
           pubkey: listOwner,
           identifier: "Members",
+          communityId: activeBranch.communityId,
           members: [userPubkey],
         }),
       ],
@@ -406,6 +439,7 @@ describe("community membership", () => {
           id: "member-list",
           pubkey: memberListOwner,
           identifier: "Members",
+          communityId: memberDefinition.communityId,
           members: [userPubkey],
         }),
       ],
@@ -511,6 +545,7 @@ describe("community membership", () => {
           id: "goals-list",
           pubkey: moderatorPubkey,
           identifier: "Goals",
+          communityId: definition.communityId,
           members: [memberPubkey],
         }),
       ],
@@ -583,7 +618,12 @@ describe("community membership", () => {
     const members = selectCommunityMemberList({
       definition,
       profileListEvents: [
-        makeProfileList({id: "moderator-list", pubkey: userPubkey, identifier: "General"}),
+        makeProfileList({
+          id: "moderator-list",
+          pubkey: userPubkey,
+          identifier: "General",
+          communityId: definition.communityId,
+        }),
       ],
     })
     const moderator = members.find(member => member.pubkey === userPubkey)
@@ -611,6 +651,7 @@ describe("community membership", () => {
       id: "declined-list",
       pubkey: userPubkey,
       identifier: "General",
+      communityId: definition.communityId,
     })
     declinedList.tags.push(["status", "declined"])
 
@@ -659,6 +700,7 @@ describe("community membership", () => {
           id: "member-list",
           pubkey: memberListOwner,
           identifier: "General",
+          communityId: memberDefinition.communityId,
           members: [userPubkey],
         }),
       ],
@@ -713,12 +755,14 @@ describe("community membership", () => {
           id: "member-list",
           pubkey: memberListOwner,
           identifier: "General",
+          communityId: memberDefinition.communityId,
           members: [userPubkey],
         }),
         makeProfileList({
           id: "banned-list",
           pubkey: bannedListOwner,
           identifier: "General",
+          communityId: bannedDefinition.communityId,
           members: [userPubkey],
         }),
       ],

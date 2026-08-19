@@ -75,7 +75,7 @@ const makeDefinition = ({
       {
         name: "General",
         kinds: [{kind: 1111}],
-        profileLists: [{address: `30000:${getPublicKey(secret)}:members`}],
+        profileLists: [{address: `30000:${getPublicKey(secret)}:${communityId}-members`}],
       },
     ],
     services: services.map(service => ({

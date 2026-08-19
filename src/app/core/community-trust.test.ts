@@ -90,14 +90,23 @@ const makeDefinition = ({
   sectionName?: string
   profileListAddress?: string
   profileListAddresses?: string[]
-}) =>
-  parseCommunityDefinition(
+}) => {
+  const communityId = getCommunityId(id)
+  const canonicalizeAddress = (address: string) => {
+    const [kind, owner, ...parts] = address.split(":")
+    const purpose = parts
+      .join(":")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+    return `${kind}:${owner}:${communityId}-${purpose}`
+  }
+  return parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: getCommunityId(id),
+        communityId,
         name: id,
         relays: ["wss://relay.example.com"],
         sections: [
@@ -111,30 +120,36 @@ const makeDefinition = ({
                 ...(!profileListAddress && !profileListAddresses
                   ? [`${PROFILE_LIST_KIND}:${pubkey}:${sectionName}`]
                   : []),
-              ].map(address => ({address})),
+              ].map(address => ({address: canonicalizeAddress(address)})),
             ],
           },
         ],
       }).tags,
     }),
   )!
+}
 
 const makeProfileList = ({
   id,
   pubkey,
   identifier,
+  communityId,
   members = [],
 }: {
   id: string
   pubkey: string
   identifier: string
+  communityId: string
   members?: string[]
 }) =>
   makeEvent({
     id,
     pubkey,
     kind: PROFILE_LIST_KIND,
-    tags: [["d", identifier], ...members.map(member => ["p", member])],
+    tags: [
+      ["d", `${communityId}-${identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`],
+      ...members.map(member => ["p", member]),
+    ],
   })
 
 describe("community trust", () => {
@@ -167,12 +182,14 @@ describe("community trust", () => {
           id: "viewer-members",
           pubkey: viewerListOwner,
           identifier: "Repositories",
+          communityId: definitions[0].communityId,
           members: [viewerPubkey],
         }),
         makeProfileList({
           id: "target-members",
           pubkey: targetListOwner,
           identifier: "Repositories",
+          communityId: definitions[1].communityId,
           members: [targetPubkey],
         }),
       ],
@@ -224,6 +241,7 @@ describe("community trust", () => {
         id: "members",
         pubkey: listOwner,
         identifier: "Repositories",
+        communityId: definitions[0].communityId,
         members: [memberPubkey],
       }),
     ]
@@ -261,11 +279,17 @@ describe("community trust", () => {
       }),
     ]
     const profileListEvents = [
-      makeProfileList({id: "moderators", pubkey: moderatorPubkey, identifier: "Repositories"}),
+      makeProfileList({
+        id: "moderators",
+        pubkey: moderatorPubkey,
+        identifier: "Repositories",
+        communityId: definitions[0].communityId,
+      }),
       makeProfileList({
         id: "members",
         pubkey: memberListOwner,
         identifier: "Repositories",
+        communityId: definitions[0].communityId,
         members: [memberPubkey],
       }),
     ]
@@ -312,6 +336,7 @@ describe("community trust", () => {
         id: `members-${index}`,
         pubkey: listOwner,
         identifier: "Repositories",
+        communityId: definitions[index].communityId,
         members: [viewerPubkey, targetPubkey],
       }),
     )
@@ -358,6 +383,7 @@ describe("community trust", () => {
         id: "members",
         pubkey: listOwner,
         identifier: "Repositories",
+        communityId: definitions[0].communityId,
         members: [memberPubkey],
       }),
     ]
@@ -413,6 +439,7 @@ describe("community trust", () => {
         id: "members",
         pubkey: listOwner,
         identifier: "Repositories",
+        communityId: definitions[0].communityId,
         members: [memberPubkey],
       }),
     ]
@@ -468,6 +495,7 @@ describe("community trust", () => {
         id: "members",
         pubkey: listOwner,
         identifier: "Repositories",
+        communityId: definitions[0].communityId,
         members: [memberPubkey],
       }),
     ]
@@ -526,6 +554,7 @@ describe("community trust", () => {
         id: "members",
         pubkey: listOwner,
         identifier: "Repositories",
+        communityId: definitions[0].communityId,
         members: [memberPubkey],
       }),
     ]
@@ -595,6 +624,7 @@ describe("community trust", () => {
         id: "members",
         pubkey: listOwner,
         identifier: "Repositories",
+        communityId: definitions[0].communityId,
         members: [viewerPubkey, memberPubkey],
       }),
     ]

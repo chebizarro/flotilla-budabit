@@ -47,14 +47,23 @@ const makeDefinition = ({
   mintUrl?: string
   listAddresses?: string[]
   identifier?: string
-}) =>
-  parseCommunityDefinition(
+}) => {
+  const communityId = communityIds.get(identifier)!
+  const canonicalizeAddress = (address: string) => {
+    const [kind, owner, ...parts] = address.split(":")
+    const purpose = parts
+      .join(":")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+    return `${kind}:${owner}:${communityId}-${purpose}`
+  }
+  return parseCommunityDefinition(
     makeEvent({
       id: communityPubkey.slice(0, 8),
       pubkey: communityPubkey,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: communityIds.get(identifier)!,
+        communityId,
         name: identifier,
         relays: ["wss://relay.example.com"],
         mints: mintUrl ? [{url: mintUrl.replace(/\/$/, ""), type: "cashu"}] : [],
@@ -65,20 +74,23 @@ const makeDefinition = ({
             profileLists: (listAddresses.length
               ? listAddresses
               : [`${PROFILE_LIST_KIND}:${fallbackProfileListOwner}:Repositories`]
-            ).map(address => ({address})),
+            ).map(address => ({address: canonicalizeAddress(address)})),
           },
         ],
       }).tags,
     }),
   )!
+}
 
 const makeProfileList = ({
   pubkey,
   identifier = "Repositories",
+  community = "community",
   members = [],
 }: {
   pubkey: string
   identifier?: string
+  community?: string
   members?: Array<string | [string, string]>
 }) =>
   makeEvent({
@@ -86,7 +98,10 @@ const makeProfileList = ({
     pubkey,
     kind: PROFILE_LIST_KIND,
     tags: [
-      ["d", identifier],
+      [
+        "d",
+        `${communityIds.get(community)!}-${identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      ],
       ...members.map(member =>
         Array.isArray(member) ? ["p", member[0], member[1]] : ["p", member],
       ),
@@ -315,8 +330,8 @@ describe("cashu mint recommendations", () => {
       viewerPubkey: viewer,
       communityRefs: [makeCommunityRef(first), makeCommunityRef(second)],
       profileListEvents: [
-        makeProfileList({pubkey: moderatorA, members: [viewer, recommender]}),
-        makeProfileList({pubkey: moderatorB, members: [viewer]}),
+        makeProfileList({pubkey: moderatorA, members: [viewer, recommender], community: "first"}),
+        makeProfileList({pubkey: moderatorB, members: [viewer], community: "second"}),
       ],
       mintListEvents: [
         makeMintList({pubkey: recommender, mints: ["https://recommended.example.com"]}),
@@ -356,8 +371,8 @@ describe("cashu mint recommendations", () => {
       viewerPubkey: viewer,
       communityRefs: [makeCommunityRef(first), makeCommunityRef(second)],
       profileListEvents: [
-        makeProfileList({pubkey: firstModerator, members: [viewer]}),
-        makeProfileList({pubkey: secondModerator, members: [viewer]}),
+        makeProfileList({pubkey: firstModerator, members: [viewer], community: "shared-id"}),
+        makeProfileList({pubkey: secondModerator, members: [viewer], community: "shared-id"}),
       ],
     })
 

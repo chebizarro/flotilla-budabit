@@ -124,9 +124,13 @@ const makeDefinition = ({includeSectionModerator = true} = {}) =>
             kinds: [{kind: 9, subtype: "room-message"}, {kind: 1111}, {kind: 1984}],
             profileLists: [
               ...(includeSectionModerator
-                ? [{address: `${PROFILE_LIST_KIND}:${sectionModeratorPubkey}:General`}]
+                ? [
+                    {
+                      address: `${PROFILE_LIST_KIND}:${sectionModeratorPubkey}:${communityId}-general`,
+                    },
+                  ]
                 : []),
-              {address: `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:General`},
+              {address: `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${communityId}-general`},
             ],
             badges: [
               ...(includeSectionModerator
@@ -140,10 +144,10 @@ const makeDefinition = ({includeSectionModerator = true} = {}) =>
             kinds: [{kind: 11, subtype: COMMUNITY_SUBTYPE_THREADS}],
             profileLists: [
               {
-                address: `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`,
+                address: `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${communityId}-threads`,
               },
               {
-                address: `${PROFILE_LIST_KIND}:${otherSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`,
+                address: `${PROFILE_LIST_KIND}:${otherSectionModeratorPubkey}:${communityId}-threads`,
               },
             ],
             badges: [
@@ -165,8 +169,8 @@ const generalProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: sectionModeratorPubkey,
   tags: [
-    ["d", "General"],
-    ["a", `${PROFILE_LIST_KIND}:${sectionModeratorPubkey}:General`],
+    ["d", `${communityId}-general`],
+    ["a", `${PROFILE_LIST_KIND}:${sectionModeratorPubkey}:${communityId}-general`],
     ["p", outsiderPubkey],
   ],
 })
@@ -177,8 +181,8 @@ const moderatorProfileListEvents = [
     kind: PROFILE_LIST_KIND,
     pubkey: allSectionModeratorPubkey,
     tags: [
-      ["d", "General"],
-      ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:General`],
+      ["d", `${communityId}-general`],
+      ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${communityId}-general`],
     ],
   }),
   makeEvent({
@@ -186,8 +190,8 @@ const moderatorProfileListEvents = [
     kind: PROFILE_LIST_KIND,
     pubkey: allSectionModeratorPubkey,
     tags: [
-      ["d", COMMUNITY_SECTION_THREADS],
-      ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`],
+      ["d", `${communityId}-threads`],
+      ["a", `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${communityId}-threads`],
     ],
   }),
   makeEvent({
@@ -195,8 +199,8 @@ const moderatorProfileListEvents = [
     kind: PROFILE_LIST_KIND,
     pubkey: otherSectionModeratorPubkey,
     tags: [
-      ["d", COMMUNITY_SECTION_THREADS],
-      ["a", `${PROFILE_LIST_KIND}:${otherSectionModeratorPubkey}:${COMMUNITY_SECTION_THREADS}`],
+      ["d", `${communityId}-threads`],
+      ["a", `${PROFILE_LIST_KIND}:${otherSectionModeratorPubkey}:${communityId}-threads`],
     ],
   }),
 ]
@@ -671,7 +675,7 @@ describe("community reports", () => {
       pubkey: allSectionModeratorPubkey,
       tags: makeCommunityPersonReport({communityPubkey, pubkey: targetPubkey}).tags,
     })
-    const generalAddress = `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:General`
+    const generalAddress = `${PROFILE_LIST_KIND}:${allSectionModeratorPubkey}:${communityId}-general`
     const deletion = makeEvent({
       id: "delete-general-authority",
       kind: DELETE,

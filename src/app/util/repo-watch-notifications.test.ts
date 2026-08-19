@@ -237,7 +237,9 @@ const makeCommunityDefinition = (id = communityId, createdAt = 1): CommunityDefi
               name: COMMUNITY_SECTION_REPO_CURATOR,
               kinds: [{kind: GIT_REPO_ANNOUNCEMENT}],
               profileLists: [
-                {address: `${PROFILE_LIST_KIND}:${listPubkey}:${COMMUNITY_SECTION_REPO_CURATOR}`},
+                {
+                  address: `${PROFILE_LIST_KIND}:${listPubkey}:${id}-repo-curator`,
+                },
               ],
             },
           ],
@@ -265,7 +267,7 @@ const makeCommunityProfileList = ({
       kind: PROFILE_LIST_KIND,
       content: "",
       tags: [
-        ["d", COMMUNITY_SECTION_REPO_CURATOR],
+        ["d", `${communityId}-repo-curator`],
         ["client-id", id],
         ...pubkeys.map(pubkey => ["p", pubkey]),
       ],

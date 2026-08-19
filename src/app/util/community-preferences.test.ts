@@ -34,6 +34,13 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
+const getCommunityId = (id: string) =>
+  getPublicKey(
+    new Uint8Array(32).fill(
+      (Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 254) + 1,
+    ),
+  )
+
 const makeDefinition = ({
   id,
   pubkey,
@@ -47,11 +54,7 @@ const makeDefinition = ({
   profileListPubkey?: string
   listIdentifier?: string
 }) => {
-  const communityId = getPublicKey(
-    new Uint8Array(32).fill(
-      (Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 254) + 1,
-    ),
-  )
+  const communityId = getCommunityId(id)
   return makeEvent({
     id,
     pubkey,
@@ -65,20 +68,26 @@ const makeDefinition = ({
         {
           name: "General",
           kinds: [{kind: 7}],
-          profileLists: [{address: `${PROFILE_LIST_KIND}:${profileListPubkey}:${listIdentifier}`}],
+          profileLists: [
+            {
+              address: `${PROFILE_LIST_KIND}:${profileListPubkey}:${communityId}-${listIdentifier
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")}`,
+            },
+          ],
         },
       ],
     }).tags,
   })
 }
 
-const makeProfileList = (identifier: string, created_at = 1) =>
+const makeProfileList = (identifier: string, created_at = 1, definitionId = "moderator") =>
   makeEvent({
     id: `profile-list-${identifier}`,
     pubkey: userPubkey,
     created_at,
     kind: PROFILE_LIST_KIND,
-    tags: [["d", identifier]],
+    tags: [["d", `${getCommunityId(definitionId)}-${identifier}`]],
   })
 
 const makeStar = (communityPubkey: string, created_at = 1) => {
@@ -292,7 +301,7 @@ describe("community preferences", () => {
       profileListPubkey: otherCommunityPubkey,
       listIdentifier: "general-list",
     })
-    const profileList = makeProfileList("general-list", 3)
+    const profileList = makeProfileList("general-list", 3, "not-moderator")
 
     expect(
       selectPreferredCommunities({
@@ -309,8 +318,8 @@ describe("community preferences", () => {
       pubkey: moderatorCommunityPubkey,
       listIdentifier: "moderator-list",
     })
-    const list = makeProfileList("moderator-list", 2)
-    const address = `${PROFILE_LIST_KIND}:${userPubkey}:moderator-list`
+    const list = makeProfileList("moderator-list", 2, "moderator-authority")
+    const address = `${PROFILE_LIST_KIND}:${userPubkey}:${getCommunityId("moderator-authority")}-moderator-list`
     const deletion = makeEvent({
       id: "delete-moderator-list",
       pubkey: userPubkey,

@@ -53,7 +53,7 @@ const definitionEvent = {
       {
         name: "Repositories",
         kinds: [{kind: 30617}],
-        profileLists: [{address: `${PROFILE_LIST_KIND}:${listOwner}:Repositories`}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${listOwner}:${communityId}-repositories`}],
       },
     ],
   }).tags,
@@ -67,7 +67,7 @@ const profileListEvent = {
   content: "",
   sig: "",
   tags: [
-    ["d", "Repositories"],
+    ["d", `${communityId}-repositories`],
     ["p", owner],
   ],
 } as any

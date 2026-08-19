@@ -188,7 +188,9 @@ describe("community badges", () => {
               name: "General",
               kinds: [{kind: 1111}],
               profileLists: [
-                {address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${moderatorListIdentifier}`},
+                {
+                  address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${sibling.communityId}-moderator-list`,
+                },
               ],
             },
           ],

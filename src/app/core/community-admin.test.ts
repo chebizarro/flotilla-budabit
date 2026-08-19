@@ -30,12 +30,13 @@ const otherPubkey = getPublicKey(new Uint8Array(32).fill(6))
 const v2Controller = getPublicKey(new Uint8Array(32).fill(1))
 const v2CommunityId = getPublicKey(new Uint8Array(32).fill(2))
 const v2ListController = getPublicKey(new Uint8Array(32).fill(3))
+const generalIdentifier = `${v2CommunityId}-general`
 
 const profileList = {
   kind: PROFILE_LIST_KIND,
   pubkey: managerPubkey,
-  identifier: "General",
-  address: `${PROFILE_LIST_KIND}:${managerPubkey}:General`,
+  identifier: generalIdentifier,
+  address: `${PROFILE_LIST_KIND}:${managerPubkey}:${generalIdentifier}`,
 }
 
 const profileListEvent = {
@@ -44,7 +45,7 @@ const profileListEvent = {
   pubkey: managerPubkey,
   created_at: 1,
   tags: [
-    ["d", "General"],
+    ["d", generalIdentifier],
     ["p", otherPubkey],
   ],
   content: "",
@@ -78,7 +79,7 @@ describe("community admin helpers", () => {
       kind: PROFILE_LIST_KIND,
       content: "",
       tags: [
-        ["d", "General"],
+        ["d", generalIdentifier],
         ["p", memberPubkey],
       ],
     })
@@ -91,7 +92,7 @@ describe("community admin helpers", () => {
       kind: PROFILE_LIST_KIND,
       content: "",
       tags: [
-        ["d", "General"],
+        ["d", generalIdentifier],
         ["p", otherPubkey],
         ["p", memberPubkey],
       ],
@@ -105,7 +106,7 @@ describe("community admin helpers", () => {
     ).toEqual({
       kind: PROFILE_LIST_KIND,
       content: "",
-      tags: [["d", "General"]],
+      tags: [["d", generalIdentifier]],
     })
   })
 
@@ -114,7 +115,7 @@ describe("community admin helpers", () => {
       kind: PROFILE_LIST_KIND,
       content: "",
       tags: [
-        ["d", "General"],
+        ["d", generalIdentifier],
         ["p", otherPubkey],
         ["p", memberPubkey],
       ],
@@ -122,12 +123,14 @@ describe("community admin helpers", () => {
     expect(makeCommunityRevokeEvent({profileList, profileListEvent, pubkey: otherPubkey})).toEqual({
       kind: PROFILE_LIST_KIND,
       content: "",
-      tags: [["d", "General"]],
+      tags: [["d", generalIdentifier]],
     })
   })
 
   it("applies manual member grants to community-owned section lists", () => {
-    const definition = makeDefinition([{address: `${PROFILE_LIST_KIND}:${managerPubkey}:General`}])
+    const definition = makeDefinition([
+      {address: `${PROFILE_LIST_KIND}:${managerPubkey}:${generalIdentifier}`},
+    ])
 
     const result = applyCommunityBootstrapGrants({
       sections: definition.sections,
@@ -154,7 +157,9 @@ describe("community admin helpers", () => {
         {
           name: "Threads",
           kinds: [{kind: 11, subtype: "threads"}],
-          profileLists: [{address: `${PROFILE_LIST_KIND}:${v2ListController}:existing`}],
+          profileLists: [
+            {address: `${PROFILE_LIST_KIND}:${v2ListController}:${v2CommunityId}-threads`},
+          ],
         },
       ],
     })
@@ -204,7 +209,7 @@ describe("community admin helpers", () => {
         {
           name: "General",
           kinds: [{kind: 1111}],
-          profileLists: [{address: `${PROFILE_LIST_KIND}:${v2Controller}:General`}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${v2Controller}:${generalIdentifier}`}],
         },
       ],
     })
@@ -229,6 +234,7 @@ describe("community admin helpers", () => {
 
   it("adds manual moderator refs and creates accept or decline list events", () => {
     const moderatorRef = makeManualModeratorProfileListRef({
+      communityId: v2CommunityId,
       moderatorPubkey: memberPubkey,
       sectionName: "General",
       relays: ["wss://relay.example.com"],
@@ -256,16 +262,21 @@ describe("community admin helpers", () => {
 
     expect(result.sections[0].profileLists).toEqual([moderatorRef])
     expect(result.profileListUpdates).toEqual([])
-    expect(accepted.tags).toEqual([["d", "General"]])
+    expect(accepted.tags).toEqual([["d", generalIdentifier]])
     expect(declined.tags).toEqual([
-      ["d", "General"],
+      ["d", generalIdentifier],
       ["status", "declined"],
     ])
     expect(getProfileListPubkeys(declined as TrustedEvent)).toEqual([])
   })
 
   it("selects the latest profile list event by address", () => {
-    const newer = {...profileListEvent, id: "newer", created_at: 2, tags: [["d", "General"]]}
+    const newer = {
+      ...profileListEvent,
+      id: "newer",
+      created_at: 2,
+      tags: [["d", generalIdentifier]],
+    }
 
     expect(findCommunityProfileListEvent(profileList, [profileListEvent, newer])).toBe(newer)
   })
@@ -320,6 +331,7 @@ describe("community admin helpers", () => {
 
   it("detects pending moderator invites until the moderator responds", () => {
     const moderatorRef = makeManualModeratorProfileListRef({
+      communityId: v2CommunityId,
       moderatorPubkey: memberPubkey,
       sectionName: "General",
       relays: ["wss://relay.example.com"],
@@ -381,11 +393,13 @@ describe("community admin helpers", () => {
 
   it("selects moderator invite refs for the active user", () => {
     const moderatorRef = makeManualModeratorProfileListRef({
+      communityId: v2CommunityId,
       moderatorPubkey: memberPubkey,
       sectionName: "General",
       relays: ["wss://relay.example.com"],
     })
     const otherModeratorRef = makeManualModeratorProfileListRef({
+      communityId: v2CommunityId,
       moderatorPubkey: otherPubkey,
       sectionName: "General",
       relays: ["wss://relay.example.com"],

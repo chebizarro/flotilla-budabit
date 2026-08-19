@@ -131,6 +131,33 @@ describe("Repository", () => {
       expect(repo.isDeletedByAddress(event)).toBe(true)
     })
 
+    it("should ignore delete by id for replaceable events", () => {
+      const pubkey = randomHex()
+      const event = createEvent(MUTES, {pubkey})
+      const deleteEvent = createEvent(DELETE, {
+        pubkey,
+        tags: [["e", event.id]],
+        created_at: now() + 100,
+      })
+
+      repo.publish(event)
+      repo.publish(deleteEvent)
+
+      expect(repo.isDeleted(event)).toBe(false)
+    })
+
+    it("should keep replaced events suppressed", () => {
+      const pubkey = randomHex()
+      const original = createEvent(MUTES, {pubkey, created_at: now()})
+      const replacement = createEvent(MUTES, {pubkey, created_at: original.created_at + 1})
+
+      repo.publish(original)
+      repo.publish(replacement)
+
+      expect(repo.isDeleted(original)).toBe(true)
+      expect(repo.isDeleted(replacement)).toBe(false)
+    })
+
     it("should not delete events with mismatched pubkeys", () => {
       const event = createEvent(1)
       const deleteEvent = createEvent(DELETE, {tags: [["e", event.id]], created_at: now() + 1})

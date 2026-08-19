@@ -62,14 +62,15 @@ const makeDefinition = ({
   id: string
   pubkey: string
   sections: Array<{name: string; profileListAddresses: string[]}>
-}) =>
-  parseCommunityDefinition(
+}) => {
+  const communityId = getCommunityId(id)
+  return parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: getCommunityId(id),
+        communityId,
         name: id,
         relays: ["wss://relay.example.com"],
         sections: sections.map((section, index) => ({
@@ -78,28 +79,41 @@ const makeDefinition = ({
           profileLists: (section.profileListAddresses.length > 0
             ? section.profileListAddresses
             : [`${PROFILE_LIST_KIND}:${pubkey}:${section.name}`]
-          ).map(address => ({address})),
+          ).map(address => {
+            const [kind, owner, ...parts] = address.split(":")
+            const purpose = parts
+              .join(":")
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+            return {address: `${kind}:${owner}:${communityId}-${purpose}`}
+          }),
         })),
       }).tags,
     }),
   )!
+}
 
 const makeProfileList = ({
   id,
   pubkey,
   identifier,
+  communityId,
   members = [],
 }: {
   id: string
   pubkey: string
   identifier: string
+  communityId: string
   members?: string[]
 }) =>
   makeEvent({
     id,
     pubkey,
     kind: PROFILE_LIST_KIND,
-    tags: [["d", identifier], ...members.map(member => ["p", member])],
+    tags: [
+      ["d", `${communityId}-${identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`],
+      ...members.map(member => ["p", member]),
+    ],
   })
 
 const makeViewerRef = (definition: CommunityDefinition) =>
@@ -164,12 +178,14 @@ describe("profile trust badges", () => {
           id: "first-members",
           pubkey: memberListOwner,
           identifier: "General",
+          communityId: firstDefinition.communityId,
           members: [targetPubkey],
         }),
         makeProfileList({
           id: "second-members",
           pubkey: otherMemberListOwner,
           identifier: "General",
+          communityId: secondDefinition.communityId,
           members: [targetPubkey],
         }),
       ],
@@ -263,12 +279,14 @@ describe("profile trust badges", () => {
           id: "shared-member-list",
           pubkey: memberListOwner,
           identifier: "General",
+          communityId: sharedDefinition.communityId,
           members: [targetPubkey],
         }),
         makeProfileList({
           id: "unshared-moderator-list",
           pubkey: targetPubkey,
           identifier: "General",
+          communityId: unsharedDefinition.communityId,
         }),
       ],
     })
@@ -290,11 +308,17 @@ describe("profile trust badges", () => {
       targetPubkey,
       viewerCommunityRefs: [makeViewerRef(definition)],
       profileListEvents: [
-        makeProfileList({id: "moderator-list", pubkey: targetPubkey, identifier: "General"}),
+        makeProfileList({
+          id: "moderator-list",
+          pubkey: targetPubkey,
+          identifier: "General",
+          communityId: definition.communityId,
+        }),
         makeProfileList({
           id: "member-list",
           pubkey: memberListOwner,
           identifier: "General",
+          communityId: definition.communityId,
           members: [targetPubkey],
         }),
       ],
@@ -329,12 +353,23 @@ describe("profile trust badges", () => {
       targetPubkey,
       viewerCommunityRefs: [makeViewerRef(sharedDefinition), makeViewerRef(otherSharedDefinition)],
       profileListEvents: [
-        makeProfileList({id: "shared-general", pubkey: targetPubkey, identifier: "General"}),
-        makeProfileList({id: "shared-repos", pubkey: targetPubkey, identifier: "Repositories"}),
+        makeProfileList({
+          id: "shared-general",
+          pubkey: targetPubkey,
+          identifier: "General",
+          communityId: sharedDefinition.communityId,
+        }),
+        makeProfileList({
+          id: "shared-repos",
+          pubkey: targetPubkey,
+          identifier: "Repositories",
+          communityId: sharedDefinition.communityId,
+        }),
         makeProfileList({
           id: "other-shared-general",
           pubkey: targetPubkey,
           identifier: "OtherGeneral",
+          communityId: otherSharedDefinition.communityId,
         }),
       ],
     })
@@ -365,6 +400,7 @@ describe("profile trust badges", () => {
           id: "shared-member-list",
           pubkey: memberListOwner,
           identifier: "General",
+          communityId: sharedDefinition.communityId,
           members: [targetPubkey],
         }),
       ],

@@ -59,7 +59,7 @@ const makeDefinition = ({
       {
         name: "General",
         kinds: [{kind: 1111}],
-        profileLists: [{address: `30000:${listController}:writers`}],
+        profileLists: [{address: `30000:${listController}:${definitionCommunityId}-general`}],
       },
     ],
   }).tags,
@@ -222,7 +222,7 @@ describe("exact community state", () => {
     expect(definition?.event.id).toBe(low.id)
   })
 
-  it("applies exact-event deletions acquired during definition resolution", async () => {
+  it("applies address deletions acquired during definition resolution", async () => {
     const deleted = makeDefinition({id: "1".repeat(64), createdAt: 5})
     const older = makeDefinition({id: "2".repeat(64), createdAt: 4})
     const deletion: TrustedEvent = {
@@ -232,7 +232,7 @@ describe("exact community state", () => {
       kind: 5,
       content: "",
       sig: "f".repeat(128),
-      tags: [["e", deleted.id]],
+      tags: [["a", pointer.address]],
     }
 
     const definition = await resolveExactCommunityDefinition(pointer, {

@@ -48,6 +48,9 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
+const profileListIdentifier = (value: string) =>
+  `${communityPubkey}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+
 const makeDefinition = (sections: CommunityDefinitionSectionInput[]) =>
   parseCommunityDefinition(
     makeEvent({
@@ -59,7 +62,16 @@ const makeDefinition = (sections: CommunityDefinitionSectionInput[]) =>
         description: "Definition description",
         picture: "https://community.example/picture.png",
         relays: ["wss://relay.example"],
-        sections,
+        sections: sections.map(section => ({
+          ...section,
+          profileLists: section.profileLists.map(ref => {
+            const [kind, owner, ...parts] = ref.address.split(":")
+            return {
+              ...ref,
+              address: `${kind}:${owner}:${profileListIdentifier(parts.join(":"))}`,
+            }
+          }),
+        })),
       }).tags,
     }),
   )!
@@ -84,7 +96,7 @@ const calendarProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: calendarWriterPubkey,
   tags: [
-    ["d", "Events and meetups"],
+    ["d", profileListIdentifier("Events and meetups")],
     ["p", calendarWriterPubkey],
     ["p", calendarMemberPubkey],
   ],
@@ -94,7 +106,7 @@ const dateOnlyCalendarProfileList = makeEvent({
   kind: PROFILE_LIST_KIND,
   pubkey: calendarWriterPubkey,
   tags: [
-    ["d", "Calendar"],
+    ["d", profileListIdentifier("Calendar")],
     ["p", calendarWriterPubkey],
     ["p", calendarMemberPubkey],
   ],
@@ -453,7 +465,7 @@ describe("community widget context", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: calendarWriterPubkey,
       tags: [
-        ["d", "Repositories"],
+        ["d", profileListIdentifier("Repositories")],
         ["p", calendarWriterPubkey],
       ],
     })
@@ -544,7 +556,7 @@ describe("community widget context", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: profileListOwner,
       tags: [
-        ["d", "Rooms"],
+        ["d", profileListIdentifier("Rooms")],
         ["p", roomWriter],
       ],
     })
@@ -552,7 +564,7 @@ describe("community widget context", () => {
       kind: PROFILE_LIST_KIND,
       pubkey: profileListOwner,
       tags: [
-        ["d", "Threads"],
+        ["d", profileListIdentifier("Threads")],
         ["p", threadWriter],
       ],
     })

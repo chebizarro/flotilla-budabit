@@ -49,6 +49,7 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const makeDefinition = (pubkey = communityPubkey, sectionName = "Code-curator") => {
+  const identifier = `${moderatorPubkey}-${sectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
   return parseCommunityDefinition(
     makeEvent({
       id: `definition-${pubkey}`,
@@ -62,7 +63,7 @@ const makeDefinition = (pubkey = communityPubkey, sectionName = "Code-curator") 
           {
             name: sectionName,
             kinds: [{kind: GIT_REPO_ANNOUNCEMENT}],
-            profileLists: [{address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${sectionName}`}],
+            profileLists: [{address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${identifier}`}],
           },
         ],
       }).tags,
@@ -75,7 +76,10 @@ const makeProfileList = ({members = [granteePubkey], sectionName = "Code-curator
     id: "repo-profile-list",
     pubkey: moderatorPubkey,
     kind: PROFILE_LIST_KIND,
-    tags: [["d", sectionName], ...members.map(member => ["p", member])],
+    tags: [
+      ["d", `${moderatorPubkey}-${sectionName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`],
+      ...members.map(member => ["p", member]),
+    ],
   })
 
 const makeRepo = (overrides: Partial<TrustedEvent> = {}) =>

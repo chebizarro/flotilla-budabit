@@ -59,6 +59,7 @@ export class Repository extends Emitter {
   eventsByAuthor = new Map<string, TrustedEvent[]>()
   eventsByKind = new Map<number, TrustedEvent[]>()
   deletes = new Map<string, {created_at: number; pubkey: string}[]>()
+  replaced = new Set<string>()
   expired = new Map<string, number>()
 
   static get() {
@@ -91,6 +92,7 @@ export class Repository extends Emitter {
     this.eventsByAuthor.clear()
     this.eventsByKind.clear()
     this.deletes.clear()
+    this.replaced.clear()
     this.expired.clear()
 
     const added = []
@@ -229,6 +231,7 @@ export class Repository extends Emitter {
 
       // If our event is newer than what it's replacing, delete the old version
       pushToMapKey(this.deletes, duplicate.id, pick(["pubkey", "created_at"], event))
+      this.replaced.add(duplicate.id)
 
       // Notify listeners that it's been removed
       removed.add(duplicate.id)
@@ -295,10 +298,10 @@ export class Repository extends Emitter {
 
   isDeletedByAddress = (event: TrustedEvent) => this._isDeleted(getAddress(event), event)
 
-  isDeletedById = (event: TrustedEvent) => this._isDeleted(event.id, event)
+  isDeletedById = (event: TrustedEvent) =>
+    this.replaced.has(event.id) || (!isReplaceable(event) && this._isDeleted(event.id, event))
 
-  isDeleted = (event: TrustedEvent) =>
-    this._isDeleted(event.id, event) || this._isDeleted(getAddress(event), event)
+  isDeleted = (event: TrustedEvent) => this.isDeletedById(event) || this.isDeletedByAddress(event)
 
   isExpired = (event: TrustedEvent) => {
     const ts = this.expired.get(event.id)

@@ -117,10 +117,10 @@ const siblingCommunity = makeCommunityPointer({
   ownerPubkey: getPublicKey(new Uint8Array(32).fill(7)),
   communityId: zapper,
 })!
-const profileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_GENERAL}`
-const threadProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_THREADS}`
-const calendarProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_CALENDAR}`
-const goalProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_GOALS}`
+const profileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${notificationCommunity.communityId}-general`
+const threadProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${notificationCommunity.communityId}-threads`
+const calendarProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${notificationCommunity.communityId}-calendar`
+const goalProfileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${notificationCommunity.communityId}-goals`
 const emptyReportState = {eventReports: [], personReports: []} as any
 
 const makeCommunityRef = (): ActiveUserCommunityRef => ({
@@ -901,7 +901,10 @@ describe("notification sources", () => {
       id: "large-profile-list",
       kind: PROFILE_LIST_KIND,
       pubkey: profileListPubkey,
-      tags: [["d", COMMUNITY_SECTION_GENERAL], ...writers.map(pubkey => ["p", pubkey])],
+      tags: [
+        ["d", `${notificationCommunity.communityId}-general`],
+        ...writers.map(pubkey => ["p", pubkey]),
+      ],
     })
     const plan = buildGlobalCommunityNotificationFilterPlan({
       refs: [makeCommunityRef()],
@@ -1231,7 +1234,9 @@ describe("notification sources", () => {
       mutedPubkeys: [muted],
     })
 
-    expect(rows.map(row => row.eventId)).toEqual(expect.arrayContaining(["profile-list-General"]))
+    expect(rows.map(row => row.eventId)).toEqual(
+      expect.arrayContaining([`profile-list-${notificationCommunity.communityId}-general`]),
+    )
     expect(rows.map(row => row.eventId)).not.toEqual(
       expect.arrayContaining([
         "allowed-message",
@@ -1242,7 +1247,9 @@ describe("notification sources", () => {
       ]),
     )
     expect(rows.find(row => row.eventId === allowedMessage.id)).toBeUndefined()
-    expect(rows.find(row => row.eventId === "profile-list-General")).toEqual(
+    expect(
+      rows.find(row => row.eventId === `profile-list-${notificationCommunity.communityId}-general`),
+    ).toEqual(
       expect.objectContaining({
         source: "community",
         title: "Community membership updated",
@@ -2120,7 +2127,10 @@ describe("notification sources", () => {
     })
 
     expect(rows.map(row => row.eventId)).toEqual(
-      expect.arrayContaining(["profile-list-General", commentReply.id]),
+      expect.arrayContaining([
+        `profile-list-${notificationCommunity.communityId}-general`,
+        commentReply.id,
+      ]),
     )
     expect(rows.map(row => row.eventId)).not.toEqual(
       expect.arrayContaining([rootThreadReply.id, crossThreadReply.id]),
@@ -2661,7 +2671,9 @@ describe("notification sources", () => {
       id: "explicit-calendar-wrapper-delete",
       kind: DELETE,
       pubkey: communityPubkey,
-      tags: [["e", explicitWrapper.id]],
+      tags: [
+        ["a", `${TARGETED_PUBLICATION_KIND}:${communityPubkey}:explicit-calendar-wrapper-target`],
+      ],
     })
 
     expect(
@@ -2801,7 +2813,7 @@ describe("notification sources", () => {
       kind: DELETE,
       pubkey: writer,
       created_at: 300,
-      tags: [["e", replacement.id]],
+      tags: [["a", `${TARGETED_PUBLICATION_KIND}:${writer}:wrapper-original-target`]],
     })
     const addressDeletion = makeEvent({
       id: "wrapper-address-deletion",

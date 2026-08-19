@@ -26,8 +26,7 @@ const communityIds = new Map([
   ["second", getPublicKey(new Uint8Array(32).fill(44))],
   ["shared-id", getPublicKey(new Uint8Array(32).fill(45))],
 ])
-const communityPointer = (ownerPubkey: string) =>
-  makeCommunityPointer({ownerPubkey, communityId})!
+const communityPointer = (ownerPubkey: string) => makeCommunityPointer({ownerPubkey, communityId})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -53,7 +52,8 @@ const makeCommunityRef = ({
   graspServers?: string[]
   identifier?: string
 }): ActiveUserCommunityRef => {
-  const listAddress = `${PROFILE_LIST_KIND}:${moderatorPubkey}:Repositories`
+  const communityId = communityIds.get(identifier)!
+  const listAddress = `${PROFILE_LIST_KIND}:${moderatorPubkey}:${communityId}-repositories`
 
   const definition = parseCommunityDefinition(
     makeEvent({
@@ -61,7 +61,7 @@ const makeCommunityRef = ({
       created_at: 1,
       kind: COMMUNITY_DEFINITION_KIND,
       tags: buildCommunityDefinition({
-        communityId: communityIds.get(identifier)!,
+        communityId,
         name: identifier,
         relays: [relay],
         graspServers: graspServers.map(url => url.replace(/\/$/, "")),
@@ -85,12 +85,23 @@ const makeCommunityRef = ({
   }
 }
 
-const makeProfileList = ({pubkey, members = []}: {pubkey: string; members?: string[]}) =>
+const makeProfileList = ({
+  pubkey,
+  members = [],
+  community = "community",
+}: {
+  pubkey: string
+  members?: string[]
+  community?: string
+}) =>
   makeEvent({
     id: `${pubkey.slice(0, 8)}-profile-list`,
     pubkey,
     kind: PROFILE_LIST_KIND,
-    tags: [["d", "Repositories"], ...members.map(member => ["p", member])],
+    tags: [
+      ["d", `${communityIds.get(community)!}-repositories`],
+      ...members.map(member => ["p", member]),
+    ],
   })
 
 const makeGraspList = ({

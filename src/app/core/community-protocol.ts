@@ -402,7 +402,10 @@ const parseBoundedText = (value: string | undefined, minimum: number, maximum: n
   return size >= minimum && size <= maximum ? value : undefined
 }
 
-const parseSection = (tags: string[][]): CommunityDefinitionSection | undefined => {
+const parseSection = (
+  tags: string[][],
+  communityId: string,
+): CommunityDefinitionSection | undefined => {
   const content = tags[0]
   const name = exactTag(content, 2) ? parseBoundedText(content[1], 1, 100) : undefined
   if (!name) return undefined
@@ -424,6 +427,9 @@ const parseSection = (tags: string[][]): CommunityDefinitionSection | undefined 
       const ref = parseAddress(tag[1] || "", tag[0] === "a" ? 30000 : 30009)
       const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
       if (!ref || (tag[2] && !relay)) return undefined
+      if (tag[0] === "a" && !parseCommunityProfileListIdentifier(communityId, ref.identifier)) {
+        return undefined
+      }
       const item = relay ? {address: ref.address, relay} : {address: ref.address}
       if (tag[0] === "a") profileLists.push(item)
       else badges.push(item)
@@ -621,7 +627,7 @@ export const parseCommunityDefinition = (event: TrustedEvent): CommunityDefiniti
     }
   }
   if (rawSections.length === 0) return undefined
-  const sections = rawSections.map(parseSection)
+  const sections = rawSections.map(tags => parseSection(tags, communityId))
   if (sections.some(section => !section)) return undefined
   const parsedSections = sections as CommunityDefinitionSection[]
   const sectionNames = new Set<string>()
@@ -671,7 +677,10 @@ const requireText = (value: string, minimum: number, maximum: number, label: str
   return parsed
 }
 
-const makeSectionTags = (section: CommunityDefinitionSectionInput): string[][] => {
+const makeSectionTags = (
+  section: CommunityDefinitionSectionInput,
+  communityId: string,
+): string[][] => {
   const tags: string[][] = [["content", requireText(section.name, 1, 100, "section name")]]
   if (section.kinds.length === 0 || section.profileLists.length === 0) {
     throw new Error("Community sections require kinds and profile lists.")
@@ -687,7 +696,9 @@ const makeSectionTags = (section: CommunityDefinitionSectionInput): string[][] =
   }
   for (const item of section.profileLists) {
     const ref = parseAddress(item.address, 30000)
-    if (!ref) throw new Error("Invalid profile-list address.")
+    if (!ref || !parseCommunityProfileListIdentifier(communityId, ref.identifier)) {
+      throw new Error("Invalid profile-list address.")
+    }
     const relay = item.relay ? normalizeCommunityRelay(item.relay) : undefined
     if (item.relay && !relay) throw new Error("Invalid profile-list relay.")
     tags.push(relay ? ["a", ref.address, relay] : ["a", ref.address])
@@ -832,7 +843,7 @@ export const buildCommunityDefinition = (
       sectionKinds.add(key)
     }
   }
-  for (const item of params.sections) tags.push(...makeSectionTags(item))
+  for (const item of params.sections) tags.push(...makeSectionTags(item, communityId))
 
   return {kind: COMMUNITY_DEFINITION_KIND, content: "", tags}
 }
@@ -973,26 +984,11 @@ export const selectCurrentAddressableEvent = (
     .sort(
       (first, second) => second.created_at - first.created_at || first.id.localeCompare(second.id),
     )[0]
-  const addressEventIds = new Set(
-    events.filter(event => getAddressableEventAddress(event) === address).map(event => event.id),
-  )
-  const eventTombstone = events
-    .filter(
-      event =>
-        event.kind === 5 &&
-        event.pubkey === parsedAddress.pubkey &&
-        event.tags.some(tag => exactTag(tag, 2) && tag[0] === "e" && addressEventIds.has(tag[1])),
-    )
-    .sort(
-      (first, second) => second.created_at - first.created_at || first.id.localeCompare(second.id),
-    )[0]
-
   return events
     .filter(
       event =>
         getAddressableEventAddress(event) === address &&
         isValid(event) &&
-        (!eventTombstone || event.created_at > eventTombstone.created_at) &&
         (!tombstone || event.created_at > tombstone.created_at),
     )
     .sort(
@@ -1031,13 +1027,6 @@ export const selectCurrentCommunityDefinitions = (events: TrustedEvent[]) => {
     candidatesByAddress.set(address, candidates)
   }
 
-  const addressByEventId = new Map<string, string>()
-  for (const event of events) {
-    if (event.kind !== COMMUNITY_DEFINITION_KIND || !event.id) continue
-    const address = getAddressableEventAddress(event)
-    if (address && candidatesByAddress.has(address)) addressByEventId.set(event.id, address)
-  }
-
   const deletionCutoffByAddress = new Map<string, number>()
   const applyDeletion = (address: string, deletion: TrustedEvent) => {
     const parsedAddress = parseAddress(address)
@@ -1053,11 +1042,6 @@ export const selectCurrentCommunityDefinitions = (events: TrustedEvent[]) => {
     if (addressTags.length === 1 && exactTag(addressTags[0], 2)) {
       const address = addressTags[0][1]
       if (candidatesByAddress.has(address)) applyDeletion(address, event)
-    }
-    for (const tag of event.tags) {
-      if (!exactTag(tag, 2) || tag[0] !== "e") continue
-      const address = addressByEventId.get(tag[1])
-      if (address) applyDeletion(address, event)
     }
   }
 
@@ -1084,8 +1068,6 @@ export const selectCurrentCommunityDefinitions = (events: TrustedEvent[]) => {
 
 export const selectCurrentTargetedPublicationEvents = (events: TrustedEvent[]) => {
   const candidatesByAddress = new Map<string, TrustedEvent[]>()
-  const addressByEventId = new Map<string, string>()
-
   for (const event of events) {
     if (event.kind !== TARGETED_PUBLICATION_KIND) continue
     const address = getAddressableEventAddress(event)
@@ -1093,7 +1075,6 @@ export const selectCurrentTargetedPublicationEvents = (events: TrustedEvent[]) =
     const candidates = candidatesByAddress.get(address) || []
     candidates.push(event)
     candidatesByAddress.set(address, candidates)
-    if (event.id) addressByEventId.set(event.id, address)
   }
 
   const deletionCutoffByAddress = new Map<string, number>()
@@ -1110,10 +1091,7 @@ export const selectCurrentTargetedPublicationEvents = (events: TrustedEvent[]) =
     if (event.kind !== 5) continue
     for (const tag of event.tags) {
       if (!exactTag(tag, 2)) continue
-      if (tag[0] === "e") {
-        const address = addressByEventId.get(tag[1])
-        if (address) applyDeletion(address, event)
-      } else if (tag[0] === "a" && candidatesByAddress.has(tag[1])) {
+      if (tag[0] === "a" && candidatesByAddress.has(tag[1])) {
         applyDeletion(tag[1], event)
       }
     }
@@ -1185,8 +1163,7 @@ const makeSourceTag = (source: TargetedPublicationSource) => {
     return ["a", source.value, relay || "", "source"]
   }
   if (!LOWER_HEX_64.test(source.value)) throw new Error("Invalid source event ID.")
-  if (source.pubkey && !parseOwnerPubkey(source.pubkey))
-    throw new Error("Invalid source author.")
+  if (source.pubkey && !parseOwnerPubkey(source.pubkey)) throw new Error("Invalid source author.")
   return ["e", source.value, relay || "", source.pubkey || "", "source"]
 }
 

@@ -112,6 +112,8 @@ const makeWidgetEvent = (identifier: string, pubkey = widgetPubkey) =>
     ],
   })
 
+const appsListIdentifier = `${community.communityId}-apps`
+
 const makeDefinition = () =>
   makeEvent({
     id: "community-definition",
@@ -126,7 +128,7 @@ const makeDefinition = () =>
         {
           name: "Apps",
           kinds: [{kind: SMART_WIDGET_KIND}],
-          profileLists: [{address: `${PROFILE_LIST_KIND}:${managerPubkey}:Apps`}],
+          profileLists: [{address: `${PROFILE_LIST_KIND}:${managerPubkey}:${appsListIdentifier}`}],
         },
       ],
     }).tags,
@@ -187,7 +189,7 @@ describe("community curated widgets", () => {
       pubkey: managerPubkey,
       kind: PROFILE_LIST_KIND,
       tags: [
-        ["d", "Apps"],
+        ["d", appsListIdentifier],
         ["p", memberPubkey],
       ],
     })
@@ -346,7 +348,7 @@ describe("community curated widgets", () => {
       pubkey: managerPubkey,
       kind: PROFILE_LIST_KIND,
       tags: [
-        ["d", "Apps"],
+        ["d", appsListIdentifier],
         ["p", memberPubkey],
       ],
     })
@@ -394,7 +396,7 @@ describe("community curated widgets", () => {
       pubkey: managerPubkey,
       kind: PROFILE_LIST_KIND,
       tags: [
-        ["d", "Apps"],
+        ["d", appsListIdentifier],
         ["p", memberPubkey],
       ],
     })
@@ -433,7 +435,7 @@ describe("community curated widgets", () => {
       pubkey: managerPubkey,
       kind: PROFILE_LIST_KIND,
       tags: [
-        ["d", "Apps"],
+        ["d", appsListIdentifier],
         ["p", memberPubkey],
       ],
     })

@@ -38,7 +38,7 @@ describe("people-search", () => {
           {
             name: "General",
             kinds: [{kind: 1111}],
-            profileLists: [{address: `${PROFILE_LIST_KIND}:${listOwner}:members`}],
+            profileLists: [{address: `${PROFILE_LIST_KIND}:${listOwner}:${communityId}-members`}],
           },
         ],
       }).tags,
@@ -267,7 +267,7 @@ describe("people-search", () => {
           kind: PROFILE_LIST_KIND,
           pubkey: allowedListOwner,
           tags: [
-            ["d", "members"],
+            ["d", `${allowedCommunityId}-members`],
             ["p", allowedMember],
           ],
         } as any,
@@ -276,7 +276,7 @@ describe("people-search", () => {
           kind: PROFILE_LIST_KIND,
           pubkey: renouncedListOwner,
           tags: [
-            ["d", "members"],
+            ["d", `${renouncedCommunityId}-members`],
             ["p", renouncedMember],
           ],
         } as any,
@@ -315,7 +315,7 @@ describe("people-search", () => {
           kind: PROFILE_LIST_KIND,
           pubkey: allowedListOwner,
           tags: [
-            ["d", "members"],
+            ["d", `${allowedCommunityId}-members`],
             ["p", sharedMember],
           ],
         } as any,
@@ -324,7 +324,7 @@ describe("people-search", () => {
           kind: PROFILE_LIST_KIND,
           pubkey: excludedListOwner,
           tags: [
-            ["d", "members"],
+            ["d", `${excludedCommunityId}-members`],
             ["p", sharedMember],
           ],
         } as any,

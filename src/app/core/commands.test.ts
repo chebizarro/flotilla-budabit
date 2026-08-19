@@ -205,7 +205,7 @@ const makeCommunityDefinition = (id: string, blossomServers: string[] = []) =>
         {
           name: "General",
           kinds: [{kind: 9, subtype: "room-message"}],
-          profileLists: [{address: `30000:${communityPubkey}:General`}],
+          profileLists: [{address: `30000:${communityPubkey}:${communityId}-general`}],
         },
       ],
     }).tags,
