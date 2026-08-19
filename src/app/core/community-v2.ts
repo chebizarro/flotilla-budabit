@@ -120,16 +120,27 @@ const SECTION_SHARD = /^(?:[2-9]|[1-9][0-9]+)$/
 const SERVICE_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 const MINT_TYPE = /^[\x21-\x7e]{1,32}$/
 const utf8Length = (value: string) => new TextEncoder().encode(value).length
+const liftableXOnlyKeyCache = new Map<string, boolean>()
+const MAX_LIFTABLE_KEY_CACHE = 4_096
 
 const isLiftableXOnlyKey = (value: string) => {
   if (!LOWER_HEX_64.test(value)) return false
+  const cached = liftableXOnlyKeyCache.get(value)
+  if (cached !== undefined) return cached
 
+  let liftable = false
   try {
     schnorr.utils.lift_x(BigInt(`0x${value}`))
-    return true
+    liftable = true
   } catch {
-    return false
+    liftable = false
   }
+
+  if (liftableXOnlyKeyCache.size >= MAX_LIFTABLE_KEY_CACHE) {
+    liftableXOnlyKeyCache.delete(liftableXOnlyKeyCache.keys().next().value!)
+  }
+  liftableXOnlyKeyCache.set(value, liftable)
+  return liftable
 }
 
 export const parseCommunityId = (value: string): CommunityId | undefined =>
@@ -1028,55 +1039,145 @@ export const selectCurrentCommunityDefinitionV2 = (
   )
 
 export const selectCurrentCommunityDefinitionsV2 = (events: TrustedEvent[]) => {
-  const addresses = new Set<string>()
+  const candidatesByAddress = new Map<
+    string,
+    Array<{event: TrustedEvent; definition: CommunityDefinitionV2}>
+  >()
 
   for (const event of events) {
     const definition = parseCommunityDefinitionV2(event)
-    if (definition) addresses.add(definition.pointer.address)
+    if (!definition) continue
+    const address = definition.pointer.address
+    const candidates = candidatesByAddress.get(address) || []
+    candidates.push({event, definition})
+    candidatesByAddress.set(address, candidates)
+  }
+
+  const addressByEventId = new Map<string, string>()
+  for (const event of events) {
+    if (event.kind !== COMMUNITY_DEFINITION_KIND_V2 || !event.id) continue
+    const address = getAddressableEventAddress(event)
+    if (address && candidatesByAddress.has(address)) addressByEventId.set(event.id, address)
+  }
+
+  const deletionCutoffByAddress = new Map<string, number>()
+  const applyDeletion = (address: string, deletion: TrustedEvent) => {
+    const parsedAddress = parseAddress(address)
+    if (!parsedAddress || parsedAddress.pubkey !== deletion.pubkey) return
+    const cutoff = deletionCutoffByAddress.get(address)
+    if (cutoff === undefined || deletion.created_at > cutoff) {
+      deletionCutoffByAddress.set(address, deletion.created_at)
+    }
+  }
+  for (const event of events) {
+    if (event.kind !== 5) continue
+    const addressTags = event.tags.filter(tag => tag[0] === "a")
+    if (addressTags.length === 1 && exactTag(addressTags[0], 2)) {
+      const address = addressTags[0][1]
+      if (candidatesByAddress.has(address)) applyDeletion(address, event)
+    }
+    for (const tag of event.tags) {
+      if (!exactTag(tag, 2) || tag[0] !== "e") continue
+      const address = addressByEventId.get(tag[1])
+      if (address) applyDeletion(address, event)
+    }
   }
 
   const definitions = new Map<string, CommunityDefinitionV2>()
-  for (const address of addresses) {
-    const event = selectCurrentCommunityDefinitionV2(events, address)
-    const definition = event ? parseCommunityDefinitionV2(event) : undefined
-    if (definition) definitions.set(address, definition)
+  for (const [address, candidates] of candidatesByAddress) {
+    const cutoff = deletionCutoffByAddress.get(address)
+    let current: (typeof candidates)[number] | undefined
+    for (const candidate of candidates) {
+      if (cutoff !== undefined && candidate.event.created_at <= cutoff) continue
+      if (
+        !current ||
+        candidate.event.created_at > current.event.created_at ||
+        (candidate.event.created_at === current.event.created_at &&
+          candidate.event.id < current.event.id)
+      ) {
+        current = candidate
+      }
+    }
+    if (current) definitions.set(address, current.definition)
   }
 
   return definitions
 }
 
 export const selectCurrentTargetedPublicationEventsV2 = (events: TrustedEvent[]) => {
-  const addresses = new Set<string>()
+  const candidatesByAddress = new Map<string, TrustedEvent[]>()
+  const addressByEventId = new Map<string, string>()
+
   for (const event of events) {
     if (event.kind !== TARGETED_PUBLICATION_KIND_V2) continue
     const address = getAddressableEventAddress(event)
-    if (address) addresses.add(address)
+    if (!address) continue
+    const candidates = candidatesByAddress.get(address) || []
+    candidates.push(event)
+    candidatesByAddress.set(address, candidates)
+    if (event.id) addressByEventId.set(event.id, address)
   }
 
-  return Array.from(addresses)
-    .map(address =>
-      selectCurrentAddressableEvent(
-        events,
-        address,
-        event => Boolean(parseTargetedPublicationV2(event)),
-        event => {
-          const tags = event.tags.filter(tag => tag[0] === "a")
-          return tags.length === 1 && exactTag(tags[0], 2) && tags[0][1] === address
-        },
-      ),
-    )
-    .filter((event): event is TrustedEvent => Boolean(event))
+  const deletionCutoffByAddress = new Map<string, number>()
+  const applyDeletion = (address: string, deletion: TrustedEvent) => {
+    const parsedAddress = parseAddress(address)
+    if (!parsedAddress || parsedAddress.pubkey !== deletion.pubkey) return
+    const cutoff = deletionCutoffByAddress.get(address)
+    if (cutoff === undefined || deletion.created_at > cutoff) {
+      deletionCutoffByAddress.set(address, deletion.created_at)
+    }
+  }
+
+  for (const event of events) {
+    if (event.kind !== 5) continue
+    for (const tag of event.tags) {
+      if (!exactTag(tag, 2)) continue
+      if (tag[0] === "e") {
+        const address = addressByEventId.get(tag[1])
+        if (address) applyDeletion(address, event)
+      } else if (tag[0] === "a" && candidatesByAddress.has(tag[1])) {
+        applyDeletion(tag[1], event)
+      }
+    }
+  }
+
+  const selected: TrustedEvent[] = []
+  for (const [address, candidates] of candidatesByAddress) {
+    const cutoff = deletionCutoffByAddress.get(address)
+    let current: TrustedEvent | undefined
+    for (const event of candidates) {
+      if (
+        (cutoff !== undefined && event.created_at <= cutoff) ||
+        !parseTargetedPublicationV2(event)
+      ) {
+        continue
+      }
+      if (
+        !current ||
+        event.created_at > current.created_at ||
+        (event.created_at === current.created_at && event.id < current.id)
+      ) {
+        current = event
+      }
+    }
+    if (current) selected.push(current)
+  }
+
+  return selected
 }
 
 export const makeTargetedPublicationLifecycleFiltersV2 = (events: TrustedEvent[]): Filter[] => {
   const filters: Filter[] = []
   const ids: string[] = []
   const addresses: string[] = []
+  const seenIds = new Set<string>()
+  const seenAddresses = new Set<string>()
 
   for (const event of events) {
     if (event.kind !== TARGETED_PUBLICATION_KIND_V2) continue
     const address = getAddressableEventAddress(event)
-    if (!address || addresses.includes(address)) continue
+    if (!address || seenAddresses.has(address)) continue
+    seenAddresses.add(address)
     const [, author, ...identifierParts] = address.split(":")
     filters.push({
       kinds: [TARGETED_PUBLICATION_KIND_V2],
@@ -1086,8 +1187,10 @@ export const makeTargetedPublicationLifecycleFiltersV2 = (events: TrustedEvent[]
     addresses.push(address)
   }
   for (const event of events) {
-    if (event.kind === TARGETED_PUBLICATION_KIND_V2 && event.id && !ids.includes(event.id))
+    if (event.kind === TARGETED_PUBLICATION_KIND_V2 && event.id && !seenIds.has(event.id)) {
+      seenIds.add(event.id)
       ids.push(event.id)
+    }
   }
   const authors = Array.from(new Set(addresses.map(address => address.split(":")[1])))
   if (authors.length && ids.length) filters.push({kinds: [5], authors, "#e": ids})

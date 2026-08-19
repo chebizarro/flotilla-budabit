@@ -726,6 +726,24 @@ describe("Communikeys V2 targeting", () => {
       selectCurrentTargetedPublicationEventsV2([original, replacement, deletion, recreation]),
     ).toEqual([recreation])
   })
+
+  it("selects a large persisted wrapper cache without per-coordinate rescans", () => {
+    const pointer = makeCommunityPointer({controllerPubkey: controller, communityId})!
+    const events = Array.from({length: 2_000}, (_, index) =>
+      makeEvent({
+        id: index.toString(16).padStart(64, "0"),
+        created_at: index + 1,
+        kind: TARGETED_PUBLICATION_KIND_V2,
+        tags: buildTargetedPublicationV2({
+          id: `target-${index}`,
+          kind: 31922,
+          communities: [pointer],
+        }).tags,
+      }),
+    )
+
+    expect(selectCurrentTargetedPublicationEventsV2(events)).toHaveLength(events.length)
+  })
 })
 
 describe("Communikeys V2 workflow scope", () => {
