@@ -891,7 +891,9 @@
     {/if}
     {#each rooms as room (room.id)}
       {@const roomPath = makeExactCommunityRoomPath(communityPointer!, room.id)}
-      <Link href={roomPath} class="btn btn-neutral relative">
+      <Link
+        href={roomPath}
+        class="btn btn-neutral relative border-base-content/15 shadow-sm hover:border-base-content/25">
         <div class="flex min-w-0 items-center gap-2 overflow-hidden text-nowrap md:text-lg">
           <Icon icon={Hashtag} />
           <span class="ellipsize">{room.name}</span>
