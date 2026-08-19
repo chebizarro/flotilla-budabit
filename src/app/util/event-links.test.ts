@@ -163,7 +163,7 @@ describe("event link utilities", () => {
 
   it("adds community relays from matching targeted publication events", async () => {
     const communityId = getPublicKey(new Uint8Array(32).fill(111))
-    const controller = getPublicKey(new Uint8Array(32).fill(112))
+    const owner = getPublicKey(new Uint8Array(32).fill(112))
     const event = makeEvent({kind: EVENT_TIME, tags: [["h", "target-1"]]})
     relayMocks.repositoryQuery.mockReturnValue([
       makeEvent({
@@ -180,7 +180,7 @@ describe("event link utilities", () => {
           ["h", communityId],
           [
             "a",
-            `32222:${controller}:${communityId}`,
+            `32222:${owner}:${communityId}`,
             "wss://community-relay.example.com",
             "community",
           ],
@@ -202,7 +202,7 @@ describe("event link utilities", () => {
 
   it("prefers targeted publication relays over seen relays", async () => {
     const communityId = getPublicKey(new Uint8Array(32).fill(113))
-    const controller = getPublicKey(new Uint8Array(32).fill(114))
+    const owner = getPublicKey(new Uint8Array(32).fill(114))
     relayMocks.trackerRelays = new Set(["wss://seen.example.com"])
     relayMocks.repositoryQuery.mockReturnValue([
       makeEvent({
@@ -211,7 +211,7 @@ describe("event link utilities", () => {
           ["d", "target-2"],
           ["k", "9041"],
           ["h", communityId],
-          ["a", `32222:${controller}:${communityId}`, "wss://community.example.com", "community"],
+          ["a", `32222:${owner}:${communityId}`, "wss://community.example.com", "community"],
         ],
       }),
     ])
@@ -239,7 +239,7 @@ describe("event link utilities", () => {
 
   it("encodes targeted community relays in permalink share links", async () => {
     const communityId = getPublicKey(new Uint8Array(32).fill(115))
-    const controller = getPublicKey(new Uint8Array(32).fill(116))
+    const owner = getPublicKey(new Uint8Array(32).fill(116))
     relayMocks.repositoryQuery.mockReturnValue([
       makeEvent({
         kind: 30222,
@@ -247,7 +247,7 @@ describe("event link utilities", () => {
           ["d", "permalink-target"],
           ["k", "1623"],
           ["h", communityId],
-          ["a", `32222:${controller}:${communityId}`, "wss://community.example.com", "community"],
+          ["a", `32222:${owner}:${communityId}`, "wss://community.example.com", "community"],
         ],
       }),
     ])

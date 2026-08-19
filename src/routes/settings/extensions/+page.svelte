@@ -19,11 +19,11 @@
   } from "@app/core/commands"
   import {activeUserCommunityRefs} from "@app/core/community-state"
   import {
-    TARGETED_PUBLICATION_KIND_V2,
+    TARGETED_PUBLICATION_KIND,
     normalizePubkey,
     normalizeRelays,
     parseCommunityNaddr,
-    parseTargetedPublicationV2,
+    parseTargetedPublication,
   } from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
@@ -220,7 +220,7 @@
     $pubkey && widgetAddresses.length
       ? [
           {
-            kinds: [TARGETED_PUBLICATION_KIND_V2],
+            kinds: [TARGETED_PUBLICATION_KIND],
             authors: [$pubkey],
             "#a": widgetAddresses,
             "#k": [String(SMART_WIDGET_KIND)],
@@ -326,7 +326,7 @@
     if (!address) return []
 
     return activeWidgetTargetEvents.filter(event => {
-      const targeting = parseTargetedPublicationV2(event)
+      const targeting = parseTargetedPublication(event)
 
       return (
         targeting?.kind === SMART_WIDGET_KIND &&
@@ -344,7 +344,7 @@
     return Array.from(
       new Set(
         getWidgetTargetEvents(widget)
-          .flatMap(event => parseTargetedPublicationV2(event)?.communities || [])
+          .flatMap(event => parseTargetedPublication(event)?.communities || [])
           .map(community => community.address)
           .filter(address => eligibleAddresses.has(address)),
       ),
@@ -357,7 +357,7 @@
     return makeCommunityWidgetPreviewContextOptions({
       widgetLineId: getWidgetLineId(widget),
       userPubkey: $pubkey || "",
-      getLabel: context => getCommunityOptionLabel(context.community.controllerPubkey),
+      getLabel: context => getCommunityOptionLabel(context.community.ownerPubkey),
     })
   }
 
@@ -397,7 +397,7 @@
     const targetEvents = getWidgetTargetEvents(widget)
     const previousCommunityAddresses = targetEvents.flatMap(
       event =>
-        parseTargetedPublicationV2(event)?.communities.map(community => community.address) || [],
+        parseTargetedPublication(event)?.communities.map(community => community.address) || [],
     )
     const baseRelays = normalizeRelays([
       ...getWidgetOriginalRelayHints(widget),

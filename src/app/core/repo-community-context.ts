@@ -4,8 +4,8 @@ import {
   normalizePubkey,
   parseCommunityId,
   parseCommunityDefinitionAddress,
-  parseTargetedPublicationV2,
-  type CommunityDefinitionV2,
+  parseTargetedPublication,
+  type CommunityDefinition,
   type CommunityPointer,
 } from "@app/core/community"
 import {
@@ -38,7 +38,7 @@ export type BuildRepoCommunityContextsInput = {
   repoAddress?: string
   repoOwnerPubkey?: string
   associationEvents?: TrustedEvent[]
-  definitions?: CommunityDefinitionV2[]
+  definitions?: CommunityDefinition[]
   profileListEvents?: TrustedEvent[]
   reportStates?: UserCommunityReportStates
   activeCommunityPubkey?: string
@@ -100,7 +100,7 @@ const associationTargetsRepo = ({
   repoEvent?: TrustedEvent
   repoAddress: string
 }) => {
-  const targeting = parseTargetedPublicationV2(event)
+  const targeting = parseTargetedPublication(event)
   if (!targeting || targeting.kind !== GIT_REPO_ANNOUNCEMENT) return undefined
 
   if (targeting.source?.type === "a" && targeting.source.value === repoAddress) return targeting
@@ -146,7 +146,7 @@ const collectAssociationSources = ({
   return sources
 }
 
-const getDefinitionByAddress = (definitions: CommunityDefinitionV2[], communityAddress: string) =>
+const getDefinitionByAddress = (definitions: CommunityDefinition[], communityAddress: string) =>
   definitions.find(definition => definition.pointer.address === communityAddress)
 
 const makeBaseEvidence = ({
@@ -192,7 +192,7 @@ const validateAssociation = ({
   associationAuthorPubkey,
   repoOwnerPubkey,
 }: {
-  definition?: CommunityDefinitionV2
+  definition?: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   associationAuthorPubkey: string
@@ -242,11 +242,11 @@ const buildContextFromSource = ({
   source: RepoAssociationSource
   repoAddress: string
   repoOwnerPubkey: string
-  definitions: CommunityDefinitionV2[]
+  definitions: CommunityDefinition[]
   profileListEvents: TrustedEvent[]
   reportStates?: UserCommunityReportStates
 }): RepoCommunityContext | undefined => {
-  const communityPubkey = normalizePubkey(source.community.controllerPubkey)
+  const communityPubkey = normalizePubkey(source.community.ownerPubkey)
   const associationAuthorPubkey = normalizePubkey(source.associationAuthorPubkey)
   if (!communityPubkey || !associationAuthorPubkey) return undefined
 

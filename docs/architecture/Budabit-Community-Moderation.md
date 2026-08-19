@@ -2,11 +2,11 @@
 
 This document describes how moderation, admission, and section access should work in Budabit communities.
 
-The goal is to let communities stay readable and discoverable while keeping publication rights high-signal, fine-grained, and delegated to moderators instead of requiring the branch controller key for day-to-day work.
+The goal is to let communities stay readable and discoverable while keeping publication rights high-signal, fine-grained, and delegated to moderators instead of requiring the branch owner key for day-to-day work.
 
 ## Summary
 
-Budabit community branches use addressable `kind:32222` Communikey definitions for stable community structure and definition-native metadata. Current section grants from `kind:30000` profile lists govern publishing and permission-governed Budabit visibility. Admission requests use NIP-101 forms created by moderators, not by the branch controller.
+Budabit community branches use addressable `kind:32222` Communikey definitions for stable community structure and definition-native metadata. Current section grants from `kind:30000` profile lists govern publishing and permission-governed Budabit visibility. Admission requests use NIP-101 forms created by moderators, not by the branch owner.
 
 Moderators create application forms as `kind:30168` events. A form references the community definition with an `a` tag and identifies the requested section with a `content` tag. Users submit public, identified `kind:1069` responses to request access. Moderators review responses and either grant access by updating the section profile list and publishing a positive review, or reject by reacting negatively to the response.
 
@@ -32,7 +32,7 @@ Moderators create application forms as `kind:30168` events. A form references th
 
 Application forms are operational moderation state. They may change frequently as moderators improve questions, requirements, onboarding language, and anti-spam checks.
 
-`kind:32222` is exact branch configuration. It should be stable, rare to update, and usually signed by a cold or high-trust controller key. Requiring the controller to update application forms would make admission workflows too rigid and would prevent delegated moderators from curating section-specific applications.
+`kind:32222` is exact branch configuration. It should be stable, rare to update, and usually signed by a cold or high-trust owner key. Requiring the owner to update application forms would make admission workflows too rigid and would prevent delegated moderators from curating section-specific applications.
 
 Instead, forms self-associate with the community and section:
 
@@ -43,7 +43,7 @@ Instead, forms self-associate with the community and section:
   "tags": [
     ["d", "code-curator-application"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "wss://community.example", "community"],
+    ["a", "32222:<owner-pubkey>:<community-id>", "wss://community.example", "community"],
     ["content", "Code-curator"],
     ["name", "Code curator application"],
     ["settings", "{\"description\":\"Tell us why you should curate repositories.\"}"],
@@ -110,7 +110,7 @@ Example form query:
 {
   "kinds": [30168],
   "authors": ["<moderator-pubkey-1>", "<moderator-pubkey-2>"],
-  "#a": ["32222:<controller-pubkey>:<community-id>"]
+  "#a": ["32222:<owner-pubkey>:<community-id>"]
 }
 ```
 
@@ -138,7 +138,7 @@ Applications are public NIP-101 responses authored by the applicant.
   "tags": [
     ["a", "30168:<form-pubkey>:code-curator-application", "", "form"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
+    ["a", "32222:<owner-pubkey>:<community-id>", "", "community"],
     ["response", "experience", "I maintain several Nostr repositories.", "{}"],
     ["response", "focus", "Developer tooling and protocol libraries.", "{}"]
   ],
@@ -174,7 +174,7 @@ Delete event example:
     ["e", "<form-response-event-id>", "", "<applicant-pubkey>", "response"],
     ["k", "1069"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"]
+    ["a", "32222:<owner-pubkey>:<community-id>", "", "community"]
   ],
   "content": "Deleted application submission"
 }
@@ -209,7 +209,7 @@ Granting access publishes two events:
       ["k", "1069"],
       ["a", "30168:<form-author-pubkey>:code-curator-application", "", "form"],
       ["h", "<community-id>"],
-      ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
+      ["a", "32222:<owner-pubkey>:<community-id>", "", "community"],
       ["content", "Code-curator"]
     ],
     "content": "+"
@@ -229,7 +229,7 @@ Rejecting access publishes only a negative reaction:
     ["k", "1069"],
     ["a", "30168:<form-author-pubkey>:code-curator-application", "", "form"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
+    ["a", "32222:<owner-pubkey>:<community-id>", "", "community"],
     ["content", "Code-curator"]
   ],
   "content": "-"
@@ -445,7 +445,7 @@ Event censoring:
     ["e", "<event-id>", "spam"],
     ["p", "<event-author-pubkey>"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
+    ["a", "32222:<owner-pubkey>:<community-id>", "", "community"],
     ["content", "<section-name>"]
   ],
   "content": "Optional moderation note"
@@ -463,14 +463,14 @@ Addressable event censoring:
     ["a", "<target-kind>:<event-author-pubkey>:<d-tag>", "spam"],
     ["p", "<event-author-pubkey>"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
+    ["a", "32222:<owner-pubkey>:<community-id>", "", "community"],
     ["content", "<section-name>"]
   ],
   "content": "Optional moderation note"
 }
 ```
 
-For addressable events, Budabit treats the reason-bearing target `a` tag as stronger than the `e` tag: the report censors the address, not only the specific event version. Later replacements at the same `kind:pubkey:d` remain censored until the report is revoked. The community scope `a` tag has marker `community` and names the exact `32222:<controller>:<communityId>` definition; it is not a report target.
+For addressable events, Budabit treats the reason-bearing target `a` tag as stronger than the `e` tag: the report censors the address, not only the specific event version. Later replacements at the same `kind:pubkey:d` remain censored until the report is revoked. The community scope `a` tag has marker `community` and names the exact `32222:<owner>:<communityId>` definition; it is not a report target.
 
 Person censoring:
 
@@ -481,7 +481,7 @@ Person censoring:
   "tags": [
     ["p", "<reported-pubkey>", "spam"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"]
+    ["a", "32222:<owner-pubkey>:<community-id>", "", "community"]
   ],
   "content": "Optional moderation note"
 }
@@ -493,7 +493,7 @@ Rules:
 - A reason-bearing target `a` tag on a parameterized replaceable event applies to every replacement at that address.
 - The marked community definition `a` tag is branch authority metadata only; it must not be interpreted as the moderated target.
 - Person moderation is community-scoped and may be performed by an admin or a current moderator who has grant capability for every section in the latest community definition.
-- Admin means the controller of the selected exact definition branch.
+- Admin means the owner of the selected exact definition branch.
 - Moderators cannot moderate another current moderator.
 - Admin reports supersede moderator protection.
 - Reports by removed moderators stop counting at render time.
@@ -593,6 +593,6 @@ Broad historical requests use bounded raw-event cursor scans per relay and per s
 
 This model accepts some application workflow overhead because it gives communities a competitive moderation surface.
 
-Communities can set different requirements for different publishing capabilities. They can keep general participation easy while making higher-impact publication types more curated. Moderators can improve forms and review processes without using the branch controller key. Users can still browse the community and understand what capabilities they can unlock.
+Communities can set different requirements for different publishing capabilities. They can keep general participation easy while making higher-impact publication types more curated. Moderators can improve forms and review processes without using the branch owner key. Users can still browse the community and understand what capabilities they can unlock.
 
 Good UX is essential. The process should feel like requesting a community capability, not filing paperwork. The app should keep inaccessible actions visible, explain the missing permission, and route the user to a single place where requests, grants, and rejections are understandable.

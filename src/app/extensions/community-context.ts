@@ -5,11 +5,11 @@ import {
   COMMUNITY_SUBTYPE_THREADS,
   normalizePubkey,
   normalizeRelays,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
   communitySectionKindsMatch,
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
   type CommunityPointer,
-  type CommunitySectionV2,
+  type CommunityDefinitionSection,
 } from "@app/core/community"
 import {
   COMMUNITY_TARGETABLE_KINDS,
@@ -46,10 +46,10 @@ export type CommunityContextRuntimeSnapshot = {
 
 export type ResolvedCommunityEventDescriptor = {
   descriptor: CommunityEventDescriptor
-  sections: CommunitySectionV2[]
+  sections: CommunityDefinitionSection[]
   writerPubkeys: string[]
   moderatorPubkeys: string[]
-  writableSections: CommunitySectionV2[]
+  writableSections: CommunityDefinitionSection[]
   capability: CommunityWriteCapability
 }
 
@@ -99,7 +99,7 @@ export const normalizeCommunityEventDescriptors = (
   return Array.from(byKey.values())
 }
 
-const sectionFingerprint = (definition: CommunityDefinitionV2) =>
+const sectionFingerprint = (definition: CommunityDefinition) =>
   definition.sections.map(section => ({
     name: section.name,
     kinds: section.kinds.map(kind => normalizeDescriptor(kind)),
@@ -124,7 +124,7 @@ export const getCommunityContextRuntimeSnapshot = ({
   relayHints = [],
   readinessKey = "",
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   userPubkey?: string
@@ -167,7 +167,7 @@ const withLimit = (filters: Filter[], limit?: number, since?: number, until?: nu
   }))
 
 const findDescriptorSections = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   descriptor: CommunityEventDescriptor,
 ) => {
   const sections = definition.sections.filter(section =>
@@ -190,7 +190,7 @@ const findDescriptorSections = (
 }
 
 const getSectionPermissionDescriptor = (
-  section: CommunitySectionV2,
+  section: CommunityDefinitionSection,
   descriptor: CommunityEventDescriptor,
 ): CommunityEventDescriptor => {
   if (
@@ -278,7 +278,7 @@ export const resolveCommunityEventDescriptors = ({
   userPubkey = "",
   descriptors,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   userPubkey?: string
@@ -371,7 +371,7 @@ export const makeCommunityWidgetContext = ({
   relayHints = [],
   readinessKey = "",
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   userPubkey?: string
@@ -380,7 +380,7 @@ export const makeCommunityWidgetContext = ({
   readinessKey?: string
 }): CommunityWidgetContext => {
   const normalizedUser = normalizePubkey(userPubkey)
-  const normalizedCommunity = normalizePubkey(definition.controllerPubkey)
+  const normalizedCommunity = normalizePubkey(definition.ownerPubkey)
   const runtime = getCommunityContextRuntimeSnapshot({
     definition,
     profileListEvents,
@@ -395,7 +395,7 @@ export const makeCommunityWidgetContext = ({
     version: 2,
     ...runtime,
     communityId: definition.pointer.communityId,
-    controllerPubkey: definition.pointer.controllerPubkey,
+    ownerPubkey: definition.pointer.ownerPubkey,
     definitionAddress: definition.pointer.address,
     naddr: definition.pointer.naddr,
     relays,
@@ -434,7 +434,7 @@ export const makeCommunityDescriptorQueryPlan = ({
   until,
 }: {
   community: CommunityPointer
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   descriptors: CommunityEventDescriptor[]
@@ -491,7 +491,7 @@ export const makeCommunityDescriptorQueryPlan = ({
 
     originalRelayHints.push(
       ...authorizedTargetingEvents.flatMap(event => {
-        const relay = parseTargetedPublicationV2(event)?.source?.relay
+        const relay = parseTargetedPublication(event)?.source?.relay
         return relay ? [relay] : []
       }),
     )
@@ -514,7 +514,7 @@ export const makeCommunityDescriptorQueryPlan = ({
     const directCommunityId =
       info.descriptor.kind === GIT_REPO_ANNOUNCEMENT
         ? community.communityId
-        : definition.controllerPubkey
+        : definition.ownerPubkey
     const directPlan = makeCommunityContentFilterPlan(
       [makeCommunityExclusiveFilter(directCommunityId, [info.descriptor.kind])],
       info.writerPubkeys,

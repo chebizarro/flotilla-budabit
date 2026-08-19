@@ -5,8 +5,8 @@ import {readFileSync} from "node:fs"
 import {getPublicKey, nip19} from "nostr-tools"
 import {describe, expect, it, vi} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
-import type {CommunityDefinitionV2} from "@app/core/community"
-import {buildTargetedPublicationV2, makeCommunityPointer} from "@app/core/community"
+import type {CommunityDefinition} from "@app/core/community"
+import {buildTargetedPublication, makeCommunityPointer} from "@app/core/community"
 import type {CommunityPermissionStatus} from "@app/core/community-state"
 
 vi.mock("@app/core/storage", () => ({
@@ -38,7 +38,7 @@ vi.mock("@app/core/community-state", () => ({
 
 const makeTestCommunity = (controllerByte: number, idByte: number) =>
   makeCommunityPointer({
-    controllerPubkey: getPublicKey(new Uint8Array(32).fill(controllerByte)),
+    ownerPubkey: getPublicKey(new Uint8Array(32).fill(controllerByte)),
     communityId: getPublicKey(new Uint8Array(32).fill(idByte)),
   })!
 
@@ -75,8 +75,7 @@ describe("notifications", () => {
     expect(source).toContain("makeCommunityContentFilterPlan(")
     expect(source).toContain("relayFilters: targetingFilterPlan.relayFilters")
     expect(source).toContain("localFilters: targetingFilterPlan.localFilters")
-    expect(source).toContain("parseTargetedPublicationV2(event)")
-    expect(source).not.toContain("parseTargetedPublication(")
+    expect(source).toContain("parseTargetedPublication(event)")
     expect(source).toContain("makeTargetedPublicationOriginalRelayHintPlans(")
     expect(source.match(/loadBoundedCommunityHistory\(\{/g)).toHaveLength(2)
     expect(source).not.toContain("request({")
@@ -86,12 +85,12 @@ describe("notifications", () => {
     const {getActiveCommunityNotificationPermissionKey} = await import("./notifications")
     const viewer = "a".repeat(64)
     const community = makeTestCommunity(11, 12)
-    const communityPubkey = community.controllerPubkey
+    const communityPubkey = community.ownerPubkey
     const definition = {
       event: makeEvent({id: "definition", pubkey: communityPubkey}),
       pointer: community,
-      controllerPubkey: community.controllerPubkey,
-    } as CommunityDefinitionV2
+      ownerPubkey: community.ownerPubkey,
+    } as CommunityDefinition
     const ready: CommunityPermissionStatus = {
       communityPubkey,
       key: `${viewer}:definition:wss://relay.example/:1`,
@@ -354,15 +353,15 @@ describe("notifications", () => {
     ).toEqual([{path, latestEvent: newerThread}])
   })
 
-  it("matches strict V2 targets by exact branch address", async () => {
+  it("matches strict targets by exact branch address", async () => {
     const {getTargetedPublicationRootNotificationCandidates} = await import("./notifications")
-    const controller = getPublicKey(new Uint8Array(32).fill(1))
+    const owner = getPublicKey(new Uint8Array(32).fill(1))
     const siblingController = getPublicKey(new Uint8Array(32).fill(2))
     const author = getPublicKey(new Uint8Array(32).fill(3))
     const sharedId = "7".repeat(64)
-    const community = makeCommunityPointer({controllerPubkey: controller, communityId: sharedId})!
+    const community = makeCommunityPointer({ownerPubkey: owner, communityId: sharedId})!
     const sibling = makeCommunityPointer({
-      controllerPubkey: siblingController,
+      ownerPubkey: siblingController,
       communityId: sharedId,
     })!
     const path = `/c/${community.naddr}/calendar`
@@ -377,7 +376,7 @@ describe("notifications", () => {
       id: "targeted",
       pubkey: author,
       created_at: 20,
-      ...buildTargetedPublicationV2({
+      ...buildTargetedPublication({
         id: "target",
         kind: 31923,
         source: {type: "a", value: `31923:${author}:calendar`},
@@ -388,7 +387,7 @@ describe("notifications", () => {
       id: "sibling-targeted",
       pubkey: author,
       created_at: 30,
-      ...buildTargetedPublicationV2({
+      ...buildTargetedPublication({
         id: "sibling-target",
         kind: 31923,
         source: {type: "a", value: `31923:${author}:calendar`},
@@ -403,7 +402,7 @@ describe("notifications", () => {
       tags: [
         ["d", "legacy"],
         ["k", "31923"],
-        ["p", controller],
+        ["p", owner],
       ],
     })
 
@@ -420,11 +419,11 @@ describe("notifications", () => {
 
   it("allows explicit external roots but binds implicit roots to the wrapper signer", async () => {
     const {getTargetedPublicationRootNotificationCandidates} = await import("./notifications")
-    const controller = getPublicKey(new Uint8Array(32).fill(4))
+    const owner = getPublicKey(new Uint8Array(32).fill(4))
     const wrapperPubkey = getPublicKey(new Uint8Array(32).fill(5))
     const externalPubkey = getPublicKey(new Uint8Array(32).fill(6))
     const community = makeCommunityPointer({
-      controllerPubkey: controller,
+      ownerPubkey: owner,
       communityId: "8".repeat(64),
     })!
     const path = `/c/${community.naddr}/goals`
@@ -432,7 +431,7 @@ describe("notifications", () => {
       id: "explicit-targeting",
       pubkey: wrapperPubkey,
       created_at: 20,
-      ...buildTargetedPublicationV2({
+      ...buildTargetedPublication({
         id: "explicit-target",
         kind: 9041,
         source: {type: "e", value: "a".repeat(64), pubkey: externalPubkey},
@@ -450,7 +449,7 @@ describe("notifications", () => {
       id: "implicit-targeting",
       pubkey: wrapperPubkey,
       created_at: 30,
-      ...buildTargetedPublicationV2({
+      ...buildTargetedPublication({
         id: "implicit-target",
         kind: 9041,
         communities: [community],

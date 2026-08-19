@@ -2,8 +2,8 @@ import {describe, expect, it, vi} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import type {Filter, TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
-  buildCommunityDefinitionV2,
+  COMMUNITY_DEFINITION_KIND,
+  buildCommunityDefinition,
   makeCommunityPointer,
 } from "./community"
 import {
@@ -18,16 +18,16 @@ import {
   selectExactCommunityDefinition,
   writeExactCommunitySession,
 } from "./community-state"
-import {selectCurrentCommunityDefinitionsV2} from "./community"
+import {selectCurrentCommunityDefinitions} from "./community"
 
 const secret = (value: number) => new Uint8Array(32).fill(value)
-const controller = getPublicKey(secret(11))
+const owner = getPublicKey(secret(11))
 const otherController = getPublicKey(secret(12))
 const communityId = getPublicKey(secret(13))
 const siblingId = getPublicKey(secret(14))
 const listController = getPublicKey(secret(15))
 const pointer = makeCommunityPointer({
-  controllerPubkey: controller,
+  ownerPubkey: owner,
   communityId,
   relayHints: ["wss://hint.example"],
 })!
@@ -35,7 +35,7 @@ const pointer = makeCommunityPointer({
 const makeDefinition = ({
   id,
   createdAt,
-  definitionController = controller,
+  definitionController = owner,
   definitionCommunityId = communityId,
   name = "Builders",
 }: {
@@ -48,10 +48,10 @@ const makeDefinition = ({
   id,
   pubkey: definitionController,
   created_at: createdAt,
-  kind: COMMUNITY_DEFINITION_KIND_V2,
+  kind: COMMUNITY_DEFINITION_KIND,
   content: "",
   sig: "f".repeat(128),
-  tags: buildCommunityDefinitionV2({
+  tags: buildCommunityDefinition({
     communityId: definitionCommunityId,
     name,
     relays: ["wss://relay.example"],
@@ -68,13 +68,13 @@ const makeDefinition = ({
 describe("exact community state", () => {
   it("builds an exact definition filter without relay-selected replacement limits", () => {
     expect(makeExactCommunityDefinitionFilter(pointer)).toEqual({
-      kinds: [COMMUNITY_DEFINITION_KIND_V2],
-      authors: [controller],
+      kinds: [COMMUNITY_DEFINITION_KIND],
+      authors: [owner],
       "#d": [communityId],
     })
   })
 
-  it("keeps same-controller siblings and same-ID branches separate", () => {
+  it("keeps same-owner siblings and same-ID branches separate", () => {
     const expected = makeDefinition({id: "2".repeat(64), createdAt: 2})
     const sibling = makeDefinition({
       id: "1".repeat(64),
@@ -105,19 +105,17 @@ describe("exact community state", () => {
       definitionController: otherController,
     })
 
-    expect(Array.from(selectCurrentCommunityDefinitionsV2([first, sibling, sameIdBranch]))).toEqual(
+    expect(Array.from(selectCurrentCommunityDefinitions([first, sibling, sameIdBranch]))).toEqual([
+      [pointer.address, expect.objectContaining({event: first})],
       [
-        [pointer.address, expect.objectContaining({event: first})],
-        [
-          `${COMMUNITY_DEFINITION_KIND_V2}:${controller}:${siblingId}`,
-          expect.objectContaining({event: sibling}),
-        ],
-        [
-          `${COMMUNITY_DEFINITION_KIND_V2}:${otherController}:${communityId}`,
-          expect.objectContaining({event: sameIdBranch}),
-        ],
+        `${COMMUNITY_DEFINITION_KIND}:${owner}:${siblingId}`,
+        expect.objectContaining({event: sibling}),
       ],
-    )
+      [
+        `${COMMUNITY_DEFINITION_KIND}:${otherController}:${communityId}`,
+        expect.objectContaining({event: sameIdBranch}),
+      ],
+    ])
   })
 
   it("does not claim a saturated bounded definition discovery is complete", () => {
@@ -187,7 +185,7 @@ describe("exact community state", () => {
 
   it("uses exact branch identity without relay hints in state keys", () => {
     const otherHints = makeCommunityPointer({
-      controllerPubkey: controller,
+      ownerPubkey: owner,
       communityId,
       relayHints: ["wss://elsewhere.example"],
     })!
@@ -200,26 +198,26 @@ describe("exact community state", () => {
     )
   })
 
-  it("resolves from all relays and hydrates only the controller outbox", async () => {
+  it("resolves from all relays and hydrates only the owner outbox", async () => {
     const high = makeDefinition({id: "f".repeat(64), createdAt: 5, name: "High"})
     const low = makeDefinition({id: "1".repeat(64), createdAt: 5, name: "Low"})
-    const hydrateControllerOutbox = vi.fn(async () => ["wss://outbox.example"])
+    const hydrateOwnerOutbox = vi.fn(async () => ["wss://outbox.example"])
     const loadEvents = vi.fn(async (relays: string[], _filters: Filter[]) =>
       relays.includes("wss://outbox.example") ? [low] : [high],
     )
 
     const definition = await resolveExactCommunityDefinition(pointer, {
       discoveryRelays: ["wss://discovery.example"],
-      hydrateControllerOutbox,
+      hydrateOwnerOutbox,
       loadEvents,
     })
 
-    expect(hydrateControllerOutbox).toHaveBeenCalledWith(controller, pointer.relayHints)
-    expect(hydrateControllerOutbox).not.toHaveBeenCalledWith(communityId, expect.anything())
+    expect(hydrateOwnerOutbox).toHaveBeenCalledWith(owner, pointer.relayHints)
+    expect(hydrateOwnerOutbox).not.toHaveBeenCalledWith(communityId, expect.anything())
     expect(loadEvents).toHaveBeenCalledTimes(2)
     expect(loadEvents.mock.calls[0][1]).toEqual([
       makeExactCommunityDefinitionFilter(pointer),
-      {kinds: [5], authors: [controller]},
+      {kinds: [5], authors: [owner]},
     ])
     expect(definition?.event.id).toBe(low.id)
   })
@@ -229,7 +227,7 @@ describe("exact community state", () => {
     const older = makeDefinition({id: "2".repeat(64), createdAt: 4})
     const deletion: TrustedEvent = {
       id: "3".repeat(64),
-      pubkey: controller,
+      pubkey: owner,
       created_at: 6,
       kind: 5,
       content: "",
@@ -238,7 +236,7 @@ describe("exact community state", () => {
     }
 
     const definition = await resolveExactCommunityDefinition(pointer, {
-      hydrateControllerOutbox: async () => [],
+      hydrateOwnerOutbox: async () => [],
       loadEvents: async () => [deleted, older, deletion],
     })
 

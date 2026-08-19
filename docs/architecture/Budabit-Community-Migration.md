@@ -2,7 +2,7 @@
 
 ## Status
 
-> **Historical V1 design proposal.** This document records migration ideas for the former pubkey/`kind:10222` model and is not current Communikeys guidance. V2 already separates stable `communityId` from exact controller branch identity at `32222:<controller>:<communityId>`; see `Communikeys.md`. The V1 details below are preserved as design history rather than rewritten as if they had specified V2.
+> **Historical V1 design proposal.** This document records migration ideas for the former pubkey/`kind:10222` model and is not current Communikeys guidance. V2 already separates stable `communityId` from exact owner branch identity at `32222:<owner>:<communityId>`; see `Communikeys.md`. The V1 details below are preserved as design history rather than rewritten as if they had specified V2.
 
 It is an architecture proposal, not a normative protocol specification or implementation plan. Event kinds, tag names, snapshot formats, recovery policies, user prompts, and branch-selection rules remain future design decisions unless this document explicitly states an invariant.
 
@@ -15,11 +15,11 @@ This model makes relays replaceable without changing community identity, but it 
 - Transfer control deliberately to a new key.
 - Recover when the current root key is lost or compromised.
 - Fork after a governance disagreement.
-- Preserve and verify inherited history across a controller change.
+- Preserve and verify inherited history across a owner change.
 - Migrate member grants and moderator authority safely.
 - Help users discover and choose between successor branches.
 
-The migration model must preserve Nostr's signed-event provenance. A new controller cannot become the author of old events, replace predecessor-owned lists, or globally invalidate activity on another branch.
+The migration model must preserve Nostr's signed-event provenance. A new owner cannot become the author of old events, replace predecessor-owned lists, or globally invalidate activity on another branch.
 
 ## Existing Architecture Constraints
 
@@ -28,7 +28,7 @@ The migration model must preserve Nostr's signed-event provenance. A new control
 - A community is currently identified by the pubkey that authors its `kind:10222` definition.
 - The community pubkey is also the root administrator.
 - Community routes, sessions, caches, stars, renunciations, reports, forms, and membership derivation are keyed primarily by that pubkey.
-- A new controller pubkey is therefore a new Communikey identity unless a future protocol introduces a separate stable lineage identifier.
+- A new owner pubkey is therefore a new Communikey identity unless a future protocol introduces a separate stable lineage identifier.
 
 ### Content Scope
 
@@ -58,7 +58,7 @@ Current grants consistently govern historical and live Budabit visibility. Remov
 | Predecessor       | The branch from which another branch imports history or authority.                                                  |
 | Successor         | A branch authorized by its predecessor to continue the community under a new key.                                   |
 | Fork              | A new branch that claims historical descent without becoming the sole continuation of its predecessor.              |
-| Recovery          | A controller change authorized through a policy established before root-key loss or compromise.                     |
+| Recovery          | A owner change authorized through a policy established before root-key loss or compromise.                     |
 | Transition        | A signed relationship between predecessor and successor branches.                                                   |
 | Snapshot          | A cryptographic commitment to the exact predecessor state or history imported by a branch.                          |
 | Cutoff            | A human-readable transition time or query bound. It is not, by itself, a cryptographic publication-order guarantee. |
@@ -345,7 +345,7 @@ All community-definition consumers should use one accepted-authority resolver wi
 The application will need to distinguish at least:
 
 - Selected branch pubkey.
-- Current controller pubkey.
+- Current owner pubkey.
 - Genesis or lineage identifier if adopted.
 - Predecessor chain and imported snapshots.
 - Selected branch when multiple successors exist.

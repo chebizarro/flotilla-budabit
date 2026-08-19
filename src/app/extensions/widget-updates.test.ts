@@ -60,7 +60,7 @@ describe("widget update helpers", () => {
     const latest = makeWidget({
       id: "weather-20",
       created_at: 20,
-      appUrl: "https://example.com/v2.html",
+      appUrl: "https://example.com/current.html",
       version: "1.1.0",
       changelog: "Use immutable Blossom artifact.",
       permissions: ["ui:toast", "nostr:query"],

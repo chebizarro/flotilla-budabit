@@ -3,13 +3,13 @@ import type {TrustedEvent} from "@welshman/util"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  TARGETED_PUBLICATION_KIND_V2,
-  buildCommunityDefinitionV2,
-  buildTargetedPublicationV2,
+  TARGETED_PUBLICATION_KIND,
+  buildCommunityDefinition,
+  buildTargetedPublication,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   COMMUNITY_REPORT_KIND,
@@ -32,7 +32,7 @@ const outsiderPubkey = key(5)
 const otherCommunityPubkey = key(6)
 const repoAddress = `${GIT_REPO_ANNOUNCEMENT}:${repoOwnerPubkey}:demo`
 const reportCommunity = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: moderatorPubkey,
 })!
 
@@ -49,12 +49,12 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const makeDefinition = (pubkey = communityPubkey, sectionName = "Code-curator") => {
-  return parseCommunityDefinitionV2(
+  return parseCommunityDefinition(
     makeEvent({
       id: `definition-${pubkey}`,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: moderatorPubkey,
         name: "Community",
         relays: ["wss://relay.example.com"],
@@ -90,7 +90,7 @@ const makeRepo = (overrides: Partial<TrustedEvent> = {}) =>
 const makeAssociation = ({
   pubkey,
   community = makeCommunityPointer({
-    controllerPubkey: communityPubkey,
+    ownerPubkey: communityPubkey,
     communityId: moderatorPubkey,
   })!,
   createdAt = 10,
@@ -103,8 +103,8 @@ const makeAssociation = ({
     id: `association-${pubkey}-${community.address}`,
     pubkey,
     created_at: createdAt,
-    kind: TARGETED_PUBLICATION_KIND_V2,
-    tags: buildTargetedPublicationV2({
+    kind: TARGETED_PUBLICATION_KIND,
+    tags: buildTargetedPublication({
       id: `target-${community.address}`,
       kind: GIT_REPO_ANNOUNCEMENT,
       source: {type: "a", value: repoAddress},
@@ -138,7 +138,7 @@ describe("repo community context", () => {
     ).toBe(false)
   })
 
-  it("does not treat legacy direct repository tags as V2 associations", () => {
+  it("does not treat legacy direct repository tags as targeting associations", () => {
     const definition = makeDefinition()
     const tags = [
       ["d", "demo"],
@@ -237,8 +237,8 @@ describe("repo community context", () => {
     const association = makeEvent({
       id: "implicit-association",
       pubkey: granteePubkey,
-      kind: TARGETED_PUBLICATION_KIND_V2,
-      tags: buildTargetedPublicationV2({
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: buildTargetedPublication({
         id: targetingId,
         kind: GIT_REPO_ANNOUNCEMENT,
         communities: [reportCommunity],
@@ -323,7 +323,7 @@ describe("repo community context", () => {
         makeAssociation({
           pubkey: otherCommunityPubkey,
           community: makeCommunityPointer({
-            controllerPubkey: otherCommunityPubkey,
+            ownerPubkey: otherCommunityPubkey,
             communityId: moderatorPubkey,
           })!,
           createdAt: 20,

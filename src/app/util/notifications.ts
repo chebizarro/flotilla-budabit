@@ -17,8 +17,8 @@ import {
 import {
   normalizePubkey,
   parseCommunityDefinitionAddress,
-  parseTargetedPublicationV2,
-  type CommunityDefinitionV2,
+  parseTargetedPublication,
+  type CommunityDefinition,
   type CommunityPointer,
 } from "@app/core/community"
 import {
@@ -63,7 +63,7 @@ export type CommunityNotificationBaselineState = {
 }
 
 export const communityNotificationBaselines = synced<CommunityNotificationBaselineState>({
-  key: "communityNotificationBaselines.v2",
+  key: "communityNotificationBaselines",
   defaultValue: {version: 2, byCommunityAddress: {}},
   storage: kv,
 })
@@ -371,7 +371,7 @@ const targetedPublicationMatchesCommunity = (
   communityAddress: string,
   kinds: readonly number[],
 ) => {
-  const targeting = parseTargetedPublicationV2(event)
+  const targeting = parseTargetedPublication(event)
 
   return Boolean(
     targeting &&
@@ -385,7 +385,7 @@ const rootMatchesTargetingEvent = (
   targetingEvent: TrustedEvent,
   kinds: readonly number[],
 ) => {
-  const targeting = parseTargetedPublicationV2(targetingEvent)
+  const targeting = parseTargetedPublication(targetingEvent)
   if (!targeting || !kinds.includes(targeting.kind) || root.kind !== targeting.kind) return false
 
   const source = targeting.source
@@ -450,13 +450,13 @@ export const getTargetedPublicationRootNotificationCandidates = ({
 }
 
 export const getActiveCommunityNotificationPermissionKey = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   currentPubkey: string,
   permissionStatus: CommunityPermissionStatus,
 ) => {
   const expectedKeyPrefix = `${normalizePubkey(currentPubkey)}:${definition.event.id}:`
 
-  return normalizePubkey(permissionStatus.communityPubkey) === definition.controllerPubkey &&
+  return normalizePubkey(permissionStatus.communityPubkey) === definition.ownerPubkey &&
     permissionStatus.key.startsWith(expectedKeyPrefix) &&
     !permissionStatus.loading &&
     permissionStatus.loaded &&
@@ -487,7 +487,7 @@ const moderatorRequestAdminCandidates: Readable<NotificationCandidate[]> = deriv
     if (
       !$pubkey ||
       !$activeCommunityDefinition ||
-      normalizePubkey($pubkey) !== $activeCommunityDefinition.controllerPubkey
+      normalizePubkey($pubkey) !== $activeCommunityDefinition.ownerPubkey
     ) {
       return []
     }
@@ -762,7 +762,7 @@ const makeTargetedPublicationRootNotificationCandidates = ({
         unsubscribeRootEvents = undefined
 
         const authorizedTargetingEvents = $targetingEvents.filter(event => {
-          const targeting = parseTargetedPublicationV2(event)
+          const targeting = parseTargetedPublication(event)
           return (
             targeting?.communities.some(target => target.address === community.address) &&
             targets.some(

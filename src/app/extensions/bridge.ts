@@ -22,12 +22,12 @@ import {
   type CommunityRelayLoadResult,
 } from "@app/core/community-state"
 import {
-  TARGETED_PUBLICATION_KIND_V2,
+  TARGETED_PUBLICATION_KIND,
   PROFILE_LIST_KIND,
   normalizePubkey,
   normalizeRelays,
   parseAddressRef,
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
 } from "@app/core/community"
 import {
   filterAuthorizedCommunityDescriptorEvents,
@@ -584,7 +584,7 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
     const {event, relays} = parseNostrPublishPayload(payload)
     if (!relays?.length) throw new Error("No valid publish relays provided")
     if (
-      event?.kind === TARGETED_PUBLICATION_KIND_V2 ||
+      event?.kind === TARGETED_PUBLICATION_KIND ||
       (Array.isArray(event?.tags) &&
         event.tags.some((tag: unknown) => Array.isArray(tag) && tag[0] === "h"))
     ) {
@@ -871,12 +871,12 @@ const makeCommunitySharedConfigIdentifier = ({
   namespace,
   key,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   namespace: string
   key: string
 }) => `${COMMUNITY_SHARED_CONFIG_PREFIX}:${definition.pointer.address}:${namespace}:${key}`
 
-const makeCommunityProfileListFilters = (definition: CommunityDefinitionV2) =>
+const makeCommunityProfileListFilters = (definition: CommunityDefinition) =>
   definition.sections
     .flatMap(section => section.profileLists)
     .flatMap(ref => {
@@ -940,8 +940,8 @@ const selectLiveStreamReplacements = (events: any[]) => {
   return Array.from(selected.values())
 }
 
-const hasCommunityStreamTag = (event: any, communityPubkey: string) => {
-  const marker = `${COMMUNITY_STREAM_TAG_PREFIX}${communityPubkey}`
+const hasCommunityStreamTag = (event: any, communityId: string) => {
+  const marker = `${COMMUNITY_STREAM_TAG_PREFIX}${communityId}`
 
   return Array.isArray(event?.tags)
     ? event.tags.some((tag: any) => {
@@ -950,8 +950,8 @@ const hasCommunityStreamTag = (event: any, communityPubkey: string) => {
           .trim()
           .toLowerCase()
         return (
-          (name === "h" && normalizePubkey(value) === communityPubkey) ||
-          (name === "t" && (value === marker || value === communityPubkey))
+          (name === "h" && value === communityId) ||
+          (name === "t" && (value === marker || value === communityId))
         )
       })
     : false
@@ -969,14 +969,14 @@ const hasModeratorHostTag = (event: any, moderatorPubkeys: Set<string>) =>
 const selectAuthorizedLiveStreams = ({
   events,
   moderatorPubkeys,
-  communityPubkey,
+  communityId,
   since,
   until,
   limit,
 }: {
   events: any[]
   moderatorPubkeys: Set<string>
-  communityPubkey: string
+  communityId: string
   since?: number
   until?: number
   limit: number
@@ -992,7 +992,7 @@ const selectAuthorizedLiveStreams = ({
 
       return (
         Boolean(author) &&
-        hasCommunityStreamTag(event, communityPubkey) &&
+        hasCommunityStreamTag(event, communityId) &&
         (!since || createdAt >= since) &&
         (!until || createdAt <= until) &&
         (direct || delegated)
@@ -1145,7 +1145,7 @@ const isCommunityAuthorityLoading = (snapshot: ReturnType<typeof getCommunityReq
   return (
     getCommunityPermissionReadiness({
       status,
-      communityPubkey: snapshot.definition.controllerPubkey,
+      communityPubkey: snapshot.definition.ownerPubkey,
       expectedKeyPrefix,
     }) === "loading"
   )
@@ -1271,7 +1271,7 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
   const authorityEvidenceSettled =
     getCommunityPermissionReadiness({
       status: permissionStatus,
-      communityPubkey: definition.controllerPubkey,
+      communityPubkey: definition.ownerPubkey,
       expectedKeyPrefix: permissionKeyPrefix,
     }) === "ready"
 
@@ -1642,7 +1642,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const authorizedCachedExactRefEvents = filterExactCommunityRefEvents(
       cachedExactRefEvents as TrustedEvent[],
       exactRefFilters,
-      snapshot.definition.controllerPubkey,
+      snapshot.definition.ownerPubkey,
       descriptorInfos,
       snapshot.community.communityId,
     )
@@ -1660,7 +1660,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       })
       const events = filterCommunityDescriptorEvents(
         authorizedCachedExactRefEvents as any,
-        snapshot.definition.controllerPubkey,
+        snapshot.definition.ownerPubkey,
         descriptorInfos.map(info => info.descriptor),
         snapshot.community.communityId,
       )
@@ -1687,7 +1687,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const exactRefEvents = filterExactCommunityRefEvents(
       dedupeEvents([...cachedExactRefEvents, ...loadedExactRefResult.events]) as TrustedEvent[],
       exactRefFilters,
-      snapshot.definition.controllerPubkey,
+      snapshot.definition.ownerPubkey,
       descriptorInfos,
       snapshot.community.communityId,
     )
@@ -1695,7 +1695,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     if (request.refs?.length) {
       const events = filterCommunityDescriptorEvents(
         exactRefEvents as any,
-        snapshot.definition.controllerPubkey,
+        snapshot.definition.ownerPubkey,
         descriptorInfos.map(info => info.descriptor),
         snapshot.community.communityId,
       )
@@ -1772,7 +1772,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
         return (
           filterCommunityDescriptorEvents(
             [event],
-            snapshot.definition.controllerPubkey,
+            snapshot.definition.ownerPubkey,
             plan.descriptors.filter(descriptor => targetKindSet.has(descriptor.kind)),
             snapshot.community.communityId,
           ).length > 0
@@ -1782,7 +1782,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       return (
         filterAuthorizedCommunityDescriptorEvents(
           [event],
-          snapshot.definition.controllerPubkey,
+          snapshot.definition.ownerPubkey,
           descriptorInfos,
           snapshot.community.communityId,
         ).length > 0
@@ -1804,7 +1804,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     )
     const events = filterCommunityDescriptorEvents(
       dedupeEvents([...exactRefEvents, ...admittedOriginalEvents]) as any,
-      snapshot.definition.controllerPubkey,
+      snapshot.definition.ownerPubkey,
       plan.descriptors,
       snapshot.community.communityId,
     ).sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
@@ -1893,12 +1893,12 @@ registerBridgeHandler("community:queryLiveStreams", async (payload, ext) => {
       })
     }
 
-    const communityPubkey = normalizePubkey(snapshot.definition.controllerPubkey)
+    const communityId = snapshot.community.communityId
     const selectEvents = (events: any[]) =>
       selectAuthorizedLiveStreams({
         events,
         moderatorPubkeys,
-        communityPubkey,
+        communityId,
         since: request.since,
         until: request.until,
         limit: request.limit || 100,
@@ -2188,9 +2188,7 @@ registerBridgeHandler("ui:resize", (payload, ext) => {
 })
 
 // Storage handlers are scoped by encoded extension/widget line ID and optional repo address.
-// v2 keys receive all new writes; legacy flotilla keys remain readable during migration.
-const STORAGE_PREFIX = "budabit:ext:v2:"
-const LEGACY_STORAGE_PREFIX = "flotilla:ext:"
+const STORAGE_PREFIX = "budabit:extension:"
 const encodeStorageComponent = (value: string): string => encodeURIComponent(value)
 
 const decodeStorageComponent = (value: string): string => {
@@ -2201,7 +2199,7 @@ const decodeStorageComponent = (value: string): string => {
   }
 }
 
-const getV2StorageKeyPrefix = (ext: LoadedExtension, repoScoped: boolean): string => {
+const getExtensionStorageKeyPrefix = (ext: LoadedExtension, repoScoped: boolean): string => {
   const base = `${STORAGE_PREFIX}${encodeStorageComponent(ext.id)}:`
 
   if (repoScoped && ext.repoContext) {
@@ -2211,43 +2209,11 @@ const getV2StorageKeyPrefix = (ext: LoadedExtension, repoScoped: boolean): strin
   return `${base}global:`
 }
 
-const getLegacyStorageKeyPrefix = (
-  extId: string,
-  repoContext: LoadedExtension["repoContext"],
-  repoScoped: boolean,
-): string => {
-  const base = `${LEGACY_STORAGE_PREFIX}${extId}:`
-
-  if (repoScoped && repoContext) {
-    return `${base}repo:${repoContext.pubkey}:${repoContext.name}:`
-  }
-
-  return base
-}
-
-const getLegacyStorageKeyPrefixes = (ext: LoadedExtension, repoScoped: boolean): string[] => {
-  const ids = [ext.id]
-
-  if (ext.type === "widget" && ext.widget.identifier && ext.widget.identifier !== ext.id) {
-    ids.push(ext.widget.identifier)
-  }
-
-  return Array.from(
-    new Set(ids.map(id => getLegacyStorageKeyPrefix(id, ext.repoContext, repoScoped))),
-  )
-}
-
-const getV2StorageKey = (ext: LoadedExtension, repoScoped: boolean, key: string): string =>
-  `${getV2StorageKeyPrefix(ext, repoScoped)}${encodeStorageComponent(key)}`
-
-const getLegacyStorageKeys = (ext: LoadedExtension, repoScoped: boolean, key: string): string[] =>
-  getLegacyStorageKeyPrefixes(ext, repoScoped).map(prefix => `${prefix}${key}`)
+const getExtensionStorageKey = (ext: LoadedExtension, repoScoped: boolean, key: string): string =>
+  `${getExtensionStorageKeyPrefix(ext, repoScoped)}${encodeStorageComponent(key)}`
 
 const removeStorageKey = (ext: LoadedExtension, repoScoped: boolean, key: string): void => {
-  localStorage.removeItem(getV2StorageKey(ext, repoScoped, key))
-  for (const legacyKey of getLegacyStorageKeys(ext, repoScoped, key)) {
-    localStorage.removeItem(legacyKey)
-  }
+  localStorage.removeItem(getExtensionStorageKey(ext, repoScoped, key))
 }
 
 registerBridgeHandler("storage:get", (payload, ext) => {
@@ -2263,12 +2229,8 @@ registerBridgeHandler("storage:get", (payload, ext) => {
     if (repoScoped && !ext.repoContext) {
       throw new Error("repoScoped requested but no repository context available")
     }
-    const raw =
-      localStorage.getItem(getV2StorageKey(ext, repoScoped, key)) ??
-      getLegacyStorageKeys(ext, repoScoped, key)
-        .map(legacyKey => localStorage.getItem(legacyKey))
-        .find(value => value !== null)
-    const data = raw !== null && raw !== undefined ? JSON.parse(raw) : null
+    const raw = localStorage.getItem(getExtensionStorageKey(ext, repoScoped, key))
+    const data = raw !== null ? JSON.parse(raw) : null
     return {status: "ok", data}
   } catch (err: any) {
     console.error("Error in storage:get bridge handler:", err)
@@ -2297,7 +2259,7 @@ registerBridgeHandler("storage:set", (payload, ext) => {
     if (new TextEncoder().encode(serialized).byteLength > MAX_STORAGE_VALUE_SIZE) {
       throw new Error(`Value exceeds maximum size of ${MAX_STORAGE_VALUE_SIZE} bytes`)
     }
-    localStorage.setItem(getV2StorageKey(ext, repoScoped, key), serialized)
+    localStorage.setItem(getExtensionStorageKey(ext, repoScoped, key), serialized)
     return {status: "ok"}
   } catch (err: any) {
     console.error("Error in storage:set bridge handler:", err)
@@ -2330,24 +2292,15 @@ registerBridgeHandler("storage:keys", (payload, ext) => {
     if (repoScoped && !ext.repoContext) {
       throw new Error("repoScoped requested but no repository context available")
     }
-    const v2Prefix = getV2StorageKeyPrefix(ext, repoScoped)
-    const legacyPrefixes = getLegacyStorageKeyPrefixes(ext, repoScoped)
+    const storagePrefix = getExtensionStorageKeyPrefix(ext, repoScoped)
     const keys = new Set<string>()
 
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       if (!key) continue
 
-      if (key.startsWith(v2Prefix)) {
-        keys.add(decodeStorageComponent(key.slice(v2Prefix.length)))
-        continue
-      }
-
-      for (const legacyPrefix of legacyPrefixes) {
-        if (key.startsWith(legacyPrefix)) {
-          keys.add(key.slice(legacyPrefix.length))
-          break
-        }
+      if (key.startsWith(storagePrefix)) {
+        keys.add(decodeStorageComponent(key.slice(storagePrefix.length)))
       }
     }
 

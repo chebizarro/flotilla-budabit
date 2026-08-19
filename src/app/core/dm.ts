@@ -539,7 +539,7 @@ const getCommunityMessagingSourceKind = ({
   const normalizedPubkey = normalizePubkey(pubkey || "")
   if (!normalizedPubkey) return
 
-  if (definition.controllerPubkey === normalizedPubkey) {
+  if (definition.ownerPubkey === normalizedPubkey) {
     return "community_messaging"
   }
 
@@ -581,7 +581,7 @@ const getActiveCommunityRelaySources = (communityRefs: ActiveUserCommunityRef[] 
     return [
       {
         source: "active_community_relay" as const,
-        communityPubkey: ref.community.controllerPubkey,
+        communityPubkey: ref.community.ownerPubkey,
         communityAddress: ref.community.address,
         relays: ref.definition.relays,
         isStarred: false,
@@ -644,7 +644,7 @@ export const buildDmRelayRecommendations = ({
       communitySources.push({
         source: sourceKind,
         pubkey: recommender,
-        communityPubkey: definition.controllerPubkey,
+        communityPubkey: definition.ownerPubkey,
         communityAddress: definition.pointer.address,
         relays,
         createdAt: event.created_at,
@@ -681,7 +681,7 @@ const getCommunityProfileListAuthors = (
   const memberAuthors: string[] = []
 
   for (const definition of getDefinitionsFromRefs(communityRefs)) {
-    communityAuthors.push(definition.controllerPubkey)
+    communityAuthors.push(definition.ownerPubkey)
 
     for (const section of definition.sections) {
       for (const ref of section.profileLists) {

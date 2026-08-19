@@ -21,8 +21,8 @@
   import {
     getProfileListPubkeys,
     normalizePubkey,
-    type CommunityDefinitionV2,
-    type CommunityProfileListRefV2,
+    type CommunityDefinition,
+    type CommunityDefinitionProfileListRef,
   } from "@app/core/community"
   import {
     type CommunityBootstrapGrantDraft,
@@ -36,11 +36,11 @@
   type SectionOption = {
     name: string
     displayName: string
-    profileLists: CommunityProfileListRefV2[]
+    profileLists: CommunityDefinitionProfileListRef[]
   }
 
   type Props = {
-    definition: CommunityDefinitionV2
+    definition: CommunityDefinition
     sections: SectionOption[]
     profileListEvents?: TrustedEvent[]
     relays?: string[]
@@ -214,7 +214,7 @@
     return $peopleDiscoverySearch.searchValues(query, {
       context: {
         scope: "community",
-        communityPubkey: definition.controllerPubkey,
+        communityPubkey: definition.ownerPubkey,
         communityAddress: definition.pointer.address,
       },
       resultLimit: 8,

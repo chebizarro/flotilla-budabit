@@ -68,4 +68,31 @@ describe("community shared config authority", () => {
       }),
     ).toBe(true)
   })
+
+  it("treats date and time calendar descriptors as one authority family", () => {
+    const dateModerator = "a".repeat(64)
+    const timeModerator = "b".repeat(64)
+
+    expect(
+      isAuthorizedCommunitySharedConfigEvent({
+        event: {pubkey: dateModerator, tags: [["descriptor", "31923"]]},
+        descriptorAuthorities: [
+          {descriptor: {kind: 31923}, moderatorPubkeys: [dateModerator]},
+          {descriptor: {kind: 31922}, moderatorPubkeys: [timeModerator]},
+        ],
+        requireExactDescriptors: true,
+      }),
+    ).toBe(true)
+
+    expect(
+      isAuthorizedCommunitySharedConfigEvent({
+        event: {pubkey: timeModerator, tags: [["descriptor", "31922"]]},
+        descriptorAuthorities: [
+          {descriptor: {kind: 31923}, moderatorPubkeys: [dateModerator]},
+          {descriptor: {kind: 31922}, moderatorPubkeys: [timeModerator]},
+        ],
+        requireExactDescriptors: true,
+      }),
+    ).toBe(true)
+  })
 })

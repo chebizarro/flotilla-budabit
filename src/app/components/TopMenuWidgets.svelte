@@ -11,7 +11,7 @@
   const exactCommunity = $derived($activeExactCommunityPointer)
   const relayHints = $derived($activeExactCommunityRelays)
   const permissionReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === exactCommunity?.controllerPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === exactCommunity?.ownerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -26,7 +26,7 @@
 
 {#if exactCommunity && communityCoreReady}
   <CommunityWidgetSlotLaunchers
-    communityPubkey={exactCommunity.controllerPubkey}
+    communityPubkey={exactCommunity.ownerPubkey}
     communityAddress={exactCommunity.address}
     {relayHints}
     slotType="global-menu"

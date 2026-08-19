@@ -35,7 +35,7 @@ If the relay goes down, the community is out.
 - `kind:32222` — Addressable Community Definition
 - `kind:30222` — Targeted Publication
 
-Uses existing primitives for everything else: badges (NIP-58), forms (NIP-101), and profile lists (`kind:30000`). Community metadata is native to definition tags; a controller's `kind:0` remains personal metadata.
+Uses existing primitives for everything else: badges (NIP-58), forms (NIP-101), and profile lists (`kind:30000`). Community metadata is native to definition tags; a owner's `kind:0` remains personal metadata.
 
 ### NIP-72
 
@@ -116,7 +116,7 @@ No content type declaration. Communities are generic containers. You don't know 
 
 Any existing Nostr event can be targeted to a community via a Targeted Publication event (`kind:30222`). Full backwards compatibility. The association can be updated or removed without affecting the original content.
 
-A single publication can be targeted to up to 12 exact community branches via one Targeted Publication event. Each target is an adjacent `h=<communityId>` and `a=<32222:controller:communityId>` pair with marker `community`. The authorized wrapper curator's intended branch association is explicit and transparent, including when the original has an external author. Community association through a person `p` tag is invalid.
+A single publication can be targeted to up to 12 exact community branches via one Targeted Publication event. Each target is an adjacent `h=<communityId>` and `a=<32222:owner:communityId>` pair with marker `community`. The authorized wrapper curator's intended branch association is explicit and transparent, including when the original has an external author. Community association through a person `p` tag is invalid.
 
 ### NIP-72 and NIP-29
 
@@ -207,17 +207,17 @@ No built-in media solution. Members use their own Blossom servers or external ho
 
 ### Communikeys
 
-Communikeys separate stable community association from controller identity:
+Communikeys separate stable community association from owner identity:
 
 **Stable association** — `communityId` is the definition `d` and community-event `h`. It is not a person, profile, signer, outbox identity, or `p` target.
 
-**Exact branch authority** — branch identity is `32222:<controllerPubkey>:<communityId>`. The controller's valid definition signature grants authority only at that exact address; authority-sensitive events mark that definition in an `a` tag.
+**Exact branch authority** — branch identity is `32222:<ownerPubkey>:<communityId>`. The owner's valid definition signature grants authority only at that exact address; authority-sensitive events mark that definition in an `a` tag.
 
-**Canonical navigation** — a NIP-19 `naddr` containing kind `32222`, controller, community ID, and optional definition-relay hints selects one exact branch.
+**Canonical navigation** — a NIP-19 `naddr` containing kind `32222`, owner, community ID, and optional definition-relay hints selects one exact branch.
 
-**Definition-native metadata** — name, description, picture, banner, and website come from definition tags, not from the controller's personal profile.
+**Definition-native metadata** — name, description, picture, banner, and website come from definition tags, not from the owner's personal profile.
 
-Badge awarding can be delegated to a separate keypair, allowing assistants or automated systems to handle engagement programs without access to the branch controller key. Profile-list updates remain the permission step.
+Badge awarding can be delegated to a separate keypair, allowing assistants or automated systems to handle engagement programs without access to the branch owner key. Profile-list updates remain the permission step.
 
 ### NIP-72
 
@@ -249,7 +249,7 @@ For migration to work in any way smoothly, the community ID would also need to b
 
 If you take the Nip-72, Nip-29 and Relay-as-Community approaches seriously and try to address their limitations, you'd need to add:
 
-- **A stable identifier plus explicit authority** — Relays and NIP-29 use URLs as identifiers. Communikeys uses a stable community ID for association and a real controller signer in an exact addressable definition coordinate.
+- **A stable identifier plus explicit authority** — Relays and NIP-29 use URLs as identifiers. Communikeys uses a stable community ID for association and a real owner signer in an exact addressable definition coordinate.
 
 - **Migration without breaking everything** — If your community ID is a relay URL (Relay-as-Community) or tied to a specific relay (NIP-29), switching hosting is a nightmare. Communikeys keeps the community ID and exact definition address independent of relay hints.
 
@@ -265,6 +265,6 @@ If you take the Nip-72, Nip-29 and Relay-as-Community approaches seriously and t
 
 - **Blossom servers** — Relays and NIP-29 have no integrated media solution. You'd need blossom tags.
 
-Follow these paths to their logical conclusions and you arrive at something that looks like Communikeys: stable IDs, exact controller branches, content sections with profile-list write rules, targeted publications, badge-driven engagement, and integrated infrastructure tags.
+Follow these paths to their logical conclusions and you arrive at something that looks like Communikeys: stable IDs, exact owner branches, content sections with profile-list write rules, targeted publications, badge-driven engagement, and integrated infrastructure tags.
 
 Communikeys isn't an alternative to these approaches — it's what you get when you play them out.

@@ -22,8 +22,8 @@ import {
 } from "@app/core/community-state"
 import {
   normalizePubkey,
-  selectCurrentCommunityDefinitionsV2,
-  type CommunityDefinitionV2,
+  selectCurrentCommunityDefinitions,
+  type CommunityDefinition,
 } from "@app/core/community"
 import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
 import {buildCommunityTrustAssessments} from "@app/core/community-trust"
@@ -61,7 +61,7 @@ export type PeopleDiscoverySearch = {
 
 type PeopleDiscoveryEvidence = {
   definitionEvents: TrustedEvent[]
-  definitions: Map<string, CommunityDefinitionV2>
+  definitions: Map<string, CommunityDefinition>
   profileListEvents: TrustedEvent[]
   reportStates: Map<string, EffectiveCommunityReportState>
   renouncedCommunityAddresses: string[]
@@ -157,7 +157,7 @@ export const peopleDiscoverySearch = derived(
     }
     const evidence: PeopleDiscoveryEvidence = {
       definitionEvents,
-      definitions: selectCurrentCommunityDefinitionsV2(definitionEvents),
+      definitions: selectCurrentCommunityDefinitions(definitionEvents),
       profileListEvents,
       reportStates,
       renouncedCommunityAddresses: $userRenouncedCommunityAddresses,

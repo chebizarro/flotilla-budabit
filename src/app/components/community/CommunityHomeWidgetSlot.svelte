@@ -60,7 +60,7 @@
       : undefined,
   )
   const contextDefinition = $derived(
-    exactDefinition ? {...exactDefinition, pubkey: exactDefinition.controllerPubkey} : undefined,
+    exactDefinition ? {...exactDefinition, pubkey: exactDefinition.ownerPubkey} : undefined,
   )
   let curatedWidgets = $state<SmartWidgetEvent[]>([])
   let loadKey = ""
@@ -175,7 +175,7 @@
     const descriptorAuthorities = Array.from(moderatorsByDescriptor.values())
     return {
       authorizedPubkeys: new Set([
-        normalizePubkey(definition.controllerPubkey),
+        normalizePubkey(definition.ownerPubkey),
         ...descriptorAuthorities.flatMap(authority => Array.from(authority.moderatorPubkeys)),
       ]),
       descriptorAuthorities,
@@ -264,7 +264,7 @@
       slot: {type: slotType, label: widget.slot?.label},
       community: {
         address: exactCommunity.address,
-        controllerPubkey: exactCommunity.controllerPubkey,
+        ownerPubkey: exactCommunity.ownerPubkey,
         communityId: exactCommunity.communityId,
         naddr: exactCommunity.naddr,
         relays: relayHints,

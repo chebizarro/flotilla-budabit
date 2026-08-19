@@ -44,18 +44,18 @@
   import {COMMUNITY_EXPLAINER_PATH, makeExactCommunityPath} from "@app/util/routes"
   import {
     DEFAULT_COMMUNITY_SECTION_NAMES,
-    COMMUNITY_DEFINITION_KIND_V2,
+    COMMUNITY_DEFINITION_KIND,
     FORM_RESPONSE_KIND,
-    buildCommunityDefinitionV2,
+    buildCommunityDefinition,
     getCommunitySectionKindAssignments,
     getDefaultCommunitySectionKinds,
     getCommunitySectionKindKey,
     getCommunitySectionKindLabel,
     getProfileListPubkeys,
-    getCommunitySectionPurposeV2,
+    getCommunitySectionPurpose,
     isHexPubkey,
     makeCommunityProfileListIdentifier,
-    parseCommunityDefinitionV2,
+    parseCommunityDefinition,
     parseAddressRef,
     normalizeCommunityAlertHandlerAddress,
     normalizeCommunityAlertService,
@@ -66,17 +66,17 @@
     normalizePubkey,
     normalizeRelay,
     normalizeRelays,
-    updateCommunityDefinitionV2,
+    updateCommunityDefinition,
     PROFILE_LIST_KIND,
     type CommunityAlertService,
-    type CommunityBadgeRefV2,
+    type CommunityDefinitionBadgeRef,
     type CommunityEmailDigestService,
     type CommunityMint,
-    type CommunityDefinitionV2,
-    type CommunityProfileListRefV2,
-    type CommunityRetentionV2,
-    type CommunitySectionInputV2,
-    type CommunitySectionKindV2,
+    type CommunityDefinition,
+    type CommunityDefinitionProfileListRef,
+    type CommunityDefinitionRetentionPolicy,
+    type CommunityDefinitionSectionInput,
+    type CommunityDefinitionSectionKind,
   } from "@app/core/community"
   import {
     getCommunitySectionNameKey,
@@ -111,14 +111,14 @@
     publishAndVerifyCommunityEvent,
     type CommunityPublishStatusUpdate,
   } from "@app/core/community-publish"
-  import {createCommunityV2} from "@app/core/community-create-v2"
+  import {createCommunity} from "@app/core/community-create"
   import {uploadFile} from "@app/core/commands"
   import type {BlossomUploadStage} from "@app/core/blossom"
   import {promptBlossomMirrorUpload} from "@app/util/blossom-mirror-prompt"
 
   type Mode = "create" | "edit"
 
-  type ControllerProfile = {
+  type OwnerProfile = {
     name?: string
     display_name?: string
     about?: string
@@ -128,8 +128,8 @@
 
   type Props = {
     mode?: Mode
-    definition?: CommunityDefinitionV2
-    profile?: ControllerProfile
+    definition?: CommunityDefinition
+    profile?: OwnerProfile
     embedded?: boolean
     operationId?: string
   }
@@ -172,14 +172,14 @@
     originalNameKey?: string
     name: string
     kinds: SectionKindDraft[]
-    profileLists: CommunityProfileListRefV2[]
-    badges: CommunityBadgeRefV2[]
-    retention: CommunityRetentionV2[]
+    profileLists: CommunityDefinitionProfileListRef[]
+    badges: CommunityDefinitionBadgeRef[]
+    retention: CommunityDefinitionRetentionPolicy[]
   }
 
   type NewProfileList = {
     sectionName: string
-    profileList: CommunityProfileListRefV2
+    profileList: CommunityDefinitionProfileListRef
   }
 
   type ValidatedSetup = {
@@ -199,7 +199,7 @@
     tos?: {ref: string; relay?: string}
     location: string
     geohash: string
-    sections: CommunitySectionInputV2[]
+    sections: CommunityDefinitionSectionInput[]
     newProfileLists: NewProfileList[]
     profileListUpdates: CommunityProfileListDraftUpdate[]
   }
@@ -249,7 +249,7 @@
   }
 
   type MigrationArtifactPlan = {
-    sections: CommunitySectionInputV2[]
+    sections: CommunityDefinitionSectionInput[]
     profileListUpdates: CommunityProfileListDraftUpdate[]
     formTemplates: Array<EventTemplate & {kind: number}>
     reportReviewLabels: Array<EventTemplate & {kind: number}>
@@ -311,7 +311,7 @@
     `section-${sectionIndex}-subtype-${kindIndex}`
   const sectionKindsField = (sectionIndex: number) => `section-${sectionIndex}-kinds`
 
-  const toKindDraft = (kind: CommunitySectionKindV2): SectionKindDraft => ({
+  const toKindDraft = (kind: CommunityDefinitionSectionKind): SectionKindDraft => ({
     kind: String(kind.kind),
     subtype: kind.subtype || "",
   })
@@ -332,7 +332,7 @@
     }))
 
   const makeSectionDraftsFromDefinition = (
-    communityDefinition: CommunityDefinitionV2,
+    communityDefinition: CommunityDefinition,
   ): SectionDraft[] =>
     communityDefinition.sections.map(section => ({
       draftKey: makeOriginalSectionDraftKey(section.name),
@@ -356,7 +356,7 @@
     }))
 
   const makeOriginalDraftState = (
-    communityDefinition: CommunityDefinitionV2,
+    communityDefinition: CommunityDefinition,
   ): OriginalDraftState => ({
     name: communityDefinition.metadata.name || "",
     description: communityDefinition.metadata.description || "",
@@ -407,7 +407,7 @@
     sectionDrafts: makeSectionDraftsFromDefinition(communityDefinition),
   })
 
-  const parseSectionDraftKind = (draft: SectionKindDraft): CommunitySectionKindV2 | undefined => {
+  const parseSectionDraftKind = (draft: SectionKindDraft): CommunityDefinitionSectionKind | undefined => {
     const kindValue = draft.kind.trim()
     const kind = Number.parseInt(kindValue, 10)
     const subtype = draft.subtype.trim()
@@ -424,11 +424,11 @@
     drafts.map(section => ({
       originalNameKey: section.originalNameKey,
       name: section.name.trim(),
-      kinds: section.kinds.map(parseSectionDraftKind).filter(Boolean) as CommunitySectionKindV2[],
+      kinds: section.kinds.map(parseSectionDraftKind).filter(Boolean) as CommunityDefinitionSectionKind[],
     }))
 
   const getSectionAssignmentMap = (
-    sections: Array<Pick<CommunitySectionInputV2, "name" | "kinds">>,
+    sections: Array<Pick<CommunityDefinitionSectionInput, "name" | "kinds">>,
   ) => new Map(getCommunitySectionKindAssignments(sections as any).map(item => [item.key, item]))
 
   const uniqueNormalizedPubkeys = (pubkeys: string[]) =>
@@ -461,7 +461,7 @@
   const getActiveSectionModeratorPubkeys = (sectionName: string) => {
     const section = getOriginalSection(sectionName)
     if (!section || !definition) return []
-    const owner = normalizePubkey(definition.controllerPubkey)
+    const owner = normalizePubkey(definition.ownerPubkey)
 
     return uniqueNormalizedPubkeys(
       section.profileLists
@@ -604,7 +604,7 @@
     const affectedOldSectionNames = Array.from(
       new Set([...migrationPairs.map(pair => pair.oldSectionName), ...removedSectionNames]),
     )
-    const owner = normalizePubkey(definition?.controllerPubkey || "")
+    const owner = normalizePubkey(definition?.ownerPubkey || "")
     const migratedMemberPubkeys = uniqueNormalizedPubkeys(
       migrationPairs.flatMap(pair => getActiveSectionMemberPubkeys(pair.oldSectionName)),
     ).filter(pubkey => pubkey !== owner)
@@ -1093,7 +1093,7 @@
   }
 
   const normalizeSectionDrafts = (nextErrors: FieldErrors) => {
-    const sections: CommunitySectionInputV2[] = []
+    const sections: CommunityDefinitionSectionInput[] = []
     const seenNames = new Map<string, number>()
     const seenKinds = new Map<
       string,
@@ -1105,7 +1105,7 @@
     for (const [sectionIndex, section] of sectionDrafts.entries()) {
       const name = section.name.trim()
       const nameKey = getSectionNameKey(name)
-      const kinds: CommunitySectionKindV2[] = []
+      const kinds: CommunityDefinitionSectionKind[] = []
 
       if (!SECTION_NAME_RE.test(name)) {
         nextErrors[sectionNameField(sectionIndex)] =
@@ -1181,8 +1181,8 @@
     return sections
   }
 
-  const ensureSectionAuthorities = ({sections}: {sections: CommunitySectionInputV2[]}) => {
-    const nextSections: CommunitySectionInputV2[] = []
+  const ensureSectionAuthorities = ({sections}: {sections: CommunityDefinitionSectionInput[]}) => {
+    const nextSections: CommunityDefinitionSectionInput[] = []
     const newProfileLists: NewProfileList[] = []
 
     for (const section of sections) {
@@ -1230,16 +1230,16 @@
     const normalizedSections = normalizeSectionDrafts(nextErrors)
     const exactDefinition = $activeExactCommunityDefinition
 
-    if (!community) nextErrors.auth = "Log in with the community controller first."
+    if (!community) nextErrors.auth = "Log in with the community owner first."
     if (isEdit && !exactDefinition) {
       nextErrors.auth = "Load the exact community definition before publishing updates."
     } else if (
       isEdit &&
       community &&
       exactDefinition &&
-      community.pubkey !== exactDefinition.controllerPubkey
+      community.pubkey !== exactDefinition.ownerPubkey
     ) {
-      nextErrors.auth = "Only the community controller can publish community definition updates."
+      nextErrors.auth = "Only the community owner can publish community definition updates."
     }
     if (!trimmedName) nextErrors.name = "Community name is required."
     if (!normalizedPrimaryRelay) {
@@ -1269,7 +1269,7 @@
       ? applyCommunityBootstrapGrants({
           sections: authority.sections,
           communityId: exactDefinition?.communityId || community.pubkey,
-          controllerPubkey: community.pubkey,
+          ownerPubkey: community.pubkey,
           profileListPubkey: community.pubkey,
           relays,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -1326,7 +1326,7 @@
     return Array.from(byAddress.values())
   }
 
-  const dedupeProfileListRefs = (refs: CommunityProfileListRefV2[]) =>
+  const dedupeProfileListRefs = (refs: CommunityDefinitionProfileListRef[]) =>
     Array.from(new Map(refs.map(ref => [ref.address, ref])).values())
 
   const applySectionMigration = (
@@ -1371,12 +1371,12 @@
       const section = sections[sectionIndex]
       if (!section) continue
 
-      const purpose = getCommunitySectionPurposeV2(definition.communityId, section)
+      const purpose = getCommunitySectionPurpose(definition.communityId, section)
       const identifier = purpose
         ? makeCommunityProfileListIdentifier(definition.communityId, purpose)
         : undefined
       if (!identifier) continue
-      const setupProfileList: CommunityProfileListRefV2 = {
+      const setupProfileList: CommunityDefinitionProfileListRef = {
         address: `${PROFILE_LIST_KIND}:${owner}:${identifier}`,
         ...(validated.relays[0] ? {relay: validated.relays[0]} : {}),
       }
@@ -1610,12 +1610,12 @@
     const rootRelays = getCommunityRootPublishRelays(validated.relays, validated.community.pubkey)
     let prerequisiteCount = 0
 
-    const result = await createCommunityV2({
+    const result = await createCommunity({
       operationId: communityCreateOperationId,
-      controllerPubkey: validated.community.pubkey,
+      ownerPubkey: validated.community.pubkey,
       sign: template => makeSignedEvent(validated.community, template),
       publishAndVerifyExact: event => {
-        const activation = event.kind === COMMUNITY_DEFINITION_KIND_V2
+        const activation = event.kind === COMMUNITY_DEFINITION_KIND
         const label = activation
           ? "community definition"
           : `community prerequisite ${++prerequisiteCount}`
@@ -1632,7 +1632,7 @@
         const bootstrap = applyCommunityBootstrapGrants({
           sections: validated.sections,
           communityId,
-          controllerPubkey: validated.community.pubkey,
+          ownerPubkey: validated.community.pubkey,
           profileListPubkey: validated.community.pubkey,
           relays: validated.relays,
           grants: bootstrapGrantDrafts,
@@ -1662,7 +1662,7 @@
         return {
           prerequisites,
           definition: {
-            ...buildCommunityDefinitionV2({
+            ...buildCommunityDefinition({
               communityId,
               name: validated.name,
               description: validated.description || undefined,
@@ -1696,7 +1696,7 @@
     })
 
     for (const event of result.verifiedEvents) repository.publish(event)
-    const parsedDefinition = parseCommunityDefinitionV2(result.definition)
+    const parsedDefinition = parseCommunityDefinition(result.definition)
     if (!parsedDefinition) throw new Error("Verified community definition was invalid.")
 
     clearCommunityBootstrapCache(parsedDefinition.pointer.address)
@@ -1742,8 +1742,8 @@
           }
       const exactDefinition = $activeExactCommunityDefinition
       if (!exactDefinition) throw new Error("The exact community definition is not loaded.")
-      if (validated.community.pubkey !== exactDefinition.controllerPubkey) {
-        throw new Error("The active signer is not this community's controller.")
+      if (validated.community.pubkey !== exactDefinition.ownerPubkey) {
+        throw new Error("The active signer is not this community.s owner.")
       }
       const createdAt = getNextReplacementCreatedAt([])
       const services = [
@@ -1765,7 +1765,7 @@
           handlerRelay: service.handlerRelay,
         })),
       ]
-      const rebuiltDefinition = buildCommunityDefinitionV2({
+      const rebuiltDefinition = buildCommunityDefinition({
         communityId: exactDefinition.communityId,
         name: validated.name,
         description: validated.description || undefined,
@@ -1801,7 +1801,7 @@
         ),
       )
       const communityDefinition = {
-        ...updateCommunityDefinitionV2(
+        ...updateCommunityDefinition(
           exactDefinition,
           {
             name: validated.name,
@@ -1895,7 +1895,7 @@
 
       for (const event of verifiedEvents) repository.publish(event)
 
-      const parsedDefinition = parseCommunityDefinitionV2(verifiedDefinition)
+      const parsedDefinition = parseCommunityDefinition(verifiedDefinition)
       if (
         !parsedDefinition ||
         parsedDefinition.pointer.address !== exactDefinition.pointer.address
@@ -2156,7 +2156,7 @@
 
   const submitCommunitySettings = async () => {
     if (!$pubkey) {
-      pushToast({theme: "error", message: "Log in with the community controller first."})
+      pushToast({theme: "error", message: "Log in with the community owner first."})
       return
     }
 
@@ -2531,7 +2531,7 @@
   const actionLabel = $derived(isEdit ? "Update" : "Create")
   const title = $derived(isEdit ? "Edit community settings." : "Create a BudaBit community.")
   const eyebrow = $derived(isEdit ? "Community Admin" : "Community Setup")
-  const activeCommunityPubkey = $derived(definition?.controllerPubkey || $pubkey || "")
+  const activeCommunityPubkey = $derived(definition?.ownerPubkey || $pubkey || "")
   const login = () => pushModal(LogIn)
   const pictureUploading = $derived(!["idle", "ready", "failed"].includes(pictureUploadStage))
   const activeCommunityRelays = $derived.by(() =>
@@ -2680,7 +2680,7 @@
               Publish a fresh community definition with updated relays, metadata, and content
               sections.
             {:else}
-              Publish the community definition. Your logged-in account becomes its controller.
+              Publish the community definition. Your logged-in account becomes its owner.
             {/if}
           </p>
           <div class="mt-6 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -2703,7 +2703,7 @@
               <Profile pubkey={activeCommunityPubkey} avatarSize={9} showPubkey />
               <span class="mt-3 block">
                 The active signer shown here controls and publishes this definition. Keep the
-                controller key in cold storage and sign with it
+                owner key in cold storage and sign with it
                 <a
                   class="link font-medium"
                   href="https://nostrapps.com#signers"
@@ -2746,7 +2746,7 @@
             <div class="rounded-xl border border-base-300 bg-base-200 p-3 text-sm">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <strong>Controller pubkey</strong>
+                  <strong>Owner pubkey</strong>
                   <code class="mt-2 block break-all text-xs opacity-75">
                     {activeCommunityPubkey || "Not logged in"}
                   </code>

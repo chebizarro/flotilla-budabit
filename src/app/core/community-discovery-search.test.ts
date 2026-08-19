@@ -5,10 +5,10 @@ import {
   rankCommunitySearchDefinitions,
   searchCommunities,
 } from "./community-discovery-search"
-import {parseCommunityDefinitionV2} from "./community"
+import {parseCommunityDefinition} from "./community"
 
 const secret = new Uint8Array(32).fill(1)
-const controller = getPublicKey(secret)
+const owner = getPublicKey(secret)
 const otherSecret = new Uint8Array(32).fill(2)
 const otherController = getPublicKey(otherSecret)
 
@@ -51,10 +51,10 @@ const second = makeDefinition({
 })
 
 describe("community discovery search", () => {
-  it("classifies exact links, controllers, NIP-05 and names", () => {
-    const definition = parseCommunityDefinitionV2(first)!
+  it("classifies exact links, owners, NIP-05 and names", () => {
+    const definition = parseCommunityDefinition(first)!
     expect(classifyCommunitySearchQuery(definition.pointer.naddr).type).toBe("exact")
-    expect(classifyCommunitySearchQuery(controller).type).toBe("controller")
+    expect(classifyCommunitySearchQuery(owner).type).toBe("owner")
     expect(classifyCommunitySearchQuery("alice@example.com")).toEqual({
       type: "nip05",
       identifier: "alice@example.com",
@@ -66,7 +66,7 @@ describe("community discovery search", () => {
   })
 
   it("ranks preferred exact-name matches before weaker matches", () => {
-    const definitions = [parseCommunityDefinitionV2(second)!, parseCommunityDefinitionV2(first)!]
+    const definitions = [parseCommunityDefinition(second)!, parseCommunityDefinition(first)!]
     const ranked = rankCommunitySearchDefinitions({
       definitions,
       query: "Buda Builders",
@@ -78,7 +78,7 @@ describe("community discovery search", () => {
     ])
   })
 
-  it("uses community-first controller evidence to order equally relevant names", () => {
+  it("uses community-first owner evidence to order equally relevant names", () => {
     const other = makeDefinition({
       name: "Builders",
       communityId: getPublicKey(new Uint8Array(32).fill(5)),
@@ -89,14 +89,14 @@ describe("community discovery search", () => {
       communityId: getPublicKey(new Uint8Array(32).fill(6)),
     })
     const ranked = rankCommunitySearchDefinitions({
-      definitions: [parseCommunityDefinitionV2(local)!, parseCommunityDefinitionV2(other)!],
+      definitions: [parseCommunityDefinition(local)!, parseCommunityDefinition(other)!],
       query: "Builders",
-      candidateControllerPubkeys: [otherController, controller],
+      candidateOwnerPubkeys: [otherController, owner],
     })
 
-    expect(ranked.map(result => result.definition.controllerPubkey)).toEqual([
+    expect(ranked.map(result => result.definition.ownerPubkey)).toEqual([
       otherController,
-      controller,
+      owner,
     ])
   })
 
@@ -125,7 +125,7 @@ describe("community discovery search", () => {
     ])
   })
 
-  it("resolves NIP-05 to a controller without treating it as a community ID", async () => {
+  it("resolves NIP-05 to a owner without treating it as a community ID", async () => {
     const loadEvents = vi.fn().mockResolvedValue([second])
     const result = await searchCommunities("alice@example.com", {
       bootstrapRelays: ["wss://bootstrap.example"],
@@ -136,6 +136,6 @@ describe("community discovery search", () => {
     })
 
     expect(loadEvents.mock.calls[0][1][0].authors).toEqual([otherController])
-    expect(result.results[0]?.definition.controllerPubkey).toBe(otherController)
+    expect(result.results[0]?.definition.ownerPubkey).toBe(otherController)
   })
 })

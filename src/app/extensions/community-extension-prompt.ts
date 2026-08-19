@@ -6,7 +6,7 @@ import {
   type CommunityPointer,
 } from "@app/core/community"
 
-export const COMMUNITY_EXTENSION_PROMPT_KEY = "budabit/community-extension-prompt/v2"
+export const COMMUNITY_EXTENSION_PROMPT_KEY = "budabit/community-extension-prompt"
 
 export type CommunityExtensionPromptState = {
   version: 2

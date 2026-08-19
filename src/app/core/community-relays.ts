@@ -1,6 +1,6 @@
 import {Router} from "@welshman/router"
 import {derived, get, type Readable} from "svelte/store"
-import {normalizePubkey, normalizeRelays, type CommunityDefinitionV2} from "@app/core/community"
+import {normalizePubkey, normalizeRelays, type CommunityDefinition} from "@app/core/community"
 import {INDEXER_RELAYS} from "@app/core/state"
 import {activeUserCommunityRefs} from "@app/core/community-state"
 import {logPublishRelaySummary} from "@app/core/diagnostics"
@@ -10,7 +10,7 @@ export type CommunityRelayRef = {
   communityId: string
   communityAddress: string
   relayHints: string[]
-  definition?: Pick<CommunityDefinitionV2, "relays">
+  definition?: Pick<CommunityDefinition, "relays">
 }
 
 export type CommunityRelayScope = {
@@ -30,7 +30,7 @@ export const getPubkeyOutboxRelays = (pubkey: string | undefined) => {
 }
 
 export const getCommunityScopedPublishRelays = (
-  definition: Pick<CommunityDefinitionV2, "relays"> | undefined,
+  definition: Pick<CommunityDefinition, "relays"> | undefined,
 ) => normalizeRelays(definition?.relays || [])
 
 export const getCommunityRootPublishRelays = (

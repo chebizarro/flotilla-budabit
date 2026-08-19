@@ -1,10 +1,10 @@
 import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
-  parseCommunityDefinitionV2,
+  buildCommunityDefinition,
+  parseCommunityDefinition,
 } from "@app/core/community"
 import {
   buildPeopleSearchCandidates,
@@ -15,22 +15,22 @@ import {
 
 describe("people-search", () => {
   const makeDefinition = ({
-    controllerPubkey,
+    ownerPubkey,
     communityId,
     listOwner,
   }: {
-    controllerPubkey: string
+    ownerPubkey: string
     communityId: string
     listOwner: string
   }) =>
-    parseCommunityDefinitionV2({
+    parseCommunityDefinition({
       id: communityId,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      pubkey: controllerPubkey,
+      kind: COMMUNITY_DEFINITION_KIND,
+      pubkey: ownerPubkey,
       created_at: 1,
       content: "",
       sig: "f".repeat(128),
-      tags: buildCommunityDefinitionV2({
+      tags: buildCommunityDefinition({
         communityId,
         name: "Builders",
         relays: ["wss://relay.example"],
@@ -238,7 +238,7 @@ describe("people-search", () => {
     expect(pubkeys).toEqual([listOwner, member])
   })
 
-  it("uses V2 controllers and profile lists as people without admitting community IDs", () => {
+  it("uses owners and profile lists as people without admitting community IDs", () => {
     const allowedController = getPublicKey(new Uint8Array(32).fill(1))
     const renouncedController = getPublicKey(new Uint8Array(32).fill(2))
     const allowedCommunityId = getPublicKey(new Uint8Array(32).fill(3))
@@ -248,12 +248,12 @@ describe("people-search", () => {
     const allowedMember = getPublicKey(new Uint8Array(32).fill(7))
     const renouncedMember = getPublicKey(new Uint8Array(32).fill(8))
     const allowedDefinition = makeDefinition({
-      controllerPubkey: allowedController,
+      ownerPubkey: allowedController,
       communityId: allowedCommunityId,
       listOwner: allowedListOwner,
     })
     const renouncedDefinition = makeDefinition({
-      controllerPubkey: renouncedController,
+      ownerPubkey: renouncedController,
       communityId: renouncedCommunityId,
       listOwner: renouncedListOwner,
     })
@@ -296,12 +296,12 @@ describe("people-search", () => {
     const excludedListOwner = getPublicKey(new Uint8Array(32).fill(14))
     const sharedMember = getPublicKey(new Uint8Array(32).fill(15))
     const allowedDefinition = makeDefinition({
-      controllerPubkey: sharedController,
+      ownerPubkey: sharedController,
       communityId: allowedCommunityId,
       listOwner: allowedListOwner,
     })
     const excludedDefinition = makeDefinition({
-      controllerPubkey: sharedController,
+      ownerPubkey: sharedController,
       communityId: excludedCommunityId,
       listOwner: excludedListOwner,
     })

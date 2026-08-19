@@ -9,13 +9,13 @@ import {
   type Filter,
   type TrustedEvent,
 } from "@welshman/util"
-import type {CommunityDefinitionV2, CommunityPointer} from "@app/core/community"
+import type {CommunityDefinition, CommunityPointer} from "@app/core/community"
 import {
   FORM_RESPONSE_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KINDS,
-  makeTargetedPublicationLifecycleFiltersV2,
-  parseTargetedPublicationV2,
+  makeTargetedPublicationLifecycleFilters,
+  parseTargetedPublication,
 } from "@app/core/community"
 import {
   COMMUNITY_EXCLUSIVE_KINDS,
@@ -37,12 +37,12 @@ import {
 import {writable, type Readable} from "svelte/store"
 
 type CommunityLiveFilterInput = {
-  authorityDefinition: CommunityDefinitionV2
+  authorityDefinition: CommunityDefinition
   admissionFormAddresses: string[]
 }
 
 type CommunityFiniteFollowUpFilterInput = {
-  authorityDefinition: CommunityDefinitionV2
+  authorityDefinition: CommunityDefinition
   targetingEvents: TrustedEvent[]
   targetingCandidateEvents?: TrustedEvent[]
   admissionResponseIds: string[]
@@ -212,7 +212,7 @@ export const buildCommunityFiniteFollowUpFilters = ({
   moderatorRequestReactionEvents,
 }: CommunityFiniteFollowUpFilterInput) => {
   const filters: Filter[] = [
-    ...makeTargetedPublicationLifecycleFiltersV2(targetingCandidateEvents || targetingEvents),
+    ...makeTargetedPublicationLifecycleFilters(targetingCandidateEvents || targetingEvents),
     ...makeTargetedPublicationOriginalFilterPlan(targetingEvents).relayFilters,
     ...chunkFiltersByTag(
       makeCommunityModeratorRequestReactionFilters(authorityDefinition, moderatorRequests),
@@ -247,7 +247,7 @@ const buildCommunityWorkflowFollowUpFilters = ({
   targetingEvents,
 }: CommunityFiniteFollowUpFilterInput) => {
   const filters: Filter[] = [
-    ...makeTargetedPublicationLifecycleFiltersV2(targetingCandidateEvents || targetingEvents),
+    ...makeTargetedPublicationLifecycleFilters(targetingCandidateEvents || targetingEvents),
     ...chunkFiltersByTag(
       makeCommunityModeratorRequestReactionFilters(authorityDefinition, moderatorRequests),
       "#e",
@@ -290,9 +290,7 @@ export const buildCommunityFiniteFollowUpRelayPlans = ({
   for (const relay of communityRelays) filtersByRelay.set(relay, communityFilters)
 
   for (const event of targetingEvents) {
-    const relay = normalizeCommunityLiveRelay(
-      parseTargetedPublicationV2(event)?.source?.relay || "",
-    )
+    const relay = normalizeCommunityLiveRelay(parseTargetedPublication(event)?.source?.relay || "")
     if (!relay || communityRelaySet.has(relay)) continue
 
     filtersByRelay.set(

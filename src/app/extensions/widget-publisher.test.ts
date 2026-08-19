@@ -87,11 +87,11 @@ describe("widget publisher helpers", () => {
   it("filters exact same-ID community branches independently", () => {
     const communityId = getPublicKey(new Uint8Array(32).fill(3))
     const first = makeCommunityPointer({
-      controllerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
+      ownerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
       communityId,
     })!
     const second = makeCommunityPointer({
-      controllerPubkey: getPublicKey(new Uint8Array(32).fill(4)),
+      ownerPubkey: getPublicKey(new Uint8Array(32).fill(4)),
       communityId,
     })!
 

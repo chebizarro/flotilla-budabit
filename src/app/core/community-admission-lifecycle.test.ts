@@ -3,18 +3,18 @@ import type {RequestOptions} from "@welshman/net"
 import {DELETE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
 import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
-  TARGETED_PUBLICATION_KIND_V2,
-  buildCommunityDefinitionV2,
+  TARGETED_PUBLICATION_KIND,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {makeCommunityGrantEvent, makeCommunityRevokeEvent} from "./community-admin"
 import {
-  makeTargetedPublicationForCommunityV2,
+  makeTargetedPublicationForCommunity,
   makeAddressablePublicationRef,
 } from "./community-targeting"
 import {
@@ -43,7 +43,7 @@ import {
 const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
 const communityPubkey = testPubkey(31)
 const communityPointer = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: communityPubkey,
 })!
 const moderatorPubkey = testPubkey(32)
@@ -85,12 +85,12 @@ const calendarListRef = {
   identifier: "Calendar-event-creator",
   address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:Calendar-event-creator`,
 }
-const definition = parseCommunityDefinitionV2(
+const definition = parseCommunityDefinition(
   makeEvent({
     id: "community-definition",
-    kind: COMMUNITY_DEFINITION_KIND_V2,
+    kind: COMMUNITY_DEFINITION_KIND,
     pubkey: communityPubkey,
-    tags: buildCommunityDefinitionV2({
+    tags: buildCommunityDefinition({
       communityId: communityPointer.communityId,
       name: "Admission lifecycle",
       relays: ["wss://community.example"],
@@ -369,9 +369,9 @@ describe("community admission lifecycle integration", () => {
     })
     const approvedTargeting = makeEvent({
       id: "approved-targeting",
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       pubkey: approvedCalendarPubkey,
-      tags: makeTargetedPublicationForCommunityV2({
+      tags: makeTargetedPublicationForCommunity({
         targetingId: "approved-event",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -384,9 +384,9 @@ describe("community admission lifecycle integration", () => {
     })
     const unauthorizedTargeting = makeEvent({
       id: "unauthorized-targeting",
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       pubkey: unauthorizedCalendarPubkey,
-      tags: makeTargetedPublicationForCommunityV2({
+      tags: makeTargetedPublicationForCommunity({
         targetingId: "unauthorized-event",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -424,10 +424,10 @@ describe("community admission lifecycle integration", () => {
       pubkey: moderatorPubkey,
       tags: grantEvent.tags,
     })
-    const revokedDefinition = parseCommunityDefinitionV2(
+    const revokedDefinition = parseCommunityDefinition(
       makeEvent({
         id: "community-definition-revoked",
-        kind: COMMUNITY_DEFINITION_KIND_V2,
+        kind: COMMUNITY_DEFINITION_KIND,
         pubkey: communityPubkey,
         tags: definition.event.tags.filter(
           tag => !(tag[0] === "a" && tag[1] === generalListRef.address),

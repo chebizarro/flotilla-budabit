@@ -3,11 +3,11 @@ import type {SmartWidgetEvent} from "@app/extensions/types"
 
 export const selectDefaultCommunityWidgets = (
   widgets: SmartWidgetEvent[],
-  controllerPubkey?: string,
+  ownerPubkey?: string,
 ) => {
-  const ownerPubkey = normalizePubkey(controllerPubkey || "")
+  const normalizedOwnerPubkey = normalizePubkey(ownerPubkey || "")
 
-  return ownerPubkey
-    ? widgets.filter(widget => normalizePubkey(widget.pubkey || "") === ownerPubkey)
+  return normalizedOwnerPubkey
+    ? widgets.filter(widget => normalizePubkey(widget.pubkey || "") === normalizedOwnerPubkey)
     : []
 }

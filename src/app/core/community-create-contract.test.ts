@@ -3,19 +3,18 @@ import {describe, expect, it} from "vitest"
 
 const readProjectFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
 
-describe("Communikeys V2 create source contract", () => {
+describe("Communikeys create source contract", () => {
   it("routes create and edit through kind-32222 publication only", () => {
     const component = readProjectFile("../components/CommunityCreate.svelte")
 
-    expect(component).toContain("createCommunityV2({")
+    expect(component).toContain("createCommunity({")
     expect(component).toContain("operationId: communityCreateOperationId")
-    expect(component).toContain("buildCommunityDefinitionV2({")
-    expect(component).toContain("updateCommunityDefinitionV2(")
+    expect(component).toContain("buildCommunityDefinition({")
+    expect(component).toContain("updateCommunityDefinition(")
     expect(component).toContain("if (!isEdit) {")
     expect(component).toContain("await performCommunityCreate(validated, reportStatus)")
     expect(component).not.toContain("createProfile")
     expect(component).not.toMatch(/\bkind\s*:\s*0\b/)
-    expect(component).not.toContain("buildCommunityDefinition({")
     expect(component).not.toContain("makeCommunityNcommunity")
   })
 
@@ -23,10 +22,10 @@ describe("Communikeys V2 create source contract", () => {
     const component = readProjectFile("../components/CommunityCreate.svelte")
 
     expect(component).toContain("activeExactCommunityDefinition")
-    expect(component).toContain("validated.community.pubkey !== exactDefinition.controllerPubkey")
+    expect(component).toContain("validated.community.pubkey !== exactDefinition.ownerPubkey")
     expect(component).toContain("communityId: exactDefinition.communityId")
     expect(component).toContain("getNextReplacementCreatedAt([exactDefinition.event]")
-    expect(component).toContain("parseCommunityDefinitionV2(verifiedDefinition)")
+    expect(component).toContain("parseCommunityDefinition(verifiedDefinition)")
     expect(component).toContain("goto(makeExactCommunityPath(parsedDefinition.pointer))")
   })
 
@@ -63,7 +62,7 @@ describe("Communikeys V2 create source contract", () => {
     expect(component).not.toContain("clearCommunityBootstrapCache(exactDefinition.communityId)")
   })
 
-  it("does not gate creation on another community owned by the controller", () => {
+  it("does not gate creation on another community owned by the owner", () => {
     const component = readProjectFile("../components/CommunityCreate.svelte")
     const page = readProjectFile("../../routes/explore/create-community/+page.svelte")
 

@@ -5,17 +5,17 @@ import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {
   COMMUNITY_SUBTYPE_ROOM,
   COMMUNITY_SUBTYPE_THREADS,
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
-  type CommunitySectionInputV2,
+  parseCommunityDefinition,
+  type CommunityDefinitionSectionInput,
 } from "@app/core/community"
 import {
   makeAddressablePublicationRef,
-  makeTargetedPublicationForCommunityV2,
+  makeTargetedPublicationForCommunity,
 } from "@app/core/community-targeting"
 import {
   filterAuthorizedCommunityDescriptorEvents,
@@ -28,7 +28,7 @@ import {
 const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
 const communityPubkey = testPubkey(41)
 const communityPointer = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: communityPubkey,
   relayHints: ["wss://relay.example.com/"],
 })!
@@ -48,12 +48,12 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const makeDefinition = (sections: CommunitySectionInputV2[]) =>
-  parseCommunityDefinitionV2(
+const makeDefinition = (sections: CommunityDefinitionSectionInput[]) =>
+  parseCommunityDefinition(
     makeEvent({
-      kind: COMMUNITY_DEFINITION_KIND_V2,
+      kind: COMMUNITY_DEFINITION_KIND,
       content: "",
-      tags: buildCommunityDefinitionV2({
+      tags: buildCommunityDefinition({
         communityId: communityPubkey,
         name: "Test community",
         description: "Definition description",
@@ -117,7 +117,7 @@ const makeCalendarTargetingEvent = ({
     id,
     pubkey,
     kind: TARGETED_PUBLICATION_KIND,
-    tags: makeTargetedPublicationForCommunityV2({
+    tags: makeTargetedPublicationForCommunity({
       targetingId: id,
       originalKind: EVENT_TIME,
       originalRef: implicit
@@ -151,7 +151,7 @@ describe("community widget context", () => {
     expect(context).toMatchObject({
       version: 2,
       communityId: communityPointer.communityId,
-      controllerPubkey: communityPointer.controllerPubkey,
+      ownerPubkey: communityPointer.ownerPubkey,
       definitionAddress: communityPointer.address,
       naddr: definition.pointer.naddr,
     })

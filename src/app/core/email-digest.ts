@@ -3,13 +3,13 @@ import {parseJson} from "@welshman/lib"
 import {getAddress, type TrustedEvent} from "@welshman/util"
 import {verifyEvent} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   getCommunityEmailDigestServiceDescriptorKey,
   normalizeCommunityEmailDigestService,
   normalizePubkey,
   parseCommunityDefinitionAddress,
-  parseCommunityDefinitionV2,
-  type CommunityDefinitionV2,
+  parseCommunityDefinition,
+  type CommunityDefinition,
   type CommunityEmailDigestService,
 } from "@app/core/community"
 import type {ActiveUserCommunityRef} from "@app/core/community-membership"
@@ -31,7 +31,7 @@ export const EMAIL_DIGEST_MAX_REPOSITORY_NAME_LENGTH = 200
 export const EMAIL_DIGEST_MAX_LOCALE_LENGTH = 64
 
 export type EmailDigestProvider = CommunityEmailDigestService & {
-  endorsingCommunities: CommunityDefinitionV2[]
+  endorsingCommunities: CommunityDefinition[]
   isActiveCommunity: boolean
 }
 
@@ -260,11 +260,11 @@ export const normalizeEmailDigestSettings = (value: unknown): EmailDigestSetting
   }
 }
 
-const isVerifiedCommunityDefinition = (definition?: CommunityDefinitionV2) => {
+const isVerifiedCommunityDefinition = (definition?: CommunityDefinition) => {
   if (!definition) return false
   const event = definition?.event
-  if (!event?.sig || event.kind !== COMMUNITY_DEFINITION_KIND_V2) return false
-  if (normalizePubkey(event.pubkey) !== definition.controllerPubkey) return false
+  if (!event?.sig || event.kind !== COMMUNITY_DEFINITION_KIND) return false
+  if (normalizePubkey(event.pubkey) !== definition.ownerPubkey) return false
   return verifyEventSignature(event)
 }
 
@@ -272,11 +272,11 @@ export const discoverEmailDigestProviders = ({
   activeCommunityDefinition,
   communityRefs,
 }: {
-  activeCommunityDefinition?: CommunityDefinitionV2
+  activeCommunityDefinition?: CommunityDefinition
   communityRefs: ActiveUserCommunityRef[]
 }): EmailDigestProvider[] => {
   const activeCommunityAddress = activeCommunityDefinition?.pointer.address || ""
-  const latestByCommunity = new Map<string, CommunityDefinitionV2>()
+  const latestByCommunity = new Map<string, CommunityDefinition>()
 
   for (const candidate of [
     ...(activeCommunityDefinition ? [activeCommunityDefinition] : []),
@@ -284,7 +284,7 @@ export const discoverEmailDigestProviders = ({
   ]) {
     if (!isVerifiedCommunityDefinition(candidate)) continue
 
-    const definition = parseCommunityDefinitionV2(candidate.event)
+    const definition = parseCommunityDefinition(candidate.event)
     if (!definition) continue
 
     const current = latestByCommunity.get(definition.pointer.address)

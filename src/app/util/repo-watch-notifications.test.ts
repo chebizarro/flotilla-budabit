@@ -14,13 +14,13 @@ import {
   GIT_STATUS_CLOSED,
 } from "@nostr-git/core/events"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   COMMUNITY_SECTION_REPO_CURATOR,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
-  type CommunityDefinitionV2,
+  parseCommunityDefinition,
+  type CommunityDefinition,
 } from "@app/core/community"
 import {
   COMMUNITY_REPORT_KIND,
@@ -132,7 +132,7 @@ vi.mock("@app/core/community-state", () => ({
   activeCommunityUserModeratorRequestStates: readable([]),
   activeUserCommunityRefs: readable([]),
   communityMemberReportStates: readable(new Map()),
-  makeCommunityProfileListFilters: vi.fn((definition: CommunityDefinitionV2) =>
+  makeCommunityProfileListFilters: vi.fn((definition: CommunityDefinition) =>
     definition.sections.flatMap(section =>
       section.profileLists.map(ref => {
         const [kind, pubkey, identifier] = ref.address.split(":")
@@ -181,7 +181,7 @@ const repoAddress = `30617:${owner}:${repoIdentifier}`
 const naddr = nip19.naddrEncode({kind: 30617, pubkey: owner, identifier: repoIdentifier})
 const repoPath = `/git/${naddr}`
 const reportCommunity = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId,
 })!
 
@@ -224,11 +224,11 @@ const makeRepo = (options = watchOptions()) => ({
   }),
 })
 
-const makeCommunityDefinition = (id = communityId, createdAt = 1): CommunityDefinitionV2 =>
-  parseCommunityDefinitionV2(
+const makeCommunityDefinition = (id = communityId, createdAt = 1): CommunityDefinition =>
+  parseCommunityDefinition(
     finalizeEvent(
       {
-        ...buildCommunityDefinitionV2({
+        ...buildCommunityDefinition({
           communityId: id,
           name: `Community ${id.slice(0, 8)}`,
           relays: ["wss://repo-store.example"],
@@ -321,7 +321,7 @@ const makeCommunityRepo = ({
 })
 
 describe("repo watch notifications", () => {
-  it("keeps same-controller sibling definitions separated by exact address", async () => {
+  it("keeps same-owner sibling definitions separated by exact address", async () => {
     const {selectRepoWatchCommunityDefinitions} = await import("./repo-watch-notifications")
     const sibling = makeCommunityDefinition(siblingCommunityId)
 
@@ -333,7 +333,7 @@ describe("repo watch notifications", () => {
     expect(Array.from(definitions.keys()).sort()).toEqual(
       [communityDefinition.pointer.address, sibling.pointer.address].sort(),
     )
-    expect(communityDefinition.controllerPubkey).toBe(sibling.controllerPubkey)
+    expect(communityDefinition.ownerPubkey).toBe(sibling.ownerPubkey)
     expect(communityDefinition.communityId).not.toBe(sibling.communityId)
   })
 
@@ -1082,7 +1082,7 @@ describe("repo watch notifications", () => {
     ])
   })
 
-  it("discovers a repository community by its exact V2 identifier", async () => {
+  it("discovers a repository community by its exact identifier", async () => {
     const {repoWatchNotificationCandidates} = await import("./repo-watch-notifications")
     const relay = "wss://repo-store.example/"
     const originalAbortSignalAny = AbortSignal.any
@@ -1179,7 +1179,7 @@ describe("repo watch notifications", () => {
         storeMocks.request.mock.calls.some(call =>
           (call[0] as RequestOptions).filters.some(
             filter =>
-              filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2) &&
+              filter.kinds?.includes(COMMUNITY_DEFINITION_KIND) &&
               filter["#d"]?.[0] === communityId &&
               filter.authors?.[0] === communityPubkey,
           ),

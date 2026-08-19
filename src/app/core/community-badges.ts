@@ -10,11 +10,11 @@ import {
 import {
   PROFILE_LIST_KIND,
   makeAddress,
-  makeCommunityAuthorityTagsV2,
+  makeCommunityAuthorityTags,
   makeCommunityChildIdentifier,
   normalizePubkey,
-  parseCommunityAuthorityV2,
-  type CommunityDefinitionV2,
+  parseCommunityAuthority,
+  type CommunityDefinition,
   type CommunityPointer,
 } from "@app/core/community"
 import {isCommunityReportStatePersonBanned} from "@app/core/community-permissions"
@@ -163,14 +163,14 @@ export const getCommunityBadgeCreatorPubkeys = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }) => {
   const activeAddresses = new Set(
     (profileListEvents || []).flatMap(event => {
       const identifier = getTagValue(event, "d")
-      const community = parseCommunityAuthorityV2(event)
+      const community = parseCommunityAuthority(event)
       if (!identifier || community?.address !== definition.pointer.address) return []
       if (event.tags.some(tag => tag[0] === "status" && tag[1] === "declined")) return []
       return [makeAddress(event.kind, event.pubkey, identifier)]
@@ -183,9 +183,9 @@ export const getCommunityBadgeCreatorPubkeys = ({
     }),
   )
 
-  return unique([definition.controllerPubkey, ...moderators]).filter(
+  return unique([definition.ownerPubkey, ...moderators]).filter(
     pubkey =>
-      pubkey === definition.controllerPubkey ||
+      pubkey === definition.ownerPubkey ||
       !isCommunityReportStatePersonBanned(reportState, pubkey),
   )
 }
@@ -196,7 +196,7 @@ export const canCreateCommunityBadge = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   pubkey: string
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
@@ -246,7 +246,7 @@ export const makeCommunityBadgeDefinitionEvent = ({
   return {
     kind: BADGE_DEFINITION,
     content: "",
-    tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], tags),
+    tags: makeCommunityAuthorityTags(community, community.relayHints[0], tags),
   }
 }
 
@@ -259,7 +259,7 @@ export const makeCommunityBadgeAwardDelete = ({
 }): EventContent & {kind: typeof DELETE} => ({
   kind: DELETE,
   content: "Deleted community badge award",
-  tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+  tags: makeCommunityAuthorityTags(community, community.relayHints[0], [
     ["e", awardId],
     ["k", String(BADGE_AWARD)],
   ]),
@@ -279,7 +279,7 @@ export const makeCommunityBadgeAwardEvent = ({
   return {
     kind: BADGE_AWARD,
     content: "",
-    tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+    tags: makeCommunityAuthorityTags(community, community.relayHints[0], [
       ["a", definitionAddress, "", "badge"],
       ...(pubkey ? [["p", pubkey]] : []),
     ]),
@@ -312,7 +312,7 @@ export const parseCommunityBadgeDefinition = (
 
   const pubkey = normalizePubkey(event.pubkey || "")
   const identifier = getTagValue(event, "d")
-  const community = parseCommunityAuthorityV2(event)
+  const community = parseCommunityAuthority(event)
   if (
     !pubkey ||
     !identifier ||
@@ -350,7 +350,7 @@ export const parseCommunityBadgeAward = (
 ): CommunityBadgeAward | undefined => {
   if (event.kind !== BADGE_AWARD) return undefined
 
-  const community = parseCommunityAuthorityV2(event)
+  const community = parseCommunityAuthority(event)
   if (!community || (expectedCommunity && community.address !== expectedCommunity.address)) {
     return undefined
   }
@@ -378,8 +378,8 @@ export const isCommunityBadgeAwardDeleted = (award: TrustedEvent, deleteEvents: 
     if (event.kind !== DELETE) return false
     if (normalizePubkey(event.pubkey || "") !== normalizePubkey(award.pubkey || "")) return false
     if (!event.tags.some(tag => tag[0] === "e" && tag[1] === award.id)) return false
-    const awardCommunity = parseCommunityAuthorityV2(award)
-    const deleteCommunity = parseCommunityAuthorityV2(event)
+    const awardCommunity = parseCommunityAuthority(award)
+    const deleteCommunity = parseCommunityAuthority(event)
     if (!awardCommunity || deleteCommunity?.address !== awardCommunity.address) return false
 
     return hasKindTag(event, BADGE_AWARD)
@@ -495,7 +495,7 @@ export const makeCommunityBadgeDefinitionFilters = ({
   reportState,
   limit = 200,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   limit?: number
@@ -544,7 +544,7 @@ export const makeCommunityBadgeAwardDeleteFilters = (awardEvents: TrustedEvent[]
   const awardIds = unique(awardEvents.map(event => event.id).filter(Boolean))
   const communityIds = unique(
     awardEvents.flatMap(event => {
-      const community = parseCommunityAuthorityV2(event)
+      const community = parseCommunityAuthority(event)
       return community ? [community.communityId] : []
     }),
   )
@@ -576,7 +576,7 @@ const getTrustedDefinitionsByAddress = ({
   reportState,
   includeDeprecated = false,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
@@ -616,7 +616,7 @@ export const selectCommunityBadgeDefinitions = ({
   reportState,
   includeDeprecated = false,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
@@ -695,7 +695,7 @@ export const getAcceptedCommunityBadges = ({
   profilePubkey,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   badgeAwardEvents: TrustedEvent[]
@@ -739,7 +739,7 @@ export const getPendingCommunityBadgeAwards = ({
   profilePubkey,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   badgeDefinitionEvents: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   badgeAwardEvents: TrustedEvent[]

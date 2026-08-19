@@ -45,11 +45,11 @@
     COMMUNITY_DISCOVERY_RELAYS,
   } from "@app/core/community-state"
   import {
-    COMMUNITY_DEFINITION_KIND_V2,
+    COMMUNITY_DEFINITION_KIND,
     PROFILE_LIST_KIND,
-    parseCommunityDefinitionV2,
-    selectCurrentCommunityDefinitionsV2,
-    type CommunityDefinitionV2,
+    parseCommunityDefinition,
+    selectCurrentCommunityDefinitions,
+    type CommunityDefinition,
   } from "@app/core/community"
   import {getRepoAnnouncementRelays, getRepoMaintainers} from "@app/core/git-state"
   import {buildBookmarkRepoFilters, matchBookmarkedRepoEvents} from "@app/util/bookmarks"
@@ -82,7 +82,7 @@
 
   type ProfileCommunityRef = {
     address: string
-    definition: CommunityDefinitionV2
+    definition: CommunityDefinition
     roles: Array<"admin" | "moderator" | "member">
   }
 
@@ -263,7 +263,7 @@
     ...(targetPubkey
       ? [
           {
-            kinds: [COMMUNITY_DEFINITION_KIND_V2],
+            kinds: [COMMUNITY_DEFINITION_KIND],
             authors: [targetPubkey],
             limit: PROFILE_EVENT_LIMIT,
           },
@@ -276,7 +276,7 @@
           .filter(Boolean),
       ),
       address => ({
-        kinds: [COMMUNITY_DEFINITION_KIND_V2],
+        kinds: [COMMUNITY_DEFINITION_KIND],
         "#a": [address],
         limit: PROFILE_EVENT_LIMIT,
       }),
@@ -291,13 +291,13 @@
     )
 
     return Array.from(
-      selectCurrentCommunityDefinitionsV2(
+      selectCurrentCommunityDefinitions(
         $targetCommunityDefinitionEvents as TrustedEvent[],
       ).entries(),
     )
       .flatMap(([address, definition]): ProfileCommunityRef[] => {
         const roles = new Set<ProfileCommunityRef["roles"][number]>()
-        if (definition.controllerPubkey === targetPubkey) roles.add("admin")
+        if (definition.ownerPubkey === targetPubkey) roles.add("admin")
 
         for (const section of definition.sections) {
           for (const listRef of section.profileLists) {
@@ -336,7 +336,7 @@
   const viewerCommunityAddresses = $derived(
     new Set(
       $activeUserCommunityRefs.flatMap(ref => {
-        const definition = parseCommunityDefinitionV2(ref.definition.event)
+        const definition = parseCommunityDefinition(ref.definition.event)
         return definition ? [definition.pointer.address] : []
       }),
     ),

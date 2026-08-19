@@ -8,14 +8,14 @@ const readProjectFile = (path: string) => readFileSync(new URL(path, import.meta
 
 describe("exact community admin navigation contracts", () => {
   it("retains each sibling's exact naddr in admin navigation", () => {
-    const controllerPubkey = getPublicKey(new Uint8Array(32).fill(1))
+    const ownerPubkey = getPublicKey(new Uint8Array(32).fill(1))
     const first = makeCommunityPointer({
-      controllerPubkey,
+      ownerPubkey,
       communityId: getPublicKey(new Uint8Array(32).fill(2)),
       relayHints: ["wss://relay.example"],
     })!
     const sibling = makeCommunityPointer({
-      controllerPubkey,
+      ownerPubkey,
       communityId: getPublicKey(new Uint8Array(32).fill(3)),
       relayHints: ["wss://relay.example"],
     })!
@@ -43,7 +43,7 @@ describe("exact community admin navigation contracts", () => {
     expect(menu).not.toContain('makeCommunityPath(community, "moderation")')
   })
 
-  it("uses the exact V2 definition for the moderation owner-grant update", () => {
+  it("uses the exact definition for the moderation owner-grant update", () => {
     const moderation = readProjectFile("../../routes/c/[community]/moderation/+page.svelte")
 
     expect(moderation).toContain("definition: $activeExactCommunityDefinition")

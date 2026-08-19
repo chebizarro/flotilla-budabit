@@ -104,8 +104,8 @@ describe("strict community publication source contracts", () => {
 
     expect(repositories).toContain('["h", communityId, relays[0]]')
     expect(repositories).toContain("publishThunk({relays: announcementRelays, event: repoEvent})")
-    expect(repositories).not.toContain("TARGETED_PUBLICATION_KIND_V2")
-    expect(repositories).not.toContain("makeTargetedPublicationForCommunityV2")
+    expect(repositories).not.toContain("TARGETED_PUBLICATION_KIND")
+    expect(repositories).not.toContain("makeTargetedPublicationForCommunity")
   })
 
   it("keeps pending community stars outside the canonical repository", () => {
@@ -114,7 +114,7 @@ describe("strict community publication source contracts", () => {
     expect(star).toContain("startPublication({")
     expect(star).toContain('preview: "rollback-on-failure"')
     expect(star).toContain("$publicationOperations.values()")
-    expect(star).toContain("makeCommunityStarDeleteV2(community, star.reaction.id)")
+    expect(star).toContain("makeCommunityStarDelete(community, star.reaction.id)")
     expect(star).not.toContain("publishThunk({")
     expect(star).not.toContain("repository.publish(")
     expect(star).not.toContain("publishDelete(")

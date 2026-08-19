@@ -33,10 +33,10 @@ import {
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
-  TARGETED_PUBLICATION_KIND_V2,
-  buildCommunityDefinitionV2,
-  buildTargetedPublicationV2,
-  makeCommunityAuthorityTagsV2,
+  TARGETED_PUBLICATION_KIND,
+  buildCommunityDefinition,
+  buildTargetedPublication,
+  makeCommunityAuthorityTags,
   makeCommunityPointer,
 } from "@app/core/community"
 import {COMMUNITY_FORM_REVIEW_KIND} from "@app/core/community-forms"
@@ -104,17 +104,17 @@ const communityPubkey = getPublicKey(new Uint8Array(32).fill(6))
 const profileListPubkey = getPublicKey(new Uint8Array(32).fill(8))
 const zapper = getPublicKey(new Uint8Array(32).fill(9))
 const reportCommunity = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: zapper,
 })!
 const notificationCommunity = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: zapper,
 })!
 const makeApplicationAuthorityTags = (tags: string[][] = []) =>
-  makeCommunityAuthorityTagsV2(notificationCommunity, undefined, tags)
+  makeCommunityAuthorityTags(notificationCommunity, undefined, tags)
 const siblingCommunity = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(7)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(7)),
   communityId: zapper,
 })!
 const profileListAddress = `${PROFILE_LIST_KIND}:${profileListPubkey}:${COMMUNITY_SECTION_GENERAL}`
@@ -138,7 +138,7 @@ const makeCommunityRef = (): ActiveUserCommunityRef => ({
     }),
     pointer: notificationCommunity,
     communityId: notificationCommunity.communityId,
-    controllerPubkey: notificationCommunity.controllerPubkey,
+    ownerPubkey: notificationCommunity.ownerPubkey,
     metadata: {name: "Community"},
     relays: [],
     blossomServers: [],
@@ -228,10 +228,10 @@ const makeTargetingEvent = ({
 }) =>
   makeEvent({
     id,
-    kind: TARGETED_PUBLICATION_KIND_V2,
+    kind: TARGETED_PUBLICATION_KIND,
     pubkey,
     content: "",
-    tags: buildTargetedPublicationV2({
+    tags: buildTargetedPublication({
       id: `${id}-target`,
       kind,
       source: /^[0-9a-f]{64}$/.test(originalId) ? {type: "e", value: originalId} : undefined,
@@ -652,7 +652,7 @@ describe("notification sources", () => {
       kind: 32222,
       pubkey: communityPubkey,
       content: "",
-      tags: buildCommunityDefinitionV2({
+      tags: buildCommunityDefinition({
         communityId: notificationCommunity.communityId,
         name: "Community",
         relays: ["wss://community.example"],
@@ -724,7 +724,7 @@ describe("notification sources", () => {
       kind: 32222,
       pubkey: communityPubkey,
       content: "",
-      tags: buildCommunityDefinitionV2({
+      tags: buildCommunityDefinition({
         communityId: notificationCommunity.communityId,
         name: "Community",
         relays: ["wss://community.example"],
@@ -1717,7 +1717,7 @@ describe("notification sources", () => {
       ...widget,
       id: "weather-2",
       created_at: 200,
-      appUrl: "https://example.com/v2.html",
+      appUrl: "https://example.com/current.html",
       version: "1.1.0",
       changelog: "Better forecast data.",
     }
@@ -2604,7 +2604,7 @@ describe("notification sources", () => {
     const siblingWrapper = makeEvent({
       id: "sibling-calendar-wrapper",
       pubkey: communityPubkey,
-      ...buildTargetedPublicationV2({
+      ...buildTargetedPublication({
         id: "sibling-calendar-target",
         kind: EVENT_TIME,
         source: {type: "e", value: calendar.id},
@@ -2613,7 +2613,7 @@ describe("notification sources", () => {
     })
     const v1ShapedWrapper = makeEvent({
       id: "v1-shaped-calendar-wrapper",
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       pubkey: communityPubkey,
       content: "",
       tags: [
@@ -2646,11 +2646,11 @@ describe("notification sources", () => {
 
     const removedWrapper = makeEvent({
       id: "explicit-calendar-wrapper-removed",
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       pubkey: communityPubkey,
       created_at: explicitWrapper.created_at + 1,
       content: "",
-      tags: buildTargetedPublicationV2({
+      tags: buildTargetedPublication({
         id: "explicit-calendar-wrapper-target",
         kind: EVENT_TIME,
         source: {type: "a", value: `${EVENT_TIME}:${viewer}:${calendar.id}`},
@@ -2695,10 +2695,10 @@ describe("notification sources", () => {
     })
     const implicitWrapper = makeEvent({
       id: "implicit-calendar-wrapper",
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       pubkey: communityPubkey,
       content: "",
-      tags: buildTargetedPublicationV2({
+      tags: buildTargetedPublication({
         id: "implicit-target",
         kind: EVENT_TIME,
         communities: [notificationCommunity],
@@ -2785,11 +2785,11 @@ describe("notification sources", () => {
     original.created_at = 100
     const replacement = makeEvent({
       id: "wrapper-replacement",
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       pubkey: writer,
       created_at: 200,
       content: "",
-      tags: buildTargetedPublicationV2({
+      tags: buildTargetedPublication({
         id: "wrapper-original-target",
         kind: EVENT_TIME,
         source: {type: "a", value: `${EVENT_TIME}:${viewer}:calendar-original`},
@@ -2808,13 +2808,13 @@ describe("notification sources", () => {
       kind: DELETE,
       pubkey: writer,
       created_at: 300,
-      tags: [["a", `${TARGETED_PUBLICATION_KIND_V2}:${writer}:wrapper-original-target`]],
+      tags: [["a", `${TARGETED_PUBLICATION_KIND}:${writer}:wrapper-original-target`]],
     })
     const foreignDeletion = makeEvent({...deletion, id: "foreign-deletion", pubkey: outsider})
 
     expect(makeTargetingWrapperReplacementFilters([original])).toEqual([
       {
-        kinds: [TARGETED_PUBLICATION_KIND_V2],
+        kinds: [TARGETED_PUBLICATION_KIND],
         authors: [writer],
         "#d": ["wrapper-original-target"],
         limit: 1,

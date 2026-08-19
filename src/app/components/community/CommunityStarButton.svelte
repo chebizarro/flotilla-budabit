@@ -21,7 +21,7 @@
   } from "@app/core/community-star-operations"
   import {pushToast} from "@app/util/toast"
   import {pushModal} from "@app/util/modal"
-  import {makeCommunityStarDeleteV2, makeCommunityStarReactionV2} from "@app/util/community-stars"
+  import {makeCommunityStarDelete, makeCommunityStarReaction} from "@app/util/community-stars"
 
   type Props = {
     community: CommunityPointer
@@ -80,14 +80,14 @@
 
       if (star) {
         startPublication({
-          event: makeCommunityStarDeleteV2(community, star.reaction.id),
+          event: makeCommunityStarDelete(community, star.reaction.id),
           relays: publishRelays,
           label: "Unstar community",
           semanticKey: getCommunityStarOperationSemanticKey(community),
           preview: "rollback-on-failure",
         })
       } else {
-        const event = makeCommunityStarReactionV2({
+        const event = makeCommunityStarReaction({
           ...community,
           relayHints: publishRelayHints ?? community.relayHints,
         })

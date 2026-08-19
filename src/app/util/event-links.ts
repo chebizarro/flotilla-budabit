@@ -19,9 +19,9 @@ import {
 } from "@nostr-git/core/events"
 import {buildRepoNaddrFromEvent} from "@nostr-git/core/utils"
 import {
-  TARGETED_PUBLICATION_KIND_V2,
+  TARGETED_PUBLICATION_KIND,
   TARGETED_PUBLICATION_KINDS,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
 } from "@app/core/community"
 
 type RelayGroup = Iterable<string | undefined | null> | string | undefined | null
@@ -168,13 +168,13 @@ export const getTargetedPublicationRelayHints = (event: Pick<TrustedEvent, "kind
 
   try {
     const targetingEvents = repository.query(
-      [{kinds: [TARGETED_PUBLICATION_KIND_V2], "#d": [targetingId], "#k": [String(kind)]}],
+      [{kinds: [TARGETED_PUBLICATION_KIND], "#d": [targetingId], "#k": [String(kind)]}],
       {shouldSort: false},
     ) as TrustedEvent[]
 
     return normalizeRelayHints(
       targetingEvents.flatMap(event => {
-        const targeting = parseTargetedPublicationV2(event)
+        const targeting = parseTargetedPublication(event)
         if (!targeting) return []
 
         return [

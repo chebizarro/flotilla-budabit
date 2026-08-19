@@ -125,7 +125,7 @@
       currentCommunity: {
         servers: $activeExactCommunityDefinition?.blossomServers || [],
         communityAddress: $activeExactCommunityPointer?.address,
-        communityPubkey: $activeExactCommunityDefinition?.controllerPubkey,
+        communityPubkey: $activeExactCommunityDefinition?.ownerPubkey,
         communityName: $activeExactCommunityDefinition?.metadata.name,
       },
       personalServers,

@@ -2,12 +2,12 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
-  type CommunityDefinitionV2,
+  parseCommunityDefinition,
+  type CommunityDefinition,
 } from "@app/core/community"
 import type {ActiveUserCommunityRef} from "@app/core/community-membership"
 import {
@@ -38,9 +38,9 @@ const getCommunityId = (id: string) => {
   communityIds.set(id, communityId)
   return communityId
 }
-const makeReportCommunity = (controllerPubkey: string) =>
-  makeCommunityPointer({controllerPubkey, communityId: reportCommunityId})!
-const getDefinitionAddress = (definition: CommunityDefinitionV2) => definition.pointer.address
+const makeReportCommunity = (ownerPubkey: string) =>
+  makeCommunityPointer({ownerPubkey, communityId: reportCommunityId})!
+const getDefinitionAddress = (definition: CommunityDefinition) => definition.pointer.address
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -63,12 +63,12 @@ const makeDefinition = ({
   pubkey: string
   sections: Array<{name: string; profileListAddresses: string[]}>
 }) =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: getCommunityId(id),
         name: id,
         relays: ["wss://relay.example.com"],
@@ -102,7 +102,7 @@ const makeProfileList = ({
     tags: [["d", identifier], ...members.map(member => ["p", member])],
   })
 
-const makeViewerRef = (definition: CommunityDefinitionV2) =>
+const makeViewerRef = (definition: CommunityDefinition) =>
   ({
     community: definition.pointer,
     definition,
@@ -112,10 +112,10 @@ const makeViewerRef = (definition: CommunityDefinitionV2) =>
   }) as ActiveUserCommunityRef
 
 const makeReportState = (
-  controllerPubkey: string,
+  ownerPubkey: string,
   targetPubkeys: string[],
 ): EffectiveCommunityReportState => {
-  const community = makeReportCommunity(controllerPubkey)
+  const community = makeReportCommunity(ownerPubkey)
 
   return {
     eventReports: [],
@@ -125,7 +125,7 @@ const makeReportState = (
       community,
       communityAddress: community.address,
       communityId: reportCommunityId,
-      controllerPubkey,
+      ownerPubkey,
       reporterPubkey: viewerPubkey,
       adminAuthored: true,
       event: makeEvent({id: `report-${index}`, created_at: index}),
@@ -134,11 +134,11 @@ const makeReportState = (
 }
 
 describe("profile trust badges", () => {
-  it("keeps same-controller community branches as separate role evidence", () => {
-    const controllerPubkey = sharedCommunityPubkey
+  it("keeps same-owner community branches as separate role evidence", () => {
+    const ownerPubkey = sharedCommunityPubkey
     const firstDefinition = makeDefinition({
       id: "first-branch",
-      pubkey: controllerPubkey,
+      pubkey: ownerPubkey,
       sections: [
         {
           name: "General",
@@ -148,7 +148,7 @@ describe("profile trust badges", () => {
     })
     const secondDefinition = makeDefinition({
       id: "second-branch",
-      pubkey: controllerPubkey,
+      pubkey: ownerPubkey,
       sections: [
         {
           name: "General",
@@ -184,7 +184,7 @@ describe("profile trust badges", () => {
     )
   })
 
-  it("keeps same-ID branches under different controllers as separate moderation state", () => {
+  it("keeps same-ID branches under different owners as separate moderation state", () => {
     const firstDefinition = makeDefinition({
       id: reportCommunityId,
       pubkey: sharedCommunityPubkey,
@@ -224,7 +224,7 @@ describe("profile trust badges", () => {
       pubkey: viewerPubkey,
       ...makeCommunityEventReport({
         community: makeCommunityPointer({
-          controllerPubkey: sharedCommunityPubkey,
+          ownerPubkey: sharedCommunityPubkey,
           communityId: siblingCommunityId,
         })!,
         sectionName: "General",
@@ -273,7 +273,7 @@ describe("profile trust badges", () => {
       ],
     })
 
-    expect(unsharedDefinition.controllerPubkey).toBe(unsharedCommunityPubkey)
+    expect(unsharedDefinition.ownerPubkey).toBe(unsharedCommunityPubkey)
     expect(groups.map(group => group.role)).toEqual(["member"])
     expect(groups[0].items.map(item => item.communityPubkey)).toEqual([sharedCommunityPubkey])
   })
@@ -378,7 +378,7 @@ describe("profile trust badges", () => {
           makeReportState(otherSharedCommunityPubkey, [targetPubkey]),
         ],
         [
-          `${COMMUNITY_DEFINITION_KIND_V2}:${unsharedCommunityPubkey}:${reportCommunityId}`,
+          `${COMMUNITY_DEFINITION_KIND}:${unsharedCommunityPubkey}:${reportCommunityId}`,
           makeReportState(unsharedCommunityPubkey, [targetPubkey]),
         ],
       ]),

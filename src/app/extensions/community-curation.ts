@@ -4,8 +4,8 @@ import {
   normalizeRelays,
   normalizePubkey,
   parseCommunityNaddr,
-  parseTargetedPublicationV2,
-  type CommunityDefinitionV2,
+  parseTargetedPublication,
+  type CommunityDefinition,
 } from "@app/core/community"
 import {
   getCommunityBootstrapRelays,
@@ -130,7 +130,7 @@ const loadTargetingEvents = async ({
 
 const getTargetingRelayHints = (events: TrustedEvent[]) =>
   events.flatMap(event => {
-    const ref = parseTargetedPublicationV2(event)?.source
+    const ref = parseTargetedPublication(event)?.source
 
     return ref?.relay ? [ref.relay] : []
   })
@@ -142,7 +142,7 @@ const getWidgetTargetingEvents = (widget: SmartWidgetEvent, targetingEvents: Tru
     : ""
 
   return targetingEvents.filter(event => {
-    const target = parseTargetedPublicationV2(event)
+    const target = parseTargetedPublication(event)
     if (!target || target.kind !== SMART_WIDGET_KIND || !target.source) return false
 
     if (target.source.type === "e") {
@@ -207,7 +207,7 @@ const getDeletedTargetEventIds = (targetEvents: TrustedEvent[], deleteEvents: Tr
   return deleted
 }
 
-const makeWidgetProfileListFilters = (definition: CommunityDefinitionV2) => {
+const makeWidgetProfileListFilters = (definition: CommunityDefinition) => {
   const sections = getCommunityWriteTargetSections(definition, COMMUNITY_WRITE_TARGETS.widget)
 
   return makeCommunityProfileListFilters({...definition, sections})
@@ -355,7 +355,7 @@ export const loadCommunityCuratedWidgets = async (
     eligibleTargetingEvents: eligibleTargetingEvents.map(event => ({
       id: event.id,
       pubkey: event.pubkey,
-      ref: parseTargetedPublicationV2(event)?.source,
+      ref: parseTargetedPublication(event)?.source,
     })),
   })
 

@@ -145,28 +145,28 @@ describe("routes", () => {
       makeExactCommunityRoomPath,
       parseExactCommunityRouteParam,
     } = await import("./routes")
-    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const owner = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const naddr = nip19.naddrEncode({
       kind: 32222,
-      pubkey: controller,
+      pubkey: owner,
       identifier: communityId,
       relays: ["wss://relay.example"],
     })
     const pointer = parseExactCommunityRouteParam(naddr)!
 
-    expect(pointer.address).toBe(`32222:${controller}:${communityId}`)
+    expect(pointer.address).toBe(`32222:${owner}:${communityId}`)
     expect(makeExactCommunityPath(pointer)).toBe(`/c/${naddr}`)
     expect(makeExactCommunityRoomPath(pointer, "room/id")).toBe(`/c/${naddr}/rooms/room%2Fid`)
     expect(makeExactCommunityCalendarPath(pointer, "event-id")).toBe(
       `/c/${naddr}/calendar/event-id`,
     )
-    expect(parseExactCommunityRouteParam(nip19.npubEncode(controller))).toBeUndefined()
-    expect(parseExactCommunityRouteParam(controller)).toBeUndefined()
+    expect(parseExactCommunityRouteParam(nip19.npubEncode(owner))).toBeUndefined()
+    expect(parseExactCommunityRouteParam(owner)).toBeUndefined()
     expect(parseExactCommunityRouteParam(`ncommunity://${communityId}`)).toBeUndefined()
     expect(
       parseExactCommunityRouteParam(
-        nip19.naddrEncode({kind: 30023, pubkey: controller, identifier: communityId}),
+        nip19.naddrEncode({kind: 30023, pubkey: owner, identifier: communityId}),
       ),
     ).toBeUndefined()
   })
@@ -177,16 +177,16 @@ describe("routes", () => {
       makeCanonicalExactCommunityUrl,
       parseExactCommunityRouteParam,
     } = await import("./routes")
-    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const owner = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const withoutHints = nip19.naddrEncode({
       kind: 32222,
-      pubkey: controller,
+      pubkey: owner,
       identifier: communityId,
     })
     const withHints = nip19.naddrEncode({
       kind: 32222,
-      pubkey: controller,
+      pubkey: owner,
       identifier: communityId,
       relays: ["wss://relay.example"],
     })
@@ -205,11 +205,11 @@ describe("routes", () => {
 
   it("requires exact selected context to route h-only community events", async () => {
     const {getExactCommunityEventPath, parseExactCommunityRouteParam} = await import("./routes")
-    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const owner = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const otherCommunityId = "531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337"
     const pointer = parseExactCommunityRouteParam(
-      nip19.naddrEncode({kind: 32222, pubkey: controller, identifier: communityId}),
+      nip19.naddrEncode({kind: 32222, pubkey: owner, identifier: communityId}),
     )!
     const event = makeEvent({id: "thread-root", kind: 11, tags: [["h", communityId]]})
 
@@ -223,17 +223,17 @@ describe("routes", () => {
   })
 
   it("does not choose the first target from an ambiguous multi-community wrapper", async () => {
-    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
+    const {buildTargetedPublication, makeCommunityPointer} = await import("@app/core/community")
     const {getExactCommunityEventPath} = await import("./routes")
     const first = makeCommunityPointer({
-      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      ownerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
       communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
     })!
     const second = makeCommunityPointer({
-      controllerPubkey: "552c630b64b54bf50210c9e253d38bd4949c72e22873500f6285c2bede312a84",
+      ownerPubkey: "552c630b64b54bf50210c9e253d38bd4949c72e22873500f6285c2bede312a84",
       communityId: "2f1b310f4c065331bc0d79ba4661bb9822d67d7c4a1b0a1892e1fd0cd23aa68d",
     })!
-    const template = buildTargetedPublicationV2({
+    const template = buildTargetedPublication({
       id: "goal-id",
       kind: 9041,
       communities: [first, second],
@@ -362,17 +362,17 @@ describe("routes", () => {
   })
 
   it("routes targeted original events using cached targeting events", async () => {
-    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
+    const {buildTargetedPublication, makeCommunityPointer} = await import("@app/core/community")
     const {getCommunityEventPath} = await import("./routes")
     const community = makeCommunityPointer({
-      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      ownerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
       communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
     })!
 
     repositoryQuery.mockReturnValue([
       makeEvent({
         kind: 30222,
-        tags: buildTargetedPublicationV2({
+        tags: buildTargetedPublication({
           id: "target-1",
           kind: EVENT_TIME,
           communities: [community],
@@ -394,15 +394,15 @@ describe("routes", () => {
   })
 
   it("loads targeting events before falling back to external links", async () => {
-    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
+    const {buildTargetedPublication, makeCommunityPointer} = await import("@app/core/community")
     const {getEventPath} = await import("./routes")
     const community = makeCommunityPointer({
-      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      ownerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
       communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
     })!
     const targeting = makeEvent({
       kind: 30222,
-      tags: buildTargetedPublicationV2({
+      tags: buildTargetedPublication({
         id: "target-1",
         kind: 9041,
         communities: [community],
@@ -425,10 +425,10 @@ describe("routes", () => {
   })
 
   it("routes targeted publication events to their community sections", async () => {
-    const {buildTargetedPublicationV2, makeCommunityPointer} = await import("@app/core/community")
+    const {buildTargetedPublication, makeCommunityPointer} = await import("@app/core/community")
     const {getCommunityEventPath} = await import("./routes")
     const community = makeCommunityPointer({
-      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      ownerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
       communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
     })!
 
@@ -436,7 +436,7 @@ describe("routes", () => {
       getCommunityEventPath(
         makeEvent({
           kind: 30222,
-          tags: buildTargetedPublicationV2({
+          tags: buildTargetedPublication({
             id: "target-1",
             kind: 30033,
             communities: [community],
@@ -452,7 +452,7 @@ describe("routes", () => {
       ...(await import("@app/core/community")),
     }
     const community = makeCommunityPointer({
-      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      ownerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
       communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
     })!
     window.history.replaceState(null, "", `/c/${community.naddr}/threads/root`)
@@ -477,7 +477,7 @@ describe("routes", () => {
       ...(await import("@app/core/community")),
     }
     const community = makeCommunityPointer({
-      controllerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      ownerPubkey: "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
       communityId: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
     })!
     const event = makeEvent({

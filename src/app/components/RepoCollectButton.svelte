@@ -57,9 +57,9 @@
   import {publishDelete} from "@app/core/commands"
   import {activeUserCommunityRefs, hydratePreferredCommunities} from "@app/core/community-state"
   import {
-    TARGETED_PUBLICATION_KIND_V2,
+    TARGETED_PUBLICATION_KIND,
     makeCommunityPointer,
-    parseTargetedPublicationV2,
+    parseTargetedPublication,
   } from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
@@ -73,7 +73,7 @@
   import {loadBoundedCommunityHistory, makeSameAuthorDeleteFilters} from "@app/core/requests"
   import {
     makeEventPublicationRef,
-    makeTargetedPublicationForCommunityV2,
+    makeTargetedPublicationForCommunity,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {GIT_RELAYS, getRepoScopedRelays} from "@app/core/git-state"
@@ -193,7 +193,7 @@
           }),
         )
         .map(ref => ({
-          controllerPubkey: ref.community.controllerPubkey,
+          ownerPubkey: ref.community.ownerPubkey,
           address: ref.community.address,
           communityId: ref.community.communityId,
           label: ref.definition.metadata.name,
@@ -221,7 +221,7 @@
     return makeCommunityContentFilterPlan(
       [
         {
-          kinds: [TARGETED_PUBLICATION_KIND_V2],
+          kinds: [TARGETED_PUBLICATION_KIND],
           "#h": communityIds,
           "#k": [String(REACTION)],
         } as Filter,
@@ -276,7 +276,7 @@
     normalizeRelays([
       ...repoStarCommunityRelays,
       ...eligibleUserCommunityStarTargetEvents.flatMap(event => {
-        const relay = parseTargetedPublicationV2(event)?.source?.relay
+        const relay = parseTargetedPublication(event)?.source?.relay
         return relay ? [relay] : []
       }),
     ]),
@@ -363,7 +363,7 @@
   }
 
   const getRepoCollectionCommunityLabel = (community: RepoCommunityOption) =>
-    community.label || getCommunityOptionLabel(community.controllerPubkey)
+    community.label || getCommunityOptionLabel(community.ownerPubkey)
 
   const getDeclaredCommunityRelays = (community: RepoCommunityOption | undefined) =>
     normalizeRelays([community?.relay || "", ...(community?.relays || [])])
@@ -407,7 +407,7 @@
     const targetingId = randomId()
     const communityRelays = requireDeclaredCommunityRelays(community)
     const communityPointer = makeCommunityPointer({
-      controllerPubkey: community.controllerPubkey,
+      ownerPubkey: community.ownerPubkey,
       communityId: community.communityId || "",
       relayHints: communityRelays,
     })
@@ -429,8 +429,8 @@
     const starThunk = publishEvent(starEvent as any, relays, repoAddress)
     if (starThunk?.event) repository.publish(starThunk.event as TrustedEvent)
 
-    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
-      ...makeTargetedPublicationForCommunityV2({
+    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND, {
+      ...makeTargetedPublicationForCommunity({
         targetingId,
         originalKind: REACTION,
         originalRef: starThunk?.event?.id

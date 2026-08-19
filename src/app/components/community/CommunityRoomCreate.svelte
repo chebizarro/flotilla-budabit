@@ -48,7 +48,7 @@
     Boolean(
       $activeExactCommunityPointer?.address === community.address &&
       $activeExactCommunityDefinition?.pointer.address === community.address &&
-      $activeExactCommunityDefinition.controllerPubkey === community.controllerPubkey &&
+      $activeExactCommunityDefinition.ownerPubkey === community.ownerPubkey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -58,7 +58,7 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === community.address &&
-      $activeCommunityAuthorityReadiness.communityPubkey === community.controllerPubkey
+      $activeCommunityAuthorityReadiness.communityPubkey === community.ownerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )

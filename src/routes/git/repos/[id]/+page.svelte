@@ -19,7 +19,7 @@
 
   const url = $repoAnnouncementRelaysStore[0] || ""
   const gitPageWidthClass = $derived(
-    $activeExactCommunitySession?.definition.controllerPubkey ? "" : "cw-full",
+    $activeExactCommunitySession?.definition.ownerPubkey ? "" : "cw-full",
   )
   const id = $page.params.id
 

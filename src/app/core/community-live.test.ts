@@ -2,13 +2,13 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {EVENT_DATE, EVENT_TIME, THREAD, ZAP_GOAL, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildCommunityDefinitionV2,
-  buildTargetedPublicationV2,
+  buildCommunityDefinition,
+  buildTargetedPublication,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   buildCommunityFiniteFollowUpFilters,
@@ -24,7 +24,7 @@ const communityId = key(104)
 const listPubkey = key(102)
 const authorPubkey = key(103)
 const community = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId,
 })!
 const goalEventId = "1".repeat(64)
@@ -42,10 +42,10 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const authorityDefinition = parseCommunityDefinitionV2(
+const authorityDefinition = parseCommunityDefinition(
   makeEvent({
     kind: 32222,
-    tags: buildCommunityDefinitionV2({
+    tags: buildCommunityDefinition({
       communityId: community.communityId,
       name: "Community",
       relays: ["wss://relay.budabit.club"],
@@ -73,7 +73,7 @@ const authorityDefinition = parseCommunityDefinitionV2(
 const targetingEvent = makeEvent({
   id: "targeting-event",
   kind: TARGETED_PUBLICATION_KIND,
-  tags: buildTargetedPublicationV2({
+  tags: buildTargetedPublication({
     id: "calendar-target",
     kind: EVENT_TIME,
     source: {type: "a", value: `${EVENT_TIME}:${authorPubkey}:calendar-event`},
@@ -85,7 +85,7 @@ const implicitTargetingEvent = makeEvent({
   id: "implicit-targeting-event",
   pubkey: authorPubkey,
   kind: TARGETED_PUBLICATION_KIND,
-  tags: buildTargetedPublicationV2({
+  tags: buildTargetedPublication({
     id: "implicit-goal-target",
     kind: ZAP_GOAL,
     communities: [community],
@@ -95,7 +95,7 @@ const implicitTargetingEvent = makeEvent({
 const goalTargetingEvent = makeEvent({
   id: "goal-targeting-event",
   kind: TARGETED_PUBLICATION_KIND,
-  tags: buildTargetedPublicationV2({
+  tags: buildTargetedPublication({
     id: "goal-target",
     kind: ZAP_GOAL,
     source: {
@@ -108,9 +108,9 @@ const goalTargetingEvent = makeEvent({
 })
 
 describe("community live filters", () => {
-  it("keys same-controller sibling ownership by exact address", () => {
+  it("keys same-owner sibling ownership by exact address", () => {
     const sibling = makeCommunityPointer({
-      controllerPubkey: community.controllerPubkey,
+      ownerPubkey: community.ownerPubkey,
       communityId: key(105),
     })!
 
@@ -156,8 +156,8 @@ describe("community live filters", () => {
     ).toBe(true)
     expect(filters.some(filter => filter.ids?.includes("calendar-event"))).toBe(false)
     expect(filters).toContainEqual({
-      kinds: [COMMUNITY_DEFINITION_KIND_V2],
-      authors: [community.controllerPubkey],
+      kinds: [COMMUNITY_DEFINITION_KIND],
+      authors: [community.ownerPubkey],
       "#d": [community.communityId],
       limit: 0,
     })
@@ -226,7 +226,7 @@ describe("community live filters", () => {
     const otherTargetingEvent = makeEvent({
       id: "other-targeting-event",
       kind: TARGETED_PUBLICATION_KIND,
-      tags: buildTargetedPublicationV2({
+      tags: buildTargetedPublication({
         id: "other-goal-target",
         kind: ZAP_GOAL,
         source: {

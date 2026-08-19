@@ -2,14 +2,14 @@ import {parseJson} from "@welshman/lib"
 import type {TrustedEvent} from "@welshman/util"
 import {verifyEvent} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   getCommunityAlertServiceDescriptorKey,
   normalizeCommunityAlertService,
   normalizePubkey,
   parseCommunityDefinitionAddress,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
   type CommunityAlertService,
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
 } from "@app/core/community"
 import type {ActiveUserCommunityRef} from "@app/core/community-membership"
 import {
@@ -122,7 +122,7 @@ export type CommunityAlertProvider = CommunityAlertService & {
 
 export type CommunityAlertProviderGroup = {
   communityAddress: string
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   providers: CommunityAlertProvider[]
 }
 
@@ -339,13 +339,13 @@ export const normalizeCommunityAlertSettings = (value: unknown): CommunityAlertS
   }
 }
 
-const isVerifiedCommunityDefinition = (definition?: CommunityDefinitionV2) => {
+const isVerifiedCommunityDefinition = (definition?: CommunityDefinition) => {
   const event = definition?.event
 
   return Boolean(
     definition &&
-    event?.kind === COMMUNITY_DEFINITION_KIND_V2 &&
-    normalizePubkey(event.pubkey) === definition.controllerPubkey &&
+    event?.kind === COMMUNITY_DEFINITION_KIND &&
+    normalizePubkey(event.pubkey) === definition.ownerPubkey &&
     verifyEventSignature(event),
   )
 }
@@ -369,7 +369,7 @@ export const discoverCommunityAlertProviders = ({
 
   for (const ref of communityRefs) {
     if (!isVerifiedCommunityDefinition(ref.definition)) continue
-    const parsed = parseCommunityDefinitionV2(ref.definition.event)
+    const parsed = parseCommunityDefinition(ref.definition.event)
     if (!parsed || ref.community.address !== parsed.pointer.address) continue
     const current = latestByCommunity.get(parsed.pointer.address)
     if (

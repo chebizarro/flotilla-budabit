@@ -69,7 +69,7 @@
   const REQUEST_HARD_TIMEOUT_MS = 10_000
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityOwnerPubkey = $derived(routeCommunity?.ownerPubkey || "")
   const communityId = $derived(routeCommunity?.communityId || "")
   const communityAddress = $derived(routeCommunity?.address || "")
   const communityDefinition = $derived(
@@ -98,7 +98,7 @@
     Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -337,7 +337,7 @@
           content: trimmed,
           tags,
           relays,
-          url: communityControllerPubkey,
+          url: communityOwnerPubkey,
         })
       } catch (error) {
         pushToast({
@@ -560,7 +560,7 @@
           <h1 class="text-xl font-bold">{thread.title}</h1>
           <Content
             event={thread.event}
-            url={communityControllerPubkey}
+            url={communityOwnerPubkey}
             communitySectionName={threadSectionName}
             expandMode="inline" />
           {#if threadOperationId}
@@ -570,7 +570,7 @@
             <div class="mt-3 flex justify-end">
               <ThreadActions
                 community={routeCommunity}
-                url={communityControllerPubkey}
+                url={communityOwnerPubkey}
                 relays={$activeExactCommunityRelays}
                 publishRelays={$activeExactCommunityRelays}
                 scopeH={communityId}
@@ -605,7 +605,7 @@
               class="card2 bg-alt shadow-sm"
               data-latest-reply={item.id === latestReplyId ? "true" : undefined}>
               <ChannelMessage
-                url={communityControllerPubkey}
+                url={communityOwnerPubkey}
                 event={item.event}
                 operationId={replyProjection.operationIds.get(item.id)}
                 showPubkey
@@ -656,7 +656,7 @@
         {/if}
         {#key eventToEdit}
           <RoomCompose
-            url={$activeExactCommunityRelays[0] || communityControllerPubkey}
+            url={$activeExactCommunityRelays[0] || communityOwnerPubkey}
             h={communityId}
             blossomContext={communityDefinition
               ? {

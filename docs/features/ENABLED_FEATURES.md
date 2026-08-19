@@ -15,11 +15,11 @@ The root `vite.config.ts` defines these compile-time flags from environment vari
 
 Budabit's current community architecture is Communikey-based:
 
-- A branch is identified by the exact definition address `32222:<controller>:<communityId>` and its canonical `naddr`; `communityId` remains the stable `d` and community-event `h` value.
+- A branch is identified by the exact definition address `32222:<owner>:<communityId>` and its canonical `naddr`; `communityId` remains the stable `d` and community-event `h` value.
 - Community routes are under `/c/[community]`, with the definition `naddr` as `[community]`.
 - Canonical Git routes are under `/git`.
 - Relay URLs are infrastructure and discovery hints, not community IDs.
-- Community metadata comes from definition tags, not the controller's personal `kind:0` profile, and community association is never encoded as a person `p` tag.
+- Community metadata comes from definition tags, not the owner's personal `kind:0` profile, and community association is never encoded as a person `p` tag.
 
 NIP-34 pull request support is always part of Budabit. Terminal UI has been removed for now. Strict NIP-29 validation is not part of the current community access-control model; current write permissions come from community definition sections and their referenced `kind:30000` profile lists.
 

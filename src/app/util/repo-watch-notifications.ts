@@ -29,10 +29,10 @@ import {
   type RepoAnnouncementEvent,
 } from "@nostr-git/core/events"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   parseCommunityDefinitionAddress,
-  parseCommunityDefinitionV2,
-  type CommunityDefinitionV2,
+  parseCommunityDefinition,
+  type CommunityDefinition,
 } from "@app/core/community"
 import {
   makeCommunityProfileListFilters,
@@ -102,7 +102,7 @@ export type RepoWatchNotificationRepo = RepoWatchAddressRef & {
   options: RepoWatchOptions
   repoEvent?: TrustedEvent
   communityAddress?: string
-  communityDefinition?: CommunityDefinitionV2
+  communityDefinition?: CommunityDefinition
   communityProfileListEvents?: TrustedEvent[]
   communityReportState?: EffectiveCommunityReportState
 }
@@ -156,7 +156,7 @@ type LoadedRepoWatchEvents<T extends TrustedEvent> = RepoWatchHistoryStatus & {
 }
 
 export type RepoWatchCommunityContext = {
-  definition?: CommunityDefinitionV2
+  definition?: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
   ready: boolean
@@ -1331,8 +1331,8 @@ const watchedRepoCommunityDefinitionSources = derived(knownRepoAnnouncementEvent
           relays: normalizeRelays([...(announcement.relays || []), community?.relay]),
           filters: [
             {
-              kinds: [COMMUNITY_DEFINITION_KIND_V2],
-              authors: [pointer.controllerPubkey],
+              kinds: [COMMUNITY_DEFINITION_KIND],
+              authors: [pointer.ownerPubkey],
               "#d": [pointer.communityId],
               limit: 1,
             },
@@ -1357,10 +1357,10 @@ export const selectRepoWatchCommunityDefinitions = (
   communityAddresses: Iterable<string>,
 ) => {
   const addresses = new Set(communityAddresses)
-  const definitions = new Map<string, CommunityDefinitionV2>()
+  const definitions = new Map<string, CommunityDefinition>()
 
   for (const event of events) {
-    const definition = parseCommunityDefinitionV2(event)
+    const definition = parseCommunityDefinition(event)
     if (!definition || !addresses.has(definition.pointer.address)) continue
     const current = definitions.get(definition.pointer.address)
     if (
@@ -1446,7 +1446,7 @@ const watchedRepoCommunityReportDeleteLoad = deriveLoadedEventGroups<TrustedEven
 })
 
 const getDefinitionProfileListEvents = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   events: TrustedEvent[],
 ) => {
   const filters = makeCommunityProfileListFilters(definition)

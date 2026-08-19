@@ -345,10 +345,10 @@
         }),
       )
       .map(ref => ({
-        controllerPubkey: ref.definition.controllerPubkey,
+        ownerPubkey: ref.definition.ownerPubkey,
         address: ref.community.address,
         communityId: ref.community.communityId,
-        label: getCommunityOptionLabel(ref.definition.controllerPubkey),
+        label: getCommunityOptionLabel(ref.definition.ownerPubkey),
         relays: ref.definition.relays,
       })),
   )

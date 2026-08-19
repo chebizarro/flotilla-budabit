@@ -9,13 +9,13 @@ import {
   type TrustedEvent,
 } from "@welshman/util"
 import {
-  makeCommunityAuthorityTagsV2,
-  normalizeCommunityRelayV2,
+  makeCommunityAuthorityTags,
+  normalizeCommunityRelay,
   normalizeCommunitySectionName,
   normalizeCommunitySectionSubtype,
   normalizePubkey,
-  parseCommunityAuthorityV2,
-  type CommunityDefinitionV2,
+  parseCommunityAuthority,
+  type CommunityDefinition,
   type CommunityPointer,
 } from "@app/core/community"
 import {
@@ -39,7 +39,7 @@ export type ParsedCommunityReport = {
   community: CommunityPointer
   communityAddress: string
   communityId: string
-  controllerPubkey: string
+  ownerPubkey: string
   targetPubkey: string
   targetAddress?: string
   targetEventId?: string
@@ -72,7 +72,7 @@ export type CommunityReportReview = {
   reportAuthorPubkey: string
   community: CommunityPointer
   communityId: string
-  controllerPubkey: string
+  ownerPubkey: string
   reviewerPubkey: string
   targetEventId?: string
   targetEventKind?: number
@@ -104,7 +104,7 @@ const sortReportsByRecent = <T extends {event: TrustedEvent}>(reports: T[]) =>
     (a, b) => b.event.created_at - a.event.created_at || a.event.id.localeCompare(b.event.id),
   )
 
-const findCommunitySection = (definition: CommunityDefinitionV2, name: string) => {
+const findCommunitySection = (definition: CommunityDefinition, name: string) => {
   const normalizedName = normalizeCommunitySectionName(name)
 
   return definition.sections.find(
@@ -192,7 +192,7 @@ const getMarkedReportReference = (event: TrustedEvent) => {
   const reportId = tags[0][1]?.trim()
   const relay = tags[0][2]
   const author = normalizePubkey(tags[0][3] || "")
-  if (!reportId || (relay && normalizeCommunityRelayV2(relay) !== relay) || !author) {
+  if (!reportId || (relay && normalizeCommunityRelay(relay) !== relay) || !author) {
     return undefined
   }
 
@@ -285,7 +285,7 @@ export const makeCommunityEventReport = ({
 }): EventContent & {kind: typeof COMMUNITY_REPORT_KIND} => ({
   kind: COMMUNITY_REPORT_KIND,
   content,
-  tags: makeCommunityAuthorityTagsV2(community, undefined, [
+  tags: makeCommunityAuthorityTags(community, undefined, [
     ["e", eventId, COMMUNITY_REPORT_REASON],
     ...makeOptionalTag("a", parseReportTargetAddress(targetAddress)?.address).map(tag => [
       ...tag,
@@ -315,7 +315,7 @@ export const makeCommunityPersonReport = ({
 }): EventContent & {kind: typeof COMMUNITY_REPORT_KIND} => ({
   kind: COMMUNITY_REPORT_KIND,
   content,
-  tags: makeCommunityAuthorityTagsV2(community, undefined, [
+  tags: makeCommunityAuthorityTags(community, undefined, [
     ["p", normalizePubkey(pubkey), COMMUNITY_REPORT_REASON],
   ]),
 })
@@ -331,7 +331,7 @@ export const makeCommunityReportDelete = ({
 }): EventContent & {kind: typeof DELETE} => ({
   kind: DELETE,
   content: "Deleted community report",
-  tags: makeCommunityAuthorityTagsV2(community, undefined, [
+  tags: makeCommunityAuthorityTags(community, undefined, [
     ["e", reportId, "", normalizePubkey(reporterPubkey), "report"],
     ["k", String(COMMUNITY_REPORT_KIND)],
   ]),
@@ -356,7 +356,7 @@ export const makeCommunityReportReviewLabel = ({
 }): EventContent & {kind: typeof COMMUNITY_REPORT_REVIEW_LABEL_KIND} => ({
   kind: COMMUNITY_REPORT_REVIEW_LABEL_KIND,
   content,
-  tags: makeCommunityAuthorityTagsV2(community, undefined, [
+  tags: makeCommunityAuthorityTags(community, undefined, [
     ["L", COMMUNITY_REPORT_REVIEW_NAMESPACE],
     ["l", COMMUNITY_REPORT_REVIEWED_LABEL, COMMUNITY_REPORT_REVIEW_NAMESPACE],
     ["e", reportId, "", normalizePubkey(reporterPubkey), "report"],
@@ -386,7 +386,7 @@ export const parseCommunityReportReviewLabel = (
     return undefined
   }
 
-  const community = parseCommunityAuthorityV2(event)
+  const community = parseCommunityAuthority(event)
   if (!community) return undefined
   if (expectedCommunity && !communitiesMatch(community, expectedCommunity)) return undefined
 
@@ -400,7 +400,7 @@ export const parseCommunityReportReviewLabel = (
     reportAuthorPubkey: reportReference.author,
     community,
     communityId: community.communityId,
-    controllerPubkey: community.controllerPubkey,
+    ownerPubkey: community.ownerPubkey,
     reviewerPubkey,
     targetEventId: getStringTagValue(event, "E") || undefined,
     targetEventKind: getNumberTagValue(event, "K"),
@@ -415,7 +415,7 @@ export const parseCommunityReport = (
 ): ParsedCommunityReport | undefined => {
   if (event.kind !== COMMUNITY_REPORT_KIND) return undefined
 
-  const community = parseCommunityAuthorityV2(event)
+  const community = parseCommunityAuthority(event)
   if (!community) return undefined
   if (expectedCommunity && !communitiesMatch(community, expectedCommunity)) return undefined
 
@@ -446,7 +446,7 @@ export const parseCommunityReport = (
       community,
       communityAddress: community.address,
       communityId: community.communityId,
-      controllerPubkey: community.controllerPubkey,
+      ownerPubkey: community.ownerPubkey,
       targetPubkey,
       targetEventId: eventTag?.[1],
       targetAddress: targetAddressRef?.address,
@@ -472,7 +472,7 @@ export const parseCommunityReport = (
     community,
     communityAddress: community.address,
     communityId: community.communityId,
-    controllerPubkey: community.controllerPubkey,
+    ownerPubkey: community.ownerPubkey,
     targetPubkey,
   }
 }
@@ -481,8 +481,8 @@ export const isCommunityReportDeleted = (report: TrustedEvent, deleteEvents: Tru
   deleteEvents.some(event => {
     if (event.kind !== DELETE) return false
     if (normalizePubkey(event.pubkey || "") !== normalizePubkey(report.pubkey || "")) return false
-    const reportCommunity = parseCommunityAuthorityV2(report)
-    const deleteCommunity = parseCommunityAuthorityV2(event)
+    const reportCommunity = parseCommunityAuthority(report)
+    const deleteCommunity = parseCommunityAuthority(event)
     if (
       !reportCommunity ||
       !deleteCommunity ||
@@ -503,7 +503,7 @@ export const isCommunityReportDeleted = (report: TrustedEvent, deleteEvents: Tru
   })
 
 export const getAllSectionModeratorPubkeys = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   profileListEvents?: TrustedEvent[],
 ) => {
   if (definition.sections.length === 0) return []
@@ -524,7 +524,7 @@ export const getAllSectionModeratorPubkeys = (
 }
 
 export const getCurrentModeratorPubkeys = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   profileListEvents?: TrustedEvent[],
 ) =>
   Array.from(
@@ -539,8 +539,8 @@ export const getCurrentModeratorPubkeys = (
     ),
   )
 
-export const isCommunityAdmin = (definition: CommunityDefinitionV2, pubkey: string) =>
-  definition.controllerPubkey === normalizePubkey(pubkey)
+export const isCommunityAdmin = (definition: CommunityDefinition, pubkey: string) =>
+  definition.ownerPubkey === normalizePubkey(pubkey)
 
 export const isProtectedCommunityModeratorTarget = ({
   definition,
@@ -548,7 +548,7 @@ export const isProtectedCommunityModeratorTarget = ({
   targetPubkey,
   profileListEvents,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   reporterPubkey: string
   targetPubkey: string
   profileListEvents?: TrustedEvent[]
@@ -567,7 +567,7 @@ export const canPublishCommunityEventReport = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   reporterPubkey: string
   targetPubkey: string
   sectionName: string
@@ -613,7 +613,7 @@ export const canPublishCommunityPersonReport = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   reporterPubkey: string
   targetPubkey: string
   profileListEvents?: TrustedEvent[]
@@ -646,7 +646,7 @@ export const canReviewCommunityContentReport = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   reviewerPubkey: string
   report: ParsedCommunityReport
   profileListEvents?: TrustedEvent[]
@@ -673,7 +673,7 @@ export const canPublishCommunityContentReport = ({
   targetPubkey,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reporterPubkey: string
   targetPubkey?: string
@@ -699,7 +699,7 @@ const isProtectedModeratorTarget = ({
   reporterIsAdmin,
   profileListEvents,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   report: ParsedCommunityReport
   reporterIsAdmin: boolean
   profileListEvents?: TrustedEvent[]
@@ -709,7 +709,7 @@ const isProtectedModeratorTarget = ({
     getCurrentModeratorPubkeys(definition, profileListEvents).includes(report.targetPubkey))
 
 const isAuthorizedEventReport = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   report: ParsedCommunityReport,
   profileListEvents: TrustedEvent[],
 ) => {
@@ -726,7 +726,7 @@ const isAuthorizedEventReport = (
 }
 
 const isAuthorizedPersonReport = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   report: ParsedCommunityReport,
   profileListEvents: TrustedEvent[],
 ) => {
@@ -749,7 +749,7 @@ export const getEffectiveCommunityReportState = ({
   targetEvents = [],
 }: {
   community?: CommunityPointer
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents?: TrustedEvent[]
   reportEvents: TrustedEvent[]
   deleteEvents?: TrustedEvent[]
@@ -823,7 +823,7 @@ export const getCommunityContentReports = ({
   reportState,
 }: {
   community?: CommunityPointer
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   reportEvents: TrustedEvent[]
   reviewEvents?: TrustedEvent[]
   deleteEvents?: TrustedEvent[]

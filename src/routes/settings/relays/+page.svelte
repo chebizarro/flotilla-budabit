@@ -11,11 +11,11 @@
   import {pushModal} from "@app/util/modal"
   import {discoverRelays} from "@app/core/requests"
   import {
-    COMMUNITY_DEFINITION_KIND_V2,
+    COMMUNITY_DEFINITION_KIND,
     normalizePubkey,
-    parseCommunityDefinitionV2,
-    selectCurrentCommunityDefinitionV2,
-    type CommunityDefinitionV2,
+    parseCommunityDefinition,
+    selectCurrentCommunityDefinition,
+    type CommunityDefinition,
   } from "@app/core/community"
   import {
     activeCommunityStars,
@@ -103,7 +103,7 @@
     pushModal(ProfileDetail, {pubkey})
   }
 
-  let recommendedCommunityDefinitions = $state<Record<string, CommunityDefinitionV2>>({})
+  let recommendedCommunityDefinitions = $state<Record<string, CommunityDefinition>>({})
   let recommendedDefinitionLoadKeys = $state<Record<string, string>>({})
   let recommendedDefinitionLoads = $state<Record<string, boolean>>({})
   let recommendationLoadKey = $state("")
@@ -126,7 +126,7 @@
 
   const setRecommendedCommunityDefinition = (
     communityAddress: string,
-    definition: CommunityDefinitionV2 | undefined,
+    definition: CommunityDefinition | undefined,
   ) => {
     if (!definition) return
 
@@ -138,14 +138,14 @@
 
   const loadRecommendedCommunityDefinition = async (star: CommunityStarRef) => {
     const filter = {
-      kinds: [COMMUNITY_DEFINITION_KIND_V2],
-      authors: [star.community.controllerPubkey],
+      kinds: [COMMUNITY_DEFINITION_KIND],
+      authors: [star.community.ownerPubkey],
       "#d": [star.community.communityId],
       limit: 1,
     }
     const selectDefinition = (events: ReturnType<typeof repository.query>) => {
-      const event = selectCurrentCommunityDefinitionV2(events, star.community.address)
-      return event ? parseCommunityDefinitionV2(event) : undefined
+      const event = selectCurrentCommunityDefinition(events, star.community.address)
+      return event ? parseCommunityDefinition(event) : undefined
     }
     setRecommendedCommunityDefinition(
       star.community.address,
@@ -170,9 +170,9 @@
       if (!definition) return []
 
       const userPubkey = normalizePubkey($pubkey || "")
-      const isAdmin = Boolean(userPubkey && userPubkey === definition.controllerPubkey)
+      const isAdmin = Boolean(userPubkey && userPubkey === definition.ownerPubkey)
       const matchingRef = $activeUserCommunityRefs.find(ref => {
-        const candidate = parseCommunityDefinitionV2(ref.definition.event)
+        const candidate = parseCommunityDefinition(ref.definition.event)
         return candidate?.pointer.address === star.community.address
       })
       const isModerator = Boolean(
@@ -182,7 +182,7 @@
       return [
         {
           source: "starred_community_relay",
-          communityPubkey: star.community.controllerPubkey,
+          communityPubkey: star.community.ownerPubkey,
           relays: definition.relays,
           starredAt: star.reaction.created_at,
           isStarred: true,
@@ -395,7 +395,7 @@
       profileListEvents,
       reportStates: $communityMemberReportStates,
       extraSources: recommendationSources,
-      starredCommunityPubkeys: $activeCommunityStars.map(star => star.community.controllerPubkey),
+      starredCommunityPubkeys: $activeCommunityStars.map(star => star.community.ownerPubkey),
     }).catch(() => undefined)
   })
 

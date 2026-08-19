@@ -5,11 +5,11 @@ import type {TrustedEvent} from "@welshman/util"
 import * as nip19 from "nostr-tools/nip19"
 import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import type {ActiveUserCommunityRef} from "./community-membership"
 import {
@@ -26,8 +26,8 @@ const communityIds = new Map([
   ["second", getPublicKey(new Uint8Array(32).fill(44))],
   ["shared-id", getPublicKey(new Uint8Array(32).fill(45))],
 ])
-const communityPointer = (controllerPubkey: string) =>
-  makeCommunityPointer({controllerPubkey, communityId})!
+const communityPointer = (ownerPubkey: string) =>
+  makeCommunityPointer({ownerPubkey, communityId})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -55,12 +55,12 @@ const makeCommunityRef = ({
 }): ActiveUserCommunityRef => {
   const listAddress = `${PROFILE_LIST_KIND}:${moderatorPubkey}:Repositories`
 
-  const definition = parseCommunityDefinitionV2(
+  const definition = parseCommunityDefinition(
     makeEvent({
       pubkey: communityPubkey,
       created_at: 1,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: communityIds.get(identifier)!,
         name: identifier,
         relays: [relay],
@@ -141,7 +141,7 @@ describe("grasp recommendations", () => {
     ).toEqual([viewer, community, defaultCommunity, moderator, member, starred, follow])
   })
 
-  it("does not treat a controller's personal kind 10317 list as community infrastructure", () => {
+  it("does not treat a owner's personal kind 10317 list as community infrastructure", () => {
     const viewer = "1".repeat(64)
     const community = "2".repeat(64)
     const moderator = "3".repeat(64)
@@ -200,18 +200,18 @@ describe("grasp recommendations", () => {
     expect(recommendations[0].evidence).toHaveLength(2)
   })
 
-  it("keeps same-controller sibling infrastructure and recommendations branch-local", () => {
-    const controller = getPublicKey(new Uint8Array(32).fill(10))
+  it("keeps same-owner sibling infrastructure and recommendations branch-local", () => {
+    const owner = getPublicKey(new Uint8Array(32).fill(10))
     const moderatorA = getPublicKey(new Uint8Array(32).fill(11))
     const moderatorB = getPublicKey(new Uint8Array(32).fill(12))
     const first = makeCommunityRef({
-      communityPubkey: controller,
+      communityPubkey: owner,
       moderatorPubkey: moderatorA,
       identifier: "first",
       graspServers: ["wss://first.infrastructure.example"],
     })
     const second = makeCommunityRef({
-      communityPubkey: controller,
+      communityPubkey: owner,
       moderatorPubkey: moderatorB,
       identifier: "second",
       graspServers: ["wss://second.infrastructure.example"],
@@ -219,7 +219,7 @@ describe("grasp recommendations", () => {
     const recommendations = buildGraspServerRecommendations({
       communityRefs: [first, second],
       userGraspListEvents: [
-        makeGraspList({pubkey: controller, urls: ["wss://controller.recommendation.example"]}),
+        makeGraspList({pubkey: owner, urls: ["wss://owner.recommendation.example"]}),
       ],
     })
 
@@ -229,10 +229,10 @@ describe("grasp recommendations", () => {
         "wss://second.infrastructure.example",
       ]),
     )
-    expect(recommendations.some(item => item.url.includes("controller.recommendation"))).toBe(false)
+    expect(recommendations.some(item => item.url.includes("owner.recommendation"))).toBe(false)
   })
 
-  it("uses definition servers without importing the controller's personal list", () => {
+  it("uses definition servers without importing the owner's personal list", () => {
     const viewer = "1".repeat(64)
     const community = "2".repeat(64)
     const moderator = "3".repeat(64)

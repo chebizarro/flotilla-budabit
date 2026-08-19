@@ -1,11 +1,11 @@
 import {describe, expect, it} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   normalizeRelays,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {getPublicKey} from "nostr-tools/pure"
 import type {ActiveUserCommunityRef} from "./community-membership"
@@ -48,12 +48,12 @@ const makeDefinition = ({
   listAddresses?: string[]
   identifier?: string
 }) =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
       id: communityPubkey.slice(0, 8),
       pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: communityIds.get(identifier)!,
         name: identifier,
         relays: ["wss://relay.example.com"],
@@ -163,8 +163,8 @@ describe("cashu mint recommendations", () => {
     expect(recommendations[0].evidence[0]).toEqual(
       expect.objectContaining({
         source: "32222",
-        pubkey: definition.controllerPubkey,
-        communityPubkey: definition.controllerPubkey,
+        pubkey: definition.ownerPubkey,
+        communityPubkey: definition.ownerPubkey,
         communityAddress: definition.pointer.address,
       }),
     )
@@ -214,7 +214,7 @@ describe("cashu mint recommendations", () => {
     )
   })
 
-  it("orders direct 32222 community mints before controller-owned 10019 mints", () => {
+  it("orders direct 32222 community mints before owner-owned 10019 mints", () => {
     const viewer = testPubkey(1)
     const community = testPubkey(2)
     const listOwner = testPubkey(3)
@@ -293,20 +293,20 @@ describe("cashu mint recommendations", () => {
     expect(authors.slice(0, 5)).toEqual([viewer, community, moderator, testPubkey(5), member])
   })
 
-  it("keeps same-controller sibling recommendation evidence on exact addresses", () => {
+  it("keeps same-owner sibling recommendation evidence on exact addresses", () => {
     const viewer = testPubkey(1)
-    const controller = testPubkey(2)
+    const owner = testPubkey(2)
     const moderatorA = testPubkey(3)
     const moderatorB = testPubkey(4)
     const recommender = testPubkey(5)
     const first = makeDefinition({
-      communityPubkey: controller,
+      communityPubkey: owner,
       identifier: "first",
       mintUrl: "https://first.example.com",
       listAddresses: [`${PROFILE_LIST_KIND}:${moderatorA}:Repositories`],
     })
     const second = makeDefinition({
-      communityPubkey: controller,
+      communityPubkey: owner,
       identifier: "second",
       mintUrl: "https://second.example.com",
       listAddresses: [`${PROFILE_LIST_KIND}:${moderatorB}:Repositories`],
@@ -334,7 +334,7 @@ describe("cashu mint recommendations", () => {
     ).toEqual([expect.objectContaining({communityAddress: second.pointer.address})])
   })
 
-  it("keeps same-ID branches distinct by controller address", () => {
+  it("keeps same-ID branches distinct by owner address", () => {
     const viewer = testPubkey(1)
     const firstController = testPubkey(2)
     const secondController = testPubkey(3)

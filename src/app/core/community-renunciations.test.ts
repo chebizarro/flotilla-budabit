@@ -14,19 +14,19 @@ import {
   makeRenouncedCommunitiesList,
   removeRenouncedCommunityFromList,
 } from "@app/core/community-renunciations"
-import {makeCommunityPointer} from "@app/core/community-v2"
+import {makeCommunityPointer} from "@app/core/community-protocol"
 
 const communityId = getPublicKey(new Uint8Array(32).fill(1))
 const community = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
   communityId,
 })!
 const sameIdBranch = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(3)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(3)),
   communityId,
 })!
 const controllerSibling = makeCommunityPointer({
-  controllerPubkey: community.controllerPubkey,
+  ownerPubkey: community.ownerPubkey,
   communityId: getPublicKey(new Uint8Array(32).fill(4)),
 })!
 
@@ -93,7 +93,7 @@ describe("community renunciations", () => {
     })
   })
 
-  it("keeps communities from the same controller independent", async () => {
+  it("keeps communities from the same owner independent", async () => {
     const removed = await removeRenouncedCommunityFromList(
       makeRenouncedCommunitiesList({
         kind: NAMED_PEOPLE,

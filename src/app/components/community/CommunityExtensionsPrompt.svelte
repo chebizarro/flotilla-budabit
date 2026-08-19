@@ -47,7 +47,7 @@
     const matchesCommunity =
       definition &&
       $activeExactCommunityPointer &&
-      definition.controllerPubkey === $activeExactCommunityPointer.controllerPubkey
+      definition.ownerPubkey === $activeExactCommunityPointer.ownerPubkey
     const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
     const reportState = matchesCommunity ? $activeCommunityReportState : undefined
 

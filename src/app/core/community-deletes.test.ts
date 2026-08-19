@@ -1,7 +1,7 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
 import {getPublicKey} from "nostr-tools"
 import {DELETE, type TrustedEvent} from "@welshman/util"
-import {makeCommunityAuthorityTagsV2, makeCommunityPointer} from "./community-v2"
+import {makeCommunityAuthorityTags, makeCommunityPointer} from "./community-protocol"
 
 const {request, getEvent, publish} = vi.hoisted(() => ({
   request: vi.fn(),
@@ -16,15 +16,15 @@ import {getCommunityDeleteSeenKey, hydrateCommunityDeleteEvents} from "./communi
 
 const communityId = getPublicKey(new Uint8Array(32).fill(1))
 const community = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
   communityId,
 })!
 const sameIdBranch = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(3)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(3)),
   communityId,
 })!
 const controllerSibling = makeCommunityPointer({
-  controllerPubkey: community.controllerPubkey,
+  ownerPubkey: community.ownerPubkey,
   communityId: getPublicKey(new Uint8Array(32).fill(4)),
 })!
 
@@ -58,12 +58,9 @@ describe("community delete hydration", () => {
   })
 
   it("queries by h and admits only the exact marked branch authority", async () => {
-    const admitted = makeDelete(
-      makeCommunityAuthorityTagsV2(community, undefined, [["k", "1"]]),
-      10,
-    )
+    const admitted = makeDelete(makeCommunityAuthorityTags(community, undefined, [["k", "1"]]), 10)
     const sibling = makeDelete(
-      makeCommunityAuthorityTagsV2(sameIdBranch, undefined, [["k", "1"]]),
+      makeCommunityAuthorityTags(sameIdBranch, undefined, [["k", "1"]]),
       20,
     )
     request.mockImplementation(async ({onEvent}) => {

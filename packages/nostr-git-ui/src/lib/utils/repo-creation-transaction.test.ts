@@ -238,7 +238,7 @@ describe("RepoCreationTransactionJournal", () => {
       })
     );
     expect(storage.getItem(legacyKey)).toBeNull();
-    expect(storage.key(0)).toContain("nostr-git:repo-creation:v2:");
+    expect(storage.key(0)).toContain("nostr-git:repo-creation:transaction:");
   });
 
   it("redacts credentials from checkpoints, results, URLs, errors, and ACK details", () => {

@@ -17,18 +17,18 @@ import {
   COMMUNITY_SUBTYPE_ROOM_MESSAGE,
   COMMUNITY_SUBTYPE_THREADS,
   type AddressRef,
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
   type CommunityPointer,
-  type CommunityProfileListRefV2,
-  type CommunitySectionV2,
+  type CommunityDefinitionProfileListRef,
+  type CommunityDefinitionSection,
   getProfileListPubkeys,
   isProfileListDeclined,
   normalizeCommunitySectionName,
   normalizeCommunitySectionSubtype,
   normalizePubkey,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
   selectCurrentAddressableEvent,
-  selectCurrentTargetedPublicationEventsV2,
+  selectCurrentTargetedPublicationEvents,
 } from "@app/core/community"
 import {GIT_PERMALINK_KIND, SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
@@ -43,7 +43,7 @@ export type CommunityWriteTarget = {
 export type CommunityGrantCapability = {
   canManageList: boolean
   canGrant: boolean
-  profileList?: CommunityProfileListRefV2
+  profileList?: CommunityDefinitionProfileListRef
 }
 
 export type CommunityPublishCapability = CommunityWriteTarget & {
@@ -68,7 +68,7 @@ export type CommunityPublishGateState = CommunityWriteTarget & {
 }
 
 type ResolveCommunityTargetSectionParams = {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   userPubkey?: string
   target: CommunityWriteTarget
@@ -124,7 +124,7 @@ export const getCommunityCapabilityKey = (kind: number, subtype?: string) => {
 }
 
 const sectionSupportsKind = (
-  section: CommunitySectionV2 | undefined,
+  section: CommunityDefinitionSection | undefined,
   kind: number,
   subtype?: string,
 ) => {
@@ -138,7 +138,7 @@ const sectionSupportsKind = (
   )
 }
 
-const findCommunitySection = (definition: CommunityDefinitionV2, name: string) => {
+const findCommunitySection = (definition: CommunityDefinition, name: string) => {
   const normalizedName = normalizeCommunitySectionName(name)
 
   return definition.sections.find(
@@ -147,37 +147,37 @@ const findCommunitySection = (definition: CommunityDefinitionV2, name: string) =
 }
 
 const findCommunitySectionByKind = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   kind: number,
   subtype?: string,
 ) => definition.sections.find(section => sectionSupportsKind(section, kind, subtype))
 
-const getProfileListOwner = (ref: CommunityProfileListRefV2) =>
+const getProfileListOwner = (ref: CommunityDefinitionProfileListRef) =>
   normalizePubkey(ref.address.split(":")[1] || "")
 
 export const getCommunityWriteTargetSections = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   target: CommunityWriteTarget,
-): CommunitySectionV2[] => {
+): CommunityDefinitionSection[] => {
   const section = findCommunitySectionByKind(definition, target.kind, target.subtype)
 
   return section ? [section] : []
 }
 
 export const getCommunityWriteTargetSectionNames = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   target: CommunityWriteTarget,
 ) => getCommunityWriteTargetSections(definition, target).map(section => section.name)
 
 export const getCommunityWriteTargetSectionName = (
-  definition: CommunityDefinitionV2 | undefined,
+  definition: CommunityDefinition | undefined,
   target: CommunityWriteTarget,
 ) =>
   (definition ? getCommunityWriteTargetSections(definition, target)[0]?.name : undefined) ||
   target.sectionName
 
-export const getCommunityCalendarWriteTargetSections = (definition: CommunityDefinitionV2) => {
-  const sections = new Map<string, CommunitySectionV2>()
+export const getCommunityCalendarWriteTargetSections = (definition: CommunityDefinition) => {
+  const sections = new Map<string, CommunityDefinitionSection>()
 
   for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
     for (const section of getCommunityWriteTargetSections(definition, target)) {
@@ -189,7 +189,7 @@ export const getCommunityCalendarWriteTargetSections = (definition: CommunityDef
 }
 
 export const getCommunityCalendarWriteTargetSectionName = (
-  definition: CommunityDefinitionV2 | undefined,
+  definition: CommunityDefinition | undefined,
 ) =>
   (definition ? getCommunityCalendarWriteTargetSections(definition)[0]?.name : undefined) ||
   COMMUNITY_WRITE_TARGETS.calendar.sectionName
@@ -199,7 +199,7 @@ export const communityWritableSectionsSupportTarget = ({
   writableSections,
   target,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   writableSections: string[]
   target: CommunityWriteTarget
 }) => {
@@ -210,7 +210,7 @@ export const communityWritableSectionsSupportTarget = ({
   )
 }
 
-export const getPrimaryProfileListRef = (section: CommunitySectionV2 | undefined) =>
+export const getPrimaryProfileListRef = (section: CommunityDefinitionSection | undefined) =>
   section?.profileLists[0]
 
 export const isCommunityReportStatePersonBanned = (
@@ -229,10 +229,10 @@ export const getCommunityModeratorRefPubkeys = ({
   definition,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   reportState?: EffectiveCommunityReportState
 }) => {
-  const ownerPubkey = definition.controllerPubkey
+  const ownerPubkey = definition.ownerPubkey
 
   return Array.from(
     new Set(
@@ -250,14 +250,14 @@ export const userHasCommunityModeratorRefMembership = ({
   userPubkey,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   userPubkey: string
   reportState?: EffectiveCommunityReportState
 }) =>
   getCommunityModeratorRefPubkeys({definition, reportState}).includes(normalizePubkey(userPubkey))
 
 export const findAddressableEvent = (
-  ref: AddressRef | CommunityProfileListRefV2 | undefined,
+  ref: AddressRef | CommunityDefinitionProfileListRef | undefined,
   events: TrustedEvent[],
 ) => {
   if (!ref) return undefined
@@ -266,7 +266,7 @@ export const findAddressableEvent = (
 }
 
 export const findProfileListEvent = (
-  profileListRef: CommunityProfileListRefV2 | undefined,
+  profileListRef: CommunityDefinitionProfileListRef | undefined,
   profileListEvents: TrustedEvent[],
 ) =>
   profileListRef
@@ -286,7 +286,7 @@ export const findProfileListEvent = (
     : undefined
 
 const isActiveCommunityProfileListRef = (
-  ref: CommunityProfileListRefV2,
+  ref: CommunityDefinitionProfileListRef,
   profileListEvents: TrustedEvent[] | undefined,
 ) => {
   const event = findProfileListEvent(ref, profileListEvents || [])
@@ -299,7 +299,7 @@ export const getSectionProfileListPubkeys = ({
   profileListEvents,
   reportState,
 }: {
-  section: CommunitySectionV2 | undefined
+  section: CommunityDefinitionSection | undefined
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }) =>
@@ -319,8 +319,8 @@ export const userHasSectionProfileListAccess = ({
   userPubkey,
   reportState,
 }: {
-  definition?: CommunityDefinitionV2
-  section: CommunitySectionV2 | undefined
+  definition?: CommunityDefinition
+  section: CommunityDefinitionSection | undefined
   profileListEvents: TrustedEvent[]
   userPubkey: string
   reportState?: EffectiveCommunityReportState
@@ -343,7 +343,7 @@ export const canWriteCommunitySection = ({
   subtype,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   userPubkey: string
   sectionName: string
@@ -355,7 +355,7 @@ export const canWriteCommunitySection = ({
   if (!sectionSupportsKind(section, kind, subtype)) return false
   const normalizedUser = normalizePubkey(userPubkey)
 
-  if (definition.controllerPubkey === normalizedUser) return true
+  if (definition.ownerPubkey === normalizedUser) return true
   if (isCommunityReportStatePersonBanned(reportState, normalizedUser)) return false
   if (
     userHasCommunityModeratorRefMembership({definition, userPubkey: normalizedUser, reportState})
@@ -387,7 +387,7 @@ export const canWriteCommunityTarget = ({
   target,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   userPubkey: string
   target: CommunityWriteTarget
@@ -417,7 +417,7 @@ export const filterAuthorizedCommunityTargetingEvents = ({
   kinds,
 }: {
   community: CommunityPointer
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   events: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
@@ -425,8 +425,8 @@ export const filterAuthorizedCommunityTargetingEvents = ({
 }) => {
   const allowedKinds = kinds ? new Set(kinds) : undefined
 
-  return selectCurrentTargetedPublicationEventsV2(events).filter(event => {
-    const targeting = parseTargetedPublicationV2(event)
+  return selectCurrentTargetedPublicationEvents(events).filter(event => {
+    const targeting = parseTargetedPublication(event)
     if (!targeting || (allowedKinds && !allowedKinds.has(targeting.kind))) return false
     if (!targeting.communities.some(target => target.address === community.address)) {
       return false
@@ -455,7 +455,7 @@ export const canWriteCommunityCalendarTarget = ({
   userPubkey,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   userPubkey: string
   reportState?: EffectiveCommunityReportState
@@ -471,7 +471,7 @@ export const getCommunityWritableTargetSections = ({
   target,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   userPubkey?: string
   target: CommunityWriteTarget
@@ -528,7 +528,7 @@ export const getCommunityPublishCapabilityMap = ({
   userPubkey,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   userPubkey: string
   reportState?: EffectiveCommunityReportState
@@ -573,7 +573,7 @@ export const getCommunityPublishGateState = ({
   reviewEvents = [],
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   userPubkey?: string
   target: CommunityWriteTarget
@@ -598,7 +598,7 @@ export const getCommunityPublishGateState = ({
 
   if (!normalizedUser) return {...base, status: "login-required"}
   if (
-    normalizedUser !== definition.controllerPubkey &&
+    normalizedUser !== definition.ownerPubkey &&
     isCommunityReportStatePersonBanned(reportState, normalizedUser)
   ) {
     return {...base, status: "banned"}
@@ -651,14 +651,14 @@ export const getGrantCapableSectionModeratorPubkeys = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   sectionName: string
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }) => {
   const section = findCommunitySection(definition, sectionName)
   if (!section) return []
-  const ownerPubkey = definition.controllerPubkey
+  const ownerPubkey = definition.ownerPubkey
 
   return Array.from(
     new Set(
@@ -682,18 +682,18 @@ export const getCommunitySectionAuthorityPubkeys = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   sectionName: string
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }) => {
   const section = findCommunitySection(definition, sectionName)
-  if (!section) return [definition.controllerPubkey]
+  if (!section) return [definition.ownerPubkey]
 
   return Array.from(
     new Set(
       [
-        definition.controllerPubkey,
+        definition.ownerPubkey,
         ...section.profileLists
           .filter(ref => isActiveCommunityProfileListRef(ref, profileListEvents))
           .map(getProfileListOwner),
@@ -703,7 +703,7 @@ export const getCommunitySectionAuthorityPubkeys = ({
     ),
   ).filter(
     pubkey =>
-      pubkey === definition.controllerPubkey ||
+      pubkey === definition.ownerPubkey ||
       !isCommunityReportStatePersonBanned(reportState, pubkey),
   )
 }
@@ -714,7 +714,7 @@ export const getCommunityTargetAuthorityPubkeys = ({
   target,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents?: TrustedEvent[]
   target: CommunityWriteTarget
   reportState?: EffectiveCommunityReportState
@@ -741,7 +741,7 @@ export const getCommunitySectionWriterPubkeys = ({
   sectionName,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   sectionName: string
   reportState?: EffectiveCommunityReportState
@@ -771,7 +771,7 @@ export const getCommunityTargetWriterPubkeys = ({
   target,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   target: CommunityWriteTarget
   reportState?: EffectiveCommunityReportState
@@ -797,7 +797,7 @@ export const getCommunityCalendarTargetWriterPubkeys = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }) =>
@@ -816,7 +816,7 @@ export const getGrantCapability = ({
   profileListEvents,
   reportState,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   userPubkey: string
   sectionName: string
   profileListEvents?: TrustedEvent[]
@@ -824,7 +824,7 @@ export const getGrantCapability = ({
 }): CommunityGrantCapability => {
   const section = findCommunitySection(definition, sectionName)
   const normalizedUser = normalizePubkey(userPubkey)
-  const ownerPubkey = definition.controllerPubkey
+  const ownerPubkey = definition.ownerPubkey
 
   if (!section || !normalizedUser) return {canManageList: false, canGrant: false}
 

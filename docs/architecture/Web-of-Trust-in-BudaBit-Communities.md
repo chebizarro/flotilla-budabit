@@ -11,7 +11,7 @@ Social Nostr signals remain useful because users may carry valuable context from
 | Policy                               | Decision                                                                                                                                               |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Primary trust source                 | Exact Communikey branches defined by kind `32222` and their referenced kind `30000` profile lists.                                                     |
-| Community infrastructure             | The current valid event at an exact `32222:<controller>:<communityId>` address is authoritative for that branch.                                       |
+| Community infrastructure             | The current valid event at an exact `32222:<owner>:<communityId>` address is authoritative for that branch.                                       |
 | Person-level infrastructure evidence | Kinds `10063` and `10317` describe user server choices; `10019` is Nutzap receiving configuration whose mint tags may provide recommendation evidence. |
 | Infrastructure recommendations       | An eligible, non-renounced community declaration is viable evidence, but configuration requires an explicit **Add**.                                   |
 | Social graph depth                   | Direct only. Do not calculate a 2-hop follows-of-follows graph for BudaBit trust.                                                                      |
@@ -43,7 +43,7 @@ Direct follows are useful because the viewer intentionally expressed interest in
 
 | Source               | Nostr data                                                            | Scope               | Role in trust                                                                    |
 | -------------------- | --------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------- |
-| Community definition | Kind `32222` at an exact controller and `d=<communityId>` coordinate  | Community branch    | Defines metadata, sections, relays, and profile-list refs.                       |
+| Community definition | Kind `32222` at an exact owner and `d=<communityId>` coordinate  | Community branch    | Defines metadata, sections, relays, and profile-list refs.                       |
 | Profile lists        | Kind `30000` referenced by a community definition                     | Community section   | Defines moderators and members/grantees.                                         |
 | Admin role           | Community definition author                                           | Community           | Strongest community authority.                                                   |
 | Moderator role       | Owner of a referenced profile list with loaded evidence               | Community section   | Strong community authority for grants, reports, and repo associations.           |

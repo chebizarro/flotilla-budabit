@@ -40,12 +40,12 @@
   import {parseExactCommunityRouteParam} from "@app/util/routes"
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityPubkey = $derived(routeCommunity?.ownerPubkey || "")
   const communityId = $derived(routeCommunity?.communityId || "")
   const communityAddress = $derived(routeCommunity?.address || "")
   const communityDefinition = $derived(
     $activeExactCommunityDefinition?.pointer.address === communityAddress &&
-      $activeExactCommunityDefinition.controllerPubkey === communityPubkey
+      $activeExactCommunityDefinition.ownerPubkey === communityPubkey
       ? $activeExactCommunityDefinition
       : undefined,
   )

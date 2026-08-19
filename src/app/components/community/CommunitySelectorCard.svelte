@@ -1,7 +1,7 @@
 <script lang="ts">
   import {
     normalizeRelays,
-    type CommunityDefinitionV2,
+    type CommunityDefinition,
     type CommunityPointer,
   } from "@app/core/community"
   import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
@@ -11,7 +11,7 @@
 
   type Props = {
     community: CommunityPointer
-    definition?: CommunityDefinitionV2
+    definition?: CommunityDefinition
     relayHints?: string[]
     shareRelayHints?: string[]
     publishRelayHints?: string[]

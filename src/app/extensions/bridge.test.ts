@@ -4,19 +4,19 @@ import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {EVENT_TIME, THREAD, type TrustedEvent} from "@welshman/util"
 import {finalizeEvent, getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   COMMUNITY_SUBTYPE_ROOM,
   COMMUNITY_SUBTYPE_THREADS,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
-  type CommunitySectionInputV2,
+  parseCommunityDefinition,
+  type CommunityDefinitionSectionInput,
 } from "@app/core/community"
 import {
   makeAddressablePublicationRef,
-  makeTargetedPublicationForCommunityV2,
+  makeTargetedPublicationForCommunity,
 } from "@app/core/community-targeting"
 
 const mocks = vi.hoisted(() => {
@@ -99,7 +99,7 @@ const mocks = vi.hoisted(() => {
 const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
 const communityPubkey = testPubkey(51)
 const communityPointer = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: communityPubkey,
   relayHints: ["wss://relay.example.com/"],
 })!
@@ -121,14 +121,18 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
     ...overrides,
   }) as TrustedEvent
 
-const makeDefinition = (sections: CommunitySectionInputV2[], id = "community-definition") =>
-  parseCommunityDefinitionV2(
+const makeDefinition = (
+  sections: CommunityDefinitionSectionInput[],
+  id = "community-definition",
+  communityId: string = communityPointer.communityId,
+) =>
+  parseCommunityDefinition(
     makeEvent({
       id,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
+      kind: COMMUNITY_DEFINITION_KIND,
       content: "",
-      tags: buildCommunityDefinitionV2({
-        communityId: communityPointer.communityId,
+      tags: buildCommunityDefinition({
+        communityId,
         name: "Test community",
         relays: ["wss://relay.example.com"],
         sections,
@@ -199,7 +203,7 @@ const makePartialRuntimeContext = (userPubkey: string, authorityEvidenceSettled:
     contextSessionId: "partial-community-context",
     contextVersion: 1,
     communityId: communityPointer.communityId,
-    controllerPubkey: communityPointer.controllerPubkey,
+    ownerPubkey: communityPointer.ownerPubkey,
     definitionAddress: communityPointer.address,
     naddr: communityPointer.naddr,
     relays: ["wss://relay.example.com/"],
@@ -214,7 +218,7 @@ const calendarTargetingEvent = makeEvent({
   id: "target-1",
   pubkey: calendarWriterPubkey,
   kind: TARGETED_PUBLICATION_KIND,
-  tags: makeTargetedPublicationForCommunityV2({
+  tags: makeTargetedPublicationForCommunity({
     targetingId: "target-1",
     originalKind: EVENT_TIME,
     originalRef: makeAddressablePublicationRef({
@@ -704,12 +708,12 @@ describe("ExtensionBridge", () => {
     expect(onResizeRequest).not.toHaveBeenCalled()
   })
 
-  it("writes storage values to encoded v2 keys and reports decoded keys", async () => {
+  it("writes storage values to encoded extension keys and reports decoded keys", async () => {
     const {ExtensionBridge} = await import("./bridge")
     const extension = makeStorageExtension({id: "ext:with/slash"})
     const bridge = new ExtensionBridge(extension as any)
     const storageKey = "theme:color"
-    const expectedKey = "budabit:ext:v2:ext%3Awith%2Fslash:global:theme%3Acolor"
+    const expectedKey = "budabit:extension:ext%3Awith%2Fslash:global:theme%3Acolor"
 
     await expect(
       sendBridgeRequest(bridge, extension, "storage:set", {
@@ -747,25 +751,7 @@ describe("ExtensionBridge", () => {
         data: multibyteValue,
       }),
     ).resolves.toEqual({error: "Value exceeds maximum size of 1048576 bytes"})
-    expect(localStorage.getItem("budabit:ext:v2:test-extension:global:large-value")).toBeNull()
-  })
-
-  it("falls back to legacy storage keys without duplicating storage:keys results", async () => {
-    const {ExtensionBridge} = await import("./bridge")
-    const extension = makeStorageExtension({id: "legacy-ext"})
-    const bridge = new ExtensionBridge(extension as any)
-
-    localStorage.setItem("flotilla:ext:legacy-ext:settings", JSON.stringify({legacy: true}))
-    localStorage.setItem("flotilla:ext:legacy-ext:other", JSON.stringify({old: true}))
-    localStorage.setItem("budabit:ext:v2:legacy-ext:global:settings", JSON.stringify({v2: true}))
-
-    await expect(
-      sendBridgeRequest(bridge, extension, "storage:get", {key: "settings"}),
-    ).resolves.toEqual({status: "ok", data: {v2: true}})
-    await expect(sendBridgeRequest(bridge, extension, "storage:keys", {})).resolves.toEqual({
-      status: "ok",
-      keys: ["settings", "other"],
-    })
+    expect(localStorage.getItem("budabit:extension:test-extension:global:large-value")).toBeNull()
   })
 
   it("encodes repo-scoped storage with the repo address component", async () => {
@@ -774,7 +760,7 @@ describe("ExtensionBridge", () => {
     const extension = makeStorageExtension({id: "repo-ext", repoContext})
     const bridge = new ExtensionBridge(extension as any)
     const expectedRepoAddress = `30617:${repoContext.pubkey}:${repoContext.name}`
-    const expectedKey = `budabit:ext:v2:repo-ext:repo:${encodeURIComponent(expectedRepoAddress)}:build%3Astate`
+    const expectedKey = `budabit:extension:repo-ext:repo:${encodeURIComponent(expectedRepoAddress)}:build%3Astate`
 
     await expect(
       sendBridgeRequest(bridge, extension, "storage:set", {
@@ -797,39 +783,7 @@ describe("ExtensionBridge", () => {
     ).resolves.toEqual({status: "ok", data: {status: "green"}})
   })
 
-  it("reads legacy repo-scoped storage when no v2 value exists", async () => {
-    const {ExtensionBridge} = await import("./bridge")
-    const repoContext = {pubkey: "b".repeat(64), name: "repo"}
-    const extension = makeStorageExtension({id: "repo-ext", repoContext})
-    const bridge = new ExtensionBridge(extension as any)
-
-    localStorage.setItem(
-      `flotilla:ext:repo-ext:repo:${repoContext.pubkey}:${repoContext.name}:settings`,
-      JSON.stringify({legacyRepo: true}),
-    )
-
-    await expect(
-      sendBridgeRequest(bridge, extension, "storage:get", {key: "settings", repoScoped: true}),
-    ).resolves.toEqual({status: "ok", data: {legacyRepo: true}})
-  })
-
-  it("falls back to bare widget identifier legacy storage for canonical widget ids", async () => {
-    const {ExtensionBridge} = await import("./bridge")
-    const extension = makeWidgetStorageExtension({id: `30033:${"a".repeat(64)}:weather`})
-    const bridge = new ExtensionBridge(extension as any)
-
-    localStorage.setItem("flotilla:ext:weather:prefs", JSON.stringify({legacyWidget: true}))
-
-    await expect(
-      sendBridgeRequest(bridge, extension, "storage:get", {key: "prefs"}),
-    ).resolves.toEqual({status: "ok", data: {legacyWidget: true}})
-    await expect(sendBridgeRequest(bridge, extension, "storage:keys", {})).resolves.toEqual({
-      status: "ok",
-      keys: ["prefs"],
-    })
-  })
-
-  it("stores same-d widgets from different publishers under separate v2 keys", async () => {
+  it("stores same-d widgets from different publishers under separate keys", async () => {
     const {ExtensionBridge} = await import("./bridge")
     const first = makeWidgetStorageExtension({id: `30033:${"a".repeat(64)}:weather`})
     const second = makeWidgetStorageExtension({
@@ -854,8 +808,8 @@ describe("ExtensionBridge", () => {
     ).resolves.toEqual({status: "ok", data: {unit: "f"}})
 
     expect(getLocalStorageKeys().sort()).toEqual([
-      `budabit:ext:v2:30033%3A${"a".repeat(64)}%3Aweather:global:prefs`,
-      `budabit:ext:v2:30033%3A${"b".repeat(64)}%3Aweather:global:prefs`,
+      `budabit:extension:30033%3A${"a".repeat(64)}%3Aweather:global:prefs`,
+      `budabit:extension:30033%3A${"b".repeat(64)}%3Aweather:global:prefs`,
     ])
   })
 
@@ -967,7 +921,7 @@ describe("ExtensionBridge", () => {
           contextSessionId: "preview-community-context",
           contextVersion: 3,
           communityId: communityPointer.communityId,
-          controllerPubkey: communityPointer.controllerPubkey,
+          ownerPubkey: communityPointer.ownerPubkey,
           definitionAddress: communityPointer.address,
           naddr: communityPointer.naddr,
           relays: ["wss://preview.example.com/"],
@@ -1220,7 +1174,7 @@ describe("ExtensionBridge", () => {
         contextSessionId: "live-community-context",
         contextVersion,
         communityId: communityPointer.communityId,
-        controllerPubkey: communityPointer.controllerPubkey,
+        ownerPubkey: communityPointer.ownerPubkey,
         definitionAddress: communityPointer.address,
         naddr: communityPointer.naddr,
         relays: ["wss://preview.example.com/"],
@@ -1949,7 +1903,7 @@ describe("ExtensionBridge", () => {
         contextSessionId: "community-context-test",
         contextVersion: 0,
         communityId: communityPointer.communityId,
-        controllerPubkey: communityPointer.controllerPubkey,
+        ownerPubkey: communityPointer.ownerPubkey,
         definitionAddress: communityPointer.address,
         naddr: communityPointer.naddr,
         relays: ["wss://hint.example.com/"],
@@ -2111,7 +2065,7 @@ describe("ExtensionBridge", () => {
           pubkey: outsiderPubkey,
           created_at: pageCreatedAt - index,
           kind: TARGETED_PUBLICATION_KIND,
-          tags: makeTargetedPublicationForCommunityV2({
+          tags: makeTargetedPublicationForCommunity({
             targetingId: `outsider-target-${targetingPage}-${index}`,
             originalKind: EVENT_TIME,
             originalRef: makeAddressablePublicationRef({
@@ -2285,7 +2239,7 @@ describe("ExtensionBridge", () => {
         pubkey: outsiderPubkey,
         created_at: 300 - index,
         kind: TARGETED_PUBLICATION_KIND,
-        tags: makeTargetedPublicationForCommunityV2({
+        tags: makeTargetedPublicationForCommunity({
           targetingId: `later-outsider-target-${index}`,
           originalKind: EVENT_TIME,
           originalRef: makeAddressablePublicationRef({
@@ -2339,7 +2293,7 @@ describe("ExtensionBridge", () => {
       id: "external-target",
       pubkey: calendarWriterPubkey,
       kind: TARGETED_PUBLICATION_KIND,
-      tags: makeTargetedPublicationForCommunityV2({
+      tags: makeTargetedPublicationForCommunity({
         targetingId: "external-target",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -2355,7 +2309,7 @@ describe("ExtensionBridge", () => {
       id: "unauthorized-target",
       pubkey: outsiderPubkey,
       kind: TARGETED_PUBLICATION_KIND,
-      tags: makeTargetedPublicationForCommunityV2({
+      tags: makeTargetedPublicationForCommunity({
         targetingId: "unauthorized-target",
         originalKind: EVENT_TIME,
         originalRef: makeAddressablePublicationRef({
@@ -2724,6 +2678,12 @@ describe("ExtensionBridge", () => {
 
   it("queries direct and trusted-provider live streams hosted by descriptor moderators", async () => {
     const {ExtensionBridge} = await import("./bridge")
+    const streamCommunityId = testPubkey(56)
+    const streamCommunityDefinition = makeDefinition(
+      communityDefinition.sections,
+      "stream-community-definition",
+      streamCommunityId,
+    )
     const directOld = makeEvent({
       id: "direct-old",
       kind: 30311,
@@ -2731,7 +2691,7 @@ describe("ExtensionBridge", () => {
       created_at: 10,
       tags: [
         ["d", "direct-stream"],
-        ["h", communityPubkey],
+        ["h", streamCommunityId],
       ],
     })
     const directLive = makeEvent({
@@ -2741,7 +2701,7 @@ describe("ExtensionBridge", () => {
       created_at: 20,
       tags: [
         ["d", "direct-stream"],
-        ["h", communityPubkey],
+        ["h", streamCommunityId],
         ["status", "live"],
       ],
     })
@@ -2752,7 +2712,7 @@ describe("ExtensionBridge", () => {
       created_at: 30,
       tags: [
         ["d", "delegated-stream"],
-        ["t", `budabit-community:${communityPubkey}`],
+        ["t", `budabit-community:${streamCommunityId}`],
         ["p", calendarWriterPubkey, "", "host"],
         ["status", "live"],
       ],
@@ -2764,7 +2724,7 @@ describe("ExtensionBridge", () => {
       created_at: 40,
       tags: [
         ["d", "writer-stream"],
-        ["h", communityPubkey],
+        ["h", streamCommunityId],
       ],
     })
     const invalidDelegation = makeEvent({
@@ -2774,12 +2734,12 @@ describe("ExtensionBridge", () => {
       created_at: 40,
       tags: [
         ["d", "invalid-provider-stream"],
-        ["t", `budabit-community:${communityPubkey}`],
+        ["t", `budabit-community:${streamCommunityId}`],
         ["p", calendarMemberPubkey, "", "host"],
       ],
     })
 
-    mocks.activeExactCommunityDefinition.set(communityDefinition)
+    mocks.activeExactCommunityDefinition.set(streamCommunityDefinition)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {

@@ -4,7 +4,7 @@ import {
   PROFILE_LIST_STATUS_DECLINED,
   getProfileListStatus,
   getProfileListPubkeys,
-  getCommunitySectionPurposeV2,
+  getCommunitySectionPurpose,
   isProfileListDeclined,
   normalizePubkey,
   normalizeRelays,
@@ -12,14 +12,14 @@ import {
   selectCurrentAddressableEvent,
 } from "@app/core/community"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   makeCommunityProfileListIdentifier,
-  normalizeCommunityRelayV2,
-  updateCommunityDefinitionV2,
-  type CommunityDefinitionV2,
-  type CommunityProfileListRefV2,
-  type CommunitySectionInputV2,
-} from "@app/core/community-v2"
+  normalizeCommunityRelay,
+  updateCommunityDefinition,
+  type CommunityDefinition,
+  type CommunityDefinitionProfileListRef,
+  type CommunityDefinitionSectionInput,
+} from "@app/core/community-protocol"
 
 export type CommunityBootstrapGrantRole = "member" | "moderator"
 
@@ -30,7 +30,7 @@ export type CommunityBootstrapGrantDraft = {
 }
 
 export type CommunityProfileListDraftUpdate = {
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   pubkeys: string[]
 }
 
@@ -40,7 +40,7 @@ export type CommunityModeratorInviteState = {
   moderatorPubkey: string
   sectionName: string
   displayName: string
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   status: CommunityModeratorInviteStatus
   response?: TrustedEvent
 }
@@ -48,7 +48,7 @@ export type CommunityModeratorInviteState = {
 export type PendingCommunityModeratorInvite = CommunityModeratorInviteState & {status: "pending"}
 
 export const findCommunityProfileListEvent = (
-  profileListRef: CommunityProfileListRefV2 | undefined,
+  profileListRef: CommunityDefinitionProfileListRef | undefined,
   events: TrustedEvent[],
 ) => {
   if (!profileListRef) return undefined
@@ -74,7 +74,7 @@ export const isActiveCommunityProfileListEvent = (event: TrustedEvent | undefine
   Boolean(event && !isProfileListDeclined(event))
 
 export const isActiveCommunityProfileListRef = (
-  ref: CommunityProfileListRefV2 | undefined,
+  ref: CommunityDefinitionProfileListRef | undefined,
   profileListEvents: TrustedEvent[] | undefined,
 ) => {
   if (!ref || !profileListEvents) return false
@@ -90,7 +90,7 @@ export const makeManualModeratorProfileListRef = ({
   moderatorPubkey: string
   sectionName: string
   relays?: string[]
-}): CommunityProfileListRefV2 => {
+}): CommunityDefinitionProfileListRef => {
   const pubkey = normalizePubkey(moderatorPubkey)
   const identifier = sectionName.trim()
   const relay = normalizeRelays(relays)[0]
@@ -105,7 +105,7 @@ export const makeModeratorInviteResponseProfileList = ({
   profileList,
   declined = false,
 }: {
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   declined?: boolean
 }): EventContent & {kind: typeof PROFILE_LIST_KIND} => ({
   kind: PROFILE_LIST_KIND,
@@ -123,11 +123,11 @@ export const getCommunityModeratorInviteProfileListRefs = ({
   definition,
   moderatorPubkey,
 }: {
-  definition: CommunityDefinitionV2 | undefined
+  definition: CommunityDefinition | undefined
   moderatorPubkey: string | undefined
 }) => {
   const pubkey = normalizePubkey(moderatorPubkey || "")
-  if (!definition || !pubkey || pubkey === definition.controllerPubkey) return []
+  if (!definition || !pubkey || pubkey === definition.ownerPubkey) return []
 
   return definition.sections.flatMap(section =>
     section.profileLists.filter(
@@ -141,13 +141,13 @@ export const getCommunityModeratorInviteStates = ({
   moderatorPubkey,
   profileListEvents = [],
 }: {
-  definition: CommunityDefinitionV2 | undefined
+  definition: CommunityDefinition | undefined
   moderatorPubkey?: string
   profileListEvents?: TrustedEvent[]
 }): CommunityModeratorInviteState[] => {
   if (!definition) return []
 
-  const ownerPubkey = definition.controllerPubkey
+  const ownerPubkey = definition.ownerPubkey
   const requestedModeratorPubkey = normalizePubkey(moderatorPubkey || "")
 
   return definition.sections.flatMap(section => {
@@ -184,21 +184,21 @@ export const getOwnerMembershipGrantProfileList = ({
   sectionName,
   relays = [],
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   sectionName: string
   relays?: string[]
 }): {
-  profileList?: CommunityProfileListRefV2
-  definitionUpdate?: EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND_V2}
+  profileList?: CommunityDefinitionProfileListRef
+  definitionUpdate?: EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND}
 } => {
   const section = definition.sections.find(item => item.name === sectionName)
-  const owner = normalizePubkey(definition.controllerPubkey)
+  const owner = normalizePubkey(definition.ownerPubkey)
   if (!section || !owner) return {}
 
   const toProfileListRef = (
     address: string,
     relay?: string,
-  ): CommunityProfileListRefV2 | undefined => {
+  ): CommunityDefinitionProfileListRef | undefined => {
     const [kindValue, pubkey, ...identifierParts] = address.split(":")
     const identifier = identifierParts.join(":")
     if (
@@ -215,18 +215,18 @@ export const getOwnerMembershipGrantProfileList = ({
     .find(ref => parseAddressRef(ref?.address || "")?.pubkey === owner)
   if (existing) return {profileList: existing}
 
-  const purpose = getCommunitySectionPurposeV2(definition.communityId, section)
+  const purpose = getCommunitySectionPurpose(definition.communityId, section)
   const identifier = purpose
     ? makeCommunityProfileListIdentifier(definition.communityId, purpose)
     : undefined
   if (!identifier) return {}
-  const relay = relays.map(normalizeCommunityRelayV2).find(Boolean)
+  const relay = relays.map(normalizeCommunityRelay).find(Boolean)
   const address = `${PROFILE_LIST_KIND}:${owner}:${identifier}`
-  const profileList: CommunityProfileListRefV2 = {
+  const profileList: CommunityDefinitionProfileListRef = {
     address,
     ...(relay ? {relay} : {}),
   }
-  const base = updateCommunityDefinitionV2(definition, {})
+  const base = updateCommunityDefinition(definition, {})
   const tags = base.tags.map(tag => [...tag])
   const sectionStart = tags.findIndex(tag => tag[0] === "content" && tag[1] === section.name)
   if (sectionStart < 0) return {}
@@ -245,7 +245,7 @@ export const getPendingCommunityModeratorInvites = ({
   moderatorPubkey,
   profileListEvents = [],
 }: {
-  definition: CommunityDefinitionV2 | undefined
+  definition: CommunityDefinition | undefined
   moderatorPubkey: string | undefined
   profileListEvents?: TrustedEvent[]
 }): PendingCommunityModeratorInvite[] => {
@@ -273,24 +273,24 @@ const addGrantBySection = (
 export const applyCommunityBootstrapGrants = ({
   sections,
   communityId,
-  controllerPubkey,
-  profileListPubkey = controllerPubkey,
+  ownerPubkey,
+  profileListPubkey = ownerPubkey,
   relays = [],
   profileListEvents = [],
   grants = [],
 }: {
-  sections: CommunitySectionInputV2[]
+  sections: CommunityDefinitionSectionInput[]
   communityId: string
-  controllerPubkey: string
+  ownerPubkey: string
   profileListPubkey?: string
   relays?: string[]
   profileListEvents?: TrustedEvent[]
   grants?: CommunityBootstrapGrantDraft[]
 }): {
-  sections: CommunitySectionInputV2[]
+  sections: CommunityDefinitionSectionInput[]
   profileListUpdates: CommunityProfileListDraftUpdate[]
 } => {
-  const normalizedControllerPubkey = normalizePubkey(controllerPubkey)
+  const normalizedOwnerPubkey = normalizePubkey(ownerPubkey)
   const normalizedProfileListPubkey = normalizePubkey(profileListPubkey)
   const normalizedRelays = normalizeRelays(relays)
   const memberGrantsBySection = new Map<string, string[]>()
@@ -318,13 +318,13 @@ export const applyCommunityBootstrapGrants = ({
     const memberPubkeys = memberGrantsBySection.get(section.name) || []
     const moderatorPubkeys = moderatorGrantsBySection.get(section.name) || []
 
-    if (memberPubkeys.length > 0 && normalizedControllerPubkey) {
+    if (memberPubkeys.length > 0 && normalizedOwnerPubkey) {
       let profileList = profileLists.find(
         ref => parseAddressRef(ref.address)?.pubkey === normalizedProfileListPubkey,
       )
 
       if (!profileList) {
-        const purpose = getCommunitySectionPurposeV2(communityId, section)
+        const purpose = getCommunitySectionPurpose(communityId, section)
         const identifier = purpose
           ? makeCommunityProfileListIdentifier(communityId, purpose)
           : undefined
@@ -369,7 +369,7 @@ export const makeCommunityProfileList = ({
   profileList,
   pubkeys,
 }: {
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   pubkeys: string[]
 }): EventContent & {kind: typeof PROFILE_LIST_KIND} => {
   const ref = parseAddressRef(profileList.address)
@@ -393,7 +393,7 @@ export const addPubkeyToCommunityProfileList = ({
   event,
   pubkey,
 }: {
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   event?: TrustedEvent
   pubkey: string
 }) => makeCommunityProfileList({profileList, pubkeys: [...getProfileListPubkeys(event), pubkey]})
@@ -403,7 +403,7 @@ export const removePubkeyFromCommunityProfileList = ({
   event,
   pubkey,
 }: {
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   event?: TrustedEvent
   pubkey: string
 }) => {
@@ -420,7 +420,7 @@ export const makeCommunityGrantEvent = ({
   profileListEvent,
   pubkey,
 }: {
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   profileListEvent?: TrustedEvent
   pubkey: string
 }) => addPubkeyToCommunityProfileList({profileList, event: profileListEvent, pubkey})
@@ -430,7 +430,7 @@ export const makeCommunityRevokeEvent = ({
   profileListEvent,
   pubkey,
 }: {
-  profileList: CommunityProfileListRefV2
+  profileList: CommunityDefinitionProfileListRef
   profileListEvent?: TrustedEvent
   pubkey: string
 }) => removePubkeyFromCommunityProfileList({profileList, event: profileListEvent, pubkey})

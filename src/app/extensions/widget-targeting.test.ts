@@ -1,10 +1,10 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {
-  TARGETED_PUBLICATION_KIND_V2,
-  buildTargetedPublicationV2,
+  TARGETED_PUBLICATION_KIND,
+  buildTargetedPublication,
   makeCommunityPointer,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
 } from "@app/core/community"
 import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import type {TrustedEvent} from "@welshman/util"
@@ -29,12 +29,12 @@ import {
 
 const widgetPubkey = "a".repeat(64)
 const firstCommunity = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(2)),
   communityId: getPublicKey(new Uint8Array(32).fill(3)),
   relayHints: ["wss://community.example"],
 })!
 const secondCommunity = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(4)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(4)),
   communityId: firstCommunity.communityId,
   relayHints: ["wss://second.example"],
 })!
@@ -129,9 +129,9 @@ describe("widget targeting", () => {
 
   it("extracts original and community relay hints from targeting events", () => {
     const event = makeEvent({
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       content: "",
-      tags: buildTargetedPublicationV2({
+      tags: buildTargetedPublication({
         id: "target-weather",
         kind: SMART_WIDGET_KIND,
         source: {
@@ -174,7 +174,7 @@ describe("widget targeting", () => {
       "wss://community.example/",
       "wss://second.example/",
     ])
-    expect(event).toMatchObject({kind: TARGETED_PUBLICATION_KIND_V2, content: "", created_at: 123})
+    expect(event).toMatchObject({kind: TARGETED_PUBLICATION_KIND, content: "", created_at: 123})
     expect(event.tags).toEqual([
       ["d", "target-weather"],
       ["a", `${SMART_WIDGET_KIND}:${widgetPubkey}:weather`, "wss://widgets.example", "source"],
@@ -186,7 +186,7 @@ describe("widget targeting", () => {
     ])
     const publishedEvent = event as TrustedEvent
     expect(
-      parseTargetedPublicationV2(publishedEvent)!.communities.map(community => community.address),
+      parseTargetedPublication(publishedEvent)!.communities.map(community => community.address),
     ).toEqual([firstCommunity.address, secondCommunity.address])
     expect(publishedEvent.tags.some(tag => tag[0] === "p")).toBe(false)
   })

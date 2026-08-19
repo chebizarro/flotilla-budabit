@@ -1,5 +1,5 @@
 import type {TrustedEvent} from "@welshman/util"
-import {normalizePubkey, type CommunityDefinitionV2} from "@app/core/community"
+import {normalizePubkey, type CommunityDefinition} from "@app/core/community"
 import {
   selectUserCommunityRefs,
   type ActiveUserCommunityRef,
@@ -31,7 +31,7 @@ export type CommunityTrustInput = {
   viewerPubkey?: string
   targetPubkey?: string
   context?: CommunityTrustContext
-  definitions?: CommunityDefinitionV2[]
+  definitions?: CommunityDefinition[]
   definitionEvents?: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportStates?: UserCommunityReportStates
@@ -66,7 +66,7 @@ const roleEvidence: Record<ActiveUserCommunityRole, Pick<TrustEvidence, "type" |
 
 const roleOrder: ActiveUserCommunityRole[] = ["admin", "moderator", "member"]
 
-const getDefinitionAddress = (definition: CommunityDefinitionV2) => definition.pointer.address
+const getDefinitionAddress = (definition: CommunityDefinition) => definition.pointer.address
 
 const filterRefsByCommunity = (
   refs: ActiveUserCommunityRef[],
@@ -81,7 +81,7 @@ const getRoleEvidence = (
   role: ActiveUserCommunityRole,
 ): TrustEvidence => ({
   ...roleEvidence[role],
-  communityPubkey: ref.community.controllerPubkey,
+  communityPubkey: ref.community.ownerPubkey,
 })
 
 const getSharedSectionNames = (

@@ -9,20 +9,20 @@ Budabit treats this as a clean redesign of the community foundation. Legacy rela
 Budabit community branches are identified by an exact definition address:
 
 ```text
-32222:<controllerPubkey>:<communityId>
+32222:<ownerPubkey>:<communityId>
 ```
 
-The canonical external pointer is the definition `naddr`. The controller publishes the addressable `kind:32222` definition. Its tags are authoritative for community metadata, relays and other infrastructure, supported content sections, profile lists used for write permissions, and optional badge references for engagement.
+The canonical external pointer is the definition `naddr`. The owner publishes the addressable `kind:32222` definition. Its tags are authoritative for community metadata, relays and other infrastructure, supported content sections, profile lists used for write permissions, and optional badge references for engagement.
 
 Relays are infrastructure. They are not identity.
 
-The selected exact branch is the root of the application session. Users enter its canonical definition `naddr`, which contains kind `32222`, the controller, the `communityId` identifier, and optional relay hints.
+The selected exact branch is the root of the application session. Users enter its canonical definition `naddr`, which contains kind `32222`, the owner, the `communityId` identifier, and optional relay hints.
 
 ## Core Principles
 
 | Principle                 | Decision                                                                                                                                                |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Community identity        | Stable association uses `communityId`; exact branch identity is `32222:<controller>:<communityId>` and its canonical pointer is the definition `naddr`. |
+| Community identity        | Stable association uses `communityId`; exact branch identity is `32222:<owner>:<communityId>` and its canonical pointer is the definition `naddr`. |
 | Relay identity            | Relay URLs are never community IDs. They are relay hints and publication targets.                                                                       |
 | Session scope             | A Budabit session stores the selected exact definition address and optional relay hints.                                                                |
 | Community visibility      | Budabit admits permission-governed content under current section grants. Matching events may remain publicly retrievable from relays.                   |
@@ -48,7 +48,7 @@ Community definition naddr
 
 Resolution flow:
 
-1. Parse the canonical definition `naddr` and require kind `32222`, a controller, and a valid `communityId` identifier.
+1. Parse the canonical definition `naddr` and require kind `32222`, a owner, and a valid `communityId` identifier.
 2. Extract up to three normalized relay hints.
 3. Fetch valid definitions at exact `kind + author + #d` coordinates.
 4. Select the current replacement at that exact address deterministically.
@@ -68,7 +68,7 @@ Suggested shape:
 {
   "userPubkey": "<logged-in-user-pubkey>",
   "communityId": "<stable-community-id>",
-  "communityDefinitionAddress": "32222:<controller-pubkey>:<community-id>",
+  "communityDefinitionAddress": "32222:<owner-pubkey>:<community-id>",
   "communityRelayHints": ["wss://relay.example.com"],
   "communityDefinitionId": "<accepted-kind-32222-event-id>"
 }
@@ -82,16 +82,16 @@ Guests can select a community and read content that passes Budabit's current com
 
 ## Community Definition
 
-Budabit community branches are defined by addressable `kind:32222` events at `32222:<controller>:<communityId>`.
+Budabit community branches are defined by addressable `kind:32222` events at `32222:<owner>:<communityId>`.
 
-Community `name`, `description`, `picture`, `banner`, and `website` metadata comes only from definition tags. The controller's `kind:0` is a personal profile and does not fill or override community metadata.
+Community `name`, `description`, `picture`, `banner`, and `website` metadata comes only from definition tags. The owner's `kind:0` is a personal profile and does not fill or override community metadata.
 
 Example target shape:
 
 ```json
 {
   "kind": 32222,
-  "pubkey": "<controller-pubkey>",
+  "pubkey": "<owner-pubkey>",
   "tags": [
     ["d", "<community-id>"],
     ["name", "Buda Builders"],
@@ -212,7 +212,7 @@ A user is part of a community when at least one of these is true:
 
 Non-admin users are excluded when effective community report state contains a person-ban for that user. The community admin is never excluded by a person-ban in their own community.
 
-Discovery should keep `kind:30000` profile-list events as a first-class entrypoint. A branch reference must be `32222:<controller>:<communityId>` and, where it conveys branch authority, use marker `community`. Budabit validates the role against the loaded exact `kind:32222` section references before treating the user as a moderator.
+Discovery should keep `kind:30000` profile-list events as a first-class entrypoint. A branch reference must be `32222:<owner>:<communityId>` and, where it conveys branch authority, use marker `community`. Budabit validates the role against the loaded exact `kind:32222` section references before treating the user as a moderator.
 
 Community-scoped data used to validate membership, including referenced section profile lists and moderation reports, should be loaded from the relays declared by the loaded `kind:32222` definition. Indexer relays may help discover exact definitions, but they are not fallback sources for scoped membership or moderation state.
 
@@ -355,7 +355,7 @@ Example targeting event:
     ["a", "31922:<author-pubkey>:calendar-event-id", "wss://author-relay.example", "source"],
     ["k", "31922"],
     ["h", "<community-id>"],
-    ["a", "32222:<controller-pubkey>:<community-id>", "wss://main.community.relay", "community"]
+    ["a", "32222:<owner-pubkey>:<community-id>", "wss://main.community.relay", "community"]
   ],
   "content": ""
 }
@@ -523,7 +523,7 @@ Community bootstrap:
 ```json
 {
   "kinds": [32222],
-  "authors": ["<controller-pubkey>"],
+  "authors": ["<owner-pubkey>"],
   "#d": ["<community-id>"]
 }
 ```
@@ -576,17 +576,17 @@ Foreground and background consumers coordinate live ownership by community and r
 
 ## Admin Key Model
 
-Budabit should not require the branch controller key to be hot.
+Budabit should not require the branch owner key to be hot.
 
 | Key            | Role                                                                                                                                        |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Controller key | Signs the exact branch's `kind:32222` definition. Should be cold or rarely used.                                                            |
+| Owner key | Signs the exact branch's `kind:32222` definition. Should be cold or rarely used.                                                            |
 | Moderator key  | Updates delegated profile lists, reviews applications, creates community endorsements, and publishes admin labels. Can be hot or delegated. |
 | User key       | Publishes user content when included in the relevant profile list.                                                                          |
 
 The profile list `a` tags may reference lists managed by delegated pubkeys. Badge definitions and awards are discovered by badge-specific views and should not be required for community bootstrap or section access checks.
 
-This allows Budabit to support practical admin workflows without exposing the controller key in a browser or server process.
+This allows Budabit to support practical admin workflows without exposing the owner key in a browser or server process.
 
 ## Admission Workflow
 

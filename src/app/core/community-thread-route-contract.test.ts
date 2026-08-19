@@ -21,11 +21,11 @@ describe("exact community thread route contract", () => {
     }
   })
 
-  it("separates controller authority, content association, and sibling identity", () => {
+  it("separates owner authority, content association, and sibling identity", () => {
     for (const route of routes) {
       const source = readProjectFile(route)
 
-      expect(source, route).toContain("routeCommunity?.controllerPubkey")
+      expect(source, route).toContain("routeCommunity?.ownerPubkey")
       expect(source, route).toContain("routeCommunity?.communityId")
       expect(source, route).toContain("routeCommunity?.address")
       expect(source, route).toContain(
@@ -53,7 +53,7 @@ describe("exact community thread route contract", () => {
     )
   })
 
-  it("keeps navigation and modal context exact across same-controller siblings", () => {
+  it("keeps navigation and modal context exact across same-owner siblings", () => {
     const list = readProjectFile(routes[0])
     const create = readProjectFile(routes[1])
     const detail = readProjectFile(routes[2])
@@ -65,9 +65,9 @@ describe("exact community thread route contract", () => {
       expect(source).toContain("<CommunityMenuButton community={routeCommunity?.naddr}")
     }
     expect(list).toContain("community={routeCommunity}")
-    expect(list).toContain("url={communityControllerPubkey}")
+    expect(list).toContain("url={communityOwnerPubkey}")
     expect(detail).toContain("community={routeCommunity}")
-    expect(detail).toContain("url={communityControllerPubkey}")
+    expect(detail).toContain("url={communityOwnerPubkey}")
     expect(item).toContain("makeExactCommunityThreadPath(community, event.id)")
     expect(actions).toContain("makeExactCommunityThreadPath(community, event.id)")
     expect(actions).toContain("<EventActions")
@@ -88,7 +88,7 @@ describe("exact community thread route contract", () => {
         "$activeExactCommunityPointer?.address !== routeCommunity.address",
       )
       expect(source, route).not.toContain(
-        "session?.definition.controllerPubkey !== routeCommunity.controllerPubkey",
+        "session?.definition.ownerPubkey !== routeCommunity.ownerPubkey",
       )
     }
   })

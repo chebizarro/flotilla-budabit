@@ -22,12 +22,12 @@
     type ProfileCodeTrustInteractionDetail,
     type ProfileCodeTrustAnalysis,
   } from "@app/core/profile-collab-analysis"
-  import type {CommunityDefinitionV2} from "@app/core/community"
+  import type {CommunityDefinition} from "@app/core/community"
   import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 
   type Props = {
     pubkey: string
-    communityDefinition?: CommunityDefinitionV2
+    communityDefinition?: CommunityDefinition
     communityProfileListEvents?: TrustedEvent[]
     communityReportState?: EffectiveCommunityReportState
   }

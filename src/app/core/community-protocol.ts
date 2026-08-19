@@ -1,19 +1,19 @@
 import * as nip19 from "nostr-tools/nip19"
 import type {EventContent, Filter, TrustedEvent} from "@welshman/util"
 
-export const COMMUNITY_DEFINITION_KIND_V2 = 32222
-export const TARGETED_PUBLICATION_KIND_V2 = 30222
-export const MAX_TARGET_COMMUNITIES_V2 = 12
+export const COMMUNITY_DEFINITION_KIND = 32222
+export const TARGETED_PUBLICATION_KIND = 30222
+export const MAX_TARGET_COMMUNITIES = 12
 
 declare const communityIdBrand: unique symbol
-declare const controllerPubkeyBrand: unique symbol
+declare const ownerPubkeyBrand: unique symbol
 
 export type CommunityId = string & {[communityIdBrand]: true}
-export type ControllerPubkey = string & {[controllerPubkeyBrand]: true}
+export type OwnerPubkey = string & {[ownerPubkeyBrand]: true}
 
 export type CommunityPointer = {
-  kind: typeof COMMUNITY_DEFINITION_KIND_V2
-  controllerPubkey: ControllerPubkey
+  kind: typeof COMMUNITY_DEFINITION_KIND
+  ownerPubkey: OwnerPubkey
   communityId: CommunityId
   address: string
   cacheKey: string
@@ -21,7 +21,7 @@ export type CommunityPointer = {
   relayHints: string[]
 }
 
-export type CommunityMetadataV2 = {
+export type CommunityDefinitionMetadata = {
   name: string
   description?: string
   picture?: string
@@ -31,53 +31,57 @@ export type CommunityMetadataV2 = {
   geohash?: string
 }
 
-export type CommunitySectionKindV2 = {kind: number; subtype?: string}
-export type CommunityProfileListRefV2 = {address: string; relay?: string}
-export type CommunityBadgeRefV2 = {address: string; relay?: string}
-export type CommunityRetentionV2 = {kind: number; value: number; type: "time" | "count"}
-export type CommunityMintV2 = {url: string; type?: string}
-export type CommunityTermsV2 = {reference: string; relay?: string}
-export type CommunityServiceV2 = {
+export type CommunityDefinitionSectionKind = {kind: number; subtype?: string}
+export type CommunityDefinitionProfileListRef = {address: string; relay?: string}
+export type CommunityDefinitionBadgeRef = {address: string; relay?: string}
+export type CommunityDefinitionRetentionPolicy = {
+  kind: number
+  value: number
+  type: "time" | "count"
+}
+export type CommunityDefinitionMint = {url: string; type?: string}
+export type CommunityDefinitionTerms = {reference: string; relay?: string}
+export type CommunityDefinitionService = {
   name: string
-  pubkey: ControllerPubkey
+  pubkey: OwnerPubkey
   requestRelay: string
   handlerAddress: string
   handlerRelay: string
 }
 
-export type CommunitySectionV2 = {
+export type CommunityDefinitionSection = {
   name: string
-  kinds: CommunitySectionKindV2[]
-  profileLists: CommunityProfileListRefV2[]
-  badges: CommunityBadgeRefV2[]
-  retention: CommunityRetentionV2[]
+  kinds: CommunityDefinitionSectionKind[]
+  profileLists: CommunityDefinitionProfileListRef[]
+  badges: CommunityDefinitionBadgeRef[]
+  retention: CommunityDefinitionRetentionPolicy[]
 }
 
-export type CommunitySectionInputV2 = {
+export type CommunityDefinitionSectionInput = {
   name: string
-  kinds: CommunitySectionKindV2[]
-  profileLists: CommunityProfileListRefV2[]
-  badges?: CommunityBadgeRefV2[]
-  retention?: CommunityRetentionV2[]
+  kinds: CommunityDefinitionSectionKind[]
+  profileLists: CommunityDefinitionProfileListRef[]
+  badges?: CommunityDefinitionBadgeRef[]
+  retention?: CommunityDefinitionRetentionPolicy[]
 }
 
-export type CommunityDefinitionV2 = {
+export type CommunityDefinition = {
   event: TrustedEvent
   pointer: CommunityPointer
   communityId: CommunityId
-  controllerPubkey: ControllerPubkey
-  metadata: CommunityMetadataV2
+  ownerPubkey: OwnerPubkey
+  metadata: CommunityDefinitionMetadata
   relays: string[]
   blossomServers: string[]
   graspServers: string[]
-  mints: CommunityMintV2[]
-  terms?: CommunityTermsV2
-  services: CommunityServiceV2[]
-  sections: CommunitySectionV2[]
+  mints: CommunityDefinitionMint[]
+  terms?: CommunityDefinitionTerms
+  services: CommunityDefinitionService[]
+  sections: CommunityDefinitionSection[]
   sourceTags: string[][]
 }
 
-export type BuildCommunityDefinitionV2Params = Omit<CommunityMetadataV2, "name"> & {
+export type BuildCommunityDefinitionParams = Omit<CommunityDefinitionMetadata, "name"> & {
   communityId: string
   name: string
   relays: string[]
@@ -92,22 +96,22 @@ export type BuildCommunityDefinitionV2Params = Omit<CommunityMetadataV2, "name">
     handlerAddress: string
     handlerRelay: string
   }>
-  sections: CommunitySectionInputV2[]
+  sections: CommunityDefinitionSectionInput[]
 }
 
-export type TargetedPublicationSourceV2 =
+export type TargetedPublicationSource =
   | {type: "a"; value: string; relay?: string}
   | {type: "e"; value: string; relay?: string; pubkey?: string}
 
-export type TargetedPublicationV2 = {
+export type TargetedPublication = {
   id: string
   kind: number
-  source?: TargetedPublicationSourceV2
+  source?: TargetedPublicationSource
   communities: CommunityPointer[]
 }
 
-export type TargetedPublicationTemplateV2 = EventContent & {
-  kind: typeof TARGETED_PUBLICATION_KIND_V2
+export type TargetedPublicationTemplate = EventContent & {
+  kind: typeof TARGETED_PUBLICATION_KIND
 }
 
 const LOWER_HEX_64 = /^[0-9a-f]{64}$/
@@ -122,8 +126,8 @@ const utf8Length = (value: string) => new TextEncoder().encode(value).length
 export const parseCommunityId = (value: string): CommunityId | undefined =>
   LOWER_HEX_64.test(value) ? (value as CommunityId) : undefined
 
-export const parseControllerPubkey = (value: string): ControllerPubkey | undefined =>
-  LOWER_HEX_64.test(value) ? (value as ControllerPubkey) : undefined
+export const parseOwnerPubkey = (value: string): OwnerPubkey | undefined =>
+  LOWER_HEX_64.test(value) ? (value as OwnerPubkey) : undefined
 
 const normalizeUrl = (
   value: string | undefined,
@@ -152,7 +156,7 @@ const normalizeUrl = (
   }
 }
 
-export const normalizeCommunityRelayV2 = (value?: string) => normalizeUrl(value, ["wss:"])
+export const normalizeCommunityRelay = (value?: string) => normalizeUrl(value, ["wss:"])
 
 const normalizeHttpsUrl = (value?: string) => normalizeUrl(value, ["https:"])
 const normalizeWebsite = (value?: string) => normalizeUrl(value, ["http:", "https:"])
@@ -161,7 +165,7 @@ const normalizeRelayList = (values: string[], maximum: number) => {
   const result: string[] = []
 
   for (const value of values) {
-    const relay = normalizeCommunityRelayV2(value)
+    const relay = normalizeCommunityRelay(value)
     if (!relay || result.includes(relay)) continue
     result.push(relay)
     if (result.length === maximum) break
@@ -171,30 +175,30 @@ const normalizeRelayList = (values: string[], maximum: number) => {
 }
 
 export const makeCommunityPointer = ({
-  controllerPubkey,
+  ownerPubkey,
   communityId,
   relayHints = [],
 }: {
-  controllerPubkey: string
+  ownerPubkey: string
   communityId: string
   relayHints?: string[]
 }): CommunityPointer | undefined => {
-  const controller = parseControllerPubkey(controllerPubkey)
+  const owner = parseOwnerPubkey(ownerPubkey)
   const id = parseCommunityId(communityId)
-  if (!controller || !id) return undefined
+  if (!owner || !id) return undefined
 
-  const address = `${COMMUNITY_DEFINITION_KIND_V2}:${controller}:${id}`
+  const address = `${COMMUNITY_DEFINITION_KIND}:${owner}:${id}`
   const relays = normalizeRelayList(relayHints, 3)
 
   return {
-    kind: COMMUNITY_DEFINITION_KIND_V2,
-    controllerPubkey: controller,
+    kind: COMMUNITY_DEFINITION_KIND,
+    ownerPubkey: owner,
     communityId: id,
     address,
     cacheKey: address,
     naddr: nip19.naddrEncode({
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      pubkey: controller,
+      kind: COMMUNITY_DEFINITION_KIND,
+      pubkey: owner,
       identifier: id,
       relays,
     }),
@@ -203,21 +207,21 @@ export const makeCommunityPointer = ({
 }
 
 export const parseCommunityDefinitionAddress = (value: string) => {
-  const [kind, controllerPubkey, communityId, ...extra] = value.split(":")
-  if (kind !== String(COMMUNITY_DEFINITION_KIND_V2) || extra.length > 0) return undefined
+  const [kind, ownerPubkey, communityId, ...extra] = value.split(":")
+  if (kind !== String(COMMUNITY_DEFINITION_KIND) || extra.length > 0) return undefined
 
-  return makeCommunityPointer({controllerPubkey, communityId})
+  return makeCommunityPointer({ownerPubkey, communityId})
 }
 
 export const parseCommunityNaddr = (value: string): CommunityPointer | undefined => {
   try {
     const decoded = nip19.decode(value)
-    if (decoded.type !== "naddr" || decoded.data.kind !== COMMUNITY_DEFINITION_KIND_V2) {
+    if (decoded.type !== "naddr" || decoded.data.kind !== COMMUNITY_DEFINITION_KIND) {
       return undefined
     }
 
     return makeCommunityPointer({
-      controllerPubkey: decoded.data.pubkey,
+      ownerPubkey: decoded.data.pubkey,
       communityId: decoded.data.identifier,
       relayHints: decoded.data.relays,
     })
@@ -231,7 +235,7 @@ export const communityPointersEqual = (
   second: Pick<CommunityPointer, "address"> | undefined,
 ) => Boolean(first && second && first.address === second.address)
 
-export const makeCommunityScopeTagsV2 = (communityIdValue: string, tags: string[][] = []) => {
+export const makeCommunityScopeTags = (communityIdValue: string, tags: string[][] = []) => {
   const communityId = parseCommunityId(communityIdValue)
   if (!communityId) throw new Error("Invalid community ID.")
   if (tags.some(tag => tag[0] === "h")) {
@@ -241,17 +245,17 @@ export const makeCommunityScopeTagsV2 = (communityIdValue: string, tags: string[
   return [["h", communityId], ...tags.map(tag => [...tag])]
 }
 
-export const makeCommunityAuthorityTagsV2 = (
+export const makeCommunityAuthorityTags = (
   community: CommunityPointer,
   relay?: string,
   tags: string[][] = [],
 ) => {
   const pointer = makeCommunityPointer({
-    controllerPubkey: community.controllerPubkey,
+    ownerPubkey: community.ownerPubkey,
     communityId: community.communityId,
     relayHints: community.relayHints,
   })
-  const normalizedRelay = relay ? normalizeCommunityRelayV2(relay) : undefined
+  const normalizedRelay = relay ? normalizeCommunityRelay(relay) : undefined
   if (!pointer || pointer.address !== community.address || (relay && !normalizedRelay)) {
     throw new Error("Invalid community authority.")
   }
@@ -259,13 +263,13 @@ export const makeCommunityAuthorityTagsV2 = (
     throw new Error("Conflicting community authority tag.")
   }
 
-  return makeCommunityScopeTagsV2(pointer.communityId, [
+  return makeCommunityScopeTags(pointer.communityId, [
     ["a", pointer.address, normalizedRelay || "", "community"],
     ...tags,
   ])
 }
 
-export const parseCommunityAuthorityV2 = (
+export const parseCommunityAuthority = (
   event: Pick<TrustedEvent, "tags">,
 ): CommunityPointer | undefined => {
   const hTags = event.tags.filter(tag => tag[0] === "h")
@@ -281,7 +285,7 @@ export const parseCommunityAuthorityV2 = (
 
   const communityId = parseCommunityId(hTags[0][1] || "")
   const addressPointer = parseCommunityDefinitionAddress(authorityTags[0][1] || "")
-  const relay = authorityTags[0][2] ? normalizeCommunityRelayV2(authorityTags[0][2]) : undefined
+  const relay = authorityTags[0][2] ? normalizeCommunityRelay(authorityTags[0][2]) : undefined
   if (
     !communityId ||
     !addressPointer ||
@@ -292,7 +296,7 @@ export const parseCommunityAuthorityV2 = (
   }
 
   return makeCommunityPointer({
-    controllerPubkey: addressPointer.controllerPubkey,
+    ownerPubkey: addressPointer.ownerPubkey,
     communityId,
     relayHints: relay ? [relay] : [],
   })
@@ -343,9 +347,9 @@ export const parseCommunityProfileListIdentifier = (
   return {purpose, ...(shard ? {shard: Number(shard)} : {})}
 }
 
-export const getCommunitySectionPurposeV2 = (
+export const getCommunitySectionPurpose = (
   communityIdValue: string,
-  section: Pick<CommunitySectionV2, "name" | "profileLists">,
+  section: Pick<CommunityDefinitionSection, "name" | "profileLists">,
 ) => {
   for (const ref of section.profileLists) {
     const identifier = ref.address.split(":").slice(2).join(":")
@@ -366,7 +370,7 @@ const parseCanonicalKind = (value: string | undefined) => {
 const parseAddress = (value: string, requiredKind?: number) => {
   const [kindValue, pubkeyValue, ...identifierParts] = value.split(":")
   const kind = parseCanonicalKind(kindValue)
-  const pubkey = parseControllerPubkey(pubkeyValue || "")
+  const pubkey = parseOwnerPubkey(pubkeyValue || "")
   const identifier = identifierParts.join(":")
   if (
     kind === undefined ||
@@ -398,15 +402,15 @@ const parseBoundedText = (value: string | undefined, minimum: number, maximum: n
   return size >= minimum && size <= maximum ? value : undefined
 }
 
-const parseSection = (tags: string[][]): CommunitySectionV2 | undefined => {
+const parseSection = (tags: string[][]): CommunityDefinitionSection | undefined => {
   const content = tags[0]
   const name = exactTag(content, 2) ? parseBoundedText(content[1], 1, 100) : undefined
   if (!name) return undefined
 
-  const kinds: CommunitySectionKindV2[] = []
-  const profileLists: CommunityProfileListRefV2[] = []
-  const badges: CommunityBadgeRefV2[] = []
-  const retention: CommunityRetentionV2[] = []
+  const kinds: CommunityDefinitionSectionKind[] = []
+  const profileLists: CommunityDefinitionProfileListRef[] = []
+  const badges: CommunityDefinitionBadgeRef[] = []
+  const retention: CommunityDefinitionRetentionPolicy[] = []
 
   for (const tag of tags.slice(1)) {
     if (tag[0] === "k") {
@@ -418,7 +422,7 @@ const parseSection = (tags: string[][]): CommunitySectionV2 | undefined => {
     } else if (tag[0] === "a" || tag[0] === "badge") {
       if (![2, 3].includes(tag.length)) return undefined
       const ref = parseAddress(tag[1] || "", tag[0] === "a" ? 30000 : 30009)
-      const relay = tag[2] ? normalizeCommunityRelayV2(tag[2]) : undefined
+      const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
       if (!ref || (tag[2] && !relay)) return undefined
       const item = relay ? {address: ref.address, relay} : {address: ref.address}
       if (tag[0] === "a") profileLists.push(item)
@@ -480,10 +484,10 @@ const TOP_LEVEL_TAGS = new Set([
   "service",
 ])
 
-const parseMintTags = (tags: string[][]): CommunityMintV2[] | undefined => {
+const parseMintTags = (tags: string[][]): CommunityDefinitionMint[] | undefined => {
   const mintTags = getTags(tags, "mint")
   if (mintTags.length > 20) return undefined
-  const result: CommunityMintV2[] = []
+  const result: CommunityDefinitionMint[] = []
   const seen = new Set<string>()
   for (const tag of mintTags) {
     if (![2, 3].includes(tag.length)) return undefined
@@ -498,26 +502,26 @@ const parseMintTags = (tags: string[][]): CommunityMintV2[] | undefined => {
   return result
 }
 
-const parseTermsTag = (tags: string[][]): CommunityTermsV2 | null | undefined => {
+const parseTermsTag = (tags: string[][]): CommunityDefinitionTerms | null | undefined => {
   const tag = getSingleton(tags, "tos", [2, 3])
   if (tag === null) return null
   if (!tag) return undefined
-  const relay = tag[2] ? normalizeCommunityRelayV2(tag[2]) : undefined
+  const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
   if (!parseReference(tag[1]) || (tag[2] && (!relay || relay !== tag[2]))) return null
   return relay ? {reference: tag[1], relay} : {reference: tag[1]}
 }
 
-const parseServiceTags = (tags: string[][]): CommunityServiceV2[] | undefined => {
+const parseServiceTags = (tags: string[][]): CommunityDefinitionService[] | undefined => {
   const serviceTags = getTags(tags, "service")
   if (serviceTags.length > 50) return undefined
-  const result: CommunityServiceV2[] = []
+  const result: CommunityDefinitionService[] = []
   const seen = new Set<string>()
   for (const tag of serviceTags) {
     if (!exactTag(tag, 6) || !SERVICE_NAME.test(tag[1])) return undefined
-    const pubkey = parseControllerPubkey(tag[2])
-    const requestRelay = normalizeCommunityRelayV2(tag[3])
+    const pubkey = parseOwnerPubkey(tag[2])
+    const requestRelay = normalizeCommunityRelay(tag[3])
     const handler = parseAddress(tag[4])
-    const handlerRelay = normalizeCommunityRelayV2(tag[5])
+    const handlerRelay = normalizeCommunityRelay(tag[5])
     if (
       !pubkey ||
       !requestRelay ||
@@ -542,12 +546,10 @@ const parseServiceTags = (tags: string[][]): CommunityServiceV2[] | undefined =>
   return result
 }
 
-export const parseCommunityDefinitionV2 = (
-  event: TrustedEvent,
-): CommunityDefinitionV2 | undefined => {
-  if (event.kind !== COMMUNITY_DEFINITION_KIND_V2 || event.content !== "") return undefined
-  const controllerPubkey = parseControllerPubkey(event.pubkey)
-  if (!controllerPubkey) return undefined
+export const parseCommunityDefinition = (event: TrustedEvent): CommunityDefinition | undefined => {
+  if (event.kind !== COMMUNITY_DEFINITION_KIND || event.content !== "") return undefined
+  const ownerPubkey = parseOwnerPubkey(event.pubkey)
+  if (!ownerPubkey) return undefined
 
   const tags = event.tags || []
   const dTags = getTags(tags, "d")
@@ -564,7 +566,7 @@ export const parseCommunityDefinitionV2 = (
   const relays: string[] = []
   for (const tag of relayTags) {
     if (!exactTag(tag, 2)) return undefined
-    const relay = normalizeCommunityRelayV2(tag[1])
+    const relay = normalizeCommunityRelay(tag[1])
     if (!relay || relay !== tag[1]) return undefined
     if (!relays.includes(relay)) relays.push(relay)
   }
@@ -590,7 +592,7 @@ export const parseCommunityDefinitionV2 = (
   const graspServers: string[] = []
   for (const [items, normalizer, output] of [
     [blossomTags, normalizeHttpsUrl, blossomServers],
-    [graspTags, normalizeCommunityRelayV2, graspServers],
+    [graspTags, normalizeCommunityRelay, graspServers],
   ] as const) {
     for (const tag of items) {
       if (!exactTag(tag, 2)) return undefined
@@ -621,7 +623,7 @@ export const parseCommunityDefinitionV2 = (
   if (rawSections.length === 0) return undefined
   const sections = rawSections.map(parseSection)
   if (sections.some(section => !section)) return undefined
-  const parsedSections = sections as CommunitySectionV2[]
+  const parsedSections = sections as CommunityDefinitionSection[]
   const sectionNames = new Set<string>()
   const sectionKinds = new Set<string>()
   for (const section of parsedSections) {
@@ -635,14 +637,14 @@ export const parseCommunityDefinitionV2 = (
     }
   }
 
-  const pointer = makeCommunityPointer({controllerPubkey, communityId, relayHints: relays})
+  const pointer = makeCommunityPointer({ownerPubkey, communityId, relayHints: relays})
   if (!pointer) return undefined
 
   return {
     event,
     pointer,
     communityId,
-    controllerPubkey,
+    ownerPubkey,
     metadata: {
       name,
       ...(description ? {description} : {}),
@@ -669,7 +671,7 @@ const requireText = (value: string, minimum: number, maximum: number, label: str
   return parsed
 }
 
-const makeSectionTags = (section: CommunitySectionInputV2): string[][] => {
+const makeSectionTags = (section: CommunityDefinitionSectionInput): string[][] => {
   const tags: string[][] = [["content", requireText(section.name, 1, 100, "section name")]]
   if (section.kinds.length === 0 || section.profileLists.length === 0) {
     throw new Error("Community sections require kinds and profile lists.")
@@ -686,14 +688,14 @@ const makeSectionTags = (section: CommunitySectionInputV2): string[][] => {
   for (const item of section.profileLists) {
     const ref = parseAddress(item.address, 30000)
     if (!ref) throw new Error("Invalid profile-list address.")
-    const relay = item.relay ? normalizeCommunityRelayV2(item.relay) : undefined
+    const relay = item.relay ? normalizeCommunityRelay(item.relay) : undefined
     if (item.relay && !relay) throw new Error("Invalid profile-list relay.")
     tags.push(relay ? ["a", ref.address, relay] : ["a", ref.address])
   }
   for (const item of section.badges || []) {
     const ref = parseAddress(item.address, 30009)
     if (!ref) throw new Error("Invalid badge address.")
-    const relay = item.relay ? normalizeCommunityRelayV2(item.relay) : undefined
+    const relay = item.relay ? normalizeCommunityRelay(item.relay) : undefined
     if (item.relay && !relay) throw new Error("Invalid badge relay.")
     tags.push(relay ? ["badge", ref.address, relay] : ["badge", ref.address])
   }
@@ -713,16 +715,16 @@ const makeSectionTags = (section: CommunitySectionInputV2): string[][] => {
   return tags
 }
 
-export const buildCommunityDefinitionV2 = (
-  params: BuildCommunityDefinitionV2Params,
-): EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND_V2} => {
+export const buildCommunityDefinition = (
+  params: BuildCommunityDefinitionParams,
+): EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND} => {
   const communityId = parseCommunityId(params.communityId)
   if (!communityId) throw new Error("Invalid community ID.")
   if (params.relays.length > 20) throw new Error("Too many community relays.")
   const relays = normalizeRelayList(params.relays, 20)
   if (
     relays.length === 0 ||
-    params.relays.some(value => normalizeCommunityRelayV2(value) !== value)
+    params.relays.some(value => normalizeCommunityRelay(value) !== value)
   ) {
     throw new Error("A valid normalized community relay is required.")
   }
@@ -765,7 +767,7 @@ export const buildCommunityDefinitionV2 = (
   if ((params.graspServers?.length || 0) > 20) throw new Error("Too many GRASP URLs.")
   const graspServers = new Set<string>()
   for (const value of params.graspServers || []) {
-    const normalized = normalizeCommunityRelayV2(value)
+    const normalized = normalizeCommunityRelay(value)
     if (!normalized || normalized !== value) throw new Error("Invalid GRASP URL.")
     if (graspServers.has(normalized)) continue
     graspServers.add(normalized)
@@ -784,7 +786,7 @@ export const buildCommunityDefinitionV2 = (
     tags.push(mint.type ? ["mint", url, mint.type] : ["mint", url])
   }
   if (params.terms) {
-    const relay = params.terms.relay ? normalizeCommunityRelayV2(params.terms.relay) : undefined
+    const relay = params.terms.relay ? normalizeCommunityRelay(params.terms.relay) : undefined
     if (
       !parseReference(params.terms.reference) ||
       (params.terms.relay && (!relay || relay !== params.terms.relay))
@@ -796,10 +798,10 @@ export const buildCommunityDefinitionV2 = (
   if ((params.services?.length || 0) > 50) throw new Error("Too many service declarations.")
   const serviceKeys = new Set<string>()
   for (const service of params.services || []) {
-    const pubkey = parseControllerPubkey(service.pubkey)
-    const requestRelay = normalizeCommunityRelayV2(service.requestRelay)
+    const pubkey = parseOwnerPubkey(service.pubkey)
+    const requestRelay = normalizeCommunityRelay(service.requestRelay)
     const handler = parseAddress(service.handlerAddress)
-    const handlerRelay = normalizeCommunityRelayV2(service.handlerRelay)
+    const handlerRelay = normalizeCommunityRelay(service.handlerRelay)
     if (
       !SERVICE_NAME.test(service.name) ||
       !pubkey ||
@@ -832,7 +834,7 @@ export const buildCommunityDefinitionV2 = (
   }
   for (const item of params.sections) tags.push(...makeSectionTags(item))
 
-  return {kind: COMMUNITY_DEFINITION_KIND_V2, content: "", tags}
+  return {kind: COMMUNITY_DEFINITION_KIND, content: "", tags}
 }
 
 const EDITABLE_SINGLETONS = new Set([
@@ -845,14 +847,14 @@ const EDITABLE_SINGLETONS = new Set([
   "g",
 ])
 
-export const updateCommunityDefinitionV2 = (
-  definition: CommunityDefinitionV2,
-  changes: Partial<CommunityMetadataV2>,
+export const updateCommunityDefinition = (
+  definition: CommunityDefinition,
+  changes: Partial<CommunityDefinitionMetadata>,
   options: {
-    replacement?: EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND_V2}
+    replacement?: EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND}
     originalSectionNames?: Record<string, string>
   } = {},
-): EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND_V2} => {
+): EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND} => {
   const replacements = new Map<string, string[]>()
   const metadata = {...definition.metadata, ...changes}
   replacements.set("name", ["name", requireText(metadata.name, 1, 100, "community name")])
@@ -887,7 +889,7 @@ export const updateCommunityDefinitionV2 = (
   }
 
   if (!options.replacement) {
-    return {kind: COMMUNITY_DEFINITION_KIND_V2, content: "", tags}
+    return {kind: COMMUNITY_DEFINITION_KIND, content: "", tags}
   }
 
   const replacementCommunityIds = getTags(options.replacement.tags, "d")
@@ -942,13 +944,13 @@ export const updateCommunityDefinitionV2 = (
   appendSectionExtensions()
   if (!extensionsInserted) mergedTags.push(...topLevelExtensions.map(item => [...item]))
 
-  return {kind: COMMUNITY_DEFINITION_KIND_V2, content: "", tags: mergedTags}
+  return {kind: COMMUNITY_DEFINITION_KIND, content: "", tags: mergedTags}
 }
 
 const getAddressableEventAddress = (event: TrustedEvent) => {
   const dTags = getTags(event.tags || [], "d")
   if (dTags.length !== 1 || !exactTag(dTags[0], 2)) return undefined
-  const pubkey = parseControllerPubkey(event.pubkey)
+  const pubkey = parseOwnerPubkey(event.pubkey)
   const identifier = dTags[0][1]
   if (!pubkey || !identifier) return undefined
   return `${event.kind}:${pubkey}:${identifier}`
@@ -998,14 +1000,14 @@ export const selectCurrentAddressableEvent = (
     )[0]
 }
 
-export const selectCurrentCommunityDefinitionV2 = (
+export const selectCurrentCommunityDefinition = (
   events: TrustedEvent[],
   definitionAddress: string,
 ) =>
   selectCurrentAddressableEvent(
     events,
     definitionAddress,
-    event => Boolean(parseCommunityDefinitionV2(event)),
+    event => Boolean(parseCommunityDefinition(event)),
     event => {
       const addresses = event.tags.filter(tag => tag[0] === "a")
       return (
@@ -1014,14 +1016,14 @@ export const selectCurrentCommunityDefinitionV2 = (
     },
   )
 
-export const selectCurrentCommunityDefinitionsV2 = (events: TrustedEvent[]) => {
+export const selectCurrentCommunityDefinitions = (events: TrustedEvent[]) => {
   const candidatesByAddress = new Map<
     string,
-    Array<{event: TrustedEvent; definition: CommunityDefinitionV2}>
+    Array<{event: TrustedEvent; definition: CommunityDefinition}>
   >()
 
   for (const event of events) {
-    const definition = parseCommunityDefinitionV2(event)
+    const definition = parseCommunityDefinition(event)
     if (!definition) continue
     const address = definition.pointer.address
     const candidates = candidatesByAddress.get(address) || []
@@ -1031,7 +1033,7 @@ export const selectCurrentCommunityDefinitionsV2 = (events: TrustedEvent[]) => {
 
   const addressByEventId = new Map<string, string>()
   for (const event of events) {
-    if (event.kind !== COMMUNITY_DEFINITION_KIND_V2 || !event.id) continue
+    if (event.kind !== COMMUNITY_DEFINITION_KIND || !event.id) continue
     const address = getAddressableEventAddress(event)
     if (address && candidatesByAddress.has(address)) addressByEventId.set(event.id, address)
   }
@@ -1059,7 +1061,7 @@ export const selectCurrentCommunityDefinitionsV2 = (events: TrustedEvent[]) => {
     }
   }
 
-  const definitions = new Map<string, CommunityDefinitionV2>()
+  const definitions = new Map<string, CommunityDefinition>()
   for (const [address, candidates] of candidatesByAddress) {
     const cutoff = deletionCutoffByAddress.get(address)
     let current: (typeof candidates)[number] | undefined
@@ -1080,12 +1082,12 @@ export const selectCurrentCommunityDefinitionsV2 = (events: TrustedEvent[]) => {
   return definitions
 }
 
-export const selectCurrentTargetedPublicationEventsV2 = (events: TrustedEvent[]) => {
+export const selectCurrentTargetedPublicationEvents = (events: TrustedEvent[]) => {
   const candidatesByAddress = new Map<string, TrustedEvent[]>()
   const addressByEventId = new Map<string, string>()
 
   for (const event of events) {
-    if (event.kind !== TARGETED_PUBLICATION_KIND_V2) continue
+    if (event.kind !== TARGETED_PUBLICATION_KIND) continue
     const address = getAddressableEventAddress(event)
     if (!address) continue
     const candidates = candidatesByAddress.get(address) || []
@@ -1124,7 +1126,7 @@ export const selectCurrentTargetedPublicationEventsV2 = (events: TrustedEvent[])
     for (const event of candidates) {
       if (
         (cutoff !== undefined && event.created_at <= cutoff) ||
-        !parseTargetedPublicationV2(event)
+        !parseTargetedPublication(event)
       ) {
         continue
       }
@@ -1142,7 +1144,7 @@ export const selectCurrentTargetedPublicationEventsV2 = (events: TrustedEvent[])
   return selected
 }
 
-export const makeTargetedPublicationLifecycleFiltersV2 = (events: TrustedEvent[]): Filter[] => {
+export const makeTargetedPublicationLifecycleFilters = (events: TrustedEvent[]): Filter[] => {
   const filters: Filter[] = []
   const ids: string[] = []
   const addresses: string[] = []
@@ -1150,20 +1152,20 @@ export const makeTargetedPublicationLifecycleFiltersV2 = (events: TrustedEvent[]
   const seenAddresses = new Set<string>()
 
   for (const event of events) {
-    if (event.kind !== TARGETED_PUBLICATION_KIND_V2) continue
+    if (event.kind !== TARGETED_PUBLICATION_KIND) continue
     const address = getAddressableEventAddress(event)
     if (!address || seenAddresses.has(address)) continue
     seenAddresses.add(address)
     const [, author, ...identifierParts] = address.split(":")
     filters.push({
-      kinds: [TARGETED_PUBLICATION_KIND_V2],
+      kinds: [TARGETED_PUBLICATION_KIND],
       authors: [author],
       "#d": [identifierParts.join(":")],
     })
     addresses.push(address)
   }
   for (const event of events) {
-    if (event.kind === TARGETED_PUBLICATION_KIND_V2 && event.id && !seenIds.has(event.id)) {
+    if (event.kind === TARGETED_PUBLICATION_KIND && event.id && !seenIds.has(event.id)) {
       seenIds.add(event.id)
       ids.push(event.id)
     }
@@ -1175,29 +1177,29 @@ export const makeTargetedPublicationLifecycleFiltersV2 = (events: TrustedEvent[]
   return filters
 }
 
-const makeSourceTag = (source: TargetedPublicationSourceV2) => {
-  const relay = source.relay ? normalizeCommunityRelayV2(source.relay) : undefined
+const makeSourceTag = (source: TargetedPublicationSource) => {
+  const relay = source.relay ? normalizeCommunityRelay(source.relay) : undefined
   if (source.relay && !relay) throw new Error("Invalid source relay.")
   if (source.type === "a") {
     if (!parseAddress(source.value)) throw new Error("Invalid source address.")
     return ["a", source.value, relay || "", "source"]
   }
   if (!LOWER_HEX_64.test(source.value)) throw new Error("Invalid source event ID.")
-  if (source.pubkey && !parseControllerPubkey(source.pubkey))
+  if (source.pubkey && !parseOwnerPubkey(source.pubkey))
     throw new Error("Invalid source author.")
   return ["e", source.value, relay || "", source.pubkey || "", "source"]
 }
 
-export const buildTargetedPublicationV2 = ({
+export const buildTargetedPublication = ({
   id,
   kind,
   source,
   communities,
-}: TargetedPublicationV2): TargetedPublicationTemplateV2 => {
+}: TargetedPublication): TargetedPublicationTemplate => {
   if (!id || !Number.isInteger(kind) || kind < 0 || kind > 65535) {
     throw new Error("Invalid targeted publication.")
   }
-  if (communities.length < 1 || communities.length > MAX_TARGET_COMMUNITIES_V2) {
+  if (communities.length < 1 || communities.length > MAX_TARGET_COMMUNITIES) {
     throw new Error("A targeted publication requires 1 to 12 communities.")
   }
 
@@ -1207,7 +1209,7 @@ export const buildTargetedPublicationV2 = ({
   const addresses = new Set<string>()
   for (const community of communities) {
     const pointer = makeCommunityPointer({
-      controllerPubkey: community.controllerPubkey,
+      ownerPubkey: community.ownerPubkey,
       communityId: community.communityId,
       relayHints: community.relayHints,
     })
@@ -1219,13 +1221,11 @@ export const buildTargetedPublicationV2 = ({
     tags.push(["h", pointer.communityId])
     tags.push(["a", pointer.address, pointer.relayHints[0] || "", "community"])
   }
-  return {kind: TARGETED_PUBLICATION_KIND_V2, content: "", tags}
+  return {kind: TARGETED_PUBLICATION_KIND, content: "", tags}
 }
 
-export const parseTargetedPublicationV2 = (
-  event: TrustedEvent,
-): TargetedPublicationV2 | undefined => {
-  if (event.kind !== TARGETED_PUBLICATION_KIND_V2 || event.content !== "") return undefined
+export const parseTargetedPublication = (event: TrustedEvent): TargetedPublication | undefined => {
+  if (event.kind !== TARGETED_PUBLICATION_KIND || event.content !== "") return undefined
   const tags = event.tags || []
   if (
     tags.some(
@@ -1248,18 +1248,18 @@ export const parseTargetedPublicationV2 = (
     tag => (tag[0] === "a" && tag[3] === "source") || (tag[0] === "e" && tag[4] === "source"),
   )
   if (sourceTags.length > 1) return undefined
-  let source: TargetedPublicationSourceV2 | undefined
+  let source: TargetedPublicationSource | undefined
   if (sourceTags[0]?.[0] === "a") {
     const tag = sourceTags[0]
     if (!exactTag(tag, 4) || !parseAddress(tag[1])) return undefined
-    const relay = tag[2] ? normalizeCommunityRelayV2(tag[2]) : undefined
+    const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
     if (tag[2] && (!relay || relay !== tag[2])) return undefined
     source = {type: "a", value: tag[1], ...(relay ? {relay} : {})}
   } else if (sourceTags[0]?.[0] === "e") {
     const tag = sourceTags[0]
     if (!exactTag(tag, 5) || !LOWER_HEX_64.test(tag[1])) return undefined
-    const relay = tag[2] ? normalizeCommunityRelayV2(tag[2]) : undefined
-    const pubkey = tag[3] ? parseControllerPubkey(tag[3]) : undefined
+    const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
+    const pubkey = tag[3] ? parseOwnerPubkey(tag[3]) : undefined
     if ((tag[2] && (!relay || relay !== tag[2])) || (tag[3] && !pubkey)) return undefined
     source = {
       type: "e",
@@ -1285,7 +1285,7 @@ export const parseTargetedPublicationV2 = (
     }
     const id = parseCommunityId(tag[1] || "")
     const addressPointer = parseCommunityDefinitionAddress(next[1] || "")
-    const relay = next[2] ? normalizeCommunityRelayV2(next[2]) : undefined
+    const relay = next[2] ? normalizeCommunityRelay(next[2]) : undefined
     if (
       !id ||
       !addressPointer ||
@@ -1298,19 +1298,19 @@ export const parseTargetedPublicationV2 = (
     addresses.add(addressPointer.address)
     communities.push(
       makeCommunityPointer({
-        controllerPubkey: addressPointer.controllerPubkey,
+        ownerPubkey: addressPointer.ownerPubkey,
         communityId: id,
         relayHints: relay ? [relay] : [],
       })!,
     )
     index += 1
   }
-  if (communities.length < 1 || communities.length > MAX_TARGET_COMMUNITIES_V2) return undefined
+  if (communities.length < 1 || communities.length > MAX_TARGET_COMMUNITIES) return undefined
   return {id: dTags[0][1], kind, ...(source ? {source} : {}), communities}
 }
 
-export const removeTargetedCommunityV2 = (event: TrustedEvent, definitionAddress: string) => {
-  const parsed = parseTargetedPublicationV2(event)
+export const removeTargetedCommunity = (event: TrustedEvent, definitionAddress: string) => {
+  const parsed = parseTargetedPublication(event)
   if (!parsed) return undefined
   if (parsed.communities.length === 1) return undefined
   const tags = event.tags.map(tag => [...tag])
@@ -1324,5 +1324,5 @@ export const removeTargetedCommunityV2 = (event: TrustedEvent, definitionAddress
   if (index < 0) return undefined
   tags.splice(index, 2)
 
-  return {kind: TARGETED_PUBLICATION_KIND_V2, content: event.content, tags}
+  return {kind: TARGETED_PUBLICATION_KIND, content: event.content, tags}
 }

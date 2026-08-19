@@ -88,7 +88,7 @@
   const REQUEST_HARD_TIMEOUT_MS = 10_000
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityOwnerPubkey = $derived(routeCommunity?.ownerPubkey || "")
   const communityId = $derived(routeCommunity?.communityId || "")
   const communityAddress = $derived(routeCommunity?.address || "")
   const communityDefinition = $derived(
@@ -117,7 +117,7 @@
     Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )

@@ -71,7 +71,7 @@ describe("community relay policies", () => {
     ).toEqual(["wss://community.example/", "wss://indexer.example/", "wss://outbox.example/"])
   })
 
-  it("uses the controller outbox for root community definition publishes", () => {
+  it("uses the owner outbox for root community definition publishes", () => {
     expect(getCommunityRootPublishRelays(["wss://community.example"], communityPubkey)).toEqual([
       "wss://community.example/",
       "wss://indexer.example/",
@@ -80,7 +80,7 @@ describe("community relay policies", () => {
     expect(routerMocks.fromPubkeys).toHaveBeenCalledWith([communityPubkey])
   })
 
-  it("does not invent root outbox relays for invalid controller pubkeys", () => {
+  it("does not invent root outbox relays for invalid owner pubkeys", () => {
     expect(
       getCommunityRootPublishRelays(["wss://community.example"], "not-a-pubkey", {
         indexerRelays: [],

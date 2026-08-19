@@ -108,13 +108,13 @@
   }
 
   const parsedCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
+  const communityPubkey = $derived(parsedCommunity?.ownerPubkey || "")
   const exactCommunityId = $derived($activeExactCommunityPointer?.communityId || "")
   const exactCommunityRoute = $derived($activeExactCommunityPointer?.naddr || "")
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
-      $activeExactCommunityDefinition?.controllerPubkey === communityPubkey &&
+      $activeExactCommunityDefinition?.ownerPubkey === communityPubkey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -786,7 +786,7 @@
 
     try {
       await publishGovernanceEvent(
-        `moderator-request:${definition.controllerPubkey}:${sectionName}:${requesterPubkey}`,
+        `moderator-request:${definition.ownerPubkey}:${sectionName}:${requesterPubkey}`,
         communityPublishRelays,
         profileList,
       )
@@ -1151,7 +1151,7 @@
           <div>
             <h2 class="text-xl font-semibold">Members</h2>
             <p class="mt-1 text-sm opacity-70">
-              Current non-banned members, moderator invitations, and the community controller.
+              Current non-banned members, moderator invitations, and the community owner.
             </p>
           </div>
           <div class="flex flex-wrap gap-2">

@@ -2,11 +2,11 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   COMMUNITY_MEMBER_FLOOR,
@@ -50,15 +50,15 @@ const getCommunityId = (id: string) => {
   communityIds.set(id, communityId)
   return communityId
 }
-const makeReportCommunity = (controllerPubkey: string) =>
-  makeCommunityPointer({controllerPubkey, communityId: reportCommunityId})!
+const makeReportCommunity = (ownerPubkey: string) =>
+  makeCommunityPointer({ownerPubkey, communityId: reportCommunityId})!
 const getDefinitionAddress = (definition: ReturnType<typeof makeDefinition>) =>
   definition.pointer.address
 const makePersonBanState = (
-  controllerPubkey: string,
+  ownerPubkey: string,
   targetPubkey: string,
 ): EffectiveCommunityReportState => {
-  const community = makeReportCommunity(controllerPubkey)
+  const community = makeReportCommunity(ownerPubkey)
 
   return {
     eventReports: [],
@@ -69,10 +69,10 @@ const makePersonBanState = (
         community,
         communityAddress: community.address,
         communityId: community.communityId,
-        controllerPubkey: community.controllerPubkey,
-        reporterPubkey: controllerPubkey,
+        ownerPubkey: community.ownerPubkey,
+        reporterPubkey: ownerPubkey,
         adminAuthored: true,
-        event: makeEvent({id: "person-ban", pubkey: controllerPubkey}),
+        event: makeEvent({id: "person-ban", pubkey: ownerPubkey}),
       },
     ],
   }
@@ -91,12 +91,12 @@ const makeDefinition = ({
   profileListAddress?: string
   profileListAddresses?: string[]
 }) =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: getCommunityId(id),
         name: id,
         relays: ["wss://relay.example.com"],
@@ -138,21 +138,21 @@ const makeProfileList = ({
   })
 
 describe("community trust", () => {
-  it("does not share trust between different community IDs under one controller", () => {
+  it("does not share trust between different community IDs under one owner", () => {
     const viewerPubkey = key(1)
     const targetPubkey = key(2)
-    const controllerPubkey = key(3)
+    const ownerPubkey = key(3)
     const viewerListOwner = key(4)
     const targetListOwner = key(5)
     const definitions = [
       makeDefinition({
         id: "viewer-branch",
-        pubkey: controllerPubkey,
+        pubkey: ownerPubkey,
         profileListAddress: `${PROFILE_LIST_KIND}:${viewerListOwner}:Repositories`,
       }),
       makeDefinition({
         id: "target-branch",
-        pubkey: controllerPubkey,
+        pubkey: ownerPubkey,
         profileListAddress: `${PROFILE_LIST_KIND}:${targetListOwner}:Repositories`,
       }),
     ]
@@ -182,7 +182,7 @@ describe("community trust", () => {
     expect(assessment.evidence).toEqual([])
   })
 
-  it("uses exact controller authority when community IDs collide", () => {
+  it("uses exact owner authority when community IDs collide", () => {
     const viewerPubkey = key(1)
     const targetPubkey = key(2)
     const selectedController = key(3)
@@ -562,7 +562,7 @@ describe("community trust", () => {
       context: {
         scope: "active_community",
         communityPubkey: otherCommunityPubkey,
-        communityAddress: `${COMMUNITY_DEFINITION_KIND_V2}:${otherCommunityPubkey}:${reportCommunityId}`,
+        communityAddress: `${COMMUNITY_DEFINITION_KIND}:${otherCommunityPubkey}:${reportCommunityId}`,
       },
       definitions,
       profileListEvents,

@@ -27,11 +27,11 @@ const mocks = vi.hoisted(() => ({
   loadCommunityCuratedWidgets: vi.fn(),
 }))
 
-const communityController = getPublicKey(new Uint8Array(32).fill(1))
+const communityOwner = getPublicKey(new Uint8Array(32).fill(1))
 const communityId = getPublicKey(new Uint8Array(32).fill(2))
-const communityAddress = `32222:${communityController}:${communityId}`
-const community = makeCommunityPointer({controllerPubkey: communityController, communityId})!
-const unrelatedCommunityAddress = `32222:${communityController}:${getPublicKey(new Uint8Array(32).fill(3))}`
+const communityAddress = `32222:${communityOwner}:${communityId}`
+const community = makeCommunityPointer({ownerPubkey: communityOwner, communityId})!
+const unrelatedCommunityAddress = `32222:${communityOwner}:${getPublicKey(new Uint8Array(32).fill(3))}`
 
 vi.mock("./community-curation", () => ({
   loadCommunityCuratedWidgets: mocks.loadCommunityCuratedWidgets,
@@ -246,7 +246,7 @@ describe("community widget slots", () => {
   })
 
   it("selects enabled installed slot widgets with cached shared config", () => {
-    const communityPubkey = communityController
+    const communityPubkey = communityOwner
     const widget = makeWidget(
       "featured-calendar-event",
       "community-home-after-quicklinks",
@@ -320,7 +320,7 @@ describe("community widget slots", () => {
   })
 
   it("treats explicit shared-config declarations as authoritative", () => {
-    const communityPubkey = communityController
+    const communityPubkey = communityOwner
     const widget = makeWidget(
       "featured-calendar-event",
       "community-home-after-quicklinks",
@@ -364,7 +364,7 @@ describe("community widget slots", () => {
   })
 
   it("matches explicit shared-config declarations with trimmed case-sensitive scope", () => {
-    const communityPubkey = communityController
+    const communityPubkey = communityOwner
     const sharedConfigEvent = {
       kind: COMMUNITY_SHARED_CONFIG_KIND,
       pubkey: communityPubkey,
@@ -415,7 +415,7 @@ describe("community widget slots", () => {
   })
 
   it("rejects configs authored by a moderator of an unrelated descriptor", () => {
-    const communityPubkey = communityController
+    const communityPubkey = communityOwner
     const unrelatedModerator = "d".repeat(64)
     const widget = makeWidget(
       "featured-calendar-event",
@@ -492,17 +492,17 @@ describe("community widget slots", () => {
   })
 
   it("uses exact branch identity rather than relay hints for curated widget caches", async () => {
-    const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const owner = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const firstInput = nip19.naddrEncode({
       kind: 32222,
-      pubkey: controller,
+      pubkey: owner,
       identifier: communityId,
       relays: ["wss://one.example"],
     })
     const secondInput = nip19.naddrEncode({
       kind: 32222,
-      pubkey: controller,
+      pubkey: owner,
       identifier: communityId,
       relays: ["wss://two.example"],
     })
@@ -647,7 +647,7 @@ describe("community widget slots", () => {
       })
     const grantedProfileLists = [makeProfileListEvent("grant-v1", 1)]
     const revokedProfileLists = [makeProfileListEvent("revoke", 2)]
-    const regrantedProfileLists = [makeProfileListEvent("grant-v2", 3)]
+    const regrantedProfileLists = [makeProfileListEvent("grant-current", 3)]
     const grantedEvidenceKey = evidenceKey(grantedProfileLists)
     const revokedEvidenceKey = evidenceKey(revokedProfileLists, revokedReportState)
     const regrantedEvidenceKey = evidenceKey(regrantedProfileLists)

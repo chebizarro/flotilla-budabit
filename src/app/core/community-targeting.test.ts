@@ -2,16 +2,16 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {EVENT_DATE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
 import {
-  TARGETED_PUBLICATION_KIND_V2,
-  buildTargetedPublicationV2,
+  TARGETED_PUBLICATION_KIND,
+  buildTargetedPublication,
   makeCommunityPointer,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
 } from "./community"
 import {
   getPublicationTargetingId,
   makeAddressablePublicationRef,
   makeEventPublicationRef,
-  makeTargetedPublicationForCommunityV2,
+  makeTargetedPublicationForCommunity,
   removeCommunityTarget,
   shouldTargetPublicationKind,
   upsertCommunityTarget,
@@ -21,12 +21,12 @@ import {
 const secret = (value: number) => new Uint8Array(32).fill(value)
 const authorPubkey = getPublicKey(secret(21))
 const first = makeCommunityPointer({
-  controllerPubkey: getPublicKey(secret(22)),
+  ownerPubkey: getPublicKey(secret(22)),
   communityId: getPublicKey(secret(23)),
   relayHints: ["wss://first.example"],
 })!
 const second = makeCommunityPointer({
-  controllerPubkey: getPublicKey(secret(24)),
+  ownerPubkey: getPublicKey(secret(24)),
   communityId: first.communityId,
   relayHints: ["wss://second.example"],
 })!
@@ -99,7 +99,7 @@ describe("community targeting helpers", () => {
   })
 
   it("builds one exact targeting pair without a community p tag", () => {
-    const template = makeTargetedPublicationForCommunityV2({
+    const template = makeTargetedPublicationForCommunity({
       targetingId: "target-id",
       originalKind: EVENT_TIME,
       originalRef: makeAddressablePublicationRef({
@@ -111,7 +111,7 @@ describe("community targeting helpers", () => {
     })
 
     expect(template).toEqual({
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       content: "",
       tags: [
         ["d", "target-id"],
@@ -126,9 +126,9 @@ describe("community targeting helpers", () => {
 
   it("upserts and removes same-ID branches by exact address while preserving extensions", () => {
     const targetingEvent = makeEvent({
-      kind: TARGETED_PUBLICATION_KIND_V2,
+      kind: TARGETED_PUBLICATION_KIND,
       tags: [
-        ...buildTargetedPublicationV2({
+        ...buildTargetedPublication({
           id: "target-id",
           kind: 9041,
           source: {type: "e", value: "3".repeat(64)},
@@ -139,8 +139,8 @@ describe("community targeting helpers", () => {
     })
 
     const upserted = upsertCommunityTarget(targetingEvent, second)!
-    const parsedUpserted = parseTargetedPublicationV2(
-      makeEvent({kind: TARGETED_PUBLICATION_KIND_V2, tags: upserted.tags}),
+    const parsedUpserted = parseTargetedPublication(
+      makeEvent({kind: TARGETED_PUBLICATION_KIND, tags: upserted.tags}),
     )!
     expect(parsedUpserted.communities.map(item => item.address)).toEqual([
       first.address,
@@ -149,11 +149,11 @@ describe("community targeting helpers", () => {
     expect(upserted.tags).toContainEqual(["x-extension", "preserve"])
 
     const removed = removeCommunityTarget(
-      makeEvent({kind: TARGETED_PUBLICATION_KIND_V2, tags: upserted.tags}),
+      makeEvent({kind: TARGETED_PUBLICATION_KIND, tags: upserted.tags}),
       first.address,
     )!
-    const parsedRemoved = parseTargetedPublicationV2(
-      makeEvent({kind: TARGETED_PUBLICATION_KIND_V2, tags: removed.tags}),
+    const parsedRemoved = parseTargetedPublication(
+      makeEvent({kind: TARGETED_PUBLICATION_KIND, tags: removed.tags}),
     )!
     expect(parsedRemoved.communities.map(item => item.address)).toEqual([second.address])
     expect(removed.tags).toContainEqual(["x-extension", "preserve"])

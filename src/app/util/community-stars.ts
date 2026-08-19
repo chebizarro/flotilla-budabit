@@ -1,11 +1,11 @@
 import {DELETE, REACTION, makeEvent, type Filter, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   type CommunityPointer,
-  makeCommunityAuthorityTagsV2,
+  makeCommunityAuthorityTags,
   makeCommunityPointer,
   normalizePubkey,
-  parseCommunityAuthorityV2,
+  parseCommunityAuthority,
 } from "@app/core/community"
 
 export const COMMUNITY_STAR_CONTENT = "+"
@@ -19,7 +19,7 @@ export type CommunityStarRef = {
 
 export const makeExactCommunityInputValue = (community: CommunityPointer) => {
   const pointer = makeCommunityPointer({
-    controllerPubkey: community.controllerPubkey,
+    ownerPubkey: community.ownerPubkey,
     communityId: community.communityId,
     relayHints: community.relayHints,
   })
@@ -27,19 +27,19 @@ export const makeExactCommunityInputValue = (community: CommunityPointer) => {
   return pointer?.address === community.address ? pointer.naddr : ""
 }
 
-export const makeCommunityStarReactionV2 = (community: CommunityPointer) => {
+export const makeCommunityStarReaction = (community: CommunityPointer) => {
   return makeEvent(REACTION, {
     content: COMMUNITY_STAR_CONTENT,
-    tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
-      ["k", String(COMMUNITY_DEFINITION_KIND_V2)],
+    tags: makeCommunityAuthorityTags(community, community.relayHints[0], [
+      ["k", String(COMMUNITY_DEFINITION_KIND)],
     ]),
   })
 }
 
-export const makeCommunityStarDeleteV2 = (community: CommunityPointer, reactionId: string) => ({
+export const makeCommunityStarDelete = (community: CommunityPointer, reactionId: string) => ({
   kind: DELETE,
   content: "Deleted community star",
-  tags: makeCommunityAuthorityTagsV2(community, community.relayHints[0], [
+  tags: makeCommunityAuthorityTags(community, community.relayHints[0], [
     ["e", reactionId],
     ["k", String(REACTION)],
   ]),
@@ -52,7 +52,7 @@ export const makeCommunityStarReactionFilter = (author: string): Filter | undefi
   return {
     kinds: [REACTION],
     authors: [pubkey],
-    "#k": [String(COMMUNITY_DEFINITION_KIND_V2)],
+    "#k": [String(COMMUNITY_DEFINITION_KIND)],
     limit: COMMUNITY_STAR_LIMIT,
   }
 }
@@ -89,11 +89,11 @@ export const makeRecentCommunityStarDeleteFilter = (author: string): Filter | un
 export const parseCommunityStarReaction = (event: TrustedEvent): CommunityStarRef | undefined => {
   if (event.kind !== REACTION || event.content !== COMMUNITY_STAR_CONTENT) return undefined
 
-  const community = parseCommunityAuthorityV2(event)
+  const community = parseCommunityAuthority(event)
   if (!community) return undefined
 
   const kTag = (event.tags || []).find(tag => tag[0] === "k")?.[1]
-  if (kTag !== String(COMMUNITY_DEFINITION_KIND_V2)) return undefined
+  if (kTag !== String(COMMUNITY_DEFINITION_KIND)) return undefined
 
   return {
     community,
@@ -137,7 +137,7 @@ export const selectActiveCommunityStars = ({
     if (
       deleteEvents.some(deletion => {
         if (deletion.kind !== DELETE || deletion.pubkey !== event.pubkey) return false
-        if (parseCommunityAuthorityV2(deletion)?.address !== star.community.address) return false
+        if (parseCommunityAuthority(deletion)?.address !== star.community.address) return false
 
         const eventTags = deletion.tags.filter(tag => tag[0] === "e")
         const kindTags = deletion.tags.filter(tag => tag[0] === "k")

@@ -182,7 +182,7 @@
               <div class="text-xs uppercase tracking-wide opacity-60">Definition</div>
               <div class="mt-1 break-all text-xs opacity-75">{badge.definition.address}</div>
               <div class="mt-2 text-xs opacity-70">
-                Controller <ProfileName pubkey={badge.definition.community.controllerPubkey} />
+                Owner <ProfileName pubkey={badge.definition.community.ownerPubkey} />
               </div>
             </div>
 

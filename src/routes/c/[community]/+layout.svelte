@@ -48,7 +48,7 @@
   } from "@app/core/community-state"
   import {
     FORM_RESPONSE_KIND,
-    makeTargetedPublicationLifecycleFiltersV2,
+    makeTargetedPublicationLifecycleFilters,
     normalizePubkey,
   } from "@app/core/community"
   import {filterAuthorizedCommunityTargetingEvents} from "@app/core/community-permissions"
@@ -168,7 +168,7 @@
     deriveEventsAsc(deriveEventsById({repository, filters: communityTargetingFilters})),
   )
   const communityTargetingLifecycleFilters = $derived(
-    makeTargetedPublicationLifecycleFiltersV2($communityTargetingCandidateEventsStore),
+    makeTargetedPublicationLifecycleFilters($communityTargetingCandidateEventsStore),
   )
   const communityTargetingEventsStore = $derived(
     deriveEventsAsc(
@@ -184,7 +184,7 @@
       $activeExactCommunityDefinition.pointer.address === exactCommunity?.address &&
       $activeExactCommunityPointer.address === exactCommunity?.address &&
       $activeCommunityAuthorityReadiness.communityPubkey ===
-        $activeExactCommunityDefinition.controllerPubkey &&
+        $activeExactCommunityDefinition.ownerPubkey &&
       $activeCommunityAuthorityReadiness.state === "ready"
       ? filterAuthorizedCommunityTargetingEvents({
           community: $activeExactCommunityPointer!,
@@ -338,7 +338,7 @@
       !session ||
       definition.pointer.address !== exactCommunity?.address ||
       definition.pointer.address !== $activeExactCommunityPointer?.address ||
-      definition.controllerPubkey !== session.definition.controllerPubkey ||
+      definition.ownerPubkey !== session.definition.ownerPubkey ||
       definition.communityId !== session.definition.communityId ||
       $activeCommunityBootstrapStatus.key !== bootstrapKey ||
       !$activeCommunityBootstrapStatus.loaded ||
@@ -414,7 +414,7 @@
       $activeCommunityBootstrapStatus.key === exactCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
-      $activeCommunityAuthorityReadiness.communityPubkey === exactDefinition.controllerPubkey &&
+      $activeCommunityAuthorityReadiness.communityPubkey === exactDefinition.ownerPubkey &&
       $activeCommunityAuthorityReadiness.state === "ready",
     )
 

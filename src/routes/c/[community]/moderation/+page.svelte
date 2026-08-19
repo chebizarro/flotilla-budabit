@@ -101,7 +101,7 @@
 
   const parsedCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
   const communityAddress = $derived(parsedCommunity?.address || "")
-  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
+  const communityPubkey = $derived(parsedCommunity?.ownerPubkey || "")
   const moderationPath = $derived(
     $activeExactCommunityPointer
       ? makeExactCommunityPath($activeExactCommunityPointer, "moderation")
@@ -167,7 +167,7 @@
     $activeExactCommunityDefinition
       ? getCommunityRootPublishRelays(
           communityPublishRelays,
-          $activeExactCommunityDefinition.controllerPubkey,
+          $activeExactCommunityDefinition.ownerPubkey,
         )
       : communityPublishRelays,
   )

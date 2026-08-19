@@ -4,7 +4,7 @@ import {describe, expect, it} from "vitest"
 const readProjectFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
 
 describe("community profile relay hints", () => {
-  it("keeps V2 community cards definition-native", () => {
+  it("keeps community cards definition-native", () => {
     const link = readProjectFile("../components/community/CommunityLinkCard.svelte")
 
     expect(link).toContain("definition?.metadata.name")

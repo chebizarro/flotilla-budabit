@@ -35,10 +35,10 @@ import {
   type BlossomServerTarget,
 } from "./blossom"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
-  parseCommunityDefinitionV2,
+  buildCommunityDefinition,
+  parseCommunityDefinition,
 } from "./community"
 import type {EffectiveCommunityReportState} from "./community-reports"
 import type {TrustedEvent} from "@welshman/util"
@@ -72,13 +72,13 @@ const makeBlossomDefinition = ({
   blossomServer: string
   profileListAddress?: string
 }) =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
       created_at: 2,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: makeKey(id.charCodeAt(0)),
         name: id,
         relays: ["wss://relay.example"],
@@ -296,14 +296,14 @@ describe("blossom dashboard state", () => {
 
 describe("blossom server sources", () => {
   it("preserves exact sibling community addresses in server targets", () => {
-    const controller = "c".repeat(64)
-    const firstAddress = `32222:${controller}:${"1".repeat(64)}`
-    const secondAddress = `32222:${controller}:${"2".repeat(64)}`
+    const owner = "c".repeat(64)
+    const firstAddress = `32222:${owner}:${"1".repeat(64)}`
+    const secondAddress = `32222:${owner}:${"2".repeat(64)}`
     const groups = buildBlossomServerGroups({
       memberCommunities: [
         {
           communityAddress: firstAddress,
-          communityPubkey: controller,
+          communityPubkey: owner,
           communityName: "First project",
           relayHints: [],
           blossomServers: ["https://first.example"],
@@ -311,7 +311,7 @@ describe("blossom server sources", () => {
         },
         {
           communityAddress: secondAddress,
-          communityPubkey: controller,
+          communityPubkey: owner,
           communityName: "Second project",
           relayHints: [],
           blossomServers: ["https://second.example"],
@@ -436,7 +436,7 @@ describe("blossom server sources", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey: memberDefinition.controllerPubkey,
+        communityPubkey: memberDefinition.ownerPubkey,
         communityAddress: memberDefinition.pointer.address,
         blossomServers: ["https://member-blossom.example"],
         writableSections: ["General"],
@@ -473,12 +473,12 @@ describe("blossom server sources", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey: adminDefinition.controllerPubkey,
+        communityPubkey: adminDefinition.ownerPubkey,
         blossomServers: ["https://admin-blossom.example"],
         writableSections: ["General"],
       }),
       expect.objectContaining({
-        communityPubkey: moderatorDefinition.controllerPubkey,
+        communityPubkey: moderatorDefinition.ownerPubkey,
         blossomServers: ["https://moderator-blossom.example"],
         writableSections: ["General"],
       }),
@@ -522,7 +522,7 @@ describe("blossom server sources", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        communityPubkey: adminDefinition.controllerPubkey,
+        communityPubkey: adminDefinition.ownerPubkey,
         blossomServers: ["https://admin-blossom.example"],
       }),
     ])

@@ -5,7 +5,7 @@ import {
   COMMUNITY_SECTION_THREADS,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
-  makeCommunityAuthorityTagsV2,
+  makeCommunityAuthorityTags,
   makeCommunityPointer,
 } from "./community"
 import {
@@ -40,12 +40,12 @@ const otherModeratorPubkey = key(4)
 const applicantPubkey = key(5)
 const outsiderPubkey = key(6)
 const community = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId,
   relayHints: ["wss://relay.example.com"],
 })!
 const siblingCommunity = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: key(7),
   relayHints: ["wss://sibling.example.com"],
 })!
@@ -70,7 +70,7 @@ const makeFormEvent = (overrides: Partial<TrustedEvent> = {}) =>
     created_at: 10,
     tags: [
       ["d", "repo-application"],
-      ...makeCommunityAuthorityTagsV2(community, "wss://relay.example.com", [
+      ...makeCommunityAuthorityTags(community, "wss://relay.example.com", [
         ["content", "Repositories"],
         ["name", "Repository curator application"],
         ["settings", JSON.stringify({description: "Tell us what you will curate."})],
@@ -179,7 +179,7 @@ describe("community admission forms", () => {
   it("rejects malformed or mismatched form authority", () => {
     const valid = makeFormEvent()
     const otherCommunity = makeCommunityPointer({
-      controllerPubkey: communityPubkey,
+      ownerPubkey: communityPubkey,
       communityId: key(7),
     })!
 
@@ -485,7 +485,7 @@ describe("community admission responses", () => {
       kind: FORM_RESPONSE_KIND,
       pubkey: applicantPubkey,
       created_at: 20,
-      tags: makeCommunityAuthorityTagsV2(community, "wss://relay.example.com", [
+      tags: makeCommunityAuthorityTags(community, "wss://relay.example.com", [
         ["a", formAddress, "", "form"],
         ["response", "experience", "I maintain protocol tools.", "{}"],
         ["response", "focus", "tools;protocols", JSON.stringify({source: "test"})],

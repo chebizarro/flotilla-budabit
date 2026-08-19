@@ -1,6 +1,6 @@
 # Budabit Community Moderator Setup UX Plan
 
-> **Historical implementation plan.** This plan records work against the former Communikeys V1 workflow. Its `kind:10222` address shapes are not V2 guidance. Current authority-sensitive workflows use stable `h=<communityId>` plus a marked exact `a=<32222:controller:communityId>` branch reference; see `Communikeys.md`.
+> **Historical implementation plan.** This plan records work against the former Communikeys V1 workflow. Its `kind:10222` address shapes are not V2 guidance. Current authority-sensitive workflows use stable `h=<communityId>` plus a marked exact `a=<32222:owner:communityId>` branch reference; see `Communikeys.md`.
 
 This plan replaces the current protocol-shaped moderation form editor with a moderator-facing setup flow for accepting and reviewing section applications.
 

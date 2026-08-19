@@ -33,11 +33,11 @@ import {
 } from "@welshman/util"
 import {makeChatId, entityLink, DM_KIND} from "@app/core/state"
 import {
-  TARGETED_PUBLICATION_KIND_V2,
+  TARGETED_PUBLICATION_KIND,
   type CommunityPointer,
   makeCommunityPointer,
   parseCommunityNaddr,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
 } from "@app/core/community"
 import {GIT_PERMALINK_KIND, SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import {COMMIT_COMMENT_KIND} from "@app/core/commit-comments"
@@ -97,7 +97,7 @@ export const makeExactGitCommunityPath = (community: CommunityPointer) => {
 const getCoherentCommunityPointer = (value: CommunityPointer | undefined) => {
   if (!value) return undefined
   const pointer = makeCommunityPointer({
-    controllerPubkey: value.controllerPubkey,
+    ownerPubkey: value.ownerPubkey,
     communityId: value.communityId,
     relayHints: value.relayHints,
   })
@@ -128,7 +128,7 @@ export const getExactCommunityEventPath = (
   selectedCommunity?: CommunityPointer,
 ) => {
   const targeted =
-    event.kind === TARGETED_PUBLICATION_KIND_V2 ? parseTargetedPublicationV2(event) : undefined
+    event.kind === TARGETED_PUBLICATION_KIND ? parseTargetedPublication(event) : undefined
   const targetedPointer = targeted
     ? selectedCommunity
       ? targeted.communities.find(item => item.address === selectedCommunity.address)
@@ -384,7 +384,7 @@ const makeTargetedPublicationPath = (community: CommunityPointer, kind: number) 
 
 const getFirstTargetedPublicationCommunity = (events: TrustedEvent[]) => {
   for (const event of events) {
-    const targeting = parseTargetedPublicationV2(event)
+    const targeting = parseTargetedPublication(event)
     const community = targeting?.communities.length === 1 ? targeting.communities[0] : undefined
 
     if (community) return community
@@ -402,7 +402,7 @@ const getTargetedPublicationFiltersForOriginal = (event: TrustedEvent): Filter[]
 
   if (targetingId) {
     filters.push({
-      kinds: [TARGETED_PUBLICATION_KIND_V2],
+      kinds: [TARGETED_PUBLICATION_KIND],
       "#d": [targetingId],
       "#k": [String(event.kind)],
     })
@@ -410,14 +410,14 @@ const getTargetedPublicationFiltersForOriginal = (event: TrustedEvent): Filter[]
 
   if (identifier) {
     filters.push({
-      kinds: [TARGETED_PUBLICATION_KIND_V2],
+      kinds: [TARGETED_PUBLICATION_KIND],
       "#a": [`${event.kind}:${event.pubkey}:${identifier}`],
       "#k": [String(event.kind)],
     })
   }
 
   filters.push({
-    kinds: [TARGETED_PUBLICATION_KIND_V2],
+    kinds: [TARGETED_PUBLICATION_KIND],
     "#e": [event.id],
     "#k": [String(event.kind)],
   })
@@ -436,8 +436,8 @@ const getTargetedPublicationCommunityForOriginal = (event: TrustedEvent) => {
 }
 
 const getTargetedPublicationEventPath = (event: TrustedEvent) => {
-  if (event.kind === TARGETED_PUBLICATION_KIND_V2) {
-    const targeting = parseTargetedPublicationV2(event)
+  if (event.kind === TARGETED_PUBLICATION_KIND) {
+    const targeting = parseTargetedPublication(event)
     const community = targeting?.communities.length === 1 ? targeting.communities[0] : undefined
 
     return community && targeting

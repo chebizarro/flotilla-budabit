@@ -187,7 +187,7 @@
     setActiveExactCommunityPointer,
   } from "@app/core/community-state"
   import {
-    TARGETED_PUBLICATION_KIND_V2,
+    TARGETED_PUBLICATION_KIND,
     makeCommunityPointer,
     parseCommunityDefinitionAddress,
   } from "@app/core/community"
@@ -197,7 +197,7 @@
   } from "@app/core/community-permissions"
   import {
     makeEventPublicationRef,
-    makeTargetedPublicationForCommunityV2,
+    makeTargetedPublicationForCommunity,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -281,10 +281,10 @@
         }),
       )
       .map(ref => ({
-        controllerPubkey: ref.definition.controllerPubkey,
+        ownerPubkey: ref.definition.ownerPubkey,
         address: ref.community.address,
         communityId: ref.community.communityId,
-        label: getCommunityOptionLabel(ref.definition.controllerPubkey),
+        label: getCommunityOptionLabel(ref.definition.ownerPubkey),
         relays: ref.definition.relays,
         graspServers: ref.definition.graspServers,
       })),
@@ -302,7 +302,7 @@
     const option = repoCommunityOptions.find(item => item.address === community.address)
     const branch = parseCommunityDefinitionAddress(community.address)
     return branch
-      ? getCommunityOptionLabel(option?.controllerPubkey || branch.controllerPubkey)
+      ? getCommunityOptionLabel(option?.ownerPubkey || branch.ownerPubkey)
       : ""
   })
   const repoCommunityPointer = $derived.by(() => {
@@ -1947,7 +1947,7 @@
     if (!branch) return
 
     const pointer = makeCommunityPointer({
-      controllerPubkey: branch.controllerPubkey,
+      ownerPubkey: branch.ownerPubkey,
       communityId: branch.communityId,
       relayHints: [community.relay || "", ...(option?.relays || [])],
     })
@@ -2937,7 +2937,7 @@
   }
 
   const getRepoCollectionCommunityLabel = (community: RepoCommunityOption) =>
-    community.label || getCommunityOptionLabel(community.controllerPubkey)
+    community.label || getCommunityOptionLabel(community.ownerPubkey)
 
   const publishPersonalRepoStar = ({
     event,
@@ -2987,7 +2987,7 @@
       throw new Error("Selected community must declare at least one relay.")
     }
     const communityPointer = makeCommunityPointer({
-      controllerPubkey: community.controllerPubkey,
+      ownerPubkey: community.ownerPubkey,
       communityId: community.communityId,
       relayHints: communityRelays,
     })
@@ -3001,8 +3001,8 @@
     const starThunk = publishEvent(starEvent as any, relays, address)
     if (starThunk?.event) repository.publish(starThunk.event as TrustedEvent)
 
-    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
-      ...makeTargetedPublicationForCommunityV2({
+    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND, {
+      ...makeTargetedPublicationForCommunity({
         targetingId,
         originalKind: REACTION,
         originalRef: starThunk?.event?.id
@@ -3399,7 +3399,7 @@
               community: {
                 scope: "community" as const,
                 communityAddress: selectedCommunity.address,
-                communityPubkey: selectedCommunity.controllerPubkey,
+                communityPubkey: selectedCommunity.ownerPubkey,
               },
             }
           : {}),

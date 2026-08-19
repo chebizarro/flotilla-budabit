@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
     }
   }),
   repositoryPublish: vi.fn(),
-  makeTargetedPublicationForCommunityV2: vi.fn(() => ({tags: []})),
+  makeTargetedPublicationForCommunity: vi.fn(() => ({tags: []})),
 }))
 
 vi.mock("@welshman/app", () => ({
@@ -31,18 +31,18 @@ vi.mock("@welshman/util", () => ({
 vi.mock("@welshman/lib", () => ({randomId: () => "target-id"}))
 vi.mock("@nostr-git/core/types", () => ({GIT_PERMALINK: 1623}))
 vi.mock("@app/core/community", () => ({
-  TARGETED_PUBLICATION_KIND_V2: 30222,
-  makeCommunityPointer: ({controllerPubkey, communityId, relayHints}: any) => ({
-    controllerPubkey,
+  TARGETED_PUBLICATION_KIND: 30222,
+  makeCommunityPointer: ({ownerPubkey, communityId, relayHints}: any) => ({
+    ownerPubkey,
     communityId,
     relayHints,
-    address: `32222:${controllerPubkey}:${communityId}`,
+    address: `32222:${ownerPubkey}:${communityId}`,
     naddr: "naddr",
   }),
 }))
 vi.mock("@app/core/community-targeting", () => ({
   makeEventPublicationRef: (value: unknown) => value,
-  makeTargetedPublicationForCommunityV2: mocks.makeTargetedPublicationForCommunityV2,
+  makeTargetedPublicationForCommunity: mocks.makeTargetedPublicationForCommunity,
   withPublicationTargetingId: (event: {tags: string[][]}, id: string) => ({
     ...event,
     tags: [...event.tags, ["h", id]],
@@ -64,7 +64,7 @@ describe("permalink publishing", () => {
     mocks.publishCount = 0
     mocks.publishThunk.mockClear()
     mocks.repositoryPublish.mockClear()
-    mocks.makeTargetedPublicationForCommunityV2.mockClear()
+    mocks.makeTargetedPublicationForCommunity.mockClear()
   })
 
   it("returns the relays used for a community-only permalink publication", async () => {
@@ -75,7 +75,7 @@ describe("permalink publishing", () => {
       relays: ["wss://repo.example.com"],
       communityOptions: [
         {
-          controllerPubkey: "4".repeat(64),
+          ownerPubkey: "4".repeat(64),
           address: `32222:${"4".repeat(64)}:${"5".repeat(64)}`,
           communityId: "5".repeat(64),
           label: "Community",
@@ -95,7 +95,7 @@ describe("permalink publishing", () => {
       "p",
       "5".repeat(64),
     ])
-    expect(mocks.makeTargetedPublicationForCommunityV2).toHaveBeenCalledWith(
+    expect(mocks.makeTargetedPublicationForCommunity).toHaveBeenCalledWith(
       expect.objectContaining({
         originalRef: expect.objectContaining({id: "1".padStart(64, "0")}),
         community: expect.objectContaining({

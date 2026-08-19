@@ -14,7 +14,7 @@ const makeWidget = (identifier: string, pubkey?: string): SmartWidgetEvent => ({
 })
 
 describe("selectDefaultCommunityWidgets", () => {
-  it("keeps only widgets authored by the default community controller", () => {
+  it("keeps only widgets authored by the default community owner", () => {
     const owner = "a".repeat(64)
     const moderator = "b".repeat(64)
 

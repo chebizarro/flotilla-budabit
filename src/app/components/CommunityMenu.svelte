@@ -111,12 +111,12 @@
   )
   const mainRelay = $derived(exactDefinition?.relays[0] || "")
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === community.controllerPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === community.ownerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
   const communityAdmissionFormReadiness = $derived(
-    $activeCommunityAdmissionFormReadiness.communityPubkey === community.controllerPubkey
+    $activeCommunityAdmissionFormReadiness.communityPubkey === community.ownerPubkey
       ? $activeCommunityAdmissionFormReadiness.state
       : "loading",
   )
@@ -142,7 +142,7 @@
   )
   const gitPath = $derived(exactCommunity ? makeExactGitCommunityPath(exactCommunity) : "/git")
   const canViewAdmin = $derived(
-    Boolean($pubkey && normalizePubkey($pubkey) === normalizePubkey(community.controllerPubkey)),
+    Boolean($pubkey && normalizePubkey($pubkey) === normalizePubkey(community.ownerPubkey)),
   )
   const roomAuthorPubkeys = $derived(
     communityAuthorityReady && exactDefinition

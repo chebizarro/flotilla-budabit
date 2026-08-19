@@ -1,7 +1,7 @@
 import {
   normalizePubkey,
   normalizeRelays,
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
   type CommunityPointer,
 } from "@app/core/community"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
@@ -13,7 +13,7 @@ export type CommunityWidgetRecommendationContext = {
   community: CommunityPointer
   relays: string[]
   relayHints: string[]
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListEvents: TrustedEvent[]
   trustedWidgetAuthorPubkeys: string[]
   widgetTargetAuthorPubkeys: string[]

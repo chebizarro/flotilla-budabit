@@ -12,11 +12,11 @@ import {
 } from "@welshman/net"
 import {type Filter, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
-  makeCommunityAuthorityTagsV2,
+  buildCommunityDefinition,
+  makeCommunityAuthorityTags,
   makeCommunityPointer,
 } from "./community"
 
@@ -135,14 +135,14 @@ const discoveryRelay = "wss://discovery.example.com/"
 const moderatorCommunityRelay = "wss://moderator-community.example.com/"
 const moderatorListIdentifier = "moderator-list"
 const community = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId,
   relayHints: [relayA],
 })!
 const communitySession = makeExactCommunitySession(community)
 const makeSession = (relayHints = community.relayHints) =>
   makeExactCommunitySession(
-    makeCommunityPointer({controllerPubkey: communityPubkey, communityId, relayHints})!,
+    makeCommunityPointer({ownerPubkey: communityPubkey, communityId, relayHints})!,
   )
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
@@ -159,8 +159,8 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
 
 const definitionEvent = makeEvent({
   id: "definition",
-  kind: COMMUNITY_DEFINITION_KIND_V2,
-  tags: buildCommunityDefinitionV2({
+  kind: COMMUNITY_DEFINITION_KIND,
+  tags: buildCommunityDefinition({
     communityId,
     name: "Community",
     relays: [relayA.slice(0, -1), relayB.slice(0, -1)],
@@ -198,8 +198,8 @@ const secondProfileListEvent = makeEvent({
 
 const twoListDefinitionEvent = makeEvent({
   id: "definition-two-lists",
-  kind: COMMUNITY_DEFINITION_KIND_V2,
-  tags: buildCommunityDefinitionV2({
+  kind: COMMUNITY_DEFINITION_KIND,
+  tags: buildCommunityDefinition({
     communityId,
     name: "Two-list community",
     relays: [relayA.slice(0, -1), relayB.slice(0, -1)],
@@ -225,14 +225,14 @@ const admissionFormEvent = makeEvent({
   pubkey: listPubkey,
   tags: [
     ["d", "general-application"],
-    ...makeCommunityAuthorityTagsV2(community, relayA, [["content", "General"]]),
+    ...makeCommunityAuthorityTags(community, relayA, [["content", "General"]]),
   ],
 })
 
 const singleRelayDefinitionEvent = makeEvent({
   id: "definition-single-relay",
-  kind: COMMUNITY_DEFINITION_KIND_V2,
-  tags: buildCommunityDefinitionV2({
+  kind: COMMUNITY_DEFINITION_KIND,
+  tags: buildCommunityDefinition({
     communityId,
     name: "Single-relay community",
     relays: [relayA.slice(0, -1)],
@@ -250,8 +250,8 @@ const singleRelayDefinitionEvent = makeEvent({
 
 const requiredRelayDefinitionEvent = makeEvent({
   id: "definition-required-relay",
-  kind: COMMUNITY_DEFINITION_KIND_V2,
-  tags: buildCommunityDefinitionV2({
+  kind: COMMUNITY_DEFINITION_KIND,
+  tags: buildCommunityDefinition({
     communityId,
     name: "Required-relay community",
     relays: [requiredRelay.slice(0, -1)],
@@ -272,8 +272,8 @@ const requiredRelayDefinitionEvent = makeEvent({
 
 const preferenceDefinitionEvent = makeEvent({
   id: "preference-definition",
-  kind: COMMUNITY_DEFINITION_KIND_V2,
-  tags: buildCommunityDefinitionV2({
+  kind: COMMUNITY_DEFINITION_KIND,
+  tags: buildCommunityDefinition({
     communityId,
     name: "Preference community",
     relays: [relayA.slice(0, -1)],
@@ -291,9 +291,9 @@ const preferenceDefinitionEvent = makeEvent({
 
 const moderatorPreferenceDefinitionEvent = makeEvent({
   id: "moderator-preference-definition",
-  kind: COMMUNITY_DEFINITION_KIND_V2,
+  kind: COMMUNITY_DEFINITION_KIND,
   pubkey: moderatorCommunityPubkey,
-  tags: buildCommunityDefinitionV2({
+  tags: buildCommunityDefinition({
     communityId: getPublicKey(new Uint8Array(32).fill(8)),
     name: "Moderator community",
     relays: [moderatorCommunityRelay.slice(0, -1)],
@@ -323,7 +323,7 @@ const hasKind = (filters: Filter[], kind: number) =>
   filters.some(filter => filter.kinds?.includes(kind))
 
 const hasBroadCommunityDefinitionFilter = (filters: Filter[]) =>
-  filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2) && !filter.authors)
+  filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND) && !filter.authors)
 
 const hasProfileListFilter = (filters: Filter[], author: string, identifier: string) =>
   filters.some(filter => {
@@ -449,14 +449,14 @@ describe("community relay loading", () => {
   it("resolves first-non-empty loads without waiting for hanging relays", async () => {
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
       if (relays[0] === relayB) return new Promise(() => undefined)
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) return Promise.resolve([definitionEvent])
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) return Promise.resolve([definitionEvent])
 
       return Promise.resolve([])
     })
 
     const events = await loadCommunityEvents(
       [relayB, relayA],
-      [{kinds: [COMMUNITY_DEFINITION_KIND_V2]}],
+      [{kinds: [COMMUNITY_DEFINITION_KIND]}],
       {
         settle: "first-non-empty",
       },
@@ -953,7 +953,7 @@ describe("community relay loading", () => {
     })
     await flushPromises()
     setActiveExactCommunityPointer(
-      makeCommunityPointer({controllerPubkey: otherCommunityPubkey, communityId})!,
+      makeCommunityPointer({ownerPubkey: otherCommunityPubkey, communityId})!,
     )
     activeCommunityBootstrapStatus.set({
       key: `:${otherCommunityPubkey}:`,
@@ -1061,7 +1061,7 @@ describe("community relay loading", () => {
     })
     fromPubkeysMock.mockReturnValue({getUrls: () => (outboxHydrated ? [relayA] : [])})
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
-      if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([definitionEvent])
       }
 
@@ -1087,7 +1087,7 @@ describe("community relay loading", () => {
     forceLoadRelayListMock.mockReturnValue(new Promise(() => undefined))
     fromPubkeysMock.mockReturnValue({getUrls: () => [relayA]})
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
-      if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([definitionEvent])
       }
 
@@ -1109,7 +1109,7 @@ describe("community relay loading", () => {
     forceLoadRelayListMock.mockReturnValue(new Promise(() => undefined))
     fromPubkeysMock.mockReturnValue({getUrls: () => []})
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
-      if (relays[0] === discoveryRelay && hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (relays[0] === discoveryRelay && hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([definitionEvent])
       }
 
@@ -1153,7 +1153,7 @@ describe("community relay loading", () => {
     fromPubkeysMock.mockReturnValue({getUrls: () => [relayA]})
     loadMock.mockImplementation(
       ({relays, filters, onStart}: {relays: string[]; filters: Filter[]; onStart?: () => void}) => {
-        if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+        if (relays[0] === relayA && hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
           onStart?.()
           return new Promise(() => undefined)
         }
@@ -1182,7 +1182,7 @@ describe("community relay loading", () => {
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
       if (relays[0] === relayB) return new Promise(() => undefined)
       if (relays[0] !== relayA) return Promise.resolve([])
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) return Promise.resolve([definitionEvent])
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) return Promise.resolve([definitionEvent])
       if (hasKind(filters, PROFILE_LIST_KIND)) return Promise.resolve([profileListEvent])
       if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([])
 
@@ -1210,7 +1210,7 @@ describe("community relay loading", () => {
 
   it("keeps partial authority evidence usable when other referenced lists are pending", async () => {
     loadMock.mockImplementation(({relays, filters, onClosed, onEvent}: any) => {
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([twoListDefinitionEvent])
       }
       if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([])
@@ -1251,7 +1251,7 @@ describe("community relay loading", () => {
       resolveSecondaryList = resolve
     })
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([twoListDefinitionEvent])
       }
       if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([])
@@ -1303,7 +1303,7 @@ describe("community relay loading", () => {
         profileLoadCount += 1
         return [guestLoad, signerLoad, newestSignerLoad][profileLoadCount - 1]
       }
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([singleRelayDefinitionEvent])
       }
       if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([admissionFormEvent])
@@ -1357,7 +1357,7 @@ describe("community relay loading", () => {
 
         return Promise.resolve([profileListEvent])
       }
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([singleRelayDefinitionEvent])
       }
       if (hasKind(filters, FORM_TEMPLATE_KIND)) return Promise.resolve([admissionFormEvent])
@@ -1393,7 +1393,7 @@ describe("community relay loading", () => {
     repository.publish(singleRelayDefinitionEvent)
     loadMock.mockImplementation(({filters, onClosed}: any) => {
       if (hasKind(filters, PROFILE_LIST_KIND)) return Promise.resolve([profileListEvent])
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([singleRelayDefinitionEvent])
       }
       if (hasKind(filters, FORM_TEMPLATE_KIND)) {
@@ -1449,7 +1449,7 @@ describe("community relay loading", () => {
         admissionFormLoadCount += 1
         return Promise.resolve([admissionFormEvent])
       }
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([singleRelayDefinitionEvent])
       }
 
@@ -1503,7 +1503,7 @@ describe("community relay loading", () => {
     repository.publish(singleRelayDefinitionEvent)
     loadMock.mockImplementation(({filters}: {relays: string[]; filters: Filter[]}) => {
       if (hasKind(filters, PROFILE_LIST_KIND)) return profileListLoad
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2))
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND))
         return Promise.resolve([singleRelayDefinitionEvent])
 
       return Promise.resolve([])
@@ -1534,7 +1534,7 @@ describe("community relay loading", () => {
   it("does not reactivate a bootstrap after navigation changed communities", async () => {
     const otherCommunityPubkey = getPublicKey(new Uint8Array(32).fill(9))
     const otherCommunity = makeCommunityPointer({
-      controllerPubkey: otherCommunityPubkey,
+      ownerPubkey: otherCommunityPubkey,
       communityId: getPublicKey(new Uint8Array(32).fill(10)),
     })!
     repository.publish(singleRelayDefinitionEvent)
@@ -1553,7 +1553,7 @@ describe("community relay loading", () => {
     })
 
     await staleBootstrap
-    const activeCommunity = get(activeExactCommunitySession)?.definition.controllerPubkey
+    const activeCommunity = get(activeExactCommunitySession)?.definition.ownerPubkey
     const activePermission = get(activeCommunityPermissionStatus)
 
     expect(activeCommunity).toBe(otherCommunityPubkey)
@@ -1590,7 +1590,7 @@ describe("community relay loading", () => {
     sendAuthChallenge(socket)
     repository.publish(requiredRelayDefinitionEvent)
     loadMock.mockImplementation(({filters}: {relays: string[]; filters: Filter[]}) => {
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
         return Promise.resolve([requiredRelayDefinitionEvent])
       }
       if (hasKind(filters, PROFILE_LIST_KIND)) return Promise.resolve([profileListEvent])
@@ -1711,9 +1711,7 @@ describe("community relay loading", () => {
   it("loads the signed-in admin community through preference relay hints", async () => {
     pubkey.set(communityPubkey)
     loadMock.mockImplementation(({relays, filters}: {relays: string[]; filters: Filter[]}) => {
-      const adminFilter = filters.find(filter =>
-        filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2),
-      )
+      const adminFilter = filters.find(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND))
 
       if (relays[0] === relayA && adminFilter?.authors?.includes(communityPubkey)) {
         return Promise.resolve([preferenceDefinitionEvent])
@@ -1742,7 +1740,7 @@ describe("community relay loading", () => {
     repository.publish(singleRelayDefinitionEvent)
     setActiveExactCommunityPointer(community)
     loadMock.mockImplementation(({filters}: {filters: Filter[]}) => {
-      if (hasKind(filters, COMMUNITY_DEFINITION_KIND_V2)) return Promise.resolve([newerDefinition])
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) return Promise.resolve([newerDefinition])
       if (hasKind(filters, PROFILE_LIST_KIND)) return Promise.resolve([newerProfileList])
 
       return Promise.resolve([])

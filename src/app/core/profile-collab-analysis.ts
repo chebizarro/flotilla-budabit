@@ -16,7 +16,7 @@ import {
   loadRepoAnnouncementByAddress,
   repoAnnouncementsByAddress,
 } from "@app/core/git-state"
-import type {CommunityDefinitionV2, CommunityPointer} from "@app/core/community"
+import type {CommunityDefinition, CommunityPointer} from "@app/core/community"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
 import {loadBudabitProfile} from "@app/core/profile-resolver"
@@ -103,7 +103,7 @@ type BuildProfileCodeTrustAnalysisInput = {
 
 export type ProfileCodeTrustCommunityContext = {
   community: CommunityPointer
-  definitions: CommunityDefinitionV2[]
+  definitions: CommunityDefinition[]
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }
@@ -483,7 +483,7 @@ export const loadProfileCodeTrustAnalysis = async (
 ) => {
   const viewerPubkey = pubkey.get() || ""
   const communityContextAddress = communityContext?.community.address || ""
-  const communityContextPubkey = communityContext?.community.controllerPubkey || ""
+  const communityContextPubkey = communityContext?.community.ownerPubkey || ""
 
   if (!viewerPubkey) {
     throw new Error("Sign in to analyze code collaboration.")
@@ -684,7 +684,7 @@ const getProfileCommunityAlignedScores = ({
     context: {
       scope: "active_community",
       communityAddress: community.address,
-      communityPubkey: community.controllerPubkey,
+      communityPubkey: community.ownerPubkey,
     },
     definitions,
     profileListEvents: communityContext?.profileListEvents || [],

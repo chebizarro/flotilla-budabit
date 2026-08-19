@@ -2,11 +2,11 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   COMMUNITY_DISCOVERY_RELAYS,
@@ -20,16 +20,16 @@ import {
 } from "./community-state"
 
 const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
-const controllerPubkey = key(21)
+const ownerPubkey = key(21)
 const communityId = key(22)
 const listPubkey = key(23)
 const pointer = makeCommunityPointer({
-  controllerPubkey,
+  ownerPubkey,
   communityId,
   relayHints: ["wss://hint.example"],
 })!
 
-const template = buildCommunityDefinitionV2({
+const template = buildCommunityDefinition({
   communityId,
   name: "Community",
   relays: ["wss://relay.example.com"],
@@ -42,21 +42,21 @@ const template = buildCommunityDefinitionV2({
     },
   ],
 })
-const definition = parseCommunityDefinitionV2({
+const definition = parseCommunityDefinition({
   id: "definition",
-  pubkey: controllerPubkey,
+  pubkey: ownerPubkey,
   created_at: 1,
-  kind: COMMUNITY_DEFINITION_KIND_V2,
+  kind: COMMUNITY_DEFINITION_KIND,
   tags: template.tags,
   content: "",
   sig: "sig",
 } as TrustedEvent)!
 
 describe("community state helpers", () => {
-  it("keys bootstraps by exact V2 address, not hints", () => {
+  it("keys bootstraps by exact address, not hints", () => {
     const first = makeExactCommunitySession(pointer)
     const second = makeExactCommunitySession(
-      makeCommunityPointer({controllerPubkey, communityId, relayHints: ["wss://other.example"]})!,
+      makeCommunityPointer({ownerPubkey, communityId, relayHints: ["wss://other.example"]})!,
     )
 
     expect(getCommunityBootstrapKey(first, listPubkey)).toBe(
@@ -65,7 +65,7 @@ describe("community state helpers", () => {
     expect(getCommunityBootstrapKey(first, listPubkey)).toContain(pointer.address)
   })
 
-  it("builds relay sets from explicit V2 hints", () => {
+  it("builds relay sets from explicit hints", () => {
     expect(getCommunityBootstrapRelays(["wss://relay.example.com", "bad-relay"])).toEqual([
       "wss://relay.example.com/",
       ...COMMUNITY_DISCOVERY_RELAYS,
@@ -73,7 +73,7 @@ describe("community state helpers", () => {
     expect(getCommunityDefinitionRelayHints(definition)).toContain("wss://relay.example.com/")
   })
 
-  it("reads V2 definition infrastructure", () => {
+  it("reads definition infrastructure", () => {
     expect(getCommunityBlossomServers(definition)).toEqual(["https://blossom.example.com"])
     expect(makeCommunityProfileListFilters(definition)).toContainEqual({
       kinds: [PROFILE_LIST_KIND],

@@ -26,7 +26,7 @@ export const installBuiltinExtensions = () => {
       })
       setDefaultExtensionWidgets(
         result?.status === "community"
-          ? selectDefaultCommunityWidgets(result.widgets, result.community.controllerPubkey)
+          ? selectDefaultCommunityWidgets(result.widgets, result.community.ownerPubkey)
           : [],
       )
     } catch (error) {

@@ -2,7 +2,7 @@ import {describe, expect, it} from "vitest"
 import {EVENT_TIME, MESSAGE, THREAD, ZAP_GOAL} from "@welshman/util"
 import {DM_KIND} from "@app/core/state"
 import {COMMUNITY_REPORT_KIND} from "@app/core/community-reports"
-import {COMMUNITY_DEFINITION_KIND_V2} from "@app/core/community-v2"
+import {COMMUNITY_DEFINITION_KIND} from "@app/core/community-protocol"
 import {
   isPersistedCommunityDefinitionEvent,
   isPersistedCommunityReportDeleteEvent,
@@ -130,7 +130,7 @@ describe("storage community report delete persistence", () => {
 
 describe("storage community definition persistence", () => {
   it("persists kind 32222 definitions at their exact d coordinate", () => {
-    const event = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    const event = makeEvent(COMMUNITY_DEFINITION_KIND)
     event.tags = [["d", communityId]]
 
     expect(isPersistedCommunityDefinitionEvent(event)).toBe(true)
@@ -144,15 +144,15 @@ describe("storage community definition persistence", () => {
   })
 
   it("does not persist kind 32222 events without one exact community-id d tag", () => {
-    const missing = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
-    const duplicate = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    const missing = makeEvent(COMMUNITY_DEFINITION_KIND)
+    const duplicate = makeEvent(COMMUNITY_DEFINITION_KIND)
     duplicate.tags = [
       ["d", communityId],
       ["d", communityId],
     ]
-    const extended = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    const extended = makeEvent(COMMUNITY_DEFINITION_KIND)
     extended.tags = [["d", communityId, "extra"]]
-    const invalid = makeEvent(COMMUNITY_DEFINITION_KIND_V2)
+    const invalid = makeEvent(COMMUNITY_DEFINITION_KIND)
     invalid.tags = [["d", "not-a-community-id"]]
 
     expect(isPersistedCommunityDefinitionEvent(missing)).toBe(false)

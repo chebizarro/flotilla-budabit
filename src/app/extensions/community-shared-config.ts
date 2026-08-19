@@ -1,4 +1,5 @@
 import {normalizePubkey} from "@app/core/community"
+import {EVENT_DATE, EVENT_TIME} from "@welshman/util"
 import type {CommunityEventDescriptor} from "./types"
 
 export type CommunitySharedConfigDescriptorAuthority = {
@@ -6,8 +7,14 @@ export type CommunitySharedConfigDescriptorAuthority = {
   moderatorPubkeys: Iterable<string>
 }
 
-export const getCommunitySharedConfigDescriptorKey = (descriptor: CommunityEventDescriptor) =>
-  `${descriptor.kind}:${descriptor.subtype?.trim() || ""}`
+export const getCommunitySharedConfigDescriptorKey = (descriptor: CommunityEventDescriptor) => {
+  const kind =
+    !descriptor.subtype && (descriptor.kind === EVENT_DATE || descriptor.kind === EVENT_TIME)
+      ? "calendar"
+      : descriptor.kind
+
+  return `${kind}:${descriptor.subtype?.trim() || ""}`
+}
 
 const parseDescriptorTags = (event: {tags?: string[][]}) => {
   const tags = (event.tags || []).filter(tag => tag[0] === "descriptor")
@@ -40,12 +47,16 @@ export const isAuthorizedCommunitySharedConfigEvent = ({
   if (!parsed.declared) return false
   if (!parsed.valid) return false
 
-  const authorityByDescriptor = new Map(
-    descriptorAuthorities.map(({descriptor, moderatorPubkeys}) => [
-      getCommunitySharedConfigDescriptorKey(descriptor),
-      new Set(Array.from(moderatorPubkeys, normalizePubkey).filter(Boolean)),
-    ]),
-  )
+  const authorityByDescriptor = new Map<string, Set<string>>()
+  for (const {descriptor, moderatorPubkeys} of descriptorAuthorities) {
+    const key = getCommunitySharedConfigDescriptorKey(descriptor)
+    const moderators = authorityByDescriptor.get(key) || new Set<string>()
+    for (const moderatorPubkey of moderatorPubkeys) {
+      const moderator = normalizePubkey(moderatorPubkey)
+      if (moderator) moderators.add(moderator)
+    }
+    authorityByDescriptor.set(key, moderators)
+  }
   const declaredKeys = new Set(parsed.descriptors.map(getCommunitySharedConfigDescriptorKey))
 
   if (

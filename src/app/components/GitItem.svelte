@@ -58,7 +58,7 @@
   )
   const communityLabel = $derived.by(() => {
     if (!communityPointer) return ""
-    return `${communityPointer.controllerPubkey.slice(0, 6)}:${communityPointer.communityId.slice(0, 6)}...`
+    return `${communityPointer.ownerPubkey.slice(0, 6)}:${communityPointer.communityId.slice(0, 6)}...`
   })
   const browseHref = $derived.by(() => makeRepoHrefFromEvent(event, {url}))
   const issuesHref = $derived.by(() => `${browseHref}/issues`)

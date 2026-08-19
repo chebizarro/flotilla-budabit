@@ -14,7 +14,7 @@
 
   const shareValue = $derived(
     makeCommunityPointer({
-      controllerPubkey: value.controllerPubkey,
+      ownerPubkey: value.ownerPubkey,
       communityId: value.communityId,
       relayHints: definitionRelays,
     })?.naddr || value.naddr,

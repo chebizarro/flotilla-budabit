@@ -12,12 +12,12 @@ V2 is a clean protocol generation. This document does not define V1 discovery, m
 communityId       = stable 32-byte identifier encoded as lowercase hex
 definition d      = communityId
 community event h = communityId
-controller        = definition event author
-definitionAddress = 32222:<controllerPubkey>:<communityId>
+owner        = definition event author
+definitionAddress = 32222:<ownerPubkey>:<communityId>
 canonical pointer = naddr(definitionAddress, relay hints)
 ```
 
-There is one stable community ID. A definition address identifies one exact controller branch. Different controllers MAY publish definitions with the same community ID; those definitions are distinct branches and MUST NOT replace one another. A controller MAY publish any number of definitions with distinct community IDs.
+There is one stable community ID. A definition address identifies one exact owner branch. Different owners MAY publish definitions with the same community ID; those definitions are distinct branches and MUST NOT replace one another. A owner MAY publish any number of definitions with distinct community IDs.
 
 ### Community ID
 
@@ -25,17 +25,17 @@ A community ID MUST contain exactly 64 lowercase hexadecimal characters. Current
 
 For a new community, the creator MUST use a cryptographically secure random source to generate a secp256k1 keypair, retain the x-only public key as the community ID, and immediately discard the private key. The discarded key MUST NOT be persisted, logged, backed up, exported, or used to sign an event. A migrated community MAY instead retain the stable pubkey value already present in immutable community references.
 
-Controller and community-reference parsers validate canonical lowercase 64-character hexadecimal encoding only. Whether a controller is a usable signing key is established by verification of the referenced definition event, not by curve-lifting the reference. Likewise, targeting-wrapper admission resolves and admits the referenced original publication; parsing the wrapper does not repeat cryptographic validation of cached trusted events.
+Owner and community-reference parsers validate canonical lowercase 64-character hexadecimal encoding only. Whether a owner is a usable signing key is established by verification of the referenced definition event, not by curve-lifting the reference. Likewise, targeting-wrapper admission resolves and admits the referenced original publication; parsing the wrapper does not repeat cryptographic validation of cached trusted events.
 
 A value read from a community-ID position, including definition `d`, content `h`, or the identifier of a marked community `a`, grants no signing, person, profile, relay, or administrative meaning. Implementations MUST NOT use that field value by itself as an event author, person `p` tag, outbox or profile lookup, DM recipient, NIP-05 identity, administrator, or permission-list signer.
 
-The same 32-byte value MAY independently appear in an explicitly typed signer or person position. In particular, `controllerPubkey` MAY equal `communityId`. In that case controller authority comes only from the valid definition signature and author component of the exact definition address; equality with `d` or `h` confers nothing. Likewise, a role-specific `p` tag may identify that real controller or person, but a `p` tag MUST NOT encode community association.
+The same 32-byte value MAY independently appear in an explicitly typed signer or person position. In particular, `ownerPubkey` MAY equal `communityId`. In that case owner authority comes only from the valid definition signature and author component of the exact definition address; equality with `d` or `h` confers nothing. Likewise, a role-specific `p` tag may identify that real owner or person, but a `p` tag MUST NOT encode community association.
 
-### Controller And Branch
+### Owner And Branch
 
-The controller is the `pubkey` that signs a community definition. Controller authority applies only to that exact definition address. The controller and community ID are interpreted by position and MAY contain the same value.
+The owner is the `pubkey` that signs a community definition. Owner authority applies only to that exact definition address. The owner and community ID are interpreted by position and MAY contain the same value.
 
-Branch identity is the tuple `(kind=32222, controllerPubkey, communityId)`. Relay hints are retrieval hints and are not part of branch equality.
+Branch identity is the tuple `(kind=32222, ownerPubkey, communityId)`. Relay hints are retrieval hints and are not part of branch equality.
 
 ## Community Definition
 
@@ -44,7 +44,7 @@ A community definition is an addressable `kind:32222` event.
 ```json
 {
   "kind": 32222,
-  "pubkey": "<controller-pubkey>",
+  "pubkey": "<owner-pubkey>",
   "tags": [
     ["d", "<community-id>"],
     ["name", "Buda Builders"],
@@ -58,7 +58,7 @@ A community definition is an addressable `kind:32222` event.
     ["k", "1111"],
     ["k", "7"],
     ["k", "1985"],
-    ["a", "30000:<list-controller>:<community-id>-general", "wss://relay.example"]
+    ["a", "30000:<list-owner>:<community-id>-general", "wss://relay.example"]
   ],
   "content": ""
 }
@@ -105,7 +105,7 @@ Duplicate singleton tags invalidate the definition. Exceeding a stated maximum c
 
 Recognized top-level tags have exact arity: `d`, `name`, `description`, `picture`, `banner`, `website`, `r`, `blossom`, `grasp`, `location`, and `g` contain exactly two values; `mint` and `tos` contain two or three; `service` contains exactly six. Extra values make a recognized tag invalid and therefore invalidate a definition in which it appears.
 
-Community metadata comes only from definition tags. A controller's `kind:0` is a personal profile and MUST NOT override or fill community metadata.
+Community metadata comes only from definition tags. A owner's `kind:0` is a personal profile and MUST NOT override or fill community metadata.
 
 ### Service Tags
 
@@ -144,7 +144,7 @@ Profile-list tags reference real signer-owned `kind:30000` coordinates. The effe
 
 Readers MUST ignore unknown definition tags. Editors MUST preserve them byte-for-byte and in original relative order unless the user explicitly removes them.
 
-An editor update replaces the recognized tags it exposes while merging untouched unknown top-level and section-local tags from the accepted current definition. Automated controller or moderator updates follow the same rule.
+An editor update replaces the recognized tags it exposes while merging untouched unknown top-level and section-local tags from the accepted current definition. Automated owner or moderator updates follow the same rule.
 
 Section-local unknown tags are attached to the original section's case-folded name. Reordering sections moves those tags with their section and preserves their relative order. Renaming a section moves its unknown tags to the renamed section. Removing a section removes its section-local unknown tags only after the explicit user confirmation required for section removal. An editor MUST NOT publish an ambiguous merge from an invalid definition with duplicate case-folded section names.
 
@@ -152,9 +152,9 @@ Section-local unknown tags are attached to the original section's case-folded na
 
 Definitions replace only events at the same exact definition address. The current valid definition is selected by greatest `created_at`, then lexicographically lowest event ID when timestamps are equal. Selection MUST be independent of relay and arrival order.
 
-A branch deletion is a valid controller-authored `kind:5` containing exactly one unmarked `a` for the exact definition address. A `k=32222` SHOULD be included. It tombstones definitions at that address with `created_at` less than or equal to the deletion timestamp. A later definition with greater `created_at` recreates the branch. At equal timestamps deletion wins. An `e`-only deletion does not delete the branch coordinate.
+A branch deletion is a valid owner-authored `kind:5` containing exactly one unmarked `a` for the exact definition address. A `k=32222` SHOULD be included. It tombstones definitions at that address with `created_at` less than or equal to the deletion timestamp. A later definition with greater `created_at` recreates the branch. At equal timestamps deletion wins. An `e`-only deletion does not delete the branch coordinate.
 
-Controllers do not gain authority to rewrite, re-sign, reattribute, or globally delete other authors' events.
+Owners do not gain authority to rewrite, re-sign, reattribute, or globally delete other authors' events.
 
 ### Authority Event Replacement
 
@@ -176,7 +176,7 @@ A community-native event acquired through `#h` MUST carry exactly one `h=<commun
 An authority-sensitive event MUST also carry exactly one branch reference:
 
 ```text
-["a", "32222:<controller>:<communityId>", "<optional-relay>", "community"]
+["a", "32222:<owner>:<communityId>", "<optional-relay>", "community"]
 ```
 
 The address identifier MUST equal the community `h`. A mismatch invalidates the event for Communikeys processing. Unmarked and differently marked `a` tags retain their workflow-specific meanings.
@@ -195,7 +195,7 @@ The address identifier MUST equal the community `h`. A mismatch invalidates the 
 | Stars, bookmarks, and renunciations        | Exactly one `h`                       | Required marked community `a`; no community `p`. |
 | Targeting wrappers                         | One `h` per target pair               | One marked community `a` per pair.               |
 
-Real authors, recipients, members, moderators, controllers, services, and report targets MAY appear in `p` tags, including when a person's pubkey equals the community ID value. Community association itself MUST NOT be encoded as `p=<communityId>`.
+Real authors, recipients, members, moderators, owners, services, and report targets MAY appear in `p` tags, including when a person's pubkey equals the community ID value. Community association itself MUST NOT be encoded as `p=<communityId>`.
 
 ## Targeted Publications
 
@@ -209,9 +209,9 @@ Targetable originals retain their targeting ID in `h`; community associations ar
     ["a", "31922:<publication-author>:<publication-d>", "wss://author-relay", "source"],
     ["k", "31922"],
     ["h", "<community-id-1>"],
-    ["a", "32222:<controller-1>:<community-id-1>", "wss://community-relay-1", "community"],
+    ["a", "32222:<owner-1>:<community-id-1>", "wss://community-relay-1", "community"],
     ["h", "<community-id-2>"],
-    ["a", "32222:<controller-2>:<community-id-2>", "wss://community-relay-2", "community"]
+    ["a", "32222:<owner-2>:<community-id-2>", "wss://community-relay-2", "community"]
   ],
   "content": ""
 }
@@ -269,9 +269,9 @@ The addressable event author remains a real signer. The community ID appears onl
 
 ## Canonical Naddr And Routing
 
-The canonical pointer is a NIP-19 `naddr` containing kind `32222`, the controller pubkey, the community ID as identifier, and zero to three normalized relay hints.
+The canonical pointer is a NIP-19 `naddr` containing kind `32222`, the owner pubkey, the community ID as identifier, and zero to three normalized relay hints.
 
-Pointer equality compares kind, controller, and community ID and ignores hints. State keys use the structured coordinate or canonical address, not the hint-bearing naddr string.
+Pointer equality compares kind, owner, and community ID and ignores hints. State keys use the structured coordinate or canonical address, not the hint-bearing naddr string.
 
 Canonical emission includes at most the first three valid definition `r` relays in declared order. Duplicate normalized hints are removed by first occurrence. Fallback, indexer, tracker, and untrusted input relays MUST NOT be added to share output.
 
@@ -281,22 +281,22 @@ An event containing only `h=<communityId>` does not identify a branch. A client 
 
 ## Discovery, Permissions, And Retrieval
 
-Exact resolution queries kind `32222`, the naddr controller, and `#d=<communityId>`. Controller discovery MAY return all authored definitions. ID discovery MAY query `#d`, but MUST expose all matching branches and MUST NOT choose one silently.
+Exact resolution queries kind `32222`, the naddr owner, and `#d=<communityId>`. Owner discovery MAY return all authored definitions. ID discovery MAY query `#d`, but MUST expose all matching branches and MUST NOT choose one silently.
 
 Results are grouped and replaced by exact definition address. Bounded discovery exposes incomplete state rather than claiming an exhaustive sibling list.
 
 Relays provide transport, not Communikey grant enforcement. For a selected branch, a client resolves its exact definition, loads every referenced list coordinate, selects replacements deterministically, unions real-person grants, discovers stable content with `#h=<communityId>`, and admits events locally using the selected branch's current authority and moderation state.
 
-The controller has root authority for its branch. Referenced list authors are real delegated signers. The community ID grants no authority.
+The owner has root authority for its branch. Referenced list authors are real delegated signers. The community ID grants no authority.
 
 ## Same-ID Branches And Future Fork Flow
 
 Same-ID branches are valid independent definitions selected by different naddrs. Clients MUST keep their metadata, relays, permissions, moderation, services, state, and navigation separate.
 
-A future unilateral fork may copy original signed events, commit to exact imported event IDs in a cryptographic snapshot, publish a same-ID definition under another controller, and reference its predecessor and snapshot. Such a fork is not authorized succession and does not rewrite authorship.
+A future unilateral fork may copy original signed events, commit to exact imported event IDs in a cryptographic snapshot, publish a same-ID definition under another owner, and reference its predecessor and snapshot. Such a fork is not authorized succession and does not rewrite authorship.
 
 This records the identity model only. Snapshot encoding, fork tooling, import validation, succession, and recovery are not specified or required for V2 application conformance.
 
 ## Conformance Summary
 
-A conforming client MUST use exact definition coordinates for branches, `d` and stable `h` for community ID, definition-native metadata, marked branch references for authority workflows, deterministic replacement/deletion, lossless unknown-tag edits, definition naddr pointers, and full-ID section-purpose identifiers for section-referenced addressable shards. It MUST keep same-controller siblings and same-ID branches independent, derive identity and authority from typed field positions rather than value equality, never infer person or signer meaning from a community-ID field, and keep mutable community or application names out of section-scoped coordinates.
+A conforming client MUST use exact definition coordinates for branches, `d` and stable `h` for community ID, definition-native metadata, marked branch references for authority workflows, deterministic replacement/deletion, lossless unknown-tag edits, definition naddr pointers, and full-ID section-purpose identifiers for section-referenced addressable shards. It MUST keep same-owner siblings and same-ID branches independent, derive identity and authority from typed field positions rather than value equality, never infer person or signer meaning from a community-ID field, and keep mutable community or application names out of section-scoped coordinates.

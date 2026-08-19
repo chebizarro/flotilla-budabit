@@ -2,7 +2,7 @@ import {get} from "svelte/store"
 import {localStorageProvider, synced} from "@welshman/store"
 import {normalizeUrl} from "@welshman/lib"
 import type {TrustedEvent} from "@welshman/util"
-import {type CommunityDefinitionV2} from "@app/core/community"
+import {type CommunityDefinition} from "@app/core/community"
 import {
   selectUserCommunityRefs,
   type UserCommunityReportStates,
@@ -377,7 +377,7 @@ export const selectMemberCommunityBlossomRefs = ({
   reportStates,
 }: {
   author?: string
-  definitions?: CommunityDefinitionV2[]
+  definitions?: CommunityDefinition[]
   definitionEvents?: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportStates?: BlossomMemberCommunityReportStates
@@ -395,7 +395,7 @@ export const selectMemberCommunityBlossomRefs = ({
     return [
       {
         communityAddress: ref.community.address,
-        communityPubkey: ref.community.controllerPubkey,
+        communityPubkey: ref.community.ownerPubkey,
         communityName: ref.definition.metadata.name,
         relayHints: ref.relayHints,
         blossomServers,

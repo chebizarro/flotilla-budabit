@@ -21,9 +21,9 @@ import {
   type TrustedEvent,
 } from "@welshman/util"
 import {
-  buildTargetedPublicationV2,
+  buildTargetedPublication,
   makeCommunityPointer,
-  TARGETED_PUBLICATION_KIND_V2,
+  TARGETED_PUBLICATION_KIND,
 } from "./community"
 import {
   makeCommunityRoomMessagesFilter,
@@ -36,7 +36,7 @@ const relay = "wss://relay.budabit.club/"
 const communityPubkey = getPublicKey(new Uint8Array(32).fill(126))
 const authorPubkey = getPublicKey(new Uint8Array(32).fill(127))
 const community = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: communityPubkey,
 })!
 const goalOriginalId = "1".repeat(64)
@@ -133,8 +133,8 @@ describe("community relay stress", () => {
       })
       const calendarWrapper = makeEvent({
         id: "calendar-wrapper",
-        kind: TARGETED_PUBLICATION_KIND_V2,
-        tags: buildTargetedPublicationV2({
+        kind: TARGETED_PUBLICATION_KIND,
+        tags: buildTargetedPublication({
           id: "calendar-target",
           kind: EVENT_TIME,
           source: {type: "a", value: `${EVENT_TIME}:${authorPubkey}:calendar-event`},
@@ -143,8 +143,8 @@ describe("community relay stress", () => {
       })
       const goalWrapper = makeEvent({
         id: "goal-wrapper",
-        kind: TARGETED_PUBLICATION_KIND_V2,
-        tags: buildTargetedPublicationV2({
+        kind: TARGETED_PUBLICATION_KIND,
+        tags: buildTargetedPublication({
           id: "goal-target",
           kind: ZAP_GOAL,
           source: {type: "e", value: goalOriginalId},

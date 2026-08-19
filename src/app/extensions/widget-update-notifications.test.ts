@@ -115,7 +115,7 @@ describe("widget update notifications", () => {
         ["image", "https://example.com/weather.png"],
         ["version", "1.1.0"],
         ["changelog", "Better forecast data."],
-        ["button", "Open", "app", "https://example.com/v2.html"],
+        ["button", "Open", "app", "https://example.com/current.html"],
       ],
       content: "Weather",
     } as TrustedEvent

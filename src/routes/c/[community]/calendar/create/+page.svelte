@@ -30,10 +30,10 @@
     activeCommunityReportState,
     getUserOutboxRelays,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND_V2, normalizeRelays} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND, normalizeRelays} from "@app/core/community"
   import {
     makeAddressablePublicationRef,
-    makeTargetedPublicationForCommunityV2,
+    makeTargetedPublicationForCommunity,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -46,7 +46,7 @@
   import {makeExactCommunityCalendarPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityOwnerPubkey = $derived(routeCommunity?.ownerPubkey || "")
   const communityId = $derived(routeCommunity?.communityId || "")
   const communityAddress = $derived(routeCommunity?.address || "")
   const communityDefinition = $derived(
@@ -66,7 +66,7 @@
     ),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -247,8 +247,8 @@
           return publishThunk({
             relays,
             event: makeEvent(
-              TARGETED_PUBLICATION_KIND_V2,
-              makeTargetedPublicationForCommunityV2({
+              TARGETED_PUBLICATION_KIND,
+              makeTargetedPublicationForCommunity({
                 targetingId,
                 originalKind: currentEventKind,
                 originalRef,

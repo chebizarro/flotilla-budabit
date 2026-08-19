@@ -2,15 +2,15 @@ import type {EventContent, TrustedEvent} from "@welshman/util"
 import {getTagValue} from "@welshman/util"
 import {randomId} from "@welshman/lib"
 import {
-  MAX_TARGET_COMMUNITIES_V2,
+  MAX_TARGET_COMMUNITIES,
   TARGETED_PUBLICATION_KINDS,
   type CommunityPointer,
-  type TargetedPublicationSourceV2,
-  buildTargetedPublicationV2,
+  type TargetedPublicationSource,
+  buildTargetedPublication,
   makeCommunityPointer,
   normalizePubkey,
-  parseTargetedPublicationV2,
-  removeTargetedCommunityV2,
+  parseTargetedPublication,
+  removeTargetedCommunity,
 } from "@app/core/community"
 
 export const TARGETING_TAG = "h"
@@ -33,7 +33,7 @@ export const withPublicationTargetingId = <T extends EventContent>(
   targetingId,
 })
 
-export const makeTargetedPublicationForCommunityV2 = ({
+export const makeTargetedPublicationForCommunity = ({
   targetingId,
   originalKind,
   originalRef,
@@ -41,10 +41,10 @@ export const makeTargetedPublicationForCommunityV2 = ({
 }: {
   targetingId: string
   originalKind: number
-  originalRef?: TargetedPublicationSourceV2
+  originalRef?: TargetedPublicationSource
   community: CommunityPointer
 }): EventContent =>
-  buildTargetedPublicationV2({
+  buildTargetedPublication({
     id: targetingId,
     kind: originalKind,
     source: originalRef,
@@ -61,7 +61,7 @@ export const makeAddressablePublicationRef = ({
   pubkey: string
   identifier: string
   relay?: string
-}): TargetedPublicationSourceV2 => ({
+}): TargetedPublicationSource => ({
   type: "a",
   value: `${kind}:${normalizePubkey(pubkey)}:${identifier}`,
   relay,
@@ -75,17 +75,17 @@ export const makeEventPublicationRef = ({
   id: string
   relay?: string
   pubkey?: string
-}): TargetedPublicationSourceV2 => ({type: "e", value: id, relay, pubkey})
+}): TargetedPublicationSource => ({type: "e", value: id, relay, pubkey})
 
 export const upsertCommunityTarget = (
   event: TrustedEvent,
   target: CommunityPointer,
 ): EventContent | undefined => {
-  const parsed = parseTargetedPublicationV2(event)
+  const parsed = parseTargetedPublication(event)
   if (!parsed) return undefined
 
   const pointer = makeCommunityPointer({
-    controllerPubkey: target.controllerPubkey,
+    ownerPubkey: target.ownerPubkey,
     communityId: target.communityId,
     relayHints: target.relayHints,
   })
@@ -99,7 +99,7 @@ export const upsertCommunityTarget = (
   if (existingIndex >= 0) {
     tags[existingIndex] = ["a", pointer.address, pointer.relayHints[0] || "", "community"]
   } else {
-    if (parsed.communities.length >= MAX_TARGET_COMMUNITIES_V2) return undefined
+    if (parsed.communities.length >= MAX_TARGET_COMMUNITIES) return undefined
     tags.push(["h", pointer.communityId])
     tags.push(["a", pointer.address, pointer.relayHints[0] || "", "community"])
   }
@@ -110,4 +110,4 @@ export const upsertCommunityTarget = (
 export const removeCommunityTarget = (
   event: TrustedEvent,
   definitionAddress: string,
-): EventContent | undefined => removeTargetedCommunityV2(event, definitionAddress)
+): EventContent | undefined => removeTargetedCommunity(event, definitionAddress)

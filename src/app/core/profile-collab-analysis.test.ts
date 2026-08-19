@@ -307,13 +307,13 @@ describe("profile code trust analysis", () => {
     ])
   })
 
-  it("scopes community trust by exact address and uses the controller as the person", async () => {
-    const controllerPubkey = "6".repeat(64)
+  it("scopes community trust by exact address and uses the owner as the person", async () => {
+    const ownerPubkey = "6".repeat(64)
     const communityId = "7".repeat(64)
-    const communityAddress = `32222:${controllerPubkey}:${communityId}`
+    const communityAddress = `32222:${ownerPubkey}:${communityId}`
     const community = {
       kind: 32222,
-      controllerPubkey,
+      ownerPubkey,
       communityId,
       address: communityAddress,
       cacheKey: communityAddress,
@@ -322,9 +322,9 @@ describe("profile code trust analysis", () => {
     }
     const definition = {
       pointer: community,
-      controllerPubkey,
+      ownerPubkey,
       communityId,
-      event: makeEventForContext(controllerPubkey, communityId),
+      event: makeEventForContext(ownerPubkey, communityId),
       metadata: {name: "Community"},
       relays: [],
       blossomServers: [],
@@ -347,13 +347,13 @@ describe("profile code trust analysis", () => {
       },
     })
 
-    expect(analysis.communityContextPubkey).toBe(controllerPubkey)
+    expect(analysis.communityContextPubkey).toBe(ownerPubkey)
     expect(mocks.buildCommunityTrustAssessments).toHaveBeenCalledWith(
       expect.objectContaining({
         context: {
           scope: "active_community",
           communityAddress,
-          communityPubkey: controllerPubkey,
+          communityPubkey: ownerPubkey,
         },
         reportStates: new Map([[communityAddress, reportState]]),
       }),
@@ -361,10 +361,10 @@ describe("profile code trust analysis", () => {
   })
 })
 
-const makeEventForContext = (controllerPubkey: string, communityId: string) => ({
+const makeEventForContext = (ownerPubkey: string, communityId: string) => ({
   id: "0".repeat(64),
   kind: 32222,
-  pubkey: controllerPubkey,
+  pubkey: ownerPubkey,
   created_at: 1,
   tags: [["d", communityId]],
   content: "",

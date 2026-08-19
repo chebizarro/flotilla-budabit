@@ -2,13 +2,13 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools"
 import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
   RENOUNCED_COMMUNITIES_DTAG,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "@app/core/community"
 import {COMMUNITY_STAR_CONTENT} from "@app/util/community-stars"
 import {makeAdmissionFormTemplate} from "@app/core/community-forms"
@@ -19,8 +19,8 @@ const moderatorCommunityPubkey = getPublicKey(new Uint8Array(32).fill(2))
 const starredCommunityPubkey = getPublicKey(new Uint8Array(32).fill(3))
 const otherCommunityPubkey = getPublicKey(new Uint8Array(32).fill(4))
 const memberCommunityPubkey = getPublicKey(new Uint8Array(32).fill(5))
-const communityPointer = (controllerPubkey: string) =>
-  makeCommunityPointer({controllerPubkey, communityId: controllerPubkey})!
+const communityPointer = (ownerPubkey: string) =>
+  makeCommunityPointer({ownerPubkey, communityId: ownerPubkey})!
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -56,8 +56,8 @@ const makeDefinition = ({
     id,
     pubkey,
     created_at,
-    kind: COMMUNITY_DEFINITION_KIND_V2,
-    tags: buildCommunityDefinitionV2({
+    kind: COMMUNITY_DEFINITION_KIND,
+    tags: buildCommunityDefinition({
       communityId,
       name: id,
       relays: ["wss://community.example.com"],
@@ -106,7 +106,7 @@ const makeMemberCommunityRef = ({
   roles?: string[]
   created_at?: number
 }) => {
-  const definition = parseCommunityDefinitionV2(
+  const definition = parseCommunityDefinition(
     makeDefinition({id: `definition-${communityPubkey}`, pubkey: communityPubkey, created_at}),
   )!
 
@@ -171,7 +171,7 @@ describe("community preferences", () => {
     ])
   })
 
-  it("does not combine roles from different definitions owned by the same controller", () => {
+  it("does not combine roles from different definitions owned by the same owner", () => {
     const adminDefinition = makeDefinition({id: "admin", pubkey: userPubkey, created_at: 1})
     const starred = makeStar(userPubkey, 5)
 
@@ -208,8 +208,8 @@ describe("community preferences", () => {
         author: userPubkey,
       }).map(preference => preference.communityAddress),
     ).toEqual([
-      parseCommunityDefinitionV2(second)!.pointer.address,
-      parseCommunityDefinitionV2(first)!.pointer.address,
+      parseCommunityDefinition(second)!.pointer.address,
+      parseCommunityDefinition(first)!.pointer.address,
     ])
   })
 

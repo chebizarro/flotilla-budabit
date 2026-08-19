@@ -25,7 +25,7 @@
     activeCommunityReportState,
     loadCommunityEvents,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND_V2, normalizePubkey} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND, normalizePubkey} from "@app/core/community"
   import {getCommunityScopedPublishRelays} from "@app/core/community-relays"
   import {publicationOperations, startPublication} from "@app/core/publication-operations"
   import {getReportReviewSemanticKey} from "@app/core/governance-publication-operations"
@@ -135,7 +135,7 @@
     if (kind === EVENT_DATE || kind === EVENT_TIME) return "Calendar event"
     if (kind === ZAP_GOAL) return "Goal"
     if (kind === NOTE) return "Note"
-    if (kind === TARGETED_PUBLICATION_KIND_V2) return "Community targeting update"
+    if (kind === TARGETED_PUBLICATION_KIND) return "Community targeting update"
 
     return `Kind ${kind}`
   }

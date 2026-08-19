@@ -29,7 +29,7 @@
   import {
     makeCommunityPointer,
     normalizePubkey,
-    parseCommunityDefinitionV2,
+    parseCommunityDefinition,
     parseCommunityNaddr,
   } from "@app/core/community"
   import {
@@ -69,12 +69,12 @@
       return undefined
     }
   })
-  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
+  const communityPubkey = $derived(parsedCommunity?.ownerPubkey || "")
   const communityId = $derived(parsedCommunity?.communityId || "")
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
-      $activeExactCommunityDefinition?.controllerPubkey === communityPubkey &&
+      $activeExactCommunityDefinition?.ownerPubkey === communityPubkey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading,
     ),
@@ -193,10 +193,10 @@
         }),
       )
       .flatMap(ref => {
-        const definition = parseCommunityDefinitionV2(ref.definition.event)
+        const definition = parseCommunityDefinition(ref.definition.event)
         if (!definition) return []
         const community = makeCommunityPointer({
-          controllerPubkey: definition.pointer.controllerPubkey,
+          ownerPubkey: definition.pointer.ownerPubkey,
           communityId: definition.pointer.communityId,
           relayHints: [...definition.relays, ...ref.relayHints],
         })
@@ -219,10 +219,10 @@
       $activeExactCommunityDefinition &&
       !options.some(option => option.community.address === parsedCommunity.address)
     ) {
-      const definition = parseCommunityDefinitionV2($activeExactCommunityDefinition.event)
+      const definition = parseCommunityDefinition($activeExactCommunityDefinition.event)
       const community = definition
         ? makeCommunityPointer({
-            controllerPubkey: parsedCommunity.controllerPubkey,
+            ownerPubkey: parsedCommunity.ownerPubkey,
             communityId: parsedCommunity.communityId,
             relayHints: [...definition.relays, ...parsedCommunity.relayHints],
           })

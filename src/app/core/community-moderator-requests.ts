@@ -1,19 +1,19 @@
 import {DELETE, type EventContent, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  makeCommunityAuthorityTagsV2,
+  makeCommunityAuthorityTags,
   makeCommunityProfileListIdentifier,
   makeCommunityChildIdentifier,
-  getCommunitySectionPurposeV2,
-  normalizeCommunityRelayV2,
-  parseCommunityAuthorityV2,
-  parseControllerPubkey,
-  updateCommunityDefinitionV2,
-  type CommunityDefinitionV2,
+  getCommunitySectionPurpose,
+  normalizeCommunityRelay,
+  parseCommunityAuthority,
+  parseOwnerPubkey,
+  updateCommunityDefinition,
+  type CommunityDefinition,
   type CommunityPointer,
-  type CommunityProfileListRefV2,
-  type CommunitySectionV2,
+  type CommunityDefinitionProfileListRef,
+  type CommunityDefinitionSection,
 } from "@app/core/community"
 
 export const MODERATOR_REQUEST_REACTION_KIND = 7
@@ -34,7 +34,7 @@ export type ModeratorPromotionRequest = {
   community: CommunityPointer
   sectionName: string
   profileList: ParsedModeratorRequestEvent
-  profileListRef: CommunityProfileListRefV2
+  profileListRef: CommunityDefinitionProfileListRef
 }
 
 export type ModeratorPromotionRequestStatus = "pending" | "accepted" | "rejected"
@@ -55,7 +55,7 @@ const getSingletonValue = (event: TrustedEvent, name: string) => {
 
 const parseProfileListAddress = (address: string) => {
   const [kind, pubkeyValue, ...identifierParts] = address.split(":")
-  const pubkey = parseControllerPubkey(pubkeyValue || "")
+  const pubkey = parseOwnerPubkey(pubkeyValue || "")
   const identifier = identifierParts.join(":")
   if (kind !== String(PROFILE_LIST_KIND) || !pubkey || !identifier) return undefined
   return {pubkey, identifier, address: `${PROFILE_LIST_KIND}:${pubkey}:${identifier}`}
@@ -63,7 +63,7 @@ const parseProfileListAddress = (address: string) => {
 
 const makeEventAddress = (event: TrustedEvent) => {
   const identifier = getSingletonValue(event, "d")
-  const pubkey = parseControllerPubkey(event.pubkey || "")
+  const pubkey = parseOwnerPubkey(event.pubkey || "")
   return identifier && pubkey ? `${event.kind}:${pubkey}:${identifier}` : ""
 }
 
@@ -109,11 +109,11 @@ export const makeModeratorRequestRefs = ({
   sectionName: string
   relays?: string[]
 }) => {
-  const pubkey = parseControllerPubkey(requesterPubkey)
+  const pubkey = parseOwnerPubkey(requesterPubkey)
   if (!pubkey) throw new Error("Invalid moderator requester pubkey.")
   const identifier = makeModeratorRequestIdentifier({community, sectionName})
-  const relay = relays.map(normalizeCommunityRelayV2).find(Boolean)
-  const profileList: CommunityProfileListRefV2 = {
+  const relay = relays.map(normalizeCommunityRelay).find(Boolean)
+  const profileList: CommunityDefinitionProfileListRef = {
     address: `${PROFILE_LIST_KIND}:${pubkey}:${identifier}`,
     ...(relay ? {relay} : {}),
   }
@@ -137,13 +137,13 @@ export const makeModeratorProfileListRequest = ({
     sectionName,
     relays,
   })
-  const relay = relays.map(normalizeCommunityRelayV2).find(Boolean)
+  const relay = relays.map(normalizeCommunityRelay).find(Boolean)
   return {
     kind: PROFILE_LIST_KIND,
     content: "",
     tags: [
       ["d", identifier],
-      ...makeCommunityAuthorityTagsV2(community, relay, [
+      ...makeCommunityAuthorityTags(community, relay, [
         ["role", MODERATOR_REQUEST_ROLE],
         ["content", sectionName.trim()],
       ]),
@@ -156,10 +156,10 @@ export const parseModeratorRequestEvent = (
   community?: CommunityPointer,
 ): ParsedModeratorRequestEvent | undefined => {
   if (event.kind !== PROFILE_LIST_KIND || event.content !== "") return undefined
-  const pubkey = parseControllerPubkey(event.pubkey || "")
+  const pubkey = parseOwnerPubkey(event.pubkey || "")
   const identifier = getSingletonValue(event, "d")
   const address = makeEventAddress(event)
-  const authority = parseCommunityAuthorityV2(event)
+  const authority = parseCommunityAuthority(event)
   const sectionName = getSingletonValue(event, "content")
   const role = getSingletonValue(event, "role")
   if (
@@ -206,10 +206,10 @@ export const getModeratorPromotionRequests = ({
     },
   }))
 
-const findSection = (definition: CommunityDefinitionV2, name: string) =>
+const findSection = (definition: CommunityDefinition, name: string) =>
   definition.sections.find(section => section.name === name)
 
-const hasSectionRef = (definition: CommunityDefinitionV2, request: ModeratorPromotionRequest) =>
+const hasSectionRef = (definition: CommunityDefinition, request: ModeratorPromotionRequest) =>
   Boolean(
     findSection(definition, request.sectionName)?.profileLists.some(
       ref => ref.address === request.profileListRef.address,
@@ -221,9 +221,9 @@ const makeGrantDerivedRequestEvent = ({
   sectionName,
   ref,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   sectionName: string
-  ref: CommunityProfileListRefV2
+  ref: CommunityDefinitionProfileListRef
 }): ParsedModeratorRequestEvent | undefined => {
   const parsedRef = parseProfileListAddress(ref.address)
   if (!parsedRef) return undefined
@@ -235,7 +235,7 @@ const makeGrantDerivedRequestEvent = ({
     content: "",
     tags: [
       ["d", parsedRef.identifier],
-      ...makeCommunityAuthorityTagsV2(definition.pointer, ref.relay, [
+      ...makeCommunityAuthorityTags(definition.pointer, ref.relay, [
         ["role", MODERATOR_REQUEST_ROLE],
         ["content", sectionName],
       ]),
@@ -252,7 +252,7 @@ const makeGrantDerivedRequestEvent = ({
 }
 
 const getGrantDerivedModeratorRequestStates = (
-  definition: CommunityDefinitionV2,
+  definition: CommunityDefinition,
   requestStates: ModeratorPromotionRequestState[],
 ) => {
   const acceptedKeys = new Set(
@@ -262,10 +262,10 @@ const getGrantDerivedModeratorRequestStates = (
   )
   const states: ModeratorPromotionRequestState[] = []
   for (const section of definition.sections) {
-    const profileListsByPubkey = new Map<string, CommunityProfileListRefV2[]>()
+    const profileListsByPubkey = new Map<string, CommunityDefinitionProfileListRef[]>()
     for (const ref of section.profileLists) {
       const parsed = parseProfileListAddress(ref.address)
-      if (!parsed || parsed.pubkey === definition.controllerPubkey) continue
+      if (!parsed || parsed.pubkey === definition.ownerPubkey) continue
       profileListsByPubkey.set(parsed.pubkey, [
         ...(profileListsByPubkey.get(parsed.pubkey) || []),
         ref,
@@ -300,7 +300,7 @@ const getGrantDerivedModeratorRequestStates = (
 }
 
 const hasExactAuthority = (event: TrustedEvent, community: CommunityPointer) =>
-  parseCommunityAuthorityV2(event)?.address === community.address
+  parseCommunityAuthority(event)?.address === community.address
 
 const isReactionDeleted = (
   reaction: TrustedEvent,
@@ -338,7 +338,7 @@ const getActiveTargetReactions = ({
     event =>
       event.kind === MODERATOR_REQUEST_REACTION_KIND &&
       event.content === content &&
-      event.pubkey === community.controllerPubkey &&
+      event.pubkey === community.ownerPubkey &&
       hasExactAuthority(event, community) &&
       event.tags.some(tag => tag[0] === "e" && tag[1] === targetEventId) &&
       !isReactionDeleted(event, community, deleteEvents),
@@ -357,7 +357,7 @@ export const getModeratorPromotionRequestStates = ({
   deleteEvents = [],
   includeGranted = false,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   requests: ModeratorPromotionRequest[]
   reactionEvents?: TrustedEvent[]
   deleteEvents?: TrustedEvent[]
@@ -414,7 +414,7 @@ export const makeModeratorRequestReaction = ({
 }): EventContent & {kind: typeof MODERATOR_REQUEST_REACTION_KIND} => ({
   kind: MODERATOR_REQUEST_REACTION_KIND,
   content,
-  tags: makeCommunityAuthorityTagsV2(request.community, undefined, [
+  tags: makeCommunityAuthorityTags(request.community, undefined, [
     ["e", target.event.id],
     ["p", request.requesterPubkey],
     ["k", String(target.event.kind)],
@@ -431,17 +431,17 @@ export const makeModeratorRequestReactionDelete = ({
 }): EventContent & {kind: typeof DELETE} => ({
   kind: DELETE,
   content: "Deleted moderator request review",
-  tags: makeCommunityAuthorityTagsV2(community, undefined, [
+  tags: makeCommunityAuthorityTags(community, undefined, [
     ["e", reactionId],
     ["k", String(MODERATOR_REQUEST_REACTION_KIND)],
   ]),
 })
 
 const updateDefinitionSections = (
-  definition: CommunityDefinitionV2,
-  sections: CommunitySectionV2[],
-): EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND_V2} => {
-  const base = updateCommunityDefinitionV2(definition, {})
+  definition: CommunityDefinition,
+  sections: CommunityDefinitionSection[],
+): EventContent & {kind: typeof COMMUNITY_DEFINITION_KIND} => {
+  const base = updateCommunityDefinition(definition, {})
   const replacements = new Map(sections.map(section => [section.name, section.profileLists]))
   const tags: string[][] = []
   let sectionName: string | undefined
@@ -473,7 +473,7 @@ export const makeModeratorPromotionDefinitionUpdate = ({
   definition,
   request,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   request: ModeratorPromotionRequest
 }) =>
   updateDefinitionSections(
@@ -496,9 +496,9 @@ const makeManualModeratorProfileListRef = ({
   moderatorPubkey: string
   sectionName: string
   relays?: string[]
-}): CommunityProfileListRefV2 => {
-  const pubkey = parseControllerPubkey(moderatorPubkey)
-  const purpose = getCommunitySectionPurposeV2(community.communityId, {
+}): CommunityDefinitionProfileListRef => {
+  const pubkey = parseOwnerPubkey(moderatorPubkey)
+  const purpose = getCommunitySectionPurpose(community.communityId, {
     name: sectionName,
     profileLists: [],
   })
@@ -506,7 +506,7 @@ const makeManualModeratorProfileListRef = ({
     ? makeCommunityProfileListIdentifier(community.communityId, purpose)
     : undefined
   if (!pubkey || !identifier) throw new Error("Invalid moderator profile-list reference.")
-  const relay = relays.map(normalizeCommunityRelayV2).find(Boolean)
+  const relay = relays.map(normalizeCommunityRelay).find(Boolean)
   return {
     address: `${PROFILE_LIST_KIND}:${pubkey}:${identifier}`,
     ...(relay ? {relay} : {}),
@@ -519,12 +519,12 @@ export const makeModeratorGrantEditDefinitionUpdate = ({
   sectionNames,
   relays = definition.relays,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   moderatorPubkey: string
   sectionNames: string[]
   relays?: string[]
 }) => {
-  const pubkey = parseControllerPubkey(moderatorPubkey)
+  const pubkey = parseOwnerPubkey(moderatorPubkey)
   if (!pubkey) throw new Error("Invalid moderator pubkey.")
   const selected = new Set(sectionNames.map(name => name.trim()).filter(Boolean))
   return updateDefinitionSections(
@@ -559,11 +559,11 @@ export const makeModeratorGrantRevokeDefinitionUpdate = ({
   sectionName,
   moderatorPubkey,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   sectionName: string
   moderatorPubkey: string
 }) => {
-  const pubkey = parseControllerPubkey(moderatorPubkey)
+  const pubkey = parseOwnerPubkey(moderatorPubkey)
   if (!pubkey) throw new Error("Invalid moderator pubkey.")
   return updateDefinitionSections(
     definition,

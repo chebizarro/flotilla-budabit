@@ -109,7 +109,7 @@
   const ROOM_LOAD_RETRY_DELAYS_MS = [5_000, 10_000, 20_000]
 
   const community = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityControllerPubkey = $derived(community?.controllerPubkey || "")
+  const communityOwnerPubkey = $derived(community?.ownerPubkey || "")
   const communityId = $derived(community?.communityId || "")
   const communityAddress = $derived(community?.address || "")
   const roomId = $derived($page.params.room || "")
@@ -123,7 +123,7 @@
 
     return communityAddress &&
       $activeExactCommunityPointer?.address === communityAddress &&
-      session?.definition.controllerPubkey === communityControllerPubkey
+      session?.definition.ownerPubkey === communityOwnerPubkey
       ? getCommunityBootstrapKey(session, $pubkey || "")
       : ""
   })
@@ -190,7 +190,7 @@
     Boolean(
       communityAddress &&
       $activeExactCommunityDefinition?.pointer.address === communityAddress &&
-      $activeExactCommunityDefinition.controllerPubkey === communityControllerPubkey &&
+      $activeExactCommunityDefinition.ownerPubkey === communityOwnerPubkey &&
       expectedCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
@@ -208,7 +208,7 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === communityAddress &&
-      $activeCommunityAuthorityReadiness.communityPubkey === communityControllerPubkey
+      $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -327,7 +327,7 @@
         )
       : "",
   )
-  const composeUrl = $derived($activeExactCommunityRelays[0] || communityControllerPubkey)
+  const composeUrl = $derived($activeExactCommunityRelays[0] || communityOwnerPubkey)
 
   const replyTo = (event: TrustedEvent) => {
     parent = event
@@ -1261,7 +1261,7 @@
         {@const event = $state.snapshot(item.value as TrustedEvent)}
         <div class:-mt-1={!item.showPubkey}>
           <RoomItem
-            url={communityControllerPubkey}
+            url={communityOwnerPubkey}
             {community}
             profileRelays={$activeExactCommunityRelays}
             interactionRelays={$activeExactCommunityRelays}

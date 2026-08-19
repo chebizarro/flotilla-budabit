@@ -1,11 +1,11 @@
 <script lang="ts">
   import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
-  import {parseCommunityNaddr, type CommunityDefinitionV2} from "@app/core/community"
+  import {parseCommunityNaddr, type CommunityDefinition} from "@app/core/community"
 
   type Props = {
     value: string
-    definitions?: CommunityDefinitionV2[]
+    definitions?: CommunityDefinition[]
   }
 
   const {value, definitions = []}: Props = $props()

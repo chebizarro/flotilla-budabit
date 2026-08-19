@@ -6,8 +6,8 @@ import {AuthStateEvent, AuthStatus} from "@welshman/net"
 import type {TrustedEvent} from "@welshman/util"
 import {makeCommunityPointer} from "./community"
 import {
-  buildCommunityDefinitionV2,
-  parseCommunityDefinitionV2,
+  buildCommunityDefinition,
+  parseCommunityDefinition,
   type CommunityEmailDigestService,
 } from "./community"
 import {
@@ -60,7 +60,7 @@ const userPubkey = getPublicKey(userSecret)
 const servicePubkey = getPublicKey(serviceSecret)
 const handlerPubkey = getPublicKey(handlerSecret)
 const communityAddressA = makeCommunityPointer({
-  controllerPubkey: communityA,
+  ownerPubkey: communityA,
   communityId: communityA,
 })!.address
 const provider: CommunityEmailDigestService = {
@@ -76,7 +76,7 @@ const makeDefinition = (
   createdAt: number,
   communityId: string,
 ) => {
-  const template = buildCommunityDefinitionV2({
+  const template = buildCommunityDefinition({
     communityId,
     name: `Community ${communityId}`,
     relays: ["wss://community.example.com"],
@@ -95,7 +95,7 @@ const makeDefinition = (
       handlerRelay: service.handlerRelay.replace(/\/$/, ""),
     })),
   })
-  return parseCommunityDefinitionV2(finalizeEvent({...template, created_at: createdAt}, secret))!
+  return parseCommunityDefinition(finalizeEvent({...template, created_at: createdAt}, secret))!
 }
 
 const makeWatchState = (repos: RepoWatchState["repos"]): RepoWatchState => ({
@@ -131,14 +131,14 @@ const makePayload = (overrides: Record<string, unknown> = {}) =>
   })
 
 describe("email digest settings", () => {
-  it("keeps same-controller sibling provider choices independent by exact address", () => {
-    const controllerPubkey = communityA
+  it("keeps same-owner sibling provider choices independent by exact address", () => {
+    const ownerPubkey = communityA
     const first = makeCommunityPointer({
-      controllerPubkey,
+      ownerPubkey,
       communityId: communityA,
     })!
     const sibling = makeCommunityPointer({
-      controllerPubkey,
+      ownerPubkey,
       communityId: communityB,
     })!
     const normalized = normalizeEmailDigestSettings({
@@ -295,7 +295,7 @@ describe("verified email digest provider discovery", () => {
     ).toEqual([])
   })
 
-  it("retains same-controller sibling endorsements by exact address", () => {
+  it("retains same-owner sibling endorsements by exact address", () => {
     const first = makeDefinition(communitySecretA, [provider], 20, communityA)
     const sibling = makeDefinition(communitySecretA, [provider], 30, communityB)
     const providers = discoverEmailDigestProviders({
@@ -842,7 +842,7 @@ describe("email digest watch auto-sync boundaries", () => {
         {
           ...enabledSettings,
           selectedCommunityAddress: makeCommunityPointer({
-            controllerPubkey: communityA,
+            ownerPubkey: communityA,
             communityId: communityB,
           })!.address,
         },

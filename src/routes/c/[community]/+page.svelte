@@ -87,9 +87,9 @@
       ? $activeExactCommunityDefinition
       : undefined,
   )
-  const controllerPubkey = $derived(communityPointer?.controllerPubkey || "")
+  const ownerPubkey = $derived(communityPointer?.ownerPubkey || "")
   const communityId = $derived(communityPointer?.communityId || "")
-  const shortCommunity = $derived(formatShortNpub(controllerPubkey) || "Unknown community")
+  const shortCommunity = $derived(formatShortNpub(ownerPubkey) || "Unknown community")
   const communityName = $derived(routeCommunityDefinition?.metadata.name || shortCommunity)
   const communityDescription = $derived(routeCommunityDefinition?.metadata.description || "")
   const communityDescriptionEvent = $derived({content: communityDescription, tags: []})
@@ -122,7 +122,7 @@
     try {
       const definition = await resolveExactCommunityDefinition(pointer, {
         discoveryRelays: COMMUNITY_DISCOVERY_RELAYS,
-        hydrateControllerOutbox: hydratePubkeyOutboxRelays,
+        hydrateOwnerOutbox: hydratePubkeyOutboxRelays,
         loadEvents: (relays, filters) => loadCommunityEvents(relays, filters, {timeout: 3000}),
       })
       if (definition && $activeExactCommunityPointer?.address === pointer.address) {
@@ -146,7 +146,7 @@
   )
   const communityBootstrapReady = $derived(Boolean(communityPointer && routeCommunityDefinition))
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === controllerPubkey
+    $activeCommunityAuthorityReadiness.communityPubkey === ownerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -825,7 +825,7 @@
       <CommunityExtensionsPrompt relayHints={homeWidgetRelayHints} />
 
       <CommunityHomeWidgetSlot
-        communityPubkey={controllerPubkey}
+        communityPubkey={ownerPubkey}
         communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
         slotType="community-home-before-quicklinks" />
@@ -945,7 +945,7 @@
   {#if communityPointer && communityHomeExtensionsReady}
     {#key roomCatalogReadinessKey}
       <CommunityHomeWidgetSlot
-        communityPubkey={controllerPubkey}
+        communityPubkey={ownerPubkey}
         communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
         slotType="community-home-after-quicklinks" />

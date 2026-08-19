@@ -3,10 +3,10 @@ import {makeEvent, normalizeRelayUrl, isRelayUrl, type TrustedEvent} from "@wels
 import {randomId} from "@welshman/lib"
 import {GIT_PERMALINK, type PermalinkEvent} from "@nostr-git/core/types"
 import type {RepoCommunityOption} from "@nostr-git/ui"
-import {TARGETED_PUBLICATION_KIND_V2, makeCommunityPointer} from "@app/core/community"
+import {TARGETED_PUBLICATION_KIND, makeCommunityPointer} from "@app/core/community"
 import {
   makeEventPublicationRef,
-  makeTargetedPublicationForCommunityV2,
+  makeTargetedPublicationForCommunity,
   withPublicationTargetingId,
 } from "@app/core/community-targeting"
 import {requireRepoPublicationScope} from "@app/core/repo-publication"
@@ -47,7 +47,7 @@ const clonePermalink = (permalink: PermalinkEvent, createdAt: number): Permalink
 })
 
 const getCommunityLabel = (community: RepoCommunityOption) =>
-  community.label || community.controllerPubkey
+  community.label || community.ownerPubkey
 
 const getDeclaredCommunityRelays = (community: RepoCommunityOption) =>
   normalizeRelays([community.relay || "", ...(community.relays || [])])
@@ -100,7 +100,7 @@ export const publishPermalinkToDestinations = ({
     const communityRelays = getCommunityRelays(community, baseRelays)
     const declaredCommunityRelays = getDeclaredCommunityRelays(community)
     const communityPointer = makeCommunityPointer({
-      controllerPubkey: community.controllerPubkey,
+      ownerPubkey: community.ownerPubkey,
       communityId: community.communityId,
       relayHints: declaredCommunityRelays,
     })
@@ -118,8 +118,8 @@ export const publishPermalinkToDestinations = ({
       firstPublished ||= {event: publishedPermalink, relays: communityRelays}
     }
 
-    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
-      ...makeTargetedPublicationForCommunityV2({
+    const targetingEvent = makeEvent(TARGETED_PUBLICATION_KIND, {
+      ...makeTargetedPublicationForCommunity({
         targetingId,
         originalKind: GIT_PERMALINK,
         originalRef: publishedPermalink?.id

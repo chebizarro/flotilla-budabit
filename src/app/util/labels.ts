@@ -1,4 +1,4 @@
-import type {EffectiveLabelsV2} from "@nostr-git/core/git"
+import type {EffectiveLabels} from "@nostr-git/core/git"
 import {createRoleLabelEvent} from "@nostr-git/core/events"
 
 export type NormalizedEffectiveLabelsView = {
@@ -42,10 +42,10 @@ function toStringSet(value: unknown): Set<string> {
 }
 
 /**
- * Normalize an EffectiveLabelsV2-like object into a consistent structure with Sets.
+ * Normalize an EffectiveLabels-like object into a consistent structure with Sets.
  */
 export function normalizeEffectiveLabels(
-  eff?: Partial<EffectiveLabelsV2> | any | null,
+  eff?: Partial<EffectiveLabels> | any | null,
 ): NormalizedEffectiveLabelsView {
   const flat = toStringSet(eff?.flat)
   const byNamespace: Record<string, Set<string>> = {}

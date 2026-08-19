@@ -34,7 +34,7 @@ describe("canonical community home contracts", () => {
     for (const source of [communityLayout, gitLayout]) {
       expect(source).toContain('import CommunityMenu from "@app/components/CommunityMenu.svelte"')
       expect(source).toContain("<CommunityMenu community={")
-      expect(source).not.toContain("CommunityV2Menu")
+      expect(source).not.toContain("CommunityLegacyMenu")
     }
   })
 
@@ -43,7 +43,7 @@ describe("canonical community home contracts", () => {
       expect(source).toContain("$activeExactCommunityPointer?.address === communityAddress")
       expect(source).toContain("community: exactCommunity")
       expect(source).toContain("address: exactCommunity.address")
-      expect(source).toContain("controllerPubkey: exactCommunity.controllerPubkey")
+      expect(source).toContain("ownerPubkey: exactCommunity.ownerPubkey")
       expect(source).toContain("communityId: exactCommunity.communityId")
     }
 
@@ -52,7 +52,7 @@ describe("canonical community home contracts", () => {
     expect(launchers).toContain("communityRuntimeContextProvider")
   })
 
-  it("keeps community presentation metadata separate from controller profiles", () => {
+  it("keeps community presentation metadata separate from owner profiles", () => {
     const admin = readProjectFile("../../routes/c/[community]/admin/+page.svelte")
 
     expect(home).not.toContain("deriveProfile")
@@ -62,13 +62,13 @@ describe("canonical community home contracts", () => {
 
     for (const source of [homeSlot, launchers]) {
       expect(source).not.toContain("deriveProfile")
-      expect(source).not.toContain("controllerProfile")
+      expect(source).not.toContain("ownerProfile")
     }
 
-    expect(admin).toContain("const controllerProfileStore = $derived(")
-    expect(admin).toContain("getStore(controllerProfileStore)")
-    expect(admin).toContain("profile={controllerProfile}")
-    expect(admin).toContain("community controller pubkey")
+    expect(admin).toContain("const ownerProfileStore = $derived(")
+    expect(admin).toContain("getStore(ownerProfileStore)")
+    expect(admin).toContain("profile={ownerProfile}")
+    expect(admin).toContain("community owner pubkey")
     expect(admin).not.toContain("this community pubkey")
   })
 })

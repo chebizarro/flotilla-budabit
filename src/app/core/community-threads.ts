@@ -1,6 +1,6 @@
 import type {EventContent, TrustedEvent} from "@welshman/util"
 import {COMMENT, THREAD, getTag, getTagValue} from "@welshman/util"
-import {makeCommunityScopeTagsV2, parseCommunityId} from "@app/core/community"
+import {makeCommunityScopeTags, parseCommunityId} from "@app/core/community"
 import {eventTargetsCommunity} from "@app/core/community-feeds"
 
 export type CommunityThread = {
@@ -31,7 +31,7 @@ export const makeCommunityThread = ({
   tags?: string[][]
 }): EventContent => ({
   content,
-  tags: makeCommunityScopeTagsV2(communityPubkey, [["title", title], ...tags]),
+  tags: makeCommunityScopeTags(communityPubkey, [["title", title], ...tags]),
 })
 
 export const readCommunityThread = (
@@ -92,7 +92,7 @@ export const makeCommunityThreadReply = ({
     )
   }
 
-  return {content, tags: makeCommunityScopeTagsV2(communityPubkey, [...eventTags, ...tags])}
+  return {content, tags: makeCommunityScopeTags(communityPubkey, [...eventTags, ...tags])}
 }
 
 export const readCommunityThreadReply = (

@@ -1,10 +1,10 @@
 import {describe, expect, it} from "vitest"
 import {MESSAGING_RELAYS, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
-  parseCommunityDefinitionV2,
+  buildCommunityDefinition,
+  parseCommunityDefinition,
 } from "./community"
 import {getPublicKey} from "nostr-tools/pure"
 import type {ActiveUserCommunityRef} from "./community-membership"
@@ -54,12 +54,12 @@ const makeCommunityRef = ({
 }): ActiveUserCommunityRef => {
   const listAddress = `${PROFILE_LIST_KIND}:${moderatorPubkey}:Repositories`
 
-  const definition = parseCommunityDefinitionV2(
+  const definition = parseCommunityDefinition(
     makeEvent({
       pubkey: communityPubkey,
       created_at: 1,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: communityIds.get(identifier)!,
         name: identifier,
         relays: [relay],
@@ -456,20 +456,20 @@ describe("dm", () => {
       expect(recommendations[5].evidence[0]).toMatchObject({source: "follow_messaging"})
     })
 
-    it("keeps same-controller sibling messaging evidence on exact addresses", () => {
+    it("keeps same-owner sibling messaging evidence on exact addresses", () => {
       const viewer = testPubkey(1)
-      const controller = testPubkey(2)
+      const owner = testPubkey(2)
       const moderatorA = testPubkey(3)
       const moderatorB = testPubkey(4)
       const recommender = testPubkey(5)
       const first = makeCommunityRef({
-        communityPubkey: controller,
+        communityPubkey: owner,
         moderatorPubkey: moderatorA,
         identifier: "first",
         relay: "wss://first.active.example.com",
       })
       const second = makeCommunityRef({
-        communityPubkey: controller,
+        communityPubkey: owner,
         moderatorPubkey: moderatorB,
         identifier: "second",
         relay: "wss://second.active.example.com",
@@ -496,7 +496,7 @@ describe("dm", () => {
       )
     })
 
-    it("keeps same-ID messaging branches distinct by controller address", () => {
+    it("keeps same-ID messaging branches distinct by owner address", () => {
       const recommender = testPubkey(1)
       const firstController = testPubkey(2)
       const secondController = testPubkey(3)

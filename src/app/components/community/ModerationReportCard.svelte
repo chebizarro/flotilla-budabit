@@ -18,7 +18,7 @@
   import Confirm from "@lib/components/Confirm.svelte"
   import ProfileLink from "@app/components/ProfileLink.svelte"
   import {activeExactCommunityDefinition, loadCommunityEvents} from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND_V2, normalizePubkey} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND, normalizePubkey} from "@app/core/community"
   import {getCommunityScopedPublishRelays} from "@app/core/community-relays"
   import {
     makeCommunityReportDelete,
@@ -54,7 +54,7 @@
     if (kind === EVENT_DATE || kind === EVENT_TIME) return "Calendar event"
     if (kind === ZAP_GOAL) return "Goal"
     if (kind === NOTE) return "Note"
-    if (kind === TARGETED_PUBLICATION_KIND_V2) return "Community targeting update"
+    if (kind === TARGETED_PUBLICATION_KIND) return "Community targeting update"
 
     return `Kind ${kind}`
   }

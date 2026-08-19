@@ -7,11 +7,10 @@ import {
   isRelayUrl,
   normalizeRelayUrl,
 } from "@welshman/util"
-import {parseControllerPubkey} from "./community-v2"
+import {TARGETED_PUBLICATION_KIND, parseOwnerPubkey} from "./community-protocol"
 
-export * from "./community-v2"
+export * from "./community-protocol"
 
-export const TARGETED_PUBLICATION_KIND = 30222
 export const PROFILE_LIST_KIND = 30000
 export const FORM_TEMPLATE_KIND = 30168
 export const FORM_RESPONSE_KIND = 1069
@@ -121,16 +120,6 @@ export type CommunityEmailDigestService = CommunityServiceDescriptor
 export type CommunityAlertService = CommunityServiceDescriptor
 
 export type CommunityOtherServiceTag = ["service", ...string[]]
-
-export type CommunityDefinitionSectionInput = {
-  name: string
-  kinds: CommunitySectionKind[]
-  profileList?: CommunityProfileListRef
-  badge?: CommunityBadgeRef
-  profileLists?: CommunityProfileListRef[]
-  badges?: CommunityBadgeRef[]
-  retention?: CommunityRetentionPolicy[]
-}
 
 export type CommunitySectionKindAssignment = {
   key: string
@@ -441,7 +430,7 @@ export const getProfileListPubkeys = (event: TrustedEvent | undefined): string[]
     new Set(
       (event.tags || [])
         .filter(tag => tag[0] === "p")
-        .map(tag => (parseControllerPubkey(tag[1] || "") as string | undefined) || "")
+        .map(tag => (parseOwnerPubkey(tag[1] || "") as string | undefined) || "")
         .filter(Boolean),
     ),
   )

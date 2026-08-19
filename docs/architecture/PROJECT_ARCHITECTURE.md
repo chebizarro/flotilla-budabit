@@ -161,9 +161,9 @@ let progress = $state<ForkProgress[]>([])
 
 ## Community Bootstrap
 
-Community branches are identified by exact `32222:<controller>:<communityId>` definition addresses, not by a pubkey or relay URL.
+Community branches are identified by exact `32222:<owner>:<communityId>` definition addresses, not by a pubkey or relay URL.
 
-- `src/app/core/community.ts` parses canonical definition `naddr` values containing kind `32222`, the controller, `communityId`, and optional relay hints.
+- `src/app/core/community.ts` parses canonical definition `naddr` values containing kind `32222`, the owner, `communityId`, and optional relay hints.
 - `src/app/core/community-state.ts` stores the active exact branch, resolves its current `kind:32222` definition, profile lists, admission forms, moderator requests, reports, and user/community refs, and persists the active session in local storage.
 - `src/routes/c/[community]/+layout.svelte` activates the route community, hydrates bootstrap data, and provides the shell for community pages.
 - Section definitions in `kind:32222` map community content to rooms, threads, calendar events, goals, repositories, permalinks, widgets, badges, moderation, and admin/access surfaces. Definition tags are the only community metadata source.

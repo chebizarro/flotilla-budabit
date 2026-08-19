@@ -2,13 +2,13 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {BADGE_AWARD, BADGE_DEFINITION, BADGES, DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
-  makeCommunityAuthorityTagsV2,
+  buildCommunityDefinition,
+  makeCommunityAuthorityTags,
   makeCommunityProfileListIdentifier,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   PROFILE_BADGES_KIND,
@@ -32,13 +32,13 @@ import {
 } from "./community-badges"
 
 const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
-const controllerPubkey = key(1)
+const ownerPubkey = key(1)
 const communityId = key(2)
 const moderatorPubkey = key(3)
 const bannedModeratorPubkey = key(4)
 const recipientPubkey = key(5)
 const outsiderPubkey = key(6)
-const community = makeCommunityPointer({controllerPubkey, communityId})!
+const community = makeCommunityPointer({ownerPubkey, communityId})!
 const badgeIdentifier = `budabit-${communityId}-helper`
 const badgeAddress = `${BADGE_DEFINITION}:${moderatorPubkey}:${badgeIdentifier}`
 const moderatorListIdentifier = makeCommunityProfileListIdentifier(communityId, "moderator-list")!
@@ -47,7 +47,7 @@ const bannedListIdentifier = makeCommunityProfileListIdentifier(communityId, "ba
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
     id: "event-id",
-    pubkey: controllerPubkey,
+    pubkey: ownerPubkey,
     created_at: 1,
     kind: 1,
     tags: [],
@@ -57,11 +57,11 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const makeDefinition = () =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      pubkey: controllerPubkey,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      pubkey: ownerPubkey,
+      tags: buildCommunityDefinition({
         communityId,
         name: "Community",
         relays: ["wss://relay.example.com"],
@@ -100,7 +100,7 @@ const makeProfileListEvent = (pubkey: string, tags: string[][] = []) =>
     id: `profile-list-${pubkey[0]}`,
     kind: PROFILE_LIST_KIND,
     pubkey,
-    tags: makeCommunityAuthorityTagsV2(community, undefined, [
+    tags: makeCommunityAuthorityTags(community, undefined, [
       ["d", pubkey === moderatorPubkey ? moderatorListIdentifier : bannedListIdentifier],
       ...tags,
     ]),
@@ -137,8 +137,8 @@ describe("community badges", () => {
     expect(parsed.thumbs).toEqual([{url: "https://example.com/helper-64.png", dimensions: "64x64"}])
   })
 
-  it("rejects the same community ID on a different controller branch", () => {
-    const sameIdBranch = makeCommunityPointer({controllerPubkey: key(7), communityId})!
+  it("rejects the same community ID on a different owner branch", () => {
+    const sameIdBranch = makeCommunityPointer({ownerPubkey: key(7), communityId})!
     const definition = makeEvent({
       kind: BADGE_DEFINITION,
       pubkey: moderatorPubkey,
@@ -171,15 +171,15 @@ describe("community badges", () => {
     ).toBe(false)
   })
 
-  it("isolates badge definitions and awards between same-controller sibling communities", () => {
-    const sibling = makeCommunityPointer({controllerPubkey, communityId: key(7)})!
+  it("isolates badge definitions and awards between same-owner sibling communities", () => {
+    const sibling = makeCommunityPointer({ownerPubkey, communityId: key(7)})!
     const definition = makeDefinition()
-    const siblingDefinition = parseCommunityDefinitionV2(
+    const siblingDefinition = parseCommunityDefinition(
       makeEvent({
         id: "sibling-community-definition",
-        kind: COMMUNITY_DEFINITION_KIND_V2,
-        pubkey: controllerPubkey,
-        tags: buildCommunityDefinitionV2({
+        kind: COMMUNITY_DEFINITION_KIND,
+        pubkey: ownerPubkey,
+        tags: buildCommunityDefinition({
           communityId: sibling.communityId,
           name: "Sibling community",
           relays: ["wss://relay.example.com"],
@@ -199,18 +199,18 @@ describe("community badges", () => {
     const siblingBadge = makeEvent({
       id: "sibling-badge-definition",
       kind: BADGE_DEFINITION,
-      pubkey: controllerPubkey,
+      pubkey: ownerPubkey,
       tags: makeCommunityBadgeDefinitionEvent({
         community: sibling,
         identifier: "helper",
         name: "Sibling helper",
       }).tags,
     })
-    const siblingBadgeAddress = `${BADGE_DEFINITION}:${controllerPubkey}:${makeCommunityBadgeIdentifier(sibling, "helper")}`
+    const siblingBadgeAddress = `${BADGE_DEFINITION}:${ownerPubkey}:${makeCommunityBadgeIdentifier(sibling, "helper")}`
     const siblingAward = makeEvent({
       id: "sibling-award",
       kind: BADGE_AWARD,
-      pubkey: controllerPubkey,
+      pubkey: ownerPubkey,
       tags: makeCommunityBadgeAwardEvent({
         community: sibling,
         definitionAddress: siblingBadgeAddress,
@@ -238,7 +238,7 @@ describe("community badges", () => {
   })
 
   it("uses the full community ID in badge child identifiers", () => {
-    const other = makeCommunityPointer({controllerPubkey, communityId: key(8)})!
+    const other = makeCommunityPointer({ownerPubkey, communityId: key(8)})!
 
     expect(makeCommunityBadgeIdentifier(community, "helper")).toBe(badgeIdentifier)
     expect(makeCommunityBadgeIdentifier(other, "helper")).not.toBe(badgeIdentifier)
@@ -411,20 +411,20 @@ describe("community badges", () => {
       eventReports: [],
       personReports: [
         {
-          event: makeEvent({pubkey: controllerPubkey}),
+          event: makeEvent({pubkey: ownerPubkey}),
           target: "person" as const,
           community,
           communityAddress: community.address,
           communityId,
-          controllerPubkey,
+          ownerPubkey,
           targetPubkey: bannedModeratorPubkey,
-          reporterPubkey: controllerPubkey,
+          reporterPubkey: ownerPubkey,
           adminAuthored: true,
         },
       ],
     }
 
-    expect(getCommunityBadgeCreatorPubkeys({definition, reportState})).toEqual([controllerPubkey])
+    expect(getCommunityBadgeCreatorPubkeys({definition, reportState})).toEqual([ownerPubkey])
     expect(canCreateCommunityBadge({definition, pubkey: moderatorPubkey, reportState})).toBe(false)
     expect(canCreateCommunityBadge({definition, pubkey: bannedModeratorPubkey, reportState})).toBe(
       false,
@@ -442,7 +442,7 @@ describe("community badges", () => {
         profileListEvents: activeProfileListEvents,
         reportState,
       }),
-    ).toEqual([controllerPubkey, moderatorPubkey])
+    ).toEqual([ownerPubkey, moderatorPubkey])
     expect(
       canCreateCommunityBadge({
         definition,
@@ -465,7 +465,7 @@ describe("community badges", () => {
         profileListEvents: [makeProfileListEvent(moderatorPubkey, [["status", "declined"]])],
         reportState,
       }),
-    ).toEqual([controllerPubkey])
+    ).toEqual([ownerPubkey])
   })
 
   it("requires trusted issuer, recipient award, and profile acceptance for display", () => {

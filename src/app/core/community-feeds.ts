@@ -11,12 +11,12 @@ import {
   getTagValue,
 } from "@welshman/util"
 import {
-  TARGETED_PUBLICATION_KIND_V2,
+  TARGETED_PUBLICATION_KIND,
   TARGETED_PUBLICATION_KINDS,
   normalizePubkey,
   normalizeRelays,
   parseCommunityId,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
 } from "@app/core/community"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 
@@ -121,7 +121,7 @@ export const makeCommunityTargetingFilter = (
   originalKinds: readonly number[] = TARGETED_PUBLICATION_KINDS,
   extra: Filter = {},
 ): Filter => ({
-  kinds: [TARGETED_PUBLICATION_KIND_V2],
+  kinds: [TARGETED_PUBLICATION_KIND],
   "#h": [communityId],
   "#k": originalKinds.map(String),
   ...extra,
@@ -184,7 +184,7 @@ export const makeTargetedPublicationOriginalFilters = (
     : undefined
 
   for (const event of targetingEvents) {
-    const targeting = parseTargetedPublicationV2(event)
+    const targeting = parseTargetedPublication(event)
     if (!targeting) continue
 
     if (!targeting.source) {
@@ -227,7 +227,7 @@ export const makeTargetedPublicationOriginalFilterPlan = (
   const localFilters: Filter[] = []
 
   for (const event of authorizedTargetingEvents) {
-    const targeting = parseTargetedPublicationV2(event)
+    const targeting = parseTargetedPublication(event)
     if (!targeting) continue
 
     if (!targeting.source) {
@@ -269,7 +269,7 @@ export const makeTargetedPublicationOriginalRelayHintPlans = (
   const eventsByRelay = new Map<string, TrustedEvent[]>()
 
   for (const event of authorizedTargetingEvents) {
-    const source = parseTargetedPublicationV2(event)?.source
+    const source = parseTargetedPublication(event)?.source
     if (!source?.relay) continue
 
     const relay = normalizeRelays([source.relay])[0]

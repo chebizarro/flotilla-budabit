@@ -1,14 +1,14 @@
 import {describe, expect, it, vi} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import type {EventTemplate, SignedEvent, TrustedEvent} from "@welshman/util"
-import {COMMUNITY_DEFINITION_KIND_V2} from "./community"
+import {COMMUNITY_DEFINITION_KIND} from "./community"
 import {
-  createCommunityV2,
+  createCommunity,
   getCommunityCreationIntentKey,
   type CommunityCreationIntentStorage,
-} from "./community-create-v2"
+} from "./community-create"
 
-const controllerPubkey = "1".repeat(64)
+const ownerPubkey = "1".repeat(64)
 const operationId = "operation-a"
 const firstCommunityId = getPublicKey(new Uint8Array(32).fill(1))
 const secondCommunityId = getPublicKey(new Uint8Array(32).fill(2))
@@ -27,7 +27,7 @@ const makeSignedEvent = (template: EventTemplate, index: number): SignedEvent =>
   ({
     ...template,
     id: index.toString(16).padStart(64, "0"),
-    pubkey: controllerPubkey,
+    pubkey: ownerPubkey,
     created_at: index,
     sig: "2".repeat(128),
   }) as SignedEvent
@@ -55,7 +55,7 @@ const setup = ({storage = makeStorage(), ids = [firstCommunityId, secondCommunit
   const buildArtifacts = (communityId: string) => ({
     prerequisites: [{kind: 30000, content: "", tags: [["d", `members:${communityId}`]]}],
     definition: {
-      kind: COMMUNITY_DEFINITION_KIND_V2,
+      kind: COMMUNITY_DEFINITION_KIND,
       content: "",
       tags: [["d", communityId]],
     },
@@ -64,22 +64,22 @@ const setup = ({storage = makeStorage(), ids = [firstCommunityId, secondCommunit
   return {storage, secrets, published, dependencies, buildArtifacts}
 }
 
-describe("Communikeys V2 community creation", () => {
-  it("keeps concurrent operations for one controller durable and distinct across retry", async () => {
+describe("Communikeys community creation", () => {
+  it("keeps concurrent operations for one owner durable and distinct across retry", async () => {
     const context = setup()
     context.dependencies.publishAndVerifyExact.mockRejectedValue(new Error("offline"))
 
     const [first, second] = await Promise.allSettled([
-      createCommunityV2({
+      createCommunity({
         ...context.dependencies,
         operationId: "operation-a",
-        controllerPubkey,
+        ownerPubkey,
         buildArtifacts: context.buildArtifacts,
       }),
-      createCommunityV2({
+      createCommunity({
         ...context.dependencies,
         operationId: "operation-b",
-        controllerPubkey,
+        ownerPubkey,
         buildArtifacts: context.buildArtifacts,
       }),
     ])
@@ -87,42 +87,42 @@ describe("Communikeys V2 community creation", () => {
     expect(first.status).toBe("rejected")
     expect(second.status).toBe("rejected")
     expect(
-      context.storage.values.get(getCommunityCreationIntentKey(controllerPubkey, "operation-a")),
+      context.storage.values.get(getCommunityCreationIntentKey(ownerPubkey, "operation-a")),
     ).toContain(firstCommunityId)
     expect(
-      context.storage.values.get(getCommunityCreationIntentKey(controllerPubkey, "operation-b")),
+      context.storage.values.get(getCommunityCreationIntentKey(ownerPubkey, "operation-b")),
     ).toContain(secondCommunityId)
 
     context.dependencies.publishAndVerifyExact.mockImplementation(
       async event => event as TrustedEvent,
     )
-    const retried = await createCommunityV2({
+    const retried = await createCommunity({
       ...context.dependencies,
       operationId: "operation-a",
-      controllerPubkey,
+      ownerPubkey,
       buildArtifacts: context.buildArtifacts,
     })
 
     expect(retried.communityId).toBe(firstCommunityId)
     expect(context.dependencies.generateSecretKey).toHaveBeenCalledTimes(2)
     expect(
-      context.storage.values.has(getCommunityCreationIntentKey(controllerPubkey, "operation-a")),
+      context.storage.values.has(getCommunityCreationIntentKey(ownerPubkey, "operation-a")),
     ).toBe(false)
     expect(
-      context.storage.values.has(getCommunityCreationIntentKey(controllerPubkey, "operation-b")),
+      context.storage.values.has(getCommunityCreationIntentKey(ownerPubkey, "operation-b")),
     ).toBe(true)
   })
 
-  it("allows two communities for one controller and uses a fresh ID after each success", async () => {
+  it("allows two communities for one owner and uses a fresh ID after each success", async () => {
     const context = setup()
 
-    const first = await createCommunityV2({
-      controllerPubkey,
+    const first = await createCommunity({
+      ownerPubkey,
       buildArtifacts: context.buildArtifacts,
       ...context.dependencies,
     })
-    const second = await createCommunityV2({
-      controllerPubkey,
+    const second = await createCommunity({
+      ownerPubkey,
       buildArtifacts: context.buildArtifacts,
       ...context.dependencies,
     })
@@ -135,8 +135,8 @@ describe("Communikeys V2 community creation", () => {
   it("keeps a throwaway secret only long enough to derive the community ID", async () => {
     const context = setup()
 
-    await createCommunityV2({
-      controllerPubkey,
+    await createCommunity({
+      ownerPubkey,
       buildArtifacts: communityId => {
         expect(context.secrets[0]).toEqual(new Uint8Array(32))
         return context.buildArtifacts(communityId)
@@ -146,7 +146,7 @@ describe("Communikeys V2 community creation", () => {
 
     expect(context.secrets[0]).toEqual(new Uint8Array(32))
     expect(
-      context.storage.values.has(getCommunityCreationIntentKey(controllerPubkey, operationId)),
+      context.storage.values.has(getCommunityCreationIntentKey(ownerPubkey, operationId)),
     ).toBe(false)
   })
 
@@ -155,19 +155,19 @@ describe("Communikeys V2 community creation", () => {
     context.dependencies.publishAndVerifyExact.mockRejectedValueOnce(new Error("offline"))
 
     await expect(
-      createCommunityV2({
-        controllerPubkey,
+      createCommunity({
+        ownerPubkey,
         buildArtifacts: context.buildArtifacts,
         ...context.dependencies,
       }),
     ).rejects.toThrow("offline")
 
     expect(
-      context.storage.values.get(getCommunityCreationIntentKey(controllerPubkey, operationId)),
+      context.storage.values.get(getCommunityCreationIntentKey(ownerPubkey, operationId)),
     ).toContain(firstCommunityId)
 
-    const resumed = await createCommunityV2({
-      controllerPubkey,
+    const resumed = await createCommunity({
+      ownerPubkey,
       buildArtifacts: context.buildArtifacts,
       ...context.dependencies,
     })
@@ -182,23 +182,23 @@ describe("Communikeys V2 community creation", () => {
     first.dependencies.publishAndVerifyExact.mockRejectedValueOnce(new Error("offline"))
 
     await expect(
-      createCommunityV2({
-        controllerPubkey,
+      createCommunity({
+        ownerPubkey,
         buildArtifacts: first.buildArtifacts,
         ...first.dependencies,
       }),
     ).rejects.toThrow("offline")
 
     const reloaded = setup({storage})
-    const result = await createCommunityV2({
-      controllerPubkey,
+    const result = await createCommunity({
+      ownerPubkey,
       buildArtifacts: reloaded.buildArtifacts,
       ...reloaded.dependencies,
     })
 
     expect(result.communityId).toBe(firstCommunityId)
     expect(reloaded.dependencies.generateSecretKey).not.toHaveBeenCalled()
-    expect(storage.values.has(getCommunityCreationIntentKey(controllerPubkey, operationId))).toBe(
+    expect(storage.values.has(getCommunityCreationIntentKey(ownerPubkey, operationId))).toBe(
       false,
     )
   })
@@ -206,16 +206,13 @@ describe("Communikeys V2 community creation", () => {
   it("publishes no kind-0 event and verifies prerequisites before kind 32222 activation", async () => {
     const context = setup()
 
-    await createCommunityV2({
-      controllerPubkey,
+    await createCommunity({
+      ownerPubkey,
       buildArtifacts: context.buildArtifacts,
       ...context.dependencies,
     })
 
-    expect(context.published.map(event => event.kind)).toEqual([
-      30000,
-      COMMUNITY_DEFINITION_KIND_V2,
-    ])
+    expect(context.published.map(event => event.kind)).toEqual([30000, COMMUNITY_DEFINITION_KIND])
     expect(context.published.some(event => event.kind === 0)).toBe(false)
   })
 
@@ -230,8 +227,8 @@ describe("Communikeys V2 community creation", () => {
       return event as TrustedEvent
     })
 
-    const pending = createCommunityV2({
-      controllerPubkey,
+    const pending = createCommunity({
+      ownerPubkey,
       buildArtifacts: context.buildArtifacts,
       ...context.dependencies,
     })
@@ -243,7 +240,7 @@ describe("Communikeys V2 community creation", () => {
     expect(context.dependencies.sign).toHaveBeenCalledTimes(2)
   })
 
-  it("rejects signed artifacts from a different controller", async () => {
+  it("rejects signed artifacts from a different owner", async () => {
     const context = setup()
     context.dependencies.sign.mockImplementationOnce(async template => ({
       ...makeSignedEvent(template, 1),
@@ -251,20 +248,20 @@ describe("Communikeys V2 community creation", () => {
     }))
 
     await expect(
-      createCommunityV2({
-        controllerPubkey,
+      createCommunity({
+        ownerPubkey,
         buildArtifacts: context.buildArtifacts,
         ...context.dependencies,
       }),
-    ).rejects.toThrow("controller")
+    ).rejects.toThrow("owner")
   })
 
   it("rejects duplicate or mismatched definition identifiers", async () => {
     const context = setup()
 
     await expect(
-      createCommunityV2({
-        controllerPubkey,
+      createCommunity({
+        ownerPubkey,
         buildArtifacts: communityId => ({
           prerequisites: [],
           definition: {
@@ -288,15 +285,15 @@ describe("Communikeys V2 community creation", () => {
     }))
 
     await expect(
-      createCommunityV2({
-        controllerPubkey,
+      createCommunity({
+        ownerPubkey,
         buildArtifacts: context.buildArtifacts,
         ...context.dependencies,
       }),
     ).rejects.toThrow("exact event")
 
     expect(
-      context.storage.values.get(getCommunityCreationIntentKey(controllerPubkey, operationId)),
+      context.storage.values.get(getCommunityCreationIntentKey(ownerPubkey, operationId)),
     ).toContain(firstCommunityId)
   })
 })

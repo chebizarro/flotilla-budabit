@@ -3,10 +3,10 @@ import {repository} from "@welshman/app"
 import {DELETE, type TrustedEvent} from "@welshman/util"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 import {
-  parseCommunityAuthorityV2,
+  parseCommunityAuthority,
   parseCommunityDefinitionAddress,
   type CommunityPointer,
-} from "@app/core/community-v2"
+} from "@app/core/community-protocol"
 
 export const COMMUNITY_DELETE_LOOKBACK_SECONDS = 60 * 60 * 24 * 30
 export const COMMUNITY_DELETE_SINCE_BUFFER_SECONDS = 60
@@ -42,7 +42,7 @@ export const hydrateCommunityDeleteEvents = async ({
     relays.length === 0 ||
     kinds.length === 0 ||
     !pointer ||
-    pointer.controllerPubkey !== community.controllerPubkey ||
+    pointer.ownerPubkey !== community.ownerPubkey ||
     pointer.communityId !== community.communityId
   ) {
     return 0
@@ -58,7 +58,7 @@ export const hydrateCommunityDeleteEvents = async ({
     priority: RELAY_REQUEST_PRIORITY.community,
     filters: [{kinds: [DELETE], "#h": [pointer.communityId], "#k": kinds.map(String), since}],
     onEvent: event => {
-      if (parseCommunityAuthorityV2(event)?.address !== pointer.address) return
+      if (parseCommunityAuthority(event)?.address !== pointer.address) return
       if (!repository.getEvent(event.id)) {
         repository.publish(event as TrustedEvent)
       }

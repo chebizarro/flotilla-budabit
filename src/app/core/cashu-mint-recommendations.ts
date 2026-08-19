@@ -9,7 +9,7 @@ import {
   normalizePubkey,
   normalizeRelays,
   PROFILE_LIST_KIND,
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
 } from "@app/core/community"
 import type {
   ActiveUserCommunityRef,
@@ -200,7 +200,7 @@ const getTrackedEventRelays = (event: TrustedEvent | undefined) => {
   }
 }
 
-const getCommunityDefinitionRelayHints = (definition: CommunityDefinitionV2) =>
+const getCommunityDefinitionRelayHints = (definition: CommunityDefinition) =>
   normalizeRelays([...definition.relays, ...getTrackedEventRelays(definition.event)])
 
 const getProfileListPubkeyRelayHints = (event: TrustedEvent | undefined, pubkey: string) => {
@@ -262,7 +262,7 @@ const getCommunityRoleDetail = ({
   reportStates,
   pubkey,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   profileListsByAddress: Map<string, TrustedEvent>
   reportStates?: UserCommunityReportStates
   pubkey: string
@@ -272,10 +272,10 @@ const getCommunityRoleDetail = ({
   const communityAddress = definition.pointer.address
   const communityRelayHints = definition.relays
 
-  if (definition.controllerPubkey === normalizedPubkey) {
+  if (definition.ownerPubkey === normalizedPubkey) {
     return {
       pubkey: normalizedPubkey,
-      communityPubkey: definition.controllerPubkey,
+      communityPubkey: definition.ownerPubkey,
       communityAddress,
       role: "community",
       moderatorSectionCount: definition.sections.length,
@@ -321,7 +321,7 @@ const getCommunityRoleDetail = ({
   if (moderatorSections.size > 0) {
     return {
       pubkey: normalizedPubkey,
-      communityPubkey: definition.controllerPubkey,
+      communityPubkey: definition.ownerPubkey,
       communityAddress,
       role: "moderator",
       moderatorSectionCount: moderatorSections.size,
@@ -333,7 +333,7 @@ const getCommunityRoleDetail = ({
   if (memberSections.size > 0) {
     return {
       pubkey: normalizedPubkey,
-      communityPubkey: definition.controllerPubkey,
+      communityPubkey: definition.ownerPubkey,
       communityAddress,
       role: "member",
       moderatorSectionCount: 0,
@@ -344,7 +344,7 @@ const getCommunityRoleDetail = ({
 }
 
 const getDefinitionsFromRefs = (refs: ActiveUserCommunityRef[] = []) => {
-  const byAddress = new Map<string, CommunityDefinitionV2>()
+  const byAddress = new Map<string, CommunityDefinition>()
 
   for (const ref of refs) {
     const address = ref.community.address
@@ -484,8 +484,8 @@ export const buildCashuMintRecommendations = ({
       addEvidence(recommendations, mintUrl, {
         kind: "community",
         source: "32222",
-        pubkey: definition.controllerPubkey,
-        communityPubkey: definition.controllerPubkey,
+        pubkey: definition.ownerPubkey,
+        communityPubkey: definition.ownerPubkey,
         communityAddress: viewerRole.communityAddress,
         relayHints: getCommunityDefinitionRelayHints(definition),
         communityRelayHints: getCommunityDefinitionRelayHints(definition),
@@ -538,7 +538,7 @@ export const buildCashuMintRecommendations = ({
           kind: getRoleEvidenceKind(recommenderRole.role),
           source: "10019",
           pubkey: recommender,
-          communityPubkey: definition.controllerPubkey,
+          communityPubkey: definition.ownerPubkey,
           communityAddress: recommenderRole.communityAddress,
           relayHints: normalizeRelays([...recommenderRelayHints, ...recommenderRole.relayHints]),
           communityRelayHints: getCommunityDefinitionRelayHints(definition),
@@ -608,7 +608,7 @@ const getCommunityProfileListAuthors = (
   const memberAuthors: string[] = []
 
   for (const definition of getDefinitionsFromRefs(communityRefs)) {
-    communityAuthors.push(definition.controllerPubkey)
+    communityAuthors.push(definition.ownerPubkey)
 
     for (const section of definition.sections) {
       for (const ref of section.profileLists) {

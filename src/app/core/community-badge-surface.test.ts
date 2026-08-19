@@ -9,7 +9,7 @@ describe("exact community badge surface contracts", () => {
 
     expect(route).toContain("<CommunityBadgeAwardForm community={routeCommunity}")
     expect(route).toContain("<CommunityMenuButton community={routeCommunity.naddr}")
-    expect(route).not.toContain("<CommunityMenuButton community={communityControllerPubkey}")
+    expect(route).not.toContain("<CommunityMenuButton community={communityOwnerPubkey}")
   })
 
   it("keys badge retries and stored Blossom upload context by exact definition address", () => {

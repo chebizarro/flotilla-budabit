@@ -4,8 +4,8 @@ import {
   getProfileListPubkeys,
   normalizePubkey,
   parseCommunityId,
-  parseTargetedPublicationV2,
-  type CommunityDefinitionV2,
+  parseTargetedPublication,
+  type CommunityDefinition,
 } from "@app/core/community"
 import {
   isCommunityPersonBanned,
@@ -46,7 +46,7 @@ export type PeopleDiscoveryContext =
   | RepoPeopleDiscoveryContext
 
 export type PeopleDiscoveryContextEvidence = {
-  definitions: Map<string, CommunityDefinitionV2>
+  definitions: Map<string, CommunityDefinition>
   profileListEvents: TrustedEvent[]
   reportStates: Map<string, EffectiveCommunityReportState>
 }
@@ -88,8 +88,8 @@ const getEndorsedRepoCommunity = ({
     evidence.profileListEvents.map(event => [getEventAddress(event), event]),
   )
   const repoOwner = normalizePubkey(announcement.pubkey)
-  const getAuthorityPubkeys = (definition: CommunityDefinitionV2) => {
-    const authorityPubkeys = new Set<string>([normalizePubkey(definition.controllerPubkey)])
+  const getAuthorityPubkeys = (definition: CommunityDefinition) => {
+    const authorityPubkeys = new Set<string>([normalizePubkey(definition.ownerPubkey)])
     for (const section of definition.sections) {
       if (!section.kinds.some(item => item.kind === announcement.kind)) continue
       for (const ref of section.profileLists) {
@@ -122,7 +122,7 @@ const getEndorsedRepoCommunity = ({
   for (const event of [...(context.associationEvents || [])].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
   )) {
-    const targeting = parseTargetedPublicationV2(event)
+    const targeting = parseTargetedPublication(event)
     if (targeting?.kind !== announcement.kind) continue
     if (targeting.source?.type === "a" && targeting.source.value !== repoAddress) continue
     if (targeting.source?.type === "e" && targeting.source.value !== announcement.id) continue
@@ -195,7 +195,7 @@ export const resolveRepoPeopleDiscoveryContext = (
   if (!communityPubkey && announcement) {
     const community = getEndorsedRepoCommunity({context, evidence, announcement, repoAddress})
     if (community) {
-      communityPubkey = normalizePubkey(community.controllerPubkey)
+      communityPubkey = normalizePubkey(community.ownerPubkey)
       communityAddress = community.address
     }
   }

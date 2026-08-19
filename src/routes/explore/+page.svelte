@@ -11,9 +11,9 @@
   import {pushModal} from "@app/util/modal"
   import {
     normalizeRelays,
-    parseCommunityDefinitionV2,
+    parseCommunityDefinition,
     parseCommunityNaddr,
-    type CommunityDefinitionV2,
+    type CommunityDefinition,
     type CommunityPointer,
   } from "@app/core/community"
   import {
@@ -40,7 +40,7 @@
 
   type SelectorCommunity = {
     community: CommunityPointer
-    definition?: CommunityDefinitionV2
+    definition?: CommunityDefinition
     relayHints: string[]
     publishRelayHints: string[]
     isCurrent: boolean
@@ -51,8 +51,8 @@
 
   let communitySearchInput = $state("")
   let communityInput = $state("")
-  let previewDefinition = $state<CommunityDefinitionV2>()
-  let defaultDefinition = $state<CommunityDefinitionV2>()
+  let previewDefinition = $state<CommunityDefinition>()
+  let defaultDefinition = $state<CommunityDefinition>()
   let previewLookupState = $state<"idle" | "loading" | "found" | "not-found" | "unavailable">(
     "idle",
   )
@@ -90,7 +90,7 @@
   }
   const parseDefinitions = (events: TrustedEvent[]) =>
     events.flatMap(event => {
-      const definition = parseCommunityDefinitionV2(event)
+      const definition = parseCommunityDefinition(event)
       return definition ? [definition] : []
     })
 
@@ -112,9 +112,9 @@
   const ownCommunityDefinition = $derived(
     communityDefinitions.find(
       item =>
-        item.controllerPubkey === $pubkey &&
+        item.ownerPubkey === $pubkey &&
         item.pointer.address === $activeExactCommunityPointer?.address,
-    ) || communityDefinitions.find(item => item.controllerPubkey === $pubkey),
+    ) || communityDefinitions.find(item => item.ownerPubkey === $pubkey),
   )
   const hasOwnCommunity = $derived(Boolean(ownCommunityDefinition))
   const currentRelayHints = $derived(normalizeRelays($activeExactCommunityRelays))

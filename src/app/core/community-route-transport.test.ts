@@ -65,7 +65,7 @@ describe("community room and thread route transport", () => {
     expect(communityGit).toContain("makeCommunityRepositoryFilter(communityId)")
     expect(communityGit).toContain("isAuthorizedDirectCommunityRepo({")
     expect(communityGit).not.toContain("communityRepoAssociationFilterPlan")
-    expect(communityGit).not.toContain("TARGETED_PUBLICATION_KIND_V2")
+    expect(communityGit).not.toContain("TARGETED_PUBLICATION_KIND")
     expect(communityGit).not.toContain("Repository history is incomplete")
     expect(globalGit).toContain("loadBoundedCommunityHistory({")
     expect(globalGit).toContain("relayFilters,")

@@ -1,30 +1,33 @@
 /**
  * Compare two semantic version strings.
  * Returns:
- *  1 if v1 > v2
- *  0 if v1 === v2
- * -1 if v1 < v2
+ *  1 if leftVersion > rightVersion
+ *  0 if leftVersion === rightVersion
+ * -1 if leftVersion < rightVersion
  */
-export function compareVersions(v1: string | undefined, v2: string | undefined): number {
-  if (!v1 && !v2) return 0
-  if (!v1) return -1
-  if (!v2) return 1
+export function compareVersions(
+  leftVersion: string | undefined,
+  rightVersion: string | undefined,
+): number {
+  if (!leftVersion && !rightVersion) return 0
+  if (!leftVersion) return -1
+  if (!rightVersion) return 1
 
   // Remove leading 'v' if present
-  const clean1 = v1.replace(/^v/, "")
-  const clean2 = v2.replace(/^v/, "")
+  const cleanLeft = leftVersion.replace(/^v/, "")
+  const cleanRight = rightVersion.replace(/^v/, "")
 
-  const parts1 = clean1.split(".").map(p => parseInt(p, 10) || 0)
-  const parts2 = clean2.split(".").map(p => parseInt(p, 10) || 0)
+  const leftParts = cleanLeft.split(".").map(part => parseInt(part, 10) || 0)
+  const rightParts = cleanRight.split(".").map(part => parseInt(part, 10) || 0)
 
-  const maxLength = Math.max(parts1.length, parts2.length)
+  const maxLength = Math.max(leftParts.length, rightParts.length)
 
   for (let i = 0; i < maxLength; i++) {
-    const p1 = parts1[i] || 0
-    const p2 = parts2[i] || 0
+    const leftPart = leftParts[i] || 0
+    const rightPart = rightParts[i] || 0
 
-    if (p1 > p2) return 1
-    if (p1 < p2) return -1
+    if (leftPart > rightPart) return 1
+    if (leftPart < rightPart) return -1
   }
 
   return 0

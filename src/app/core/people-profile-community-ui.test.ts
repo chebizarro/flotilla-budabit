@@ -9,12 +9,10 @@ const communitySection = source.slice(source.indexOf("Communities"), source.inde
 
 describe("people profile exact community UI", () => {
   it("discovers and preserves exact kind 32222 definitions by address", () => {
-    expect(source).toContain("COMMUNITY_DEFINITION_KIND_V2")
-    expect(source).toContain("selectCurrentCommunityDefinitionsV2")
-    expect(source).toMatch(
-      /kinds:\s*\[COMMUNITY_DEFINITION_KIND_V2\],\s*authors:\s*\[targetPubkey\]/,
-    )
-    expect(source).toMatch(/kinds:\s*\[COMMUNITY_DEFINITION_KIND_V2\],\s*"#a":\s*\[address\]/)
+    expect(source).toContain("COMMUNITY_DEFINITION_KIND")
+    expect(source).toContain("selectCurrentCommunityDefinitions")
+    expect(source).toMatch(/kinds:\s*\[COMMUNITY_DEFINITION_KIND\],\s*authors:\s*\[targetPubkey\]/)
+    expect(source).toMatch(/kinds:\s*\[COMMUNITY_DEFINITION_KIND\],\s*"#a":\s*\[address\]/)
     expect(communitySection).toContain("(ref.address)")
     expect(communitySection).not.toContain("(ref.communityPubkey)")
   })

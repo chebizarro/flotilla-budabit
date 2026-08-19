@@ -42,8 +42,8 @@
   import {
     normalizePubkey,
     parseAddressRef,
-    parseCommunityDefinitionV2,
-    type CommunityProfileListRefV2,
+    parseCommunityDefinition,
+    type CommunityDefinitionProfileListRef,
   } from "@app/core/community"
   import {
     getEffectiveCommunityModerationActionsByReporter,
@@ -83,7 +83,7 @@
     sectionName: string
     displayName: string
     pubkey: string
-    profileLists: CommunityProfileListRefV2[]
+    profileLists: CommunityDefinitionProfileListRef[]
     status: CommunityModeratorInviteStatus
   }
 
@@ -99,12 +99,12 @@
 
   const parsedCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
   const communityAddress = $derived(parsedCommunity?.address || "")
-  const communityPubkey = $derived(parsedCommunity?.controllerPubkey || "")
-  const controllerProfileStore = $derived(
+  const communityPubkey = $derived(parsedCommunity?.ownerPubkey || "")
+  const ownerProfileStore = $derived(
     communityPubkey ? deriveProfile(communityPubkey, parsedCommunity?.relayHints) : undefined,
   )
-  const controllerProfile = $derived(
-    controllerProfileStore ? getStore(controllerProfileStore) : undefined,
+  const ownerProfile = $derived(
+    ownerProfileStore ? getStore(ownerProfileStore) : undefined,
   )
   const adminPath = $derived(
     $activeExactCommunityPointer
@@ -157,7 +157,7 @@
       communityBootstrapReady &&
       $activeExactCommunityDefinition &&
       normalizePubkey($pubkey) ===
-        normalizePubkey($activeExactCommunityDefinition.controllerPubkey),
+        normalizePubkey($activeExactCommunityDefinition.ownerPubkey),
     ),
   )
   const moderatorRequestFilters = $derived(
@@ -214,7 +214,7 @@
     const definition = $activeExactCommunityDefinition
     if (!definition) return []
 
-    const communityOwner = normalizePubkey(definition.controllerPubkey)
+    const communityOwner = normalizePubkey(definition.ownerPubkey)
 
     return definition.sections.flatMap(section => {
       const pubkeys = Array.from(
@@ -299,7 +299,7 @@
   const communityDefinitionPublishRelays = $derived(
     getCommunityRootPublishRelays(communityPublishRelays, undefined, {
       outboxRelays: getPubkeyOutboxRelays(
-        $pubkey || $activeExactCommunityDefinition?.controllerPubkey,
+        $pubkey || $activeExactCommunityDefinition?.ownerPubkey,
       ),
     }),
   )
@@ -378,7 +378,7 @@
 
   const assertCanPublish = () => {
     if (!communityBootstrapReady || !$activeExactCommunityDefinition || !canEditCommunity) {
-      pushToast({theme: "error", message: "Log in as this community controller pubkey first."})
+      pushToast({theme: "error", message: "Log in as this community owner pubkey first."})
       return false
     }
 
@@ -403,11 +403,11 @@
     createdAt?: number,
   ): Promise<SignedEvent> => {
     if (!$activeExactCommunityDefinition || !$sessionSigner) {
-      throw new Error("Log in as this community controller pubkey first.")
+      throw new Error("Log in as this community owner pubkey first.")
     }
 
     return $sessionSigner.sign(
-      prep(template, $activeExactCommunityDefinition.controllerPubkey, createdAt),
+      prep(template, $activeExactCommunityDefinition.ownerPubkey, createdAt),
     )
   }
 
@@ -446,7 +446,7 @@
       label,
       createdAt: getNextReplacementCreatedAt([$activeExactCommunityDefinition?.event]),
     })
-    const definition = parseCommunityDefinitionV2(verified)
+    const definition = parseCommunityDefinition(verified)
 
     if (definition) {
       setActiveExactCommunityDefinition(definition)
@@ -742,7 +742,7 @@
     </div>
   {:else if !canEditCommunity}
     <p class="py-8 text-center opacity-70">
-      Log in as this community controller pubkey to publish community definition updates.
+      Log in as this community owner pubkey to publish community definition updates.
     </p>
   {:else}
     <div class="flex flex-wrap gap-2">
@@ -771,7 +771,7 @@
       <CommunityCreate
         mode="edit"
         definition={$activeExactCommunityDefinition}
-        profile={controllerProfile}
+        profile={ownerProfile}
         embedded />
     {:else if adminTab === "requests"}
       <section class="card2 bg-alt flex flex-col gap-4 p-4 shadow-md">

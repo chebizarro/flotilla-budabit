@@ -3,11 +3,11 @@ import {getPublicKey} from "nostr-tools/pure"
 import {DELETE, matchFilters, type Filter, type TrustedEvent} from "@welshman/util"
 import {repository} from "@welshman/app"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildCommunityDefinitionV2,
-  buildTargetedPublicationV2,
+  buildCommunityDefinition,
+  buildTargetedPublication,
   makeCommunityPointer,
 } from "@app/core/community"
 import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
@@ -51,7 +51,7 @@ const memberPubkey = key(123)
 const outsiderPubkey = key(124)
 const widgetPubkey = key(125)
 const community = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: communityPubkey,
   relayHints: ["wss://community.example"],
 })!
@@ -87,7 +87,7 @@ const makeTargetingEvent = ({
     id,
     pubkey,
     kind: TARGETED_PUBLICATION_KIND,
-    tags: buildTargetedPublicationV2({
+    tags: buildTargetedPublication({
       id,
       kind: SMART_WIDGET_KIND,
       source: {
@@ -116,9 +116,9 @@ const makeDefinition = () =>
   makeEvent({
     id: "community-definition",
     pubkey: communityPubkey,
-    kind: COMMUNITY_DEFINITION_KIND_V2,
+    kind: COMMUNITY_DEFINITION_KIND,
     content: "",
-    tags: buildCommunityDefinitionV2({
+    tags: buildCommunityDefinition({
       communityId: community.communityId,
       name: "Test community",
       relays: ["wss://community.example"],
@@ -155,7 +155,7 @@ describe("community curated widgets", () => {
     const definition = makeEvent({
       id: "community-definition",
       pubkey: communityPubkey,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
+      kind: COMMUNITY_DEFINITION_KIND,
       tags: [],
     })
     mocks.loadCommunityEventsWithStatus.mockResolvedValue(loadResult([definition]))
@@ -253,7 +253,7 @@ describe("community curated widgets", () => {
       targetingEventIds: ["target-valid"],
       targetingRelayHints: ["wss://widgets.example/"],
     })
-    expect(contexts[0].definition.controllerPubkey).toBe(communityPubkey)
+    expect(contexts[0].definition.ownerPubkey).toBe(communityPubkey)
     expect(contexts[0].profileListEvents).toEqual([profileList])
     expect(contexts[0].widgetTargetAuthorPubkeys).toContain(memberPubkey)
     expect(
@@ -272,7 +272,7 @@ describe("community curated widgets", () => {
       makeCommunityWidgetPreviewContextOptions({
         widgetLineId: `${SMART_WIDGET_KIND}:${widgetPubkey}:valid-widget`,
         userPubkey: memberPubkey,
-        getLabel: context => `Community ${context.community.controllerPubkey.slice(0, 4)}`,
+        getLabel: context => `Community ${context.community.ownerPubkey.slice(0, 4)}`,
       }),
     ).toMatchObject([
       {
@@ -354,7 +354,7 @@ describe("community curated widgets", () => {
       id: "implicit-target",
       pubkey: memberPubkey,
       kind: TARGETED_PUBLICATION_KIND,
-      tags: buildTargetedPublicationV2({
+      tags: buildTargetedPublication({
         id: "implicit-widget-id",
         kind: SMART_WIDGET_KIND,
         communities: [community],
@@ -402,7 +402,7 @@ describe("community curated widgets", () => {
 
     mocks.loadCommunityEventsWithStatus.mockImplementation(
       async (_relays: string[], filters: Filter[]) => {
-        if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2))) {
+        if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND))) {
           return loadResult([definition])
         }
         if (filters.some(filter => filter.kinds?.includes(PROFILE_LIST_KIND))) {
@@ -448,7 +448,7 @@ describe("community curated widgets", () => {
     try {
       mocks.loadCommunityEventsWithStatus.mockImplementation(
         async (_relays: string[], filters: Filter[]) => {
-          if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND_V2))) {
+          if (filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND))) {
             return loadResult([definition])
           }
           if (filters.some(filter => filter.kinds?.includes(PROFILE_LIST_KIND))) {

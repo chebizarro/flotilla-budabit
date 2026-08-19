@@ -10,7 +10,7 @@
   import {preventDefault} from "@lib/html"
   import {
     normalizeRelays,
-    type CommunityDefinitionV2,
+    type CommunityDefinition,
     type CommunityPointer,
   } from "@app/core/community"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
@@ -19,7 +19,7 @@
 
   type Props = {
     community?: CommunityPointer
-    definition?: CommunityDefinitionV2
+    definition?: CommunityDefinition
     relayHints?: string[]
     shareRelayHints?: string[]
     publishRelayHints?: string[]
@@ -39,7 +39,7 @@
     onSubmit?: () => void
     inputSearch?: (term: string) => string[]
     onInputSelect?: (pubkey: string) => void
-    inputSuggestionDefinitions?: CommunityDefinitionV2[]
+    inputSuggestionDefinitions?: CommunityDefinition[]
   }
 
   let {
@@ -53,7 +53,7 @@
     onOpen,
     inputValue = $bindable(""),
     showInput = false,
-    inputLabel = "Community naddr, controller, NIP-05, or name",
+    inputLabel = "Community naddr, owner, NIP-05, or name",
     inputInfo = "Entering a community makes it your current community on this device.",
     inputPlaceholder = "naddr1..., npub1..., name, or NIP-05",
     showActions = true,

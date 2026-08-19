@@ -47,7 +47,7 @@
   const exactCommunity = $derived(
     $activeExactCommunityPointer?.address === communityAddress ||
       (!communityAddress &&
-        normalizePubkey($activeExactCommunityPointer?.controllerPubkey || "") ===
+        normalizePubkey($activeExactCommunityPointer?.ownerPubkey || "") ===
           normalizePubkey(communityPubkey))
       ? $activeExactCommunityPointer
       : undefined,
@@ -58,7 +58,7 @@
       : undefined,
   )
   const contextDefinition = $derived(
-    exactDefinition ? {...exactDefinition, pubkey: exactDefinition.controllerPubkey} : undefined,
+    exactDefinition ? {...exactDefinition, pubkey: exactDefinition.ownerPubkey} : undefined,
   )
   let curatedWidgets = $state<SmartWidgetEvent[]>([])
   let loadKey = ""
@@ -110,7 +110,7 @@
     if (
       !exactCommunity ||
       (communityAddress && exactCommunity.address !== communityAddress) ||
-      normalizePubkey(exactCommunity.controllerPubkey) !== normalizePubkey(communityPubkey) ||
+      normalizePubkey(exactCommunity.ownerPubkey) !== normalizePubkey(communityPubkey) ||
       definition?.pointer.address !== exactCommunity.address
     ) {
       return undefined
@@ -120,7 +120,7 @@
     const reportState = get(activeCommunityReportState)
     const relays = get(activeExactCommunityRelays)
     const currentCommunityContext = makeCommunityWidgetContext({
-      definition: {...definition, pubkey: definition.controllerPubkey} as any,
+      definition: {...definition, pubkey: definition.ownerPubkey} as any,
       profileListEvents,
       reportState,
       userPubkey: get(pubkey) || "",
@@ -169,7 +169,7 @@
         slot: {type: slotType, label: widget.slot?.label},
         community: {
           address: exactCommunity.address,
-          controllerPubkey: exactCommunity.controllerPubkey,
+          ownerPubkey: exactCommunity.ownerPubkey,
           communityId: exactCommunity.communityId,
           naddr: exactCommunity.naddr,
           relays: relayHints,

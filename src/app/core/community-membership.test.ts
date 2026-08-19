@@ -2,13 +2,13 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   COMMUNITY_SECTION_THREADS,
   PROFILE_LIST_KIND,
   RENOUNCED_COMMUNITIES_DTAG,
-  buildCommunityDefinitionV2,
-  parseCommunityDefinitionV2,
-  type CommunityDefinitionV2,
+  buildCommunityDefinition,
+  parseCommunityDefinition,
+  type CommunityDefinition,
 } from "./community"
 import type {EffectiveCommunityReportState} from "./community-reports"
 import {
@@ -53,12 +53,12 @@ const makeDefinition = ({
   profileListAddress?: string
   relays?: string[]
 }) =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: getCommunityId(id),
         name: id,
         relays,
@@ -84,12 +84,12 @@ const makeMultiSectionDefinition = ({
   pubkey: string
   sections: Array<{name: string; profileListAddresses: string[]}>
 }) =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
       id,
       pubkey,
-      kind: COMMUNITY_DEFINITION_KIND_V2,
-      tags: buildCommunityDefinitionV2({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
         communityId: getCommunityId(id),
         name: id,
         relays: ["wss://relay.example.com"],
@@ -252,7 +252,7 @@ describe("community membership", () => {
     })
 
     expect(
-      Object.fromEntries(refs.map(ref => [ref.community.controllerPubkey, ref.roles])),
+      Object.fromEntries(refs.map(ref => [ref.community.ownerPubkey, ref.roles])),
     ).toEqual({
       [userPubkey]: ["admin"],
       [moderatorCommunityPubkey]: ["moderator", "member"],
@@ -265,12 +265,12 @@ describe("community membership", () => {
 
   it("derives membership only from current non-deleted profile lists", () => {
     const userPubkey = key(2)
-    const controller = key(4)
+    const owner = key(4)
     const listOwner = key(6)
     const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:Members`
     const definition = makeDefinition({
       id: "authority",
-      pubkey: controller,
+      pubkey: owner,
       profileListAddress: listAddress,
     })
     const list = makeProfileList({
@@ -298,7 +298,7 @@ describe("community membership", () => {
       tags: [["a", listAddress]],
     })
     const recreated = {...list, id: "recreated", created_at: 3}
-    const foreignDelete = {...deletion, id: "foreign-delete", pubkey: controller}
+    const foreignDelete = {...deletion, id: "foreign-delete", pubkey: owner}
     const multiDelete = {
       ...deletion,
       id: "multi-delete",
@@ -321,7 +321,7 @@ describe("community membership", () => {
     expect(roles([list, multiDelete])).toHaveLength(1)
   })
 
-  it("keeps same-controller community definitions independent", () => {
+  it("keeps same-owner community definitions independent", () => {
     const userPubkey = key(2)
 
     expect(
@@ -335,7 +335,7 @@ describe("community membership", () => {
     ).toEqual(["first", "second"])
   })
 
-  it("keeps same-ID branches under different controllers independent", () => {
+  it("keeps same-ID branches under different owners independent", () => {
     const userPubkey = key(2)
     const otherController = key(3)
     const sharedId = "shared-community-id"
@@ -354,17 +354,17 @@ describe("community membership", () => {
 
   it("uses report state from the exact community address", () => {
     const userPubkey = key(2)
-    const controller = key(4)
+    const owner = key(4)
     const listOwner = key(6)
     const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:Members`
     const bannedBranch = makeDefinition({
       id: "banned-branch",
-      pubkey: controller,
+      pubkey: owner,
       profileListAddress: listAddress,
     })
     const activeBranch = makeDefinition({
       id: "active-branch",
-      pubkey: controller,
+      pubkey: owner,
       profileListAddress: listAddress,
     })
 
@@ -442,11 +442,11 @@ describe("community membership", () => {
     ).toEqual([["admin"]])
   })
 
-  it("does not exclude a sibling definition owned by the same controller", () => {
+  it("does not exclude a sibling definition owned by the same owner", () => {
     const pubkey = key(1)
     const renounced = makeDefinition({id: "renounced", pubkey})
     const sibling = makeDefinition({id: "sibling", pubkey})
-    const makeRef = (definition: CommunityDefinitionV2): ActiveUserCommunityRef => ({
+    const makeRef = (definition: CommunityDefinition): ActiveUserCommunityRef => ({
       community: definition.pointer,
       definition,
       relayHints: [],
@@ -537,7 +537,7 @@ describe("community membership", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        community: expect.objectContaining({controllerPubkey: communityPubkey}),
+        community: expect.objectContaining({ownerPubkey: communityPubkey}),
         roles: ["member"],
         writableSections: ["General"],
       }),
@@ -622,7 +622,7 @@ describe("community membership", () => {
       }),
     ).toEqual([
       expect.objectContaining({
-        community: expect.objectContaining({controllerPubkey: communityPubkey}),
+        community: expect.objectContaining({ownerPubkey: communityPubkey}),
         roles: ["member"],
         writableSections: ["General"],
       }),
@@ -726,7 +726,7 @@ describe("community membership", () => {
     })
 
     expect(
-      Object.fromEntries(refs.map(ref => [ref.community.controllerPubkey, ref.relayHints])),
+      Object.fromEntries(refs.map(ref => [ref.community.ownerPubkey, ref.relayHints])),
     ).toEqual({
       [userPubkey]: ["wss://admin-relay.example.com"],
       [memberCommunityPubkey]: ["wss://member-relay.example.com"],

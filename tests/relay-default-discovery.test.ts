@@ -10,12 +10,12 @@ import {
   makeProgressLogger,
   normalizePubkey,
   parseCli,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
   parseCommunityInput,
   rankCandidates,
   renderRecommendationTable,
   selectLatestEvents,
-  selectCurrentCommunityDefinitionsV2,
+  selectCurrentCommunityDefinitions,
 } from "../scripts/discover-relay-defaults.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -78,7 +78,7 @@ describe("relay default discovery CLI", () => {
 })
 
 describe("community and event parsing", () => {
-  it("parses only an exact V2 definition naddr for VITE_DEFAULT_COMMUNITY", () => {
+  it("parses only an exact definition naddr for VITE_DEFAULT_COMMUNITY", () => {
     const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const input = nip19.naddrEncode({
@@ -92,7 +92,7 @@ describe("community and event parsing", () => {
     expect(parsed).toEqual({
       input,
       address: `32222:${controller}:${communityId}`,
-      controllerPubkey: controller,
+      ownerPubkey: controller,
       communityId,
       relays: ["wss://one.example", "wss://two.example"],
       source: "naddr",
@@ -132,7 +132,7 @@ describe("community and event parsing", () => {
     const community = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const moderator = pubkey("d")
-    const definition = parseCommunityDefinitionV2(
+    const definition = parseCommunityDefinition(
       event({
         kind: 32222,
         author: community,
@@ -151,7 +151,7 @@ describe("community and event parsing", () => {
     )
 
     expect(definition).toMatchObject({
-      controllerPubkey: community,
+      ownerPubkey: community,
       communityId,
       address: `32222:${community}:${communityId}`,
       relays: ["wss://community.example/"],
@@ -170,7 +170,7 @@ describe("community and event parsing", () => {
     const firstId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const secondId = "531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337"
     const makeDefinition = (communityId: string, id: string) =>
-      parseCommunityDefinitionV2(
+      parseCommunityDefinition(
         event({
           kind: 32222,
           author: controller,
@@ -226,12 +226,12 @@ describe("community and event parsing", () => {
     })
 
     expect(
-      selectCurrentCommunityDefinitionsV2([valid, invalidNewer]).map(item => item.event.id),
+      selectCurrentCommunityDefinitions([valid, invalidNewer]).map(item => item.event.id),
     ).toEqual([valid.id])
-    expect(selectCurrentCommunityDefinitionsV2([valid, invalidNewer, deletion])).toEqual([])
+    expect(selectCurrentCommunityDefinitions([valid, invalidNewer, deletion])).toEqual([])
   })
 
-  it("rejects malformed recognized V2 definition tags", () => {
+  it("rejects malformed recognized definition tags", () => {
     const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
     const baseTags = [
@@ -262,7 +262,7 @@ describe("community and event parsing", () => {
 
     for (const tags of cases) {
       expect(
-        parseCommunityDefinitionV2(
+        parseCommunityDefinition(
           event({kind: 32222, author: controller, id: "4".repeat(64), tags}),
         ),
       ).toBeUndefined()
@@ -293,7 +293,7 @@ describe("community-first graph", () => {
         ["a", listAddress],
       ],
     })
-    const definition = parseCommunityDefinitionV2(definitionEvent)!
+    const definition = parseCommunityDefinition(definitionEvent)!
     const events = [
       event({kind: 3, author: seed, id: "2".repeat(64), tags: [["p", directFollow]]}),
       event({kind: 3, author: directFollow, id: "3".repeat(64), tags: [["p", secondHop]]}),
@@ -342,7 +342,7 @@ describe("community-first graph", () => {
         ["a", `30000:${moderator}:General`],
       ],
     })
-    const definition = parseCommunityDefinitionV2(definitionEvent)!
+    const definition = parseCommunityDefinition(definitionEvent)!
     const events = [
       definitionEvent,
       event({kind: 3, author: community, id: "6".repeat(64), tags: [["p", communityFollow]]}),

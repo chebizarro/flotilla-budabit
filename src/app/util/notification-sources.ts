@@ -70,14 +70,14 @@ import {
 import {
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
-  TARGETED_PUBLICATION_KIND_V2,
+  TARGETED_PUBLICATION_KIND,
   TARGETED_PUBLICATION_KINDS,
   normalizeCommunitySectionName,
   normalizePubkey,
-  parseCommunityDefinitionV2,
-  parseTargetedPublicationV2,
-  selectCurrentTargetedPublicationEventsV2,
-  type CommunityDefinitionV2,
+  parseCommunityDefinition,
+  parseTargetedPublication,
+  selectCurrentTargetedPublicationEvents,
+  type CommunityDefinition,
   type CommunityPointer,
 } from "@app/core/community"
 import {
@@ -444,7 +444,7 @@ const getCommunityDefinitionId = (ref: ActiveUserCommunityRef) => ref.community.
 
 const targetsCommunityDefinition = (event: TrustedEvent, ref: ActiveUserCommunityRef) =>
   Boolean(
-    parseTargetedPublicationV2(event)?.communities.some(
+    parseTargetedPublication(event)?.communities.some(
       community => community.address === getCommunityDefinitionAddress(ref),
     ),
   )
@@ -608,7 +608,7 @@ const isTargetableCommunityOriginalAdmitted = ({
         ? [target]
         : []
   const authorizedTargetingEvents = targetingEvents.filter(targetingEvent => {
-    const targeting = parseTargetedPublicationV2(targetingEvent)
+    const targeting = parseTargetedPublication(targetingEvent)
     return (
       targeting?.kind === event.kind &&
       targetsCommunityDefinition(targetingEvent, ref) &&
@@ -800,11 +800,11 @@ const selectCurrentCommunityDefinitions = (
   refs: ActiveUserCommunityRef[],
   definitionEvents: TrustedEvent[],
 ) => {
-  const definitions = new Map<string, CommunityDefinitionV2>()
+  const definitions = new Map<string, CommunityDefinition>()
 
   for (const ref of refs) definitions.set(getCommunityDefinitionAddress(ref), ref.definition)
   for (const event of definitionEvents) {
-    const definition = parseCommunityDefinitionV2(event)
+    const definition = parseCommunityDefinition(event)
     if (!definition) continue
 
     const address = definition.pointer.address
@@ -819,7 +819,7 @@ const selectCurrentCommunityDefinitions = (
 
 const getCommunityEvidenceRef = (
   refs: ActiveUserCommunityRef[],
-  definitions: Map<string, CommunityDefinitionV2>,
+  definitions: Map<string, CommunityDefinition>,
   communityAddress: string,
 ) => {
   const definition = definitions.get(communityAddress)
@@ -894,7 +894,7 @@ export const makeTargetingWrapperReplacementFilters = (events: TrustedEvent[]): 
 export const selectCurrentTargetingWrapperEvents = (
   events: TrustedEvent[],
   deleteEvents: TrustedEvent[] = [],
-) => selectCurrentTargetedPublicationEventsV2([...events, ...deleteEvents])
+) => selectCurrentTargetedPublicationEvents([...events, ...deleteEvents])
 
 const getEventRefTags = (event: TrustedEvent, names: string[]) =>
   event.tags
@@ -1894,7 +1894,7 @@ export const buildCommunityNotificationRows = ({
   const targetEventsById = mapEventsById([...events, ...targetEvents])
   const targetEventsByRef = mapEventsByRef([...events, ...targetEvents])
   const targetingEvents = selectCurrentTargetingWrapperEvents(
-    [...events, ...targetEvents].filter(event => event.kind === TARGETED_PUBLICATION_KIND_V2),
+    [...events, ...targetEvents].filter(event => event.kind === TARGETED_PUBLICATION_KIND),
     [...events, ...targetEvents].filter(event => event.kind === DELETE),
   )
 
@@ -2973,7 +2973,7 @@ export const buildEngagementNotificationRows = ({
 
   const muted = new Set(mutedPubkeys.map(normalizePubkey).filter(Boolean))
   const targetingEvents = selectCurrentTargetingWrapperEvents(
-    targetEvents.filter(event => event.kind === TARGETED_PUBLICATION_KIND_V2),
+    targetEvents.filter(event => event.kind === TARGETED_PUBLICATION_KIND),
     targetEvents.filter(event => event.kind === DELETE),
   )
   const targetEventsByRef = mapEventsByRef(targetEvents)
@@ -3944,7 +3944,7 @@ const globalCommunityNotificationEvents = deriveLoadedNotificationEventGroups({
 
 const globalCommunityAdmissionFormSources = derived(notificationCommunityRefs, $refs =>
   $refs.map(ref => {
-    const community = parseCommunityDefinitionV2(ref.definition.event)?.pointer
+    const community = parseCommunityDefinition(ref.definition.event)?.pointer
 
     return {
       communityAddress: ref.community.address,
@@ -4019,7 +4019,7 @@ const globalCommunityAdmissionDecisionSources = derived(
     const communityByFormAddress = new Map(
       $forms.flatMap(event => {
         const form = parseAdmissionForm(event)
-        return form ? [[form.address, form.community.controllerPubkey] as const] : []
+        return form ? [[form.address, form.community.ownerPubkey] as const] : []
       }),
     )
 
@@ -4133,10 +4133,10 @@ const communityApplicationOutcomeEvents = derived(
   $load => $load.events,
 )
 
-const getOutcomeWorkflowRelays = (definition: CommunityDefinitionV2) =>
+const getOutcomeWorkflowRelays = (definition: CommunityDefinition) =>
   normalizeRelayHints(definition.relays).slice(0, MAX_NOTIFICATION_OUTCOME_CONTEXT_RELAYS)
 
-const getOutcomeAuthorityRelays = (definition: CommunityDefinitionV2) =>
+const getOutcomeAuthorityRelays = (definition: CommunityDefinition) =>
   normalizeRelayHints(
     definition.sections.flatMap(section =>
       section.profileLists.flatMap(profileList => (profileList.relay ? [profileList.relay] : [])),
@@ -4752,7 +4752,7 @@ const globalCommunityTargetingEvents = derived(
     for (const event of $candidateEvents) {
       const wrapperAddress = getAddress(event)
       const targets = targetCommunityAddressesByWrapper.get(wrapperAddress) || new Set<string>()
-      for (const community of parseTargetedPublicationV2(event)?.communities || []) {
+      for (const community of parseTargetedPublication(event)?.communities || []) {
         if (activeAddresses.has(community.address)) targets.add(community.address)
       }
       targetCommunityAddressesByWrapper.set(wrapperAddress, targets)

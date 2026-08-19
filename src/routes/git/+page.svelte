@@ -116,7 +116,7 @@
   import {
     parseCommunityNaddr,
     makeCommunityPointer,
-    TARGETED_PUBLICATION_KIND_V2,
+    TARGETED_PUBLICATION_KIND,
   } from "@app/core/community"
   import {
     COMMUNITY_WRITE_TARGETS,
@@ -432,7 +432,7 @@
     getStore(page).url.searchParams.get(GIT_COMMUNITY_PARAM)?.trim() || ""
   const getInitialGitCommunityPointer = () =>
     parseCommunityNaddr(getInitialGitCommunityInput()) || getStore(activeExactCommunityPointer)
-  const getInitialGitCommunityPubkey = () => getInitialGitCommunityPointer()?.controllerPubkey || ""
+  const getInitialGitCommunityPubkey = () => getInitialGitCommunityPointer()?.ownerPubkey || ""
 
   const getInitialGitModeForContext = (): GitMode =>
     getInitialGitCommunityPointer() ? "community" : "personal"
@@ -645,7 +645,7 @@
         }),
       )
       .map(ref => ({
-        controllerPubkey: ref.definition.controllerPubkey,
+        ownerPubkey: ref.definition.ownerPubkey,
         address: ref.community.address,
         communityId: ref.community.communityId,
         name: ref.definition.metadata.name,
@@ -660,7 +660,7 @@
 
     for (const ref of $activeUserCommunityRefs) {
       options.set(ref.community.address, {
-        controllerPubkey: ref.definition.controllerPubkey,
+        ownerPubkey: ref.definition.ownerPubkey,
         address: ref.community.address,
         communityId: ref.community.communityId,
         name: ref.definition.metadata.name,
@@ -675,7 +675,7 @@
       if (!pointer) continue
       const current = options.get(pointer.address)
       options.set(pointer.address, {
-        controllerPubkey: pointer.controllerPubkey,
+        ownerPubkey: pointer.ownerPubkey,
         address: pointer.address,
         communityId: pointer.communityId,
         name: current?.name,
@@ -690,7 +690,7 @@
     const exactDefinition = $activeExactCommunityDefinition
     if (exactPointer && !options.has(exactPointer.address)) {
       options.set(exactPointer.address, {
-        controllerPubkey: exactPointer.controllerPubkey,
+        ownerPubkey: exactPointer.ownerPubkey,
         address: exactPointer.address,
         communityId: exactPointer.communityId,
         name: exactDefinition?.metadata.name,
@@ -719,7 +719,7 @@
     setActiveExactCommunityPointer(parsed)
     activeMode = "community"
     selectedCommunityAddress = parsed.address
-    selectedCommunityPubkey = parsed.controllerPubkey
+    selectedCommunityPubkey = parsed.ownerPubkey
   })
 
   $effect(() => {
@@ -729,7 +729,7 @@
 
     if (pointer && selectedCommunityAddress !== pointer.address) {
       selectedCommunityAddress = pointer.address
-      selectedCommunityPubkey = pointer.controllerPubkey
+      selectedCommunityPubkey = pointer.ownerPubkey
       return
     }
 
@@ -748,7 +748,7 @@
   const selectedCommunityPointer = $derived.by(() =>
     selectedCommunityOption
       ? makeCommunityPointer({
-          controllerPubkey: selectedCommunityOption.controllerPubkey,
+          ownerPubkey: selectedCommunityOption.ownerPubkey,
           communityId: selectedCommunityOption.communityId,
           relayHints: selectedCommunityOption.relays,
         })
@@ -778,11 +778,11 @@
   const selectGitCommunity = (communityAddress: string) => {
     selectedCommunityAddress = communityAddress
     const option = repoViewCommunityOptions.find(item => item.address === communityAddress)
-    selectedCommunityPubkey = option?.controllerPubkey || ""
+    selectedCommunityPubkey = option?.ownerPubkey || ""
     if (!option) return
 
     const pointer = makeCommunityPointer({
-      controllerPubkey: option.controllerPubkey,
+      ownerPubkey: option.ownerPubkey,
       communityId: option.communityId,
       relayHints: option.relays,
     })
@@ -1769,10 +1769,10 @@
         }),
       )
       .map(ref => ({
-        controllerPubkey: ref.definition.controllerPubkey,
+        ownerPubkey: ref.definition.ownerPubkey,
         address: ref.community.address,
         communityId: ref.community.communityId,
-        label: getCommunityOptionLabel(ref.definition.controllerPubkey),
+        label: getCommunityOptionLabel(ref.definition.ownerPubkey),
         relays: ref.definition.relays,
       })),
   )
@@ -1796,7 +1796,7 @@
 
     return [
       {
-        kinds: [TARGETED_PUBLICATION_KIND_V2],
+        kinds: [TARGETED_PUBLICATION_KIND],
         "#h": repoCollectionCommunityOptions
           .map(option => option.communityId)
           .filter((communityId): communityId is string => Boolean(communityId)),
@@ -3276,7 +3276,7 @@
       const communityAddress = event ? parseRepoCommunityBinding(event)?.address || "" : ""
       const communityPubkey = repoViewCommunityOptions.find(
         option => option.address === communityAddress,
-      )?.controllerPubkey
+      )?.ownerPubkey
       const pubkeys = [owner, communityPubkey, ...getRepoCardMaintainers(event).slice(0, 3)].filter(
         (pubkey): pubkey is string => Boolean(pubkey),
       )
@@ -3849,7 +3849,7 @@
                 community: {
                   scope: "community" as const,
                   communityAddress: communityOption.address,
-                  communityPubkey: communityOption.controllerPubkey,
+                  communityPubkey: communityOption.ownerPubkey,
                 },
               }
             : {}),

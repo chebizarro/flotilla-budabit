@@ -7,7 +7,7 @@ vi.mock("@app/core/storage", () => ({
 }))
 
 describe("notification center read state", () => {
-  it("uses a V2 clean-break persisted schema", async () => {
+  it("uses a current persisted schema", async () => {
     const {defaultNotificationReadState, normalizeNotificationReadState} =
       await import("./notification-center")
 

@@ -7,7 +7,7 @@
   import Icon from "@lib/components/Icon.svelte"
 
   const activeCommunityPubkey = $derived(
-    $activeExactCommunitySession?.definition.controllerPubkey || "",
+    $activeExactCommunitySession?.definition.ownerPubkey || "",
   )
 
   const openCommunityMenu = () => {

@@ -8,14 +8,14 @@ import {
   getCommunityStarOperationSemanticKey,
   projectCommunityStarOperation,
 } from "./community-star-operations"
-import {makeCommunityStarReactionV2, parseCommunityStarReaction} from "@app/util/community-stars"
+import {makeCommunityStarReaction, parseCommunityStarReaction} from "@app/util/community-stars"
 
 const key = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
 const ownerPubkey = key(91)
-const community = makeCommunityPointer({controllerPubkey: key(92), communityId: key(93)})!
+const community = makeCommunityPointer({ownerPubkey: key(92), communityId: key(93)})!
 const relay = "wss://relay.example/"
 
-const sign = (event: ReturnType<typeof makeCommunityStarReactionV2>, id: string): TrustedEvent => ({
+const sign = (event: ReturnType<typeof makeCommunityStarReaction>, id: string): TrustedEvent => ({
   ...event,
   id,
   pubkey: ownerPubkey,
@@ -45,7 +45,7 @@ const makeOperation = ({
 describe("community star operation projection", () => {
   it("shows a publishing star and rolls it back when unconfirmed", () => {
     const reaction = sign(
-      makeCommunityStarReactionV2({...community, relayHints: [relay]}),
+      makeCommunityStarReaction({...community, relayHints: [relay]}),
       "1".repeat(64),
     )
 
@@ -73,7 +73,7 @@ describe("community star operation projection", () => {
 
   it("hides a canonical star only while its delete is publishing", () => {
     const reaction = sign(
-      makeCommunityStarReactionV2({...community, relayHints: [relay]}),
+      makeCommunityStarReaction({...community, relayHints: [relay]}),
       "2".repeat(64),
     )
     const star = parseCommunityStarReaction(reaction)
@@ -110,7 +110,7 @@ describe("community star operation projection", () => {
 
   it("ignores other owners and non-community-star semantic keys", () => {
     const reaction = sign(
-      makeCommunityStarReactionV2({...community, relayHints: [relay]}),
+      makeCommunityStarReaction({...community, relayHints: [relay]}),
       "4".repeat(64),
     )
     const operation = makeOperation({event: reaction})

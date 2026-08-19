@@ -9,11 +9,11 @@ import {
   replaceCommunityLinks,
 } from "./community-links"
 
-const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+const owner = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
 const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
 const naddr = nip19.naddrEncode({
   kind: 32222,
-  pubkey: controller,
+  pubkey: owner,
   identifier: communityId,
   relays: ["wss://relay.example"],
 })
@@ -21,20 +21,20 @@ const naddr = nip19.naddrEncode({
 describe("community link helpers", () => {
   it("parses strict community definition naddrs with an optional nostr prefix", () => {
     expect(parseCommunityLink(naddr)).toMatchObject({
-      controllerPubkey: controller,
+      ownerPubkey: owner,
       communityId,
       relayHints: ["wss://relay.example"],
     })
-    expect(parseCommunityLink(`nostr:${naddr}`)?.address).toBe(`32222:${controller}:${communityId}`)
+    expect(parseCommunityLink(`nostr:${naddr}`)?.address).toBe(`32222:${owner}:${communityId}`)
   })
 
   it("rejects wrong-kind naddrs and legacy community inputs", () => {
-    const wrongKind = nip19.naddrEncode({kind: 30023, pubkey: controller, identifier: communityId})
+    const wrongKind = nip19.naddrEncode({kind: 30023, pubkey: owner, identifier: communityId})
 
     expect(parseCommunityLink(wrongKind)).toBeUndefined()
     expect(parseCommunityLink(`ncommunity://${communityId}`)).toBeUndefined()
-    expect(parseCommunityLink(nip19.npubEncode(controller))).toBeUndefined()
-    expect(parseCommunityLink(controller)).toBeUndefined()
+    expect(parseCommunityLink(nip19.npubEncode(owner))).toBeUndefined()
+    expect(parseCommunityLink(owner)).toBeUndefined()
   })
 
   it("finds standalone exact community links", () => {
@@ -46,7 +46,7 @@ describe("community link helpers", () => {
     expect(getCommunityLinkAtStart(`${naddr}.`)).toMatchObject({
       type: "community",
       raw: naddr,
-      value: {controllerPubkey: controller, communityId},
+      value: {ownerPubkey: owner, communityId},
     })
   })
 
@@ -60,6 +60,6 @@ describe("community link helpers", () => {
     const [token] = replaceCommunityLinks([parsedLink])
 
     expect(isCommunityLinkToken(token)).toBe(true)
-    expect(token).toMatchObject({value: {controllerPubkey: controller, communityId}})
+    expect(token).toMatchObject({value: {ownerPubkey: owner, communityId}})
   })
 })

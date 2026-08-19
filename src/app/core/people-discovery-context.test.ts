@@ -1,12 +1,12 @@
 import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
-  buildTargetedPublicationV2,
+  buildCommunityDefinition,
+  buildTargetedPublication,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   resolveCommunityPeopleDiscoveryContext,
@@ -20,8 +20,8 @@ const community = key(3)
 const communityId = key(4)
 const listOwner = key(5)
 const siblingController = key(6)
-const communityAddress = `${COMMUNITY_DEFINITION_KIND_V2}:${community}:${communityId}`
-const pointer = makeCommunityPointer({controllerPubkey: community, communityId})!
+const communityAddress = `${COMMUNITY_DEFINITION_KIND}:${community}:${communityId}`
+const pointer = makeCommunityPointer({ownerPubkey: community, communityId})!
 
 const makeRepoEvent = (communityPubkey = communityId) =>
   ({
@@ -40,12 +40,12 @@ const makeRepoEvent = (communityPubkey = communityId) =>
 
 const definitionEvent = {
   id: "definition",
-  kind: COMMUNITY_DEFINITION_KIND_V2,
+  kind: COMMUNITY_DEFINITION_KIND,
   pubkey: community,
   created_at: 1,
   content: "",
   sig: "",
-  tags: buildCommunityDefinitionV2({
+  tags: buildCommunityDefinition({
     communityId,
     name: "Builders",
     relays: ["wss://relay.example"],
@@ -72,8 +72,8 @@ const profileListEvent = {
   ],
 } as any
 
-const definition = parseCommunityDefinitionV2(definitionEvent)!
-const siblingDefinition = parseCommunityDefinitionV2({
+const definition = parseCommunityDefinition(definitionEvent)!
+const siblingDefinition = parseCommunityDefinition({
   ...definitionEvent,
   id: "sibling-definition",
   pubkey: siblingController,
@@ -83,7 +83,7 @@ const associationEvent = {
   pubkey: owner,
   created_at: 2,
   sig: "",
-  ...buildTargetedPublicationV2({
+  ...buildTargetedPublication({
     id: "repo-association",
     kind: 30617,
     source: {type: "a", value: `30617:${owner}:demo`},

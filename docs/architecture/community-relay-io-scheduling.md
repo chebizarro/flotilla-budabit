@@ -149,7 +149,7 @@ Dynamic exact original-event filters are finite queries. A new targeting event t
 
 Growing per-ID filters for deletes, reports, and form responses should use the same finite-query pattern where possible. Related broad filters may be consolidated when client-side post-validation preserves authorization semantics.
 
-Community-native and targeted-wrapper live transport uses stable structural `#h=<communityId>` filters, with `#k` where needed. Authority-sensitive candidates must also carry the workflow's marked exact `a=<32222:controller:communityId>` branch reference; community association is never a `p` tag. Current grants are applied after receipt to live and cached events. A grant revocation refilters existing results, while a regrant restarts structural acquisition so matching history can reappear.
+Community-native and targeted-wrapper live transport uses stable structural `#h=<communityId>` filters, with `#k` where needed. Authority-sensitive candidates must also carry the workflow's marked exact `a=<32222:owner:communityId>` branch reference; community association is never a `p` tag. Current grants are applied after receipt to live and cached events. A grant revocation refilters existing results, while a regrant restarts structural acquisition so matching history can reappear.
 
 Exact author filters remain appropriate for definitions, profile-list shards, grant-capable forms, personal metadata and lists, explicit address coordinates, implicit originals bound to a wrapper signer, and same-author deletes. These exact identity or authority filters must not be widened while removing ACL-derived writer arrays from content transport.
 

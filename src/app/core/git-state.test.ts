@@ -294,7 +294,7 @@ describe("budabit state", () => {
     })
 
     it("derives scoped community relay targets from repo announcement community IDs", () => {
-      const controllerPubkey = "a".repeat(64)
+      const ownerPubkey = "a".repeat(64)
       const communityId = "c".repeat(64)
       const unrelatedCommunityId = "d".repeat(64)
 
@@ -304,13 +304,13 @@ describe("budabit state", () => {
           communityRefs: [
             {
               communityId,
-              communityAddress: `32222:${controllerPubkey}:${communityId}`,
+              communityAddress: `32222:${ownerPubkey}:${communityId}`,
               relayHints: ["wss://route-hint.example"],
               definition: {relays: ["wss://community.example"]},
             },
             {
               communityId: unrelatedCommunityId,
-              communityAddress: `32222:${controllerPubkey}:${unrelatedCommunityId}`,
+              communityAddress: `32222:${ownerPubkey}:${unrelatedCommunityId}`,
               relayHints: ["wss://unrelated.example"],
               definition: {relays: ["wss://unrelated.example"]},
             },

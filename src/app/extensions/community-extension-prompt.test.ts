@@ -9,18 +9,18 @@ vi.mock("@welshman/store", async importOriginal => {
   return {...original, localStorageProvider: {get: vi.fn(), set: vi.fn(), clear: vi.fn()}}
 })
 
-const controllerPubkey = getPublicKey(new Uint8Array(32).fill(41))
+const ownerPubkey = getPublicKey(new Uint8Array(32).fill(41))
 const first = makeCommunityPointer({
-  controllerPubkey,
+  ownerPubkey,
   communityId: getPublicKey(new Uint8Array(32).fill(42)),
 })!
 const sibling = makeCommunityPointer({
-  controllerPubkey,
+  ownerPubkey,
   communityId: getPublicKey(new Uint8Array(32).fill(43)),
 })!
 
 describe("community extension prompt persistence", () => {
-  it("keeps same-controller sibling dismissals independent", async () => {
+  it("keeps same-owner sibling dismissals independent", async () => {
     const {dismissCommunityExtensionPromptState, isCommunityExtensionPromptDismissed} =
       await import("./community-extension-prompt")
     const userPubkey = "a".repeat(64)
@@ -36,7 +36,7 @@ describe("community extension prompt persistence", () => {
     expect(
       normalizeCommunityExtensionPromptState({
         pubkey: "a".repeat(64),
-        dismissedCommunityPubkeys: [controllerPubkey],
+        dismissedCommunityPubkeys: [ownerPubkey],
       }),
     ).toMatchObject({version: 2, pubkey: "", dismissedCommunityAddresses: []})
   })

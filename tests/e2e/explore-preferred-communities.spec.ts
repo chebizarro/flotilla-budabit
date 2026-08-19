@@ -3,7 +3,7 @@ import {finalizeEvent, getPublicKey} from "nostr-tools"
 import {DEV_PUBKEY, seedDevSession} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
 
-const currentCommunityController = getPublicKey(new Uint8Array(32).fill(2))
+const currentCommunityOwner = getPublicKey(new Uint8Array(32).fill(2))
 const currentCommunityId = getPublicKey(new Uint8Array(32).fill(3))
 const memberCommunitySecret = Uint8Array.from({length: 32}, (_, index) => index + 1)
 const memberCommunityId = getPublicKey(new Uint8Array(32).fill(4))
@@ -51,18 +51,18 @@ test("discovers a cold member community when another community is already visibl
 
   await seedDevSession(page)
   await page.addInitScript(
-    ({controllerPubkey, communityId, relay}) => {
+    ({ownerPubkey, communityId, relay}) => {
       localStorage.setItem(
         "budabit/community-session",
         JSON.stringify({
           version: 2,
-          definition: {kind: 32222, controllerPubkey, communityId},
+          definition: {kind: 32222, ownerPubkey, communityId},
           relayHints: [relay],
         }),
       )
     },
     {
-      controllerPubkey: currentCommunityController,
+      ownerPubkey: currentCommunityOwner,
       communityId: currentCommunityId,
       relay: currentCommunityRelay,
     },

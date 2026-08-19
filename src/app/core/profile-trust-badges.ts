@@ -1,5 +1,5 @@
 import type {TrustedEvent} from "@welshman/util"
-import {normalizePubkey, normalizeRelays, type CommunityDefinitionV2} from "@app/core/community"
+import {normalizePubkey, normalizeRelays, type CommunityDefinition} from "@app/core/community"
 import {
   selectCommunityMemberList,
   type ActiveUserCommunityRef,
@@ -20,7 +20,7 @@ export type SharedProfileCommunityEvidenceItem = {
   key: string
   role: SharedProfileCommunityRole
   communityPubkey: string
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   relayHints: string[]
   adminSectionNames: string[]
   moderatorSections: CommunityMemberSectionRef[]
@@ -47,7 +47,7 @@ export type SharedProfileCommunityEvidenceInput = {
 export type ProfileFlagReportEvidenceItem = {
   key: string
   communityPubkey: string
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   relayHints: string[]
   event: TrustedEvent
   targetPubkey: string
@@ -107,7 +107,7 @@ const getReportReason = (
   return reasonTags.map(getReasonValue).find(Boolean) || event.content?.trim() || ""
 }
 
-const getDefinitionAddress = (definition: CommunityDefinitionV2) => definition.pointer.address
+const getDefinitionAddress = (definition: CommunityDefinition) => definition.pointer.address
 
 const getReportState = (states: UserCommunityReportStates | undefined, communityAddress: string) =>
   states instanceof Map ? states.get(communityAddress) : states?.[communityAddress]
@@ -119,7 +119,7 @@ const countBanReports = (
   reportState?.personReports.filter(report => normalizePubkey(report.targetPubkey) === targetPubkey)
     .length || 0
 
-const getAdminSectionNames = (definition: CommunityDefinitionV2) =>
+const getAdminSectionNames = (definition: CommunityDefinition) =>
   definition.sections.map(section => section.name)
 
 const getRoleSortValue = (item: SharedProfileCommunityEvidenceItem) => {
@@ -162,7 +162,7 @@ const makeEvidenceItem = ({
   return {
     key: `${role}:${getDefinitionAddress(ref.definition)}`,
     role,
-    communityPubkey: ref.community.controllerPubkey,
+    communityPubkey: ref.community.ownerPubkey,
     definition: ref.definition,
     relayHints: normalizeRelays([...(ref.relayHints || []), ...(ref.definition.relays || [])]),
     adminSectionNames,
@@ -187,7 +187,7 @@ export const getSharedProfileCommunityEvidenceGroups = ({
   const seenCommunities = new Set<string>()
 
   for (const ref of viewerCommunityRefs) {
-    const communityPubkey = ref.community.controllerPubkey
+    const communityPubkey = ref.community.ownerPubkey
     const communityAddress = getDefinitionAddress(ref.definition)
     if (!communityPubkey || !communityAddress || seenCommunities.has(communityAddress)) continue
 
@@ -207,7 +207,7 @@ export const getSharedProfileCommunityEvidenceGroups = ({
       reportState,
     }).find(person => person.pubkey === target)
 
-    if (ref.definition.controllerPubkey === target || member?.isAdmin) {
+    if (ref.definition.ownerPubkey === target || member?.isAdmin) {
       items.push(
         makeEvidenceItem({
           role: "admin",
@@ -285,7 +285,7 @@ export const getProfileFlagReportEvidence = ({
     seenReports.add(event.id)
     items.push({
       key: `${report.community.address}:${event.id}`,
-      communityPubkey: report.controllerPubkey,
+      communityPubkey: report.ownerPubkey,
       definition: ref.definition,
       relayHints: normalizeRelays([...(ref.relayHints || []), ...(ref.definition.relays || [])]),
       event,

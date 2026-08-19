@@ -2,10 +2,10 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
-  buildCommunityDefinitionV2,
+  COMMUNITY_DEFINITION_KIND,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
   parseCommunityId,
 } from "./community"
 import {
@@ -24,13 +24,13 @@ import {
 } from "./community-moderator-requests"
 
 const secret = (value: number) => new Uint8Array(32).fill(value)
-const controllerPubkey = getPublicKey(secret(1))
-const otherControllerPubkey = getPublicKey(secret(2))
+const ownerPubkey = getPublicKey(secret(1))
+const otherOwnerPubkey = getPublicKey(secret(2))
 const communityId = getPublicKey(secret(3))
 const requesterPubkey = getPublicKey(secret(4))
 const existingModeratorPubkey = getPublicKey(secret(5))
 const community = makeCommunityPointer({
-  controllerPubkey,
+  ownerPubkey,
   communityId,
   relayHints: ["wss://relay.example"],
 })!
@@ -38,7 +38,7 @@ const community = makeCommunityPointer({
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
     id: "a".repeat(64),
-    pubkey: controllerPubkey,
+    pubkey: ownerPubkey,
     created_at: 1,
     kind: 1,
     tags: [],
@@ -48,12 +48,12 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const rootRef = {
-  address: `30000:${controllerPubkey}:budabit-${communityId}-general-root`,
+  address: `30000:${ownerPubkey}:budabit-${communityId}-general-root`,
   relay: "wss://relay.example",
 }
 
 const makeDefinition = () => {
-  const template = buildCommunityDefinitionV2({
+  const template = buildCommunityDefinition({
     communityId,
     name: "Builders",
     description: "A community",
@@ -78,7 +78,7 @@ const makeDefinition = () => {
         ? [tag, ["x-section", "opaque"]]
         : [tag],
   )
-  return parseCommunityDefinitionV2(makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags}))!
+  return parseCommunityDefinition(makeEvent({kind: COMMUNITY_DEFINITION_KIND, tags}))!
 }
 
 const makeRequestEvent = (pointer = community, created_at = 1) => {
@@ -111,7 +111,7 @@ const findSamePrefixCommunityId = (value: string) => {
   throw new Error("Unable to make colliding community ID.")
 }
 
-describe("Communikeys V2 moderator requests", () => {
+describe("Communikeys moderator requests", () => {
   it("builds a full-ID request coordinate with one exact authority pair and role marker", () => {
     const template = makeModeratorProfileListRequest({
       community,
@@ -136,7 +136,7 @@ describe("Communikeys V2 moderator requests", () => {
   it("rejects authority mismatches, duplicate scope, wrong role, and another exact branch", () => {
     const valid = makeRequestEvent()
     const otherBranch = makeCommunityPointer({
-      controllerPubkey: otherControllerPubkey,
+      ownerPubkey: otherOwnerPubkey,
       communityId,
     })!
     const replaceTag = (name: string, replacement: string[]) =>
@@ -165,7 +165,7 @@ describe("Communikeys V2 moderator requests", () => {
 
   it("does not collide when two community IDs share their first 12 hex characters", () => {
     const collidingId = findSamePrefixCommunityId(communityId)
-    const sibling = makeCommunityPointer({controllerPubkey, communityId: collidingId})!
+    const sibling = makeCommunityPointer({ownerPubkey, communityId: collidingId})!
 
     expect(collidingId.slice(0, 12)).toBe(communityId.slice(0, 12))
     expect(makeModeratorRequestIdentifier({community: sibling, sectionName: "General"})).not.toBe(
@@ -174,7 +174,7 @@ describe("Communikeys V2 moderator requests", () => {
     expect(parseModeratorRequestEvent(makeRequestEvent(sibling), community)).toBeUndefined()
   })
 
-  it("accepts only controller-authored exact-branch decisions and deletes", () => {
+  it("accepts only owner-authored exact-branch decisions and deletes", () => {
     const definition = makeDefinition()
     const request = getRequest()
     const decisionTemplate = makeModeratorRequestReaction({
@@ -185,7 +185,7 @@ describe("Communikeys V2 moderator requests", () => {
     const decision = makeEvent({
       id: "decision",
       kind: MODERATOR_REQUEST_REACTION_KIND,
-      pubkey: controllerPubkey,
+      pubkey: ownerPubkey,
       content: "-",
       tags: decisionTemplate.tags,
     })
@@ -193,11 +193,11 @@ describe("Communikeys V2 moderator requests", () => {
     const deletion = makeEvent({
       id: "deletion",
       kind: DELETE,
-      pubkey: controllerPubkey,
+      pubkey: ownerPubkey,
       tags: deleteTemplate.tags,
     })
     const otherBranch = makeCommunityPointer({
-      controllerPubkey: otherControllerPubkey,
+      ownerPubkey: otherOwnerPubkey,
       communityId,
     })!
     const wrongBranchDecision = {
@@ -260,8 +260,8 @@ describe("Communikeys V2 moderator requests", () => {
     const definition = makeDefinition()
     const request = getRequest()
     const promotedTemplate = makeModeratorPromotionDefinitionUpdate({definition, request})
-    const promoted = parseCommunityDefinitionV2(
-      makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags: promotedTemplate.tags}),
+    const promoted = parseCommunityDefinition(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND, tags: promotedTemplate.tags}),
     )!
 
     expect(promotedTemplate.tags).toContainEqual(["x-top", "opaque"])
@@ -276,8 +276,8 @@ describe("Communikeys V2 moderator requests", () => {
       moderatorPubkey: requesterPubkey,
       sectionNames: ["General", "Rooms"],
     })
-    const edited = parseCommunityDefinitionV2(
-      makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags: editedTemplate.tags}),
+    const edited = parseCommunityDefinition(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND, tags: editedTemplate.tags}),
     )!
     const roomsRef = edited.sections[1].profileLists.find(ref =>
       ref.address.includes(requesterPubkey),
@@ -291,8 +291,8 @@ describe("Communikeys V2 moderator requests", () => {
       sectionName: "General",
       moderatorPubkey: requesterPubkey,
     })
-    const revoked = parseCommunityDefinitionV2(
-      makeEvent({kind: COMMUNITY_DEFINITION_KIND_V2, tags: revokedTemplate.tags}),
+    const revoked = parseCommunityDefinition(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND, tags: revokedTemplate.tags}),
     )!
     expect(revoked.sections[0].profileLists).toEqual([rootRef])
     expect(revoked.sections[1].profileLists).toContainEqual(roomsRef)

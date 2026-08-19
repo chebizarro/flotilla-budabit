@@ -6,10 +6,10 @@ import {
   isProfileListDeclined,
   normalizePubkey,
   selectCurrentAddressableEvent,
-  selectCurrentCommunityDefinitionsV2,
-  type CommunityDefinitionV2,
+  selectCurrentCommunityDefinitions,
+  type CommunityDefinition,
   type CommunityPointer,
-  type CommunityProfileListRefV2,
+  type CommunityDefinitionProfileListRef,
 } from "@app/core/community"
 import {
   isCommunityPersonBanned,
@@ -20,7 +20,7 @@ export type ActiveUserCommunityRole = "admin" | "moderator" | "member"
 
 export type ActiveUserCommunityRef = {
   community: CommunityPointer
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   relayHints: string[]
   roles: ActiveUserCommunityRole[]
   writableSections: string[]
@@ -55,7 +55,7 @@ export type CommunityMemberListItem = {
 
 export type SelectUserCommunityRefsOptions = {
   author?: string
-  definitions?: CommunityDefinitionV2[]
+  definitions?: CommunityDefinition[]
   definitionEvents?: TrustedEvent[]
   profileListEvents?: TrustedEvent[]
   reportStates?: UserCommunityReportStates
@@ -79,8 +79,8 @@ const isPreferredEvent = (candidate: TrustedEvent, current: TrustedEvent | undef
   return candidate.id < current.id
 }
 
-const getLatestDefinitionsByAddress = (definitions: CommunityDefinitionV2[]) => {
-  const latest = new Map<string, CommunityDefinitionV2>()
+const getLatestDefinitionsByAddress = (definitions: CommunityDefinition[]) => {
+  const latest = new Map<string, CommunityDefinition>()
 
   for (const definition of definitions) {
     const address = definition.pointer.address
@@ -123,11 +123,11 @@ const getLatestProfileListEventsByAddress = (events: TrustedEvent[]) => {
 const getReportState = (states: UserCommunityReportStates | undefined, communityAddress: string) =>
   states instanceof Map ? states.get(communityAddress) : states?.[communityAddress]
 
-const getProfileListOwner = (ref: CommunityProfileListRefV2) =>
+const getProfileListOwner = (ref: CommunityDefinitionProfileListRef) =>
   normalizePubkey(ref.address.split(":")[1] || "")
 
 const hasValidatedModeratorRef = (
-  ref: CommunityProfileListRefV2,
+  ref: CommunityDefinitionProfileListRef,
   userPubkey: string,
   profileListsByAddress: Map<string, TrustedEvent>,
 ) => {
@@ -139,14 +139,14 @@ const hasValidatedModeratorRef = (
 }
 
 const hasMemberRef = (
-  ref: CommunityProfileListRefV2,
+  ref: CommunityDefinitionProfileListRef,
   userPubkey: string,
   profileListsByAddress: Map<string, TrustedEvent>,
 ) => getProfileListPubkeys(profileListsByAddress.get(ref.address)).includes(userPubkey)
 
-const hasModeratorRef = (definition: CommunityDefinitionV2, userPubkey: string) => {
+const hasModeratorRef = (definition: CommunityDefinition, userPubkey: string) => {
   const normalizedUser = normalizePubkey(userPubkey)
-  const ownerPubkey = definition.controllerPubkey
+  const ownerPubkey = definition.ownerPubkey
   if (!normalizedUser || normalizedUser === ownerPubkey) return false
 
   return definition.sections.some(section =>
@@ -175,13 +175,13 @@ export const selectCommunityMemberList = ({
   profileListEvents = [],
   reportState,
 }: {
-  definition?: CommunityDefinitionV2
+  definition?: CommunityDefinition
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
 }): CommunityMemberListItem[] => {
   if (!definition) return []
 
-  const ownerPubkey = definition.controllerPubkey
+  const ownerPubkey = definition.ownerPubkey
   const profileListsByAddress = getLatestProfileListEventsByAddress(profileListEvents)
   const people = new Map<string, CommunityMemberListItem>()
   const moderatorRefAddressesByPubkey = new Map<string, string[]>()
@@ -367,14 +367,12 @@ export const selectUserCommunityRefs = ({
   if (!normalizedAuthor) return []
 
   const excludedCommunities = new Set(excludedCommunityAddresses)
-  const parsedDefinitions = Array.from(
-    selectCurrentCommunityDefinitionsV2(definitionEvents).values(),
-  )
+  const parsedDefinitions = Array.from(selectCurrentCommunityDefinitions(definitionEvents).values())
   const profileListsByAddress = getLatestProfileListEventsByAddress(profileListEvents)
 
   return getLatestDefinitionsByAddress([...definitions, ...parsedDefinitions])
     .flatMap(definition => {
-      const isAdmin = definition.controllerPubkey === normalizedAuthor
+      const isAdmin = definition.ownerPubkey === normalizedAuthor
       const reportState = getReportState(reportStates, definition.pointer.address)
 
       if (!isAdmin && excludedCommunities.has(definition.pointer.address)) return []

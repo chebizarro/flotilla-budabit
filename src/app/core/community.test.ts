@@ -2,7 +2,7 @@ import {describe, expect, it} from "vitest"
 import {BADGE_DEFINITION, EVENT_DATE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
 import {getPublicKey} from "nostr-tools/pure"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   COMMUNITY_SECTION_CALENDAR,
   COMMUNITY_SECTION_GENERAL,
   COMMUNITY_SECTION_REPO_CURATOR,
@@ -33,8 +33,8 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 describe("community shared helpers", () => {
-  it("exports only the V2 definition kind", () => {
-    expect(COMMUNITY_DEFINITION_KIND_V2).toBe(32222)
+  it("exports only the definition kind", () => {
+    expect(COMMUNITY_DEFINITION_KIND).toBe(32222)
   })
 
   it("parses address refs and geohashes", () => {
@@ -48,7 +48,7 @@ describe("community shared helpers", () => {
     expect(normalizeGeohash("geo:not-valid")).toBe("")
   })
 
-  it("keeps V2 section defaults and subtype matching", () => {
+  it("keeps section defaults and subtype matching", () => {
     const general = {
       name: COMMUNITY_SECTION_GENERAL,
       kinds: getDefaultCommunitySectionKinds(COMMUNITY_SECTION_GENERAL),
@@ -82,7 +82,7 @@ describe("community shared helpers", () => {
       ],
     })
 
-    expect(getProfileListPubkeys(profileList)).toEqual([pubkeyA, pubkeyB])
+    expect(getProfileListPubkeys(profileList)).toEqual([pubkeyA, pubkeyB, "f".repeat(64)])
     expect(canWriteFromProfileList(profileList, pubkeyA)).toBe(true)
   })
 

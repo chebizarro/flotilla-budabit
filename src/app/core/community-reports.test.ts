@@ -2,13 +2,13 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools"
 import {BADGE_DEFINITION, DELETE, type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2 as COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND,
   COMMUNITY_SECTION_THREADS,
   COMMUNITY_SUBTYPE_THREADS,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   COMMUNITY_REPORT_KIND,
@@ -20,32 +20,32 @@ import {
   getAllSectionModeratorPubkeys,
   getCommunityCensorReason,
   getCommunityContentReportGroups,
-  getCommunityContentReports as getCommunityContentReportsV2,
+  getCommunityContentReports as getCommunityContentReportsWithPointer,
   getCommunityReportEventAddress,
   getEffectiveCommunityModerationActionsByReporter,
-  getEffectiveCommunityReportState as getEffectiveCommunityReportStateV2,
+  getEffectiveCommunityReportState as getEffectiveCommunityReportStateWithPointer,
   isCommunityReportDeleted,
   isCommunityPersonBanned,
-  makeCommunityEventReport as makeCommunityEventReportV2,
-  makeCommunityPersonReport as makeCommunityPersonReportV2,
-  makeCommunityReportDelete as makeCommunityReportDeleteV2,
-  makeCommunityReportReviewLabel as makeCommunityReportReviewLabelV2,
-  parseCommunityReport as parseCommunityReportV2,
-  parseCommunityReportReviewLabel as parseCommunityReportReviewLabelV2,
+  makeCommunityEventReport as makeCommunityEventReportWithPointer,
+  makeCommunityPersonReport as makeCommunityPersonReportWithPointer,
+  makeCommunityReportDelete as makeCommunityReportDeleteWithPointer,
+  makeCommunityReportReviewLabel as makeCommunityReportReviewLabelWithPointer,
+  parseCommunityReport as parseCommunityReportWithPointer,
+  parseCommunityReportReviewLabel as parseCommunityReportReviewLabelWithPointer,
 } from "./community-reports"
 
 const communityPubkey = getPublicKey(new Uint8Array(32).fill(1))
 const communityId = getPublicKey(new Uint8Array(32).fill(7))
 const communityPointer = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId,
 })!
 const siblingCommunityPointer = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: getPublicKey(new Uint8Array(32).fill(8)),
 })!
 const wrongBranchPointer = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(9)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(9)),
   communityId,
 })!
 const sectionModeratorPubkey = getPublicKey(new Uint8Array(32).fill(2))
@@ -54,31 +54,31 @@ const targetPubkey = getPublicKey(new Uint8Array(32).fill(4))
 const outsiderPubkey = getPublicKey(new Uint8Array(32).fill(5))
 const otherSectionModeratorPubkey = getPublicKey(new Uint8Array(32).fill(6))
 
-// Keep the existing authorization matrix concise while exercising only V2 report wire shapes.
+// Keep the existing authorization matrix concise while exercising only current report wire shapes.
 const makeCommunityEventReport = (
-  params: Omit<Parameters<typeof makeCommunityEventReportV2>[0], "community"> & {
+  params: Omit<Parameters<typeof makeCommunityEventReportWithPointer>[0], "community"> & {
     communityPubkey: string
   },
-) => makeCommunityEventReportV2({...params, community: communityPointer})
+) => makeCommunityEventReportWithPointer({...params, community: communityPointer})
 const makeCommunityPersonReport = (
-  params: Omit<Parameters<typeof makeCommunityPersonReportV2>[0], "community"> & {
+  params: Omit<Parameters<typeof makeCommunityPersonReportWithPointer>[0], "community"> & {
     communityPubkey: string
   },
-) => makeCommunityPersonReportV2({...params, community: communityPointer})
+) => makeCommunityPersonReportWithPointer({...params, community: communityPointer})
 const makeCommunityReportReviewLabel = (
-  params: Omit<Parameters<typeof makeCommunityReportReviewLabelV2>[0], "community"> & {
+  params: Omit<Parameters<typeof makeCommunityReportReviewLabelWithPointer>[0], "community"> & {
     communityPubkey: string
   },
-) => makeCommunityReportReviewLabelV2({...params, community: communityPointer})
+) => makeCommunityReportReviewLabelWithPointer({...params, community: communityPointer})
 const makeCommunityReportDelete = (
   params: Omit<
-    Parameters<typeof makeCommunityReportDeleteV2>[0],
+    Parameters<typeof makeCommunityReportDeleteWithPointer>[0],
     "community" | "reporterPubkey"
   > & {
     reporterPubkey?: string
   },
 ) =>
-  makeCommunityReportDeleteV2({
+  makeCommunityReportDeleteWithPointer({
     ...params,
     community: communityPointer,
     reporterPubkey: params.reporterPubkey || sectionModeratorPubkey,
@@ -87,15 +87,15 @@ const parseCommunityReport = (
   event: TrustedEvent,
   _communityPubkey?: string,
   targets: TrustedEvent[] = [],
-) => parseCommunityReportV2(event, communityPointer, targets)
+) => parseCommunityReportWithPointer(event, communityPointer, targets)
 const parseCommunityReportReviewLabel = (event: TrustedEvent, _communityPubkey?: string) =>
-  parseCommunityReportReviewLabelV2(event, communityPointer)
+  parseCommunityReportReviewLabelWithPointer(event, communityPointer)
 const getEffectiveCommunityReportState = (
-  params: Omit<Parameters<typeof getEffectiveCommunityReportStateV2>[0], "community">,
-) => getEffectiveCommunityReportStateV2({...params, community: communityPointer})
+  params: Omit<Parameters<typeof getEffectiveCommunityReportStateWithPointer>[0], "community">,
+) => getEffectiveCommunityReportStateWithPointer({...params, community: communityPointer})
 const getCommunityContentReports = (
-  params: Omit<Parameters<typeof getCommunityContentReportsV2>[0], "community">,
-) => getCommunityContentReportsV2({...params, community: communityPointer})
+  params: Omit<Parameters<typeof getCommunityContentReportsWithPointer>[0], "community">,
+) => getCommunityContentReportsWithPointer({...params, community: communityPointer})
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -110,11 +110,11 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const makeDefinition = ({includeSectionModerator = true} = {}) =>
-  parseCommunityDefinitionV2(
+  parseCommunityDefinition(
     makeEvent({
       kind: COMMUNITY_DEFINITION_KIND,
       pubkey: communityPubkey,
-      tags: buildCommunityDefinitionV2({
+      tags: buildCommunityDefinition({
         communityId,
         name: "Test community",
         relays: ["wss://relay.example"],
@@ -230,7 +230,7 @@ describe("community reports", () => {
       target: "event",
       community: {address: communityPointer.address},
       communityId,
-      controllerPubkey: communityPubkey,
+      ownerPubkey: communityPubkey,
       sectionName: "General",
       targetEventId: "reported-event",
       targetAddress,
@@ -303,7 +303,10 @@ describe("community reports", () => {
     const valid = makeEvent({
       kind: COMMUNITY_REPORT_KIND,
       pubkey: sectionModeratorPubkey,
-      tags: makeCommunityPersonReportV2({community: communityPointer, pubkey: targetPubkey}).tags,
+      tags: makeCommunityPersonReportWithPointer({
+        community: communityPointer,
+        pubkey: targetPubkey,
+      }).tags,
     })
     const mismatched = makeEvent({
       ...valid,
@@ -314,9 +317,9 @@ describe("community reports", () => {
       ),
     })
 
-    expect(parseCommunityReportV2(mismatched, communityPointer)).toBeUndefined()
-    expect(parseCommunityReportV2(valid, siblingCommunityPointer)).toBeUndefined()
-    expect(parseCommunityReportV2(valid, wrongBranchPointer)).toBeUndefined()
+    expect(parseCommunityReportWithPointer(mismatched, communityPointer)).toBeUndefined()
+    expect(parseCommunityReportWithPointer(valid, siblingCommunityPointer)).toBeUndefined()
+    expect(parseCommunityReportWithPointer(valid, wrongBranchPointer)).toBeUndefined()
   })
 
   it("applies addressable event reports across replacements", () => {
@@ -349,7 +352,7 @@ describe("community reports", () => {
     expect(
       getCommunityCensorReason({
         reportState: state,
-        eventId: "calendar-event-v2",
+        eventId: "calendar-event-current",
         eventAddress: targetAddress,
         sectionName: "General",
       }),
@@ -357,7 +360,7 @@ describe("community reports", () => {
     expect(
       getCommunityCensorReason({
         reportState: state,
-        eventId: "calendar-event-v2",
+        eventId: "calendar-event-current",
         sectionName: "General",
       }),
     ).toBeUndefined()
@@ -634,7 +637,7 @@ describe("community reports", () => {
       id: "wrong-branch-delete",
       kind: DELETE,
       pubkey: allSectionModeratorPubkey,
-      tags: makeCommunityReportDeleteV2({
+      tags: makeCommunityReportDeleteWithPointer({
         community: wrongBranchPointer,
         reportId: personReport.id,
         reporterPubkey: allSectionModeratorPubkey,
@@ -1030,7 +1033,7 @@ describe("community reports", () => {
     })
     expect(authorizedReview.tags).toContainEqual(["e", userReport.id, "", outsiderPubkey, "report"])
     expect(
-      parseCommunityReportReviewLabelV2(
+      parseCommunityReportReviewLabelWithPointer(
         makeEvent({
           ...authorizedReview,
           tags: [["e", "reason-target", "spam"], ...authorizedReview.tags],

@@ -42,7 +42,7 @@ import {
   makeCommunityPointer,
   parseCommunityDefinitionAddress,
   type CommunityPointer,
-} from "@app/core/community-v2"
+} from "@app/core/community-protocol"
 
 export const RENUNCIATION_PUBLISH_TIMEOUT = 6_000
 export const RENUNCIATION_SIGNER_TIMEOUT = 20_000
@@ -434,7 +434,7 @@ const assertCanRenounceCommunity = (community: CommunityPointer) => {
   const activePubkey = normalizePubkey(pubkey.get() || "")
 
   if (!activePubkey) throw new Error("Log in to update your groups.")
-  if (pointer.controllerPubkey === activePubkey) {
+  if (pointer.ownerPubkey === activePubkey) {
     throw new Error("Community owner keys cannot leave their own community.")
   }
 

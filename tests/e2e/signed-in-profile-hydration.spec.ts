@@ -80,7 +80,7 @@ test("bounds signed-in kind-0 hydration to one physical community-relay attempt"
         "budabit/community-session",
         JSON.stringify({
           version: 2,
-          definition: {kind: 32222, controllerPubkey: communityPubkey, communityId},
+          definition: {kind: 32222, ownerPubkey: communityPubkey, communityId},
           relayHints: [relay],
         }),
       )

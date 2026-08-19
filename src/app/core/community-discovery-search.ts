@@ -3,12 +3,12 @@ import {nip05} from "nostr-tools"
 import {repository} from "@welshman/app"
 import type {Filter, TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   normalizePubkey,
   normalizeRelays,
   parseCommunityNaddr,
-  selectCurrentCommunityDefinitionsV2,
-  type CommunityDefinitionV2,
+  selectCurrentCommunityDefinitions,
+  type CommunityDefinition,
 } from "@app/core/community"
 import {
   COMMUNITY_DISCOVERY_RELAYS,
@@ -27,12 +27,12 @@ export const COMMUNITY_SEARCH_RELAYS_PER_CONTROLLER = 4
 export type CommunitySearchQuery =
   | {type: "empty"}
   | {type: "exact"; value: NonNullable<ReturnType<typeof parseCommunityNaddr>>}
-  | {type: "controller"; pubkey: string}
+  | {type: "owner"; pubkey: string}
   | {type: "nip05"; identifier: string}
   | {type: "name"; text: string}
 
 export type CommunitySearchResult = {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   preferred: boolean
 }
 
@@ -67,7 +67,7 @@ export const classifyCommunitySearchQuery = (value: string): CommunitySearchQuer
   if (exact) return {type: "exact", value: exact}
 
   const pubkey = normalizePubkey(decodePeopleSearchPubkey(query) || "")
-  if (pubkey) return {type: "controller", pubkey}
+  if (pubkey) return {type: "owner", pubkey}
 
   if (/^[^\s@]+@[^\s@]+$/.test(query)) {
     return {type: "nip05", identifier: query.toLowerCase()}
@@ -76,7 +76,7 @@ export const classifyCommunitySearchQuery = (value: string): CommunitySearchQuer
   return {type: "name", text: query}
 }
 
-const getTextScore = (definition: CommunityDefinitionV2, query: string) => {
+const getTextScore = (definition: CommunityDefinition, query: string) => {
   const needle = query.trim().toLowerCase()
   const name = definition.metadata.name.toLowerCase()
   const description = definition.metadata.description?.toLowerCase() || ""
@@ -91,16 +91,16 @@ export const rankCommunitySearchDefinitions = ({
   definitions,
   query,
   preferredAddresses = [],
-  candidateControllerPubkeys = [],
+  candidateOwnerPubkeys = [],
 }: {
-  definitions: CommunityDefinitionV2[]
+  definitions: CommunityDefinition[]
   query?: string
   preferredAddresses?: string[]
-  candidateControllerPubkeys?: string[]
+  candidateOwnerPubkeys?: string[]
 }) => {
   const preferred = new Set(preferredAddresses)
   const controllerRank = new Map(
-    candidateControllerPubkeys.map((controller, index) => [controller, index]),
+    candidateOwnerPubkeys.map((owner, index) => [owner, index]),
   )
   return definitions
     .map(definition => ({
@@ -108,7 +108,7 @@ export const rankCommunitySearchDefinitions = ({
       preferred: preferred.has(definition.pointer.address),
       score: query ? getTextScore(definition, query) : 0,
       trustRank:
-        controllerRank.get(definition.controllerPubkey) ?? candidateControllerPubkeys.length,
+        controllerRank.get(definition.ownerPubkey) ?? candidateOwnerPubkeys.length,
     }))
     .filter(result => Number.isFinite(result.score))
     .sort(
@@ -131,7 +131,7 @@ const defaultResolveNip05 = async (identifier: string): Promise<Nip05Result | un
 }
 
 const getDefinitions = (events: TrustedEvent[]) =>
-  Array.from(selectCurrentCommunityDefinitionsV2(events).values())
+  Array.from(selectCurrentCommunityDefinitions(events).values())
 
 export const searchCommunities = async (
   value: string,
@@ -145,7 +145,7 @@ export const searchCommunities = async (
   const hydrateOutbox = dependencies.hydrateOutbox || hydratePubkeyOutboxRelays
   const resolveNip05 = dependencies.resolveNip05 || defaultResolveNip05
   const localEvents =
-    dependencies.localEvents || repository.query([{kinds: [COMMUNITY_DEFINITION_KIND_V2]}])
+    dependencies.localEvents || repository.query([{kinds: [COMMUNITY_DEFINITION_KIND]}])
   const preferredAddresses = dependencies.preferredAddresses || []
   const loadedEvents = [...localEvents]
   let incomplete = false
@@ -161,40 +161,40 @@ export const searchCommunities = async (
     }
   }
 
-  let controllerPubkeys: string[] = []
+  let ownerPubkeys: string[] = []
   let controllerHints: string[] = []
   let textQuery: string | undefined
   let filters: Filter[] = []
 
   if (query.type === "exact") {
-    controllerPubkeys = [query.value.controllerPubkey]
+    ownerPubkeys = [query.value.ownerPubkey]
     controllerHints = query.value.relayHints
     filters = [
       {
-        kinds: [COMMUNITY_DEFINITION_KIND_V2],
-        authors: [query.value.controllerPubkey],
+        kinds: [COMMUNITY_DEFINITION_KIND],
+        authors: [query.value.ownerPubkey],
         "#d": [query.value.communityId],
         limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT,
       },
     ]
-  } else if (query.type === "controller") {
-    controllerPubkeys = [query.pubkey]
+  } else if (query.type === "owner") {
+    ownerPubkeys = [query.pubkey]
     filters = [
       {
-        kinds: [COMMUNITY_DEFINITION_KIND_V2],
-        authors: controllerPubkeys,
+        kinds: [COMMUNITY_DEFINITION_KIND],
+        authors: ownerPubkeys,
         limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT,
       },
     ]
   } else if (query.type === "nip05") {
     const resolved = await resolveNip05(query.identifier)
     if (!resolved || dependencies.signal?.aborted) return {query, results: [], incomplete: false}
-    controllerPubkeys = [resolved.pubkey]
+    ownerPubkeys = [resolved.pubkey]
     controllerHints = resolved.relays || []
     filters = [
       {
-        kinds: [COMMUNITY_DEFINITION_KIND_V2],
-        authors: controllerPubkeys,
+        kinds: [COMMUNITY_DEFINITION_KIND],
+        authors: ownerPubkeys,
         limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT,
       },
     ]
@@ -206,22 +206,22 @@ export const searchCommunities = async (
         resultLimit: COMMUNITY_SEARCH_CONTROLLER_LIMIT,
         scanLimit: 320,
       })
-    controllerPubkeys = peopleCandidates
+    ownerPubkeys = peopleCandidates
       .map(normalizePubkey)
       .filter(Boolean)
       .slice(0, COMMUNITY_SEARCH_CONTROLLER_LIMIT)
     filters = [
       {
-        kinds: [COMMUNITY_DEFINITION_KIND_V2],
+        kinds: [COMMUNITY_DEFINITION_KIND],
         search: query.text,
         limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT,
       },
-      {kinds: [COMMUNITY_DEFINITION_KIND_V2], limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT},
-      ...(controllerPubkeys.length
+      {kinds: [COMMUNITY_DEFINITION_KIND], limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT},
+      ...(ownerPubkeys.length
         ? [
             {
-              kinds: [COMMUNITY_DEFINITION_KIND_V2],
-              authors: controllerPubkeys,
+              kinds: [COMMUNITY_DEFINITION_KIND],
+              authors: ownerPubkeys,
               limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT,
             },
           ]
@@ -240,19 +240,19 @@ export const searchCommunities = async (
       definitions: getDefinitions(loadedEvents),
       query: textQuery,
       preferredAddresses,
-    }).map(result => result.definition.controllerPubkey)
-    controllerPubkeys = Array.from(new Set([...matchingControllers, ...controllerPubkeys])).slice(
+    }).map(result => result.definition.ownerPubkey)
+    ownerPubkeys = Array.from(new Set([...matchingControllers, ...ownerPubkeys])).slice(
       0,
       COMMUNITY_SEARCH_CONTROLLER_LIMIT,
     )
   }
 
   await Promise.all(
-    controllerPubkeys.map(async controller => {
+    ownerPubkeys.map(async owner => {
       const relays = normalizeRelays([
-        ...getPubkeyOutboxRelays([controller]),
+        ...getPubkeyOutboxRelays([owner]),
         ...(await hydrateOutbox(
-          controller,
+          owner,
           normalizeRelays([...bootstrapRelays, ...controllerHints]),
         )),
       ])
@@ -265,8 +265,8 @@ export const searchCommunities = async (
           query.type === "exact"
             ? filters[0]
             : {
-                kinds: [COMMUNITY_DEFINITION_KIND_V2],
-                authors: [controller],
+                kinds: [COMMUNITY_DEFINITION_KIND],
+                authors: [owner],
                 limit: COMMUNITY_SEARCH_BOOTSTRAP_LIMIT,
               },
         ],
@@ -282,16 +282,16 @@ export const searchCommunities = async (
     definitions = definitions.filter(
       definition => definition.pointer.address === query.value.address,
     )
-  } else if (query.type === "controller" || query.type === "nip05") {
+  } else if (query.type === "owner" || query.type === "nip05") {
     definitions = definitions.filter(definition =>
-      controllerPubkeys.includes(definition.controllerPubkey),
+      ownerPubkeys.includes(definition.ownerPubkey),
     )
   }
   const ranked = rankCommunitySearchDefinitions({
     definitions,
     query: textQuery,
     preferredAddresses,
-    candidateControllerPubkeys: controllerPubkeys,
+    candidateOwnerPubkeys: ownerPubkeys,
   })
   if (ranked.length > COMMUNITY_SEARCH_RESULT_LIMIT) incomplete = true
 

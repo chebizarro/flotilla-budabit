@@ -519,7 +519,7 @@
     const community = parseRepoCommunityBinding(evt)
     const pointer = community ? parseCommunityDefinitionAddress(community.address) : undefined
     if (!pointer) return ""
-    return `Community: ${pointer.controllerPubkey.slice(0, 6)}:${pointer.communityId.slice(0, 6)}...`
+    return `Community: ${pointer.ownerPubkey.slice(0, 6)}:${pointer.communityId.slice(0, 6)}...`
   }
 
   const getGitShareCard = (evt: TrustedEvent, relays: string[] = []) => {

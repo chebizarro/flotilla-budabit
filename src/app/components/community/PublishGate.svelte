@@ -56,7 +56,7 @@
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
   const communityPubkey = $derived(
-    routeCommunity?.controllerPubkey || $activeExactCommunityDefinition?.controllerPubkey || "",
+    routeCommunity?.ownerPubkey || $activeExactCommunityDefinition?.ownerPubkey || "",
   )
   const communityAddress = $derived(routeCommunity?.address || "")
   const communityDefinition = $derived(

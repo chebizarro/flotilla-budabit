@@ -26,7 +26,7 @@ import type {RepositoryUpdate} from "@welshman/net"
 import {DM_KIND} from "@app/core/state"
 import {GIT_USER_GRASP_LIST} from "@nostr-git/core/events"
 import {FORM_TEMPLATE_KIND, PROFILE_LIST_KIND} from "@app/core/community"
-import {COMMUNITY_DEFINITION_KIND_V2} from "@app/core/community-v2"
+import {COMMUNITY_DEFINITION_KIND} from "@app/core/community-protocol"
 import {COMMUNITY_REPORT_KIND} from "@app/core/community-reports"
 import {PROFILE_BADGES_KIND} from "@app/core/community-badges"
 import {EMAIL_DIGEST_STATUS_KIND, EMAIL_DIGEST_SUBSCRIPTION_KIND} from "@app/core/email-digest"
@@ -79,7 +79,7 @@ const kinds = {
 const isCommunityStarReaction = (event: TrustedEvent) =>
   event.kind === REACTION &&
   event.content === "+" &&
-  getTagValue("k", event.tags) === String(COMMUNITY_DEFINITION_KIND_V2)
+  getTagValue("k", event.tags) === String(COMMUNITY_DEFINITION_KIND)
 
 const isCommunityStarDelete = (event: TrustedEvent) =>
   event.kind === DELETE && getTagValue("k", event.tags) === String(REACTION)

@@ -2,12 +2,12 @@ import {publishThunk, repository} from "@welshman/app"
 import {randomId} from "@welshman/lib"
 import {makeEvent, type EventTemplate, type TrustedEvent} from "@welshman/util"
 import {
-  TARGETED_PUBLICATION_KIND_V2,
-  buildTargetedPublicationV2,
+  TARGETED_PUBLICATION_KIND,
+  buildTargetedPublication,
   makeCommunityPointer,
   normalizePubkey,
   normalizeRelays,
-  parseTargetedPublicationV2,
+  parseTargetedPublication,
 } from "@app/core/community"
 import type {CommunityPointer} from "@app/core/community"
 import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
@@ -99,7 +99,7 @@ export const getWidgetTargetPublishRelays = ({
 }
 
 export const getWidgetTargetEventRelayHints = (event: TrustedEvent) => {
-  const targeting = parseTargetedPublicationV2(event)
+  const targeting = parseTargetedPublication(event)
 
   return normalizeRelays([
     targeting?.source?.relay || "",
@@ -154,8 +154,8 @@ export const publishWidgetTargetingEvent = ({
 
   if (!pubkey || !identifier || communities.length === 0 || relays.length === 0) return undefined
 
-  const event = makeEvent(TARGETED_PUBLICATION_KIND_V2, {
-    ...buildTargetedPublicationV2({
+  const event = makeEvent(TARGETED_PUBLICATION_KIND, {
+    ...buildTargetedPublication({
       id: targetingId,
       kind: SMART_WIDGET_KIND,
       source: makeAddressablePublicationRef({
@@ -167,7 +167,7 @@ export const publishWidgetTargetingEvent = ({
       communities: communities.map(
         option =>
           makeCommunityPointer({
-            controllerPubkey: option.community.controllerPubkey,
+            ownerPubkey: option.community.ownerPubkey,
             communityId: option.community.communityId,
             relayHints: [getWidgetCommunityOptionRelays(option)[0]],
           })!,

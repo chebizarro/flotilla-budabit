@@ -148,7 +148,7 @@ export interface RepoCreationRecoveryRecord {
   updatedAt: number;
 }
 
-const STORAGE_PREFIX = "nostr-git:repo-creation:v2:";
+const STORAGE_PREFIX = "nostr-git:repo-creation:transaction:";
 const LEGACY_STORAGE_PREFIX = "nostr-git:repo-creation:v1:";
 
 class RepoCreationJournalStorageError extends Error {

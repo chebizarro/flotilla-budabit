@@ -4,7 +4,7 @@ import {GIT_REPO_ANNOUNCEMENT, type RepoAnnouncementEvent} from "@nostr-git/core
 import {getPublicKey} from "nostr-tools/pure"
 import {TARGETED_PUBLICATION_KIND, makeCommunityPointer} from "@app/core/community"
 import {
-  makeTargetedPublicationForCommunityV2,
+  makeTargetedPublicationForCommunity,
   withPublicationTargetingId,
 } from "@app/core/community-targeting"
 import {makeRepoStarReaction} from "@app/util/repo-stars"
@@ -16,7 +16,7 @@ import {
 const viewer = getPublicKey(new Uint8Array(32).fill(21))
 const community = getPublicKey(new Uint8Array(32).fill(22))
 const communityPointer = makeCommunityPointer({
-  controllerPubkey: getPublicKey(new Uint8Array(32).fill(23)),
+  ownerPubkey: getPublicKey(new Uint8Array(32).fill(23)),
   communityId: community,
   relayHints: ["wss://community.example"],
 })!
@@ -45,7 +45,7 @@ const makeCollectionEvents = () => {
   } as TrustedEvent
   const target = {
     ...makeEvent(TARGETED_PUBLICATION_KIND, {
-      ...makeTargetedPublicationForCommunityV2({
+      ...makeTargetedPublicationForCommunity({
         targetingId,
         originalKind: REACTION,
         community: communityPointer,
@@ -72,7 +72,7 @@ describe("repository collection read model", () => {
       viewerPubkey: viewer,
       communityOptions: [
         {
-          controllerPubkey: community,
+          ownerPubkey: community,
           address: communityPointer.address,
           communityId: community,
           label: "Community",
@@ -88,7 +88,7 @@ describe("repository collection read model", () => {
       targetEvent: {id: target.id},
       star: {address: `${GIT_REPO_ANNOUNCEMENT}:${owner}:demo`},
       community: {
-        controllerPubkey: community,
+        ownerPubkey: community,
         address: communityPointer.address,
         communityId: community,
       },
@@ -108,7 +108,7 @@ describe("repository collection read model", () => {
       buildRepoCommunityStarCollections({
         viewerPubkey: viewer,
         communityOptions: [
-          {controllerPubkey: community, address: communityPointer.address, communityId: community},
+          {ownerPubkey: community, address: communityPointer.address, communityId: community},
         ],
         targetEvents: [target],
         targetDeleteEvents: [deletion],
@@ -128,7 +128,7 @@ describe("repository collection read model", () => {
     const makeExplicitTarget = (id: string, originalRef: {type: "e"; value: string}) =>
       ({
         ...makeEvent(TARGETED_PUBLICATION_KIND, {
-          ...makeTargetedPublicationForCommunityV2({
+          ...makeTargetedPublicationForCommunity({
             targetingId: `target-${id}`,
             originalKind: REACTION,
             originalRef,
@@ -143,7 +143,7 @@ describe("repository collection read model", () => {
     const collections = buildRepoCommunityStarCollections({
       viewerPubkey: viewer,
       communityOptions: [
-        {controllerPubkey: community, address: communityPointer.address, communityId: community},
+        {ownerPubkey: community, address: communityPointer.address, communityId: community},
       ],
       targetEvents: [makeExplicitTarget("event-target", {type: "e", value: eventStar.id})],
       targetDeleteEvents: [],
@@ -162,7 +162,7 @@ describe("repository collection read model", () => {
       buildRepoCommunityStarCollections({
         viewerPubkey: viewer,
         communityOptions: [
-          {controllerPubkey: community, address: communityPointer.address, communityId: community},
+          {ownerPubkey: community, address: communityPointer.address, communityId: community},
         ],
         targetEvents: [target],
         targetDeleteEvents: [],
@@ -178,7 +178,7 @@ describe("repository collection read model", () => {
       buildRepoCommunityStarCollections({
         viewerPubkey: "9".repeat(64),
         communityOptions: [
-          {controllerPubkey: community, address: communityPointer.address, communityId: community},
+          {ownerPubkey: community, address: communityPointer.address, communityId: community},
         ],
         targetEvents: [target],
         targetDeleteEvents: [],

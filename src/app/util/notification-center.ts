@@ -68,7 +68,7 @@ export const hasUnreadNotificationsState = (state: Partial<NotificationReadState
 }
 
 export const notificationReadState = synced<NotificationReadState>({
-  key: "notificationCenter.readState.v2",
+  key: "notificationCenter.readState",
   defaultValue: defaultNotificationReadState(),
   storage: kv,
 })

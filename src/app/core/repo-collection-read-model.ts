@@ -1,10 +1,10 @@
 import {DELETE, type TrustedEvent} from "@welshman/util"
-import {parseTargetedPublicationV2} from "@app/core/community"
+import {parseTargetedPublication} from "@app/core/community"
 import {getPublicationTargetingId} from "@app/core/community-targeting"
 import {parseRepoStarReaction, type RepoStarRef} from "@app/util/repo-stars"
 
 export type RepoCollectionCommunityOption = {
-  controllerPubkey: string
+  ownerPubkey: string
   address: string
   communityId: string
   label?: string
@@ -100,7 +100,7 @@ export const buildRepoCommunityStarCollections = ({
 
   for (const event of targetEvents) {
     if (event.pubkey !== viewerPubkey || deletedTargetIds.has(event.id)) continue
-    const targeting = parseTargetedPublicationV2(event)
+    const targeting = parseTargetedPublication(event)
     if (!targeting) continue
 
     for (const communityRef of targeting.communities) {

@@ -2,8 +2,8 @@ import {describe, expect, it, vi} from "vitest"
 import {finalizeEvent, generateSecretKey, getPublicKey} from "nostr-tools/pure"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  buildCommunityDefinitionV2,
-  parseCommunityDefinitionV2,
+  buildCommunityDefinition,
+  parseCommunityDefinition,
   makeCommunityPointer,
   type CommunityAlertService,
 } from "./community"
@@ -46,7 +46,7 @@ const userPubkey = getPublicKey(userSecret)
 const providerPubkey = getPublicKey(providerSecret)
 const handlerPubkey = getPublicKey(handlerSecret)
 const communityAddressA = makeCommunityPointer({
-  controllerPubkey: communityA,
+  ownerPubkey: communityA,
   communityId: communityA,
 })!.address
 const provider: CommunityAlertService = {
@@ -67,7 +67,7 @@ const makeDefinition = ({
   createdAt: number
   communityId?: string
 }) => {
-  const template = buildCommunityDefinitionV2({
+  const template = buildCommunityDefinition({
     communityId,
     name: `Community ${communityId}`,
     relays: ["wss://community.example.com"],
@@ -87,7 +87,7 @@ const makeDefinition = ({
     })),
   })
 
-  return parseCommunityDefinitionV2(finalizeEvent({...template, created_at: createdAt}, secret))!
+  return parseCommunityDefinition(finalizeEvent({...template, created_at: createdAt}, secret))!
 }
 
 const makeRef = (
@@ -148,7 +148,7 @@ describe("verified per-community alert discovery", () => {
     ).toEqual([])
   })
 
-  it("groups same-controller sibling definitions by exact address", () => {
+  it("groups same-owner sibling definitions by exact address", () => {
     const first = makeDefinition({
       secret: communitySecretA,
       services: [provider],
@@ -178,7 +178,7 @@ describe("verified per-community alert discovery", () => {
     const invalid = {...definition, event: {...definition.event, sig: "0".repeat(128)}}
     const mismatched = {
       ...makeRef(definition),
-      community: makeCommunityPointer({controllerPubkey: communityB, communityId: communityB})!,
+      community: makeCommunityPointer({ownerPubkey: communityB, communityId: communityB})!,
     }
 
     expect(isCommunityAlertEligibleRef(makeRef(definition))).toBe(true)
@@ -219,9 +219,9 @@ describe("verified per-community alert discovery", () => {
 })
 
 describe("dedicated encrypted community alert settings", () => {
-  it("keeps same-controller sibling registrations independent by exact address", () => {
-    const first = makeCommunityPointer({controllerPubkey: communityA, communityId: communityA})!
-    const sibling = makeCommunityPointer({controllerPubkey: communityA, communityId: communityB})!
+  it("keeps same-owner sibling registrations independent by exact address", () => {
+    const first = makeCommunityPointer({ownerPubkey: communityA, communityId: communityA})!
+    const sibling = makeCommunityPointer({ownerPubkey: communityA, communityId: communityB})!
     const normalized = normalizeCommunityAlertSettings({
       version: 2,
       deliveryProfile: {},
@@ -482,7 +482,7 @@ describe("strict community alert payloads and event tags", () => {
     expect(
       selectCommunityAlertStatusEvent(
         [status],
-        makeCommunityPointer({controllerPubkey: communityB, communityId: communityB})!.address,
+        makeCommunityPointer({ownerPubkey: communityB, communityId: communityB})!.address,
         userPubkey,
         provider,
       ),

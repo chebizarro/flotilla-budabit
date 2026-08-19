@@ -17,10 +17,10 @@ import {
   type BlossomUploadContext,
 } from "./blossom"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
-  buildCommunityDefinitionV2,
+  COMMUNITY_DEFINITION_KIND,
+  buildCommunityDefinition,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   activeExactCommunitySession,
@@ -184,19 +184,19 @@ const makeBlossomTarget = (url: string, priority: number): BlossomServerTarget =
 
 const communityPubkey = getPublicKey(new Uint8Array(32).fill(31))
 const communityId = getPublicKey(new Uint8Array(32).fill(32))
-const communityPointer = makeCommunityPointer({controllerPubkey: communityPubkey, communityId})!
+const communityPointer = makeCommunityPointer({ownerPubkey: communityPubkey, communityId})!
 const exactCommunityUploadContext = {
   type: "community",
   communityAddress: communityPointer.address,
 } satisfies BlossomUploadContext
 void exactCommunityUploadContext
 const makeCommunityDefinition = (id: string, blossomServers: string[] = []) =>
-  parseCommunityDefinitionV2({
+  parseCommunityDefinition({
     id,
     pubkey: communityPubkey,
     created_at: 1,
-    kind: COMMUNITY_DEFINITION_KIND_V2,
-    tags: buildCommunityDefinitionV2({
+    kind: COMMUNITY_DEFINITION_KIND,
+    tags: buildCommunityDefinition({
       communityId,
       name: "Community",
       relays: ["wss://relay.example.com"],
@@ -788,7 +788,7 @@ describe("commands", () => {
     const {uploadFile, normalizeBlossomUrl} = await import("./commands")
     const activeCommunityBlossom = normalizeBlossomUrl("https://active-community.example")
     const siblingPointer = makeCommunityPointer({
-      controllerPubkey: communityPubkey,
+      ownerPubkey: communityPubkey,
       communityId: getPublicKey(new Uint8Array(32).fill(33)),
     })!
 
@@ -1105,7 +1105,7 @@ describe("commands", () => {
       tags: [
         ["d", "weather"],
         ["version", "1.0.1"],
-        ["button", "Open", "app", "https://example.com/v2.html"],
+        ["button", "Open", "app", "https://example.com/current.html"],
       ],
     }
 
@@ -1322,8 +1322,8 @@ describe("commands", () => {
       created_at: 2,
       version: "1.1.0",
       changelog: "Use Blossom mirror fallback.",
-      appUrl: "https://example.com/v2.html",
-      appUrls: ["https://example.com/v2.html", "https://mirror.example.com/v2.html"],
+      appUrl: "https://example.com/current.html",
+      appUrls: ["https://example.com/current.html", "https://mirror.example.com/current.html"],
     }
     const widgetId = getWidgetLineId(oldWidget)
 
@@ -1342,7 +1342,7 @@ describe("commands", () => {
       id: "weather-2",
       version: "1.1.0",
       changelog: "Use Blossom mirror fallback.",
-      appUrls: ["https://example.com/v2.html", "https://mirror.example.com/v2.html"],
+      appUrls: ["https://example.com/current.html", "https://mirror.example.com/current.html"],
     })
     expect(next.widgetInstallSources[widgetId]).toEqual({
       naddr: "naddr1weather",

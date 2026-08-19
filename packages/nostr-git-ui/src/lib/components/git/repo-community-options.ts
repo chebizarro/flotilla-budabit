@@ -1,7 +1,7 @@
 import type { RepoCommunityBinding } from "@nostr-git/core/events";
 
 export type RepoCommunityOption = {
-  controllerPubkey: string;
+  ownerPubkey: string;
   address: string;
   communityId: string;
   name?: string;

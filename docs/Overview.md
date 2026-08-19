@@ -52,7 +52,7 @@ This document summarizes how the Budabit client is structured and how the main p
 - `src/app/core/community-state.ts` owns the active community session and bootstrap:
   - `VITE_DEFAULT_COMMUNITY` provides the recommended starting community on `/explore`.
   - `VITE_INDEXER_RELAYS` are discovery/bootstrap relays before the community definition relays are known.
-  - The active `kind:32222` definition at `32222:<controller>:<communityId>` provides community metadata, relays, sections, profile-list references, and Blossom refs. Community-native data uses stable `h=<communityId>` and authority-sensitive workflows additionally mark that exact definition address with `a` marker `community`.
+  - The active `kind:32222` definition at `32222:<owner>:<communityId>` provides community metadata, relays, sections, profile-list references, and Blossom refs. Community-native data uses stable `h=<communityId>` and authority-sensitive workflows additionally mark that exact definition address with `a` marker `community`.
 - Router/Context:
   - `routerContext.getIndexerRelays` is wired to env-configured relays.
   - `appContext.dufflepudUrl` is currently hard-coded to `https://dufflepud.onrender.com`.

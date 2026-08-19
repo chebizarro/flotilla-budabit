@@ -1,9 +1,9 @@
 import type {TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
   type CommunityPointer,
   isRenouncedCommunitiesListEvent,
   isProfileListDeclined,
@@ -11,7 +11,7 @@ import {
   normalizeRelays,
   parseAddressRef,
   selectCurrentAddressableEvent,
-  selectCurrentCommunityDefinitionsV2,
+  selectCurrentCommunityDefinitions,
 } from "@app/core/community"
 import {parseAdmissionForm} from "@app/core/community-forms"
 import type {CommunityStarRef} from "@app/util/community-stars"
@@ -43,7 +43,7 @@ type MemberCommunityRefInput = {
   community: CommunityPointer
   relayHints?: string[]
   roles?: string[]
-  definition?: Pick<CommunityDefinitionV2, "event" | "pointer" | "relays">
+  definition?: Pick<CommunityDefinition, "event" | "pointer" | "relays">
 }
 
 type PreferenceInput = {
@@ -74,7 +74,7 @@ export const makeCommunityAdminDefinitionFilter = (author: string) => {
   if (!pubkey) return undefined
 
   return {
-    kinds: [COMMUNITY_DEFINITION_KIND_V2],
+    kinds: [COMMUNITY_DEFINITION_KIND],
     authors: [pubkey],
     limit: COMMUNITY_PREFERENCE_LIMIT,
   }
@@ -106,7 +106,7 @@ export const makeCommunityDefinitionProfileListRefFilters = (profileListEvents: 
   )
 
   return addresses.map(address => ({
-    kinds: [COMMUNITY_DEFINITION_KIND_V2],
+    kinds: [COMMUNITY_DEFINITION_KIND],
     "#a": [address],
     limit: COMMUNITY_PREFERENCE_LIMIT,
   }))
@@ -122,7 +122,7 @@ const addRole = (
     star?: CommunityStarRef
   } = {},
 ) => {
-  const normalizedCommunity = normalizePubkey(pointer.controllerPubkey)
+  const normalizedCommunity = normalizePubkey(pointer.ownerPubkey)
   if (!normalizedCommunity) return
   const key = pointer.address
 
@@ -160,7 +160,7 @@ const addRole = (
 }
 
 const getLatestDefinitionsByAddress = (events: TrustedEvent[]) => {
-  return selectCurrentCommunityDefinitionsV2(events)
+  return selectCurrentCommunityDefinitions(events)
 }
 
 export const getModeratorProfileListEventMap = (events: TrustedEvent[], author?: string) => {
@@ -204,7 +204,7 @@ const getModeratorEvidence = ({
   moderatorProfileListEvents,
   author,
 }: {
-  definition: CommunityDefinitionV2
+  definition: CommunityDefinition
   moderatorProfileListEvents: Map<string, TrustedEvent>
   author: string
 }) => {
@@ -251,8 +251,8 @@ export const selectPreferredCommunities = ({
     })
   }
 
-  for (const definition of selectCurrentCommunityDefinitionsV2(adminDefinitionEvents).values()) {
-    if (normalizedAuthor && definition.controllerPubkey !== normalizedAuthor) continue
+  for (const definition of selectCurrentCommunityDefinitions(adminDefinitionEvents).values()) {
+    if (normalizedAuthor && definition.ownerPubkey !== normalizedAuthor) continue
 
     addRole(preferences, definition.pointer, "admin", {
       relayHints: definition.relays,
@@ -284,7 +284,7 @@ export const selectPreferredCommunities = ({
   }
 
   for (const [address, definition] of definitions) {
-    if (definition.controllerPubkey === normalizedAuthor) continue
+    if (definition.ownerPubkey === normalizedAuthor) continue
 
     const latestAt = getModeratorEvidence({
       definition,

@@ -20,14 +20,14 @@ describe("exact community identity source contracts", () => {
     )
   })
 
-  it("does not treat a definition controller as its content scope", () => {
+  it("does not treat a definition owner as its content scope", () => {
     const source = readProjectFile("../components/ContentLinkBlockImage.svelte")
 
     expect(source).toContain("definition?.communityId === communityId")
     expect(source).not.toMatch(/definition(?:\?\.)?\.pubkey\s*===\s*community/)
   })
 
-  it("does not render a community ID or controller profile as a person identity", () => {
+  it("does not render a community ID or owner profile as a person identity", () => {
     const create = readProjectFile("../components/CommunityCreate.svelte")
     const menu = readProjectFile("../components/CommunityMenu.svelte")
     const roomCreate = readProjectFile("../components/community/CommunityRoomCreate.svelte")
@@ -51,12 +51,11 @@ describe("exact community identity source contracts", () => {
     }
   })
 
-  it("keeps auxiliary discovery V2-only", () => {
+  it("keeps auxiliary discovery current-protocol", () => {
     const discovery = readProjectFile("../../../scripts/discover-relay-defaults.mjs")
 
-    expect(discovery).toContain("COMMUNITY_DEFINITION_KIND_V2")
-    expect(discovery).toContain("parseCommunityDefinitionV2")
-    expect(discovery).not.toMatch(/COMMUNITY_DEFINITION_KIND\b|parseCommunityDefinition\b/)
+    expect(discovery).toContain("COMMUNITY_DEFINITION_KIND")
+    expect(discovery).toContain("parseCommunityDefinition")
   })
 
   it("renders community cards and suggestions from definition identity", () => {

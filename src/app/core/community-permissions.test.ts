@@ -9,14 +9,14 @@ import {
   type TrustedEvent,
 } from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2 as COMMUNITY_DEFINITION_KIND,
+  COMMUNITY_DEFINITION_KIND as COMMUNITY_DEFINITION_KIND,
   FORM_RESPONSE_KIND,
   FORM_TEMPLATE_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KIND,
-  buildTargetedPublicationV2,
+  buildTargetedPublication,
   makeCommunityPointer,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   makeAdmissionFormAddress,
@@ -60,11 +60,11 @@ const managerPubkey = testPubkey(73)
 const outsiderPubkey = testPubkey(74)
 const repoManagerPubkey = testPubkey(75)
 const communityPointer = makeCommunityPointer({
-  controllerPubkey: communityPubkey,
+  ownerPubkey: communityPubkey,
   communityId: communityPubkey,
 })!
 const otherCommunityPointer = makeCommunityPointer({
-  controllerPubkey: testPubkey(76),
+  ownerPubkey: testPubkey(76),
   communityId: testPubkey(77),
 })!
 
@@ -101,7 +101,7 @@ const parseTestDefinition = (event: TrustedEvent) => {
     sectionTags.push(["a", `${PROFILE_LIST_KIND}:${communityPubkey}:${sectionName}`])
   }
 
-  return parseCommunityDefinitionV2({
+  return parseCommunityDefinition({
     ...event,
     kind: COMMUNITY_DEFINITION_KIND,
     content: "",
@@ -367,7 +367,7 @@ describe("community permissions", () => {
         id,
         pubkey,
         kind: TARGETED_PUBLICATION_KIND,
-        tags: buildTargetedPublicationV2({
+        tags: buildTargetedPublication({
           id: `target-${id}`,
           kind,
           source: {type: "e", value: "1".repeat(64)},
@@ -408,11 +408,11 @@ describe("community permissions", () => {
   it("admits targeting wrappers only for the selected exact community branch", () => {
     const communityId = testPubkey(77)
     const selected = makeCommunityPointer({
-      controllerPubkey: communityPubkey,
+      ownerPubkey: communityPubkey,
       communityId,
     })!
     const sameIdSibling = makeCommunityPointer({
-      controllerPubkey: testPubkey(76),
+      ownerPubkey: testPubkey(76),
       communityId,
     })!
     const makeTarget = (id: string, community: typeof selected) =>
@@ -420,7 +420,7 @@ describe("community permissions", () => {
         id,
         pubkey: repoManagerPubkey,
         kind: TARGETED_PUBLICATION_KIND,
-        tags: buildTargetedPublicationV2({
+        tags: buildTargetedPublication({
           id: `target-${id}`,
           kind: 30617,
           source: {type: "e", value: "1".repeat(64)},
@@ -1027,7 +1027,7 @@ describe("community permissions", () => {
       const wrapper = makeEvent({
         pubkey: memberPubkey,
         kind: TARGETED_PUBLICATION_KIND,
-        tags: buildTargetedPublicationV2({
+        tags: buildTargetedPublication({
           id: `calendar-wrapper-${admittedKind}`,
           kind: admittedKind,
           source: {type: "e", value: directEvent.id},

@@ -10,14 +10,14 @@ describe("repository community options", () => {
   it("keeps sibling definitions by the same controller independently selectable", () => {
     const controller = "a".repeat(64);
     const first = {
-      controllerPubkey: controller,
+      ownerPubkey: controller,
       address: `32222:${controller}:${"1".repeat(64)}`,
       communityId: "1".repeat(64),
       name: "First project",
       about: "First definition",
     };
     const second = {
-      controllerPubkey: controller,
+      ownerPubkey: controller,
       address: `32222:${controller}:${"2".repeat(64)}`,
       communityId: "2".repeat(64),
       name: "Second project",

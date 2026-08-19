@@ -1,7 +1,7 @@
 import * as nip19 from "nostr-tools/nip19"
 import type {TrustedEvent} from "@welshman/util"
 import {
-  type CommunityDefinitionV2,
+  type CommunityDefinition,
   getProfileListPubkeys,
   isRenouncedCommunitiesListEvent,
   normalizePubkey,
@@ -140,7 +140,7 @@ export const getCommunityPeoplePubkeys = ({
   profileListEvents = [],
   excludedCommunityAddresses = [],
 }: {
-  definitions?: CommunityDefinitionV2[]
+  definitions?: CommunityDefinition[]
   profileListEvents?: TrustedEvent[]
   excludedCommunityAddresses?: string[]
 }) => {
@@ -157,8 +157,8 @@ export const getCommunityPeoplePubkeys = ({
 
     if (excludedCommunities.has(definition.pointer.address)) continue
 
-    const controller = normalizePubkey(definition.controllerPubkey)
-    if (controller) pubkeys.add(controller)
+    const owner = normalizePubkey(definition.ownerPubkey)
+    if (owner) pubkeys.add(owner)
     for (const address of profileListAddresses) {
       includedProfileListAddresses.add(address)
     }

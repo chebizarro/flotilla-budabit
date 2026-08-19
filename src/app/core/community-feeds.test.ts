@@ -11,9 +11,9 @@ import {
 } from "@welshman/util"
 import {
   TARGETED_PUBLICATION_KIND,
-  buildTargetedPublicationV2,
+  buildTargetedPublication as buildTargetingTags,
   makeCommunityPointer,
-  type TargetedPublicationSourceV2,
+  type TargetedPublicationSource,
 } from "./community"
 import {
   eventTargetsCommunity,
@@ -38,7 +38,7 @@ const communityPubkey = testPubkey(61)
 const otherCommunityPubkey = testPubkey(62)
 const authorPubkey = testPubkey(63)
 const communityPointer = makeCommunityPointer({
-  controllerPubkey: testPubkey(64),
+  ownerPubkey: testPubkey(64),
   communityId: communityPubkey,
 })!
 const permalinkEventId = "1".repeat(64)
@@ -51,9 +51,9 @@ const buildTargetedPublication = ({
 }: {
   id: string
   kind: number
-  ref?: TargetedPublicationSourceV2
+  ref?: TargetedPublicationSource
   communities: Array<{pubkey: string}>
-}) => buildTargetedPublicationV2({id, kind, source: ref, communities: [communityPointer]})
+}) => buildTargetingTags({id, kind, source: ref, communities: [communityPointer]})
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({

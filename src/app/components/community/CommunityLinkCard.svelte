@@ -12,21 +12,21 @@
     resolveExactCommunityDefinition,
     selectExactCommunityDefinition,
   } from "@app/core/community-state"
-  import type {CommunityDefinitionV2, CommunityPointer} from "@app/core/community"
+  import type {CommunityDefinition, CommunityPointer} from "@app/core/community"
   import {makeExactCommunityPath} from "@app/util/routes"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
 
   type Props = {
     value: CommunityPointer
     compact?: boolean
-    initialDefinition?: CommunityDefinitionV2
+    initialDefinition?: CommunityDefinition
   }
 
   const {value, compact = false, initialDefinition}: Props = $props()
 
   const fallbackName = $derived(`${value.address.slice(0, 18)}...${value.address.slice(-8)}`)
 
-  let definition = $state<CommunityDefinitionV2 | undefined>(initialDefinition)
+  let definition = $state<CommunityDefinition | undefined>(initialDefinition)
   let loadingDefinition = $state(false)
 
   $effect(() => {
@@ -40,7 +40,7 @@
         repository,
         filters: [
           makeExactCommunityDefinitionFilter(value),
-          {kinds: [5], authors: [value.controllerPubkey]},
+          {kinds: [5], authors: [value.ownerPubkey]},
         ],
       }),
     )
@@ -58,7 +58,7 @@
 
     resolveExactCommunityDefinition(value, {
       discoveryRelays: COMMUNITY_DISCOVERY_RELAYS,
-      hydrateControllerOutbox: hydratePubkeyOutboxRelays,
+      hydrateOwnerOutbox: hydratePubkeyOutboxRelays,
       loadEvents: (relays, filters) => loadCommunityEvents(relays, filters, {timeout: 3000}),
     })
       .then(result => {

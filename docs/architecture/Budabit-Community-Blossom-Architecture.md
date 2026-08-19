@@ -95,13 +95,13 @@ Budabit should not default to Budabit-operated storage for all communities. Comm
 
 ## Community Relay Scope
 
-The canonical definition `naddr` is the discovery entrypoint. It resolves one exact `32222:<controller>:<communityId>` branch, and every valid definition declares at least one relay with an `r` tag. Community metadata comes from definition tags, not the controller's personal profile.
+The canonical definition `naddr` is the discovery entrypoint. It resolves one exact `32222:<owner>:<communityId>` branch, and every valid definition declares at least one relay with an `r` tag. Community metadata comes from definition tags, not the owner's personal profile.
 
 Root community definition publishes go to:
 
 ```txt
 community relays from the definition
-controller outbox relays
+owner outbox relays
 Budabit indexer relays
 ```
 
@@ -134,7 +134,7 @@ Profile-list events are a valid discovery entrypoint for moderator communities:
 
 1. Load user-authored `kind:30000` profile-list events from available user and discovery relays.
 2. Build `#a` filters from their addresses and query for `kind:32222` definitions referencing those lists.
-3. If a profile-list workflow event carries a marked community `a` pointing to `32222:<controller>:<communityId>` with a relay hint, query that hinted relay for the exact definition.
+3. If a profile-list workflow event carries a marked community `a` pointing to `32222:<owner>:<communityId>` with a relay hint, query that hinted relay for the exact definition.
 4. Validate the moderator role only after loading that exact `kind:32222` definition and confirming one of its section refs points to the user-owned list.
 5. Load referenced section lists and moderation report state from the loaded definition's declared `r` relays to validate member/grant and ban status.
 

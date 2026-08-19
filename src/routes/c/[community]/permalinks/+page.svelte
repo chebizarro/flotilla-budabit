@@ -23,7 +23,7 @@
     activeCommunityReportState,
     activeExactCommunityPointer,
   } from "@app/core/community-state"
-  import {TARGETED_PUBLICATION_KIND_V2} from "@app/core/community"
+  import {TARGETED_PUBLICATION_KIND} from "@app/core/community"
   import {
     GIT_PERMALINK_KIND,
     makeCommunityContentFilterPlan,
@@ -32,7 +32,7 @@
     makeTargetedPublicationOriginalRelayHintPlans,
   } from "@app/core/community-feeds"
   import {
-    makeTargetedPublicationForCommunityV2,
+    makeTargetedPublicationForCommunity,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -47,12 +47,12 @@
   import {parseExactCommunityRouteParam} from "@app/util/routes"
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityPubkey = $derived(routeCommunity?.ownerPubkey || "")
   const communityId = $derived(routeCommunity?.communityId || "")
   const communityAddress = $derived(routeCommunity?.address || "")
   const communityDefinition = $derived(
     $activeExactCommunityDefinition?.pointer.address === communityAddress &&
-      $activeExactCommunityDefinition.controllerPubkey === communityPubkey
+      $activeExactCommunityDefinition.ownerPubkey === communityPubkey
       ? $activeExactCommunityDefinition
       : undefined,
   )
@@ -208,8 +208,8 @@
     publishThunk({
       relays,
       event: makeEvent(
-        TARGETED_PUBLICATION_KIND_V2,
-        makeTargetedPublicationForCommunityV2({
+        TARGETED_PUBLICATION_KIND,
+        makeTargetedPublicationForCommunity({
           targetingId,
           originalKind: GIT_PERMALINK_KIND,
           originalRef: undefined,

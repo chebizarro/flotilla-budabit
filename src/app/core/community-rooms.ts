@@ -2,7 +2,7 @@ import type {EventContent, TrustedEvent} from "@welshman/util"
 import {THREAD, getTag, getTagValue} from "@welshman/util"
 import {
   COMMUNITY_SUBTYPE_ROOM,
-  makeCommunityScopeTagsV2,
+  makeCommunityScopeTags,
   normalizePubkey,
   parseCommunityId,
 } from "@app/core/community"
@@ -51,7 +51,7 @@ export const makeCommunityRoomRoot = ({
   tags?: string[][]
 }): EventContent => ({
   content: about,
-  tags: makeCommunityScopeTagsV2(communityPubkey, [
+  tags: makeCommunityScopeTags(communityPubkey, [
     [COMMUNITY_SUBTYPE_ROOM],
     ["title", name],
     ...tags,

@@ -2,11 +2,11 @@ import {describe, expect, it} from "vitest"
 import {getPublicKey} from "nostr-tools/pure"
 import {type TrustedEvent} from "@welshman/util"
 import {
-  COMMUNITY_DEFINITION_KIND_V2,
+  COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
-  buildCommunityDefinitionV2,
+  buildCommunityDefinition,
   getProfileListPubkeys,
-  parseCommunityDefinitionV2,
+  parseCommunityDefinition,
 } from "./community"
 import {
   addPubkeyToCommunityProfileList,
@@ -52,16 +52,16 @@ const profileListEvent = {
 } as TrustedEvent
 
 const makeDefinition = (profileLists: Array<{address: string; relay?: string}>) => {
-  const template = buildCommunityDefinitionV2({
+  const template = buildCommunityDefinition({
     communityId: v2CommunityId,
     name: "Community",
     relays: ["wss://relay.example.com"],
     sections: [{name: "General", kinds: [{kind: 1111}], profileLists}],
   })
 
-  return parseCommunityDefinitionV2({
+  return parseCommunityDefinition({
     id: "definition",
-    kind: COMMUNITY_DEFINITION_KIND_V2,
+    kind: COMMUNITY_DEFINITION_KIND,
     pubkey: managerPubkey,
     created_at: 1,
     tags: template.tags,
@@ -132,7 +132,7 @@ describe("community admin helpers", () => {
     const result = applyCommunityBootstrapGrants({
       sections: definition.sections,
       communityId: definition.communityId,
-      controllerPubkey: managerPubkey,
+      ownerPubkey: managerPubkey,
       relays: definition.relays,
       profileListEvents: [profileListEvent],
       grants: [{pubkey: memberPubkey, role: "member", sectionNames: ["General"]}],
@@ -144,8 +144,8 @@ describe("community admin helpers", () => {
     ])
   })
 
-  it("preserves the exact V2 definition envelope and opaque tags when adding an owner grant list", () => {
-    const template = buildCommunityDefinitionV2({
+  it("preserves the exact definition envelope and opaque tags when adding an owner grant list", () => {
+    const template = buildCommunityDefinition({
       communityId: v2CommunityId,
       name: "Sibling community",
       relays: ["wss://relay.example.com"],
@@ -159,9 +159,9 @@ describe("community admin helpers", () => {
       ],
     })
     const unknownTag = ["future-extension", "opaque", "value"]
-    const definition = parseCommunityDefinitionV2({
+    const definition = parseCommunityDefinition({
       id: "definition",
-      kind: COMMUNITY_DEFINITION_KIND_V2,
+      kind: COMMUNITY_DEFINITION_KIND,
       pubkey: v2Controller,
       created_at: 1,
       tags: [...template.tags.slice(0, 2), unknownTag, ...template.tags.slice(2)],
@@ -174,14 +174,14 @@ describe("community admin helpers", () => {
       relays: definition.relays,
     })
     const update = result.definitionUpdate!
-    const reparsed = parseCommunityDefinitionV2({
+    const reparsed = parseCommunityDefinition({
       ...definition.event,
       id: "updated-definition",
       kind: update.kind,
       tags: update.tags,
     } as TrustedEvent)!
 
-    expect(update.kind).toBe(COMMUNITY_DEFINITION_KIND_V2)
+    expect(update.kind).toBe(COMMUNITY_DEFINITION_KIND)
     expect(result.profileList?.address.split(":")[1]).toBe(v2Controller)
     expect(update.tags).toContainEqual(["d", v2CommunityId])
     expect(update.tags).toContainEqual(unknownTag)
@@ -190,13 +190,13 @@ describe("community admin helpers", () => {
       result.profileList!.address,
       "wss://relay.example.com",
     ])
-    expect(reparsed.controllerPubkey).toBe(v2Controller)
+    expect(reparsed.ownerPubkey).toBe(v2Controller)
     expect(reparsed.communityId).toBe(v2CommunityId)
     expect(reparsed.pointer.address).toBe(definition.pointer.address)
   })
 
   it("reuses an existing owner member grant list ref", () => {
-    const template = buildCommunityDefinitionV2({
+    const template = buildCommunityDefinition({
       communityId: v2CommunityId,
       name: "Sibling community",
       relays: ["wss://relay.example.com"],
@@ -208,9 +208,9 @@ describe("community admin helpers", () => {
         },
       ],
     })
-    const definition = parseCommunityDefinitionV2({
+    const definition = parseCommunityDefinition({
       id: "definition",
-      kind: COMMUNITY_DEFINITION_KIND_V2,
+      kind: COMMUNITY_DEFINITION_KIND,
       pubkey: v2Controller,
       created_at: 1,
       tags: template.tags,
@@ -244,7 +244,7 @@ describe("community admin helpers", () => {
         },
       ],
       communityId: v2CommunityId,
-      controllerPubkey: managerPubkey,
+      ownerPubkey: managerPubkey,
       relays: ["wss://relay.example.com"],
       grants: [{pubkey: memberPubkey, role: "moderator", sectionNames: ["General"]}],
     })

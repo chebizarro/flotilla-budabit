@@ -1,6 +1,6 @@
 # Budabit Moderator Promotion Flow
 
-> **Historical V1 workflow.** This document records the former `kind:10222` moderator-promotion design and is not current protocol guidance. V2 workflows use stable `h=<communityId>` and marked exact `a=<32222:controller:communityId>` branch authority; see `Communikeys.md`.
+> **Historical V1 workflow.** This document records the former `kind:10222` moderator-promotion design and is not current protocol guidance. V2 workflows use stable `h=<communityId>` and marked exact `a=<32222:owner:communityId>` branch authority; see `Communikeys.md`.
 
 This document describes the moderator promotion request flow for Communikey communities.
 

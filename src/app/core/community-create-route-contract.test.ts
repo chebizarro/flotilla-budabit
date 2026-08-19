@@ -7,7 +7,7 @@ const source = readFileSync(
 )
 
 describe("community create route contract", () => {
-  it("delegates a resumable operation-scoped create flow to the controller", () => {
+  it("delegates a resumable operation-scoped create flow to the owner", () => {
     expect(source).toContain("<CommunityCreate {operationId} />")
     expect(source).toContain('$page.url.searchParams.get("operation")')
     expect(source).toContain('url.searchParams.set("operation", operationId)')

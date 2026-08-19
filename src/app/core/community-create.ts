@@ -1,6 +1,6 @@
 import {generateSecretKey, getPublicKey} from "nostr-tools/pure"
 import type {EventTemplate, SignedEvent, TrustedEvent} from "@welshman/util"
-import {COMMUNITY_DEFINITION_KIND_V2, parseCommunityId} from "./community-v2"
+import {COMMUNITY_DEFINITION_KIND, parseCommunityId} from "./community-protocol"
 
 export type CommunityCreationIntentStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
 
@@ -9,9 +9,9 @@ type CommunityCreationArtifacts = {
   definition: EventTemplate
 }
 
-type CreateCommunityV2Options = {
+type CreateCommunityOptions = {
   operationId: string
-  controllerPubkey: string
+  ownerPubkey: string
   buildArtifacts: (communityId: string) => CommunityCreationArtifacts
   sign: (template: EventTemplate) => Promise<SignedEvent>
   publishAndVerifyExact: (event: SignedEvent) => Promise<TrustedEvent>
@@ -20,30 +20,30 @@ type CreateCommunityV2Options = {
   getPublicKey?: (secret: Uint8Array) => string
 }
 
-const INTENT_PREFIX = "budabit/community-create-v2/"
+const INTENT_PREFIX = "budabit/community-create/"
 
-export const getCommunityCreationIntentKey = (controllerPubkey: string, operationId: string) => {
+export const getCommunityCreationIntentKey = (ownerPubkey: string, operationId: string) => {
   if (!operationId) throw new Error("Community creation operation ID is required.")
-  return `${INTENT_PREFIX}${encodeURIComponent(controllerPubkey)}/${encodeURIComponent(operationId)}`
+  return `${INTENT_PREFIX}${encodeURIComponent(ownerPubkey)}/${encodeURIComponent(operationId)}`
 }
 
 const readCommunityId = (
   storage: CommunityCreationIntentStorage,
-  controllerPubkey: string,
+  ownerPubkey: string,
   operationId: string,
 ) => {
-  const raw = storage.getItem(getCommunityCreationIntentKey(controllerPubkey, operationId))
+  const raw = storage.getItem(getCommunityCreationIntentKey(ownerPubkey, operationId))
   if (!raw) return undefined
 
   try {
     const intent = JSON.parse(raw) as {
       operationId?: unknown
-      controllerPubkey?: unknown
+      ownerPubkey?: unknown
       communityId?: unknown
     }
     if (
       intent.operationId !== operationId ||
-      intent.controllerPubkey !== controllerPubkey ||
+      intent.ownerPubkey !== ownerPubkey ||
       typeof intent.communityId !== "string"
     ) {
       return undefined
@@ -69,32 +69,32 @@ const deriveThrowawayCommunityId = (
 
 const getOrCreateCommunityId = ({
   operationId,
-  controllerPubkey,
+  ownerPubkey,
   storage,
   makeSecret,
   derivePublicKey,
 }: {
   operationId: string
-  controllerPubkey: string
+  ownerPubkey: string
   storage: CommunityCreationIntentStorage
   makeSecret: () => Uint8Array
   derivePublicKey: (secret: Uint8Array) => string
 }) => {
-  const existing = readCommunityId(storage, controllerPubkey, operationId)
+  const existing = readCommunityId(storage, ownerPubkey, operationId)
   if (existing) return existing
 
   const communityId = parseCommunityId(deriveThrowawayCommunityId(makeSecret, derivePublicKey))
   if (!communityId) throw new Error("Generated an invalid community ID.")
 
   storage.setItem(
-    getCommunityCreationIntentKey(controllerPubkey, operationId),
-    JSON.stringify({operationId, controllerPubkey, communityId}),
+    getCommunityCreationIntentKey(ownerPubkey, operationId),
+    JSON.stringify({operationId, ownerPubkey, communityId}),
   )
   return communityId
 }
 
 const assertArtifacts = (communityId: string, artifacts: CommunityCreationArtifacts) => {
-  if (artifacts.definition.kind !== COMMUNITY_DEFINITION_KIND_V2) {
+  if (artifacts.definition.kind !== COMMUNITY_DEFINITION_KIND) {
     throw new Error("Community activation must be a kind-32222 event.")
   }
   const identifiers = artifacts.definition.tags.filter(tag => tag[0] === "d")
@@ -108,7 +108,7 @@ const assertArtifacts = (communityId: string, artifacts: CommunityCreationArtifa
 
   for (const event of artifacts.prerequisites) {
     if (event.kind === 0) throw new Error("Community creation must not publish a kind-0 event.")
-    if (event.kind === COMMUNITY_DEFINITION_KIND_V2) {
+    if (event.kind === COMMUNITY_DEFINITION_KIND) {
       throw new Error("Community prerequisites must precede the single kind-32222 activation.")
     }
   }
@@ -116,30 +116,30 @@ const assertArtifacts = (communityId: string, artifacts: CommunityCreationArtifa
 
 const publishExactly = async (
   event: SignedEvent,
-  controllerPubkey: string,
+  ownerPubkey: string,
   publishAndVerifyExact: (event: SignedEvent) => Promise<TrustedEvent>,
 ) => {
-  if (event.pubkey !== controllerPubkey) {
-    throw new Error("Community artifacts must be signed by the controller.")
+  if (event.pubkey !== ownerPubkey) {
+    throw new Error("Community artifacts must be signed by the owner.")
   }
   const readback = await publishAndVerifyExact(event)
   if (readback.id !== event.id) throw new Error("Relay did not read back the exact event.")
   return readback
 }
 
-export const createCommunityV2 = async ({
+export const createCommunity = async ({
   operationId,
-  controllerPubkey,
+  ownerPubkey,
   buildArtifacts,
   sign,
   publishAndVerifyExact,
   storage = localStorage,
   generateSecretKey: makeSecret = generateSecretKey,
   getPublicKey: derivePublicKey = getPublicKey,
-}: CreateCommunityV2Options) => {
+}: CreateCommunityOptions) => {
   const communityId = getOrCreateCommunityId({
     operationId,
-    controllerPubkey,
+    ownerPubkey,
     storage,
     makeSecret,
     derivePublicKey,
@@ -150,17 +150,17 @@ export const createCommunityV2 = async ({
 
   for (const template of artifacts.prerequisites) {
     verifiedEvents.push(
-      await publishExactly(await sign(template), controllerPubkey, publishAndVerifyExact),
+      await publishExactly(await sign(template), ownerPubkey, publishAndVerifyExact),
     )
   }
 
   const definition = await publishExactly(
     await sign(artifacts.definition),
-    controllerPubkey,
+    ownerPubkey,
     publishAndVerifyExact,
   )
   verifiedEvents.push(definition)
-  storage.removeItem(getCommunityCreationIntentKey(controllerPubkey, operationId))
+  storage.removeItem(getCommunityCreationIntentKey(ownerPubkey, operationId))
 
   return {communityId, definition, verifiedEvents}
 }

@@ -39,7 +39,7 @@ import { FileManager, type FileInfo, type FileListingResult } from "./FileManage
 import {
   RepoCore,
   type RepoContext,
-  type EffectiveLabelsV2,
+  type EffectiveLabels,
   detectVendorFromUrl,
   extractHostname,
 } from "@nostr-git/core/git";
@@ -147,7 +147,7 @@ export class Repo {
     } | null
   > = new Map();
   #issueThreadCache: Map<string, { rootId: string; comments: CommentEvent[] }> = new Map();
-  #labelsCache: Map<string, EffectiveLabelsV2> = new Map();
+  #labelsCache: Map<string, EffectiveLabels> = new Map();
 
   // Cached resolved branch to avoid redundant fallback iterations
   #resolvedDefaultBranch: string | null = null;
@@ -996,24 +996,24 @@ export class Repo {
     id?: string;
     address?: string;
     euc?: string;
-  }): EffectiveLabelsV2 {
+  }): EffectiveLabels {
     const key = `${target.id || ""}|${target.address || ""}|${target.euc || ""}`;
     const cached = this.#labelsCache.get(key);
     if (cached) return cached;
     const result = RepoCore.getEffectiveLabelsFor(
       this.#coreCtx(),
       target
-    ) as unknown as EffectiveLabelsV2;
+    ) as unknown as EffectiveLabels;
     this.#labelsCache.set(key, result);
     return result;
   }
 
-  public getRepoLabels(): EffectiveLabelsV2 {
-    return RepoCore.getRepoLabels(this.#coreCtx()) as unknown as EffectiveLabelsV2;
+  public getRepoLabels(): EffectiveLabels {
+    return RepoCore.getRepoLabels(this.#coreCtx()) as unknown as EffectiveLabels;
   }
 
-  public getIssueLabels(rootId: string): EffectiveLabelsV2 {
-    return RepoCore.getIssueLabels(this.#coreCtx(), rootId) as unknown as EffectiveLabelsV2;
+  public getIssueLabels(rootId: string): EffectiveLabels {
+    return RepoCore.getIssueLabels(this.#coreCtx(), rootId) as unknown as EffectiveLabels;
   }
   // -------------------------
   // Subscription hints (no network)

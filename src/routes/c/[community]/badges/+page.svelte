@@ -65,7 +65,7 @@
   }
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
-  const communityControllerPubkey = $derived(routeCommunity?.controllerPubkey || "")
+  const communityOwnerPubkey = $derived(routeCommunity?.ownerPubkey || "")
   const communityBootstrapReady = $derived(
     Boolean(
       routeCommunity &&
@@ -346,7 +346,7 @@
     const operation = JSON.stringify({
       type: editingDefinition ? "badge-definition-update" : "badge-definition-create",
       address: editingDefinition?.address || "",
-      controllerPubkey: communityControllerPubkey,
+      ownerPubkey: communityOwnerPubkey,
       pubkey: $pubkey,
       badgeName,
       badgeDescription,
