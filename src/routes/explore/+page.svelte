@@ -364,6 +364,7 @@
             notFound={previewCommunityNotFound}
             unavailable={previewCommunityUnavailable}
             inputSearch={searchCommunityInputProfiles}
+            inputSuggestionDefinitions={communityDefinitions}
             onInputSelect={selectCommunityInputProfile}
             onSubmit={submitCommunityInput} />
 

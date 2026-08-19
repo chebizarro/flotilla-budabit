@@ -16,6 +16,8 @@ import {
   normalizeCashuMintUrl,
 } from "./cashu-mint-recommendations"
 
+const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
     id: overrides.id || "e".repeat(64),
@@ -127,11 +129,11 @@ describe("cashu mint recommendations", () => {
   })
 
   it("scores community mints above personal 10019 and direct follows", () => {
-    const viewer = "1".repeat(64)
-    const community = "2".repeat(64)
-    const listOwner = "3".repeat(64)
-    const recommender = "4".repeat(64)
-    const followed = "5".repeat(64)
+    const viewer = testPubkey(1)
+    const community = testPubkey(2)
+    const listOwner = testPubkey(3)
+    const recommender = testPubkey(4)
+    const followed = testPubkey(5)
     const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:Repositories`
     const definition = makeDefinition({
       communityPubkey: community,
@@ -173,10 +175,10 @@ describe("cashu mint recommendations", () => {
   })
 
   it("attaches relay hints for recommendation evidence profiles", () => {
-    const viewer = "1".repeat(64)
-    const community = "2".repeat(64)
-    const listOwner = "3".repeat(64)
-    const recommender = "4".repeat(64)
+    const viewer = testPubkey(1)
+    const community = testPubkey(2)
+    const listOwner = testPubkey(3)
+    const recommender = testPubkey(4)
     const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:Repositories`
     const definition = makeDefinition({
       communityPubkey: community,
@@ -213,9 +215,9 @@ describe("cashu mint recommendations", () => {
   })
 
   it("orders direct 32222 community mints before controller-owned 10019 mints", () => {
-    const viewer = "1".repeat(64)
-    const community = "2".repeat(64)
-    const listOwner = "3".repeat(64)
+    const viewer = testPubkey(1)
+    const community = testPubkey(2)
+    const listOwner = testPubkey(3)
     const listAddress = `${PROFILE_LIST_KIND}:${listOwner}:Repositories`
     const definition = makeDefinition({
       communityPubkey: community,
@@ -260,8 +262,8 @@ describe("cashu mint recommendations", () => {
   })
 
   it("does not count muted direct follows as follow evidence", () => {
-    const viewer = "1".repeat(64)
-    const followed = "2".repeat(64)
+    const viewer = testPubkey(1)
+    const followed = testPubkey(2)
     const recommendations = buildCashuMintRecommendations({
       viewerPubkey: viewer,
       follows: [followed],
@@ -273,30 +275,30 @@ describe("cashu mint recommendations", () => {
   })
 
   it("prioritizes community and moderator authors before member authors", () => {
-    const viewer = "1".repeat(64)
-    const community = "2".repeat(64)
-    const moderator = "3".repeat(64)
-    const member = "4".repeat(64)
+    const viewer = testPubkey(1)
+    const community = testPubkey(2)
+    const moderator = testPubkey(3)
+    const member = testPubkey(4)
     const definition = makeDefinition({
       communityPubkey: community,
       listAddresses: [`${PROFILE_LIST_KIND}:${moderator}:Repositories`],
     })
     const authors = getCashuMintRecommendationAuthors({
       viewerPubkey: viewer,
-      follows: ["5".repeat(64)],
+      follows: [testPubkey(5)],
       communityRefs: [makeCommunityRef(definition)],
       profileListEvents: [makeProfileList({pubkey: moderator, members: [viewer, member]})],
     })
 
-    expect(authors.slice(0, 5)).toEqual([viewer, community, moderator, "5".repeat(64), member])
+    expect(authors.slice(0, 5)).toEqual([viewer, community, moderator, testPubkey(5), member])
   })
 
   it("keeps same-controller sibling recommendation evidence on exact addresses", () => {
-    const viewer = "1".repeat(64)
-    const controller = "2".repeat(64)
-    const moderatorA = "3".repeat(64)
-    const moderatorB = "4".repeat(64)
-    const recommender = "5".repeat(64)
+    const viewer = testPubkey(1)
+    const controller = testPubkey(2)
+    const moderatorA = testPubkey(3)
+    const moderatorB = testPubkey(4)
+    const recommender = testPubkey(5)
     const first = makeDefinition({
       communityPubkey: controller,
       identifier: "first",
@@ -333,9 +335,9 @@ describe("cashu mint recommendations", () => {
   })
 
   it("keeps same-ID branches distinct by controller address", () => {
-    const viewer = "1".repeat(64)
-    const firstController = "2".repeat(64)
-    const secondController = "3".repeat(64)
+    const viewer = testPubkey(1)
+    const firstController = testPubkey(2)
+    const secondController = testPubkey(3)
     const firstModerator = getPublicKey(new Uint8Array(32).fill(54))
     const secondModerator = getPublicKey(new Uint8Array(32).fill(55))
     const first = makeDefinition({

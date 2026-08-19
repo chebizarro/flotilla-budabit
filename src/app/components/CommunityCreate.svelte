@@ -52,6 +52,7 @@
     getCommunitySectionKindKey,
     getCommunitySectionKindLabel,
     getProfileListPubkeys,
+    getCommunitySectionPurposeV2,
     isHexPubkey,
     makeCommunityProfileListIdentifier,
     parseCommunityDefinitionV2,
@@ -1369,7 +1370,10 @@
       const section = sections[sectionIndex]
       if (!section) continue
 
-      const identifier = makeCommunityProfileListIdentifier(definition.communityId, section.name)
+      const purpose = getCommunitySectionPurposeV2(definition.communityId, section)
+      const identifier = purpose
+        ? makeCommunityProfileListIdentifier(definition.communityId, purpose)
+        : undefined
       if (!identifier) continue
       const setupProfileList: CommunityProfileListRefV2 = {
         address: `${PROFILE_LIST_KIND}:${owner}:${identifier}`,

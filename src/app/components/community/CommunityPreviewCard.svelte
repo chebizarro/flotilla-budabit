@@ -13,12 +13,9 @@
     type CommunityDefinitionV2,
     type CommunityPointer,
   } from "@app/core/community"
-  import {hydratePubkeyProfiles} from "@app/core/community-state"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
-  import ProfileSuggestion from "@app/editor/ProfileSuggestion.svelte"
-  import {deriveBudabitProfile, deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
-  import {formatShortNpub} from "@app/util/pubkeys"
+  import CommunitySuggestion from "@app/components/community/CommunitySuggestion.svelte"
 
   type Props = {
     community?: CommunityPointer
@@ -42,9 +39,8 @@
     onSubmit?: () => void
     inputSearch?: (term: string) => string[]
     onInputSelect?: (pubkey: string) => void
+    inputSuggestionDefinitions?: CommunityDefinitionV2[]
   }
-
-  const EMPTY_PUBKEY = "0".repeat(64)
 
   let {
     community,
@@ -68,20 +64,16 @@
     onSubmit = onOpen,
     inputSearch,
     onInputSelect,
+    inputSuggestionDefinitions = [],
   }: Props = $props()
 
   const inputTerm = writable(inputValue)
 
-  const pubkey = $derived(community?.controllerPubkey || "")
-  const profilePubkey = $derived(pubkey || EMPTY_PUBKEY)
-  const profileRelays = $derived(normalizeRelays(relayHints))
   const shareRelays = $derived(normalizeRelays(shareRelayHints))
-  const profile = $derived(deriveBudabitProfile(profilePubkey, {communityRelays: profileRelays}))
-  const profileDisplay = $derived(
-    deriveBudabitProfileDisplay(profilePubkey, {communityRelays: profileRelays}),
-  )
   const fallbackName = $derived(
-    community ? formatShortNpub(pubkey) || "Unknown community" : "No community selected",
+    community
+      ? `${community.naddr.slice(0, 18)}...${community.naddr.slice(-8)}`
+      : "No community selected",
   )
   const name = $derived(
     notFound
@@ -89,7 +81,7 @@
       : unavailable
         ? "Community unavailable"
         : community
-          ? definition?.metadata.name || $profileDisplay || fallbackName
+          ? definition?.metadata.name || fallbackName
           : fallbackName,
   )
   const info = $derived(
@@ -102,19 +94,15 @@
           : loading
             ? "Looking for a community definition..."
             : community
-              ? definition?.metadata.description ||
-                $profile?.about ||
-                profileRelays[0] ||
-                fallbackName
+              ? definition?.metadata.description || "Community definition metadata unavailable."
               : emptyInfo,
   )
-  let profileHydrationKey = ""
   let failedPicture = $state("")
   let inputElement: Element | undefined = $state()
   let inputPopover: Instance | undefined = $state()
   let inputSuggestions: {onKeyDown?: (event: Event) => boolean} | undefined = $state()
 
-  const picture = $derived(String(definition?.metadata.picture || $profile?.picture || "").trim())
+  const picture = $derived(String(definition?.metadata.picture || "").trim())
   const showPicture = $derived(Boolean(picture && failedPicture !== picture))
 
   const submit = () => onSubmit?.()
@@ -148,14 +136,6 @@
     const value = $inputTerm
 
     if (inputValue !== value) inputValue = value
-  })
-
-  $effect(() => {
-    const key = pubkey ? `${pubkey}:${profileRelays.join(",")}` : ""
-    if (!key || profileHydrationKey === key) return
-
-    profileHydrationKey = key
-    hydratePubkeyProfiles({pubkeys: [pubkey], relayHints: profileRelays}).catch(() => {})
   })
 </script>
 
@@ -241,7 +221,8 @@
               term: inputTerm,
               search: searchInputSuggestions,
               select: selectInputSuggestion,
-              component: ProfileSuggestion,
+              component: CommunitySuggestion,
+              componentProps: {definitions: inputSuggestionDefinitions},
               showEmpty: false,
               throttleMs: 0,
               style: `left: 4px; width: ${(inputElement?.clientWidth || 0) + 12}px`,

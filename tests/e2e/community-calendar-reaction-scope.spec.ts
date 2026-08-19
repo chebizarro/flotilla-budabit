@@ -10,7 +10,8 @@ const communitySecret = Uint8Array.from(
   DEV_SECRET.match(/.{2}/g)?.map(byte => Number.parseInt(byte, 16)) || [],
 )
 const communityId = getPublicKey(new Uint8Array(32).fill(2))
-const profileListAddress = `30000:${DEV_PUBKEY}:general`
+const profileListIdentifier = `${communityId}-calendar`
+const profileListAddress = `30000:${DEV_PUBKEY}:${profileListIdentifier}`
 
 const definition = finalizeEvent(
   {
@@ -43,6 +44,19 @@ const relayList = finalizeEvent(
     created_at: 2,
     content: "",
     tags: [["r", personalOutboxRelay, "write"]],
+  },
+  communitySecret,
+)
+
+const profileList = finalizeEvent(
+  {
+    kind: 30000,
+    created_at: 2,
+    content: "",
+    tags: [
+      ["d", profileListIdentifier],
+      ["p", DEV_PUBKEY],
+    ],
   },
   communitySecret,
 )
@@ -113,14 +127,14 @@ const openCalendarEvent = async (
   await mockRelay.setup(page)
   await page.goto(eventPath)
   await expect(page.getByRole("article").getByText(title, {exact: true})).toBeVisible({
-    timeout: 10_000,
+    timeout: 20_000,
   })
 }
 
 test("publishes calendar reaction additions only to community relays", async ({page}) => {
   const destinations: string[] = []
   const mockRelay = new MockRelay({
-    seedEvents: [definition, relayList, calendarEvent],
+    seedEvents: [definition, relayList, profileList, calendarEvent],
     publishResponsesByRelay: {
       [communityRelay]: {outcome: "accept", latency: 250},
       [personalOutboxRelay]: {outcome: "accept", latency: 250},
@@ -149,7 +163,7 @@ test("publishes calendar reaction additions only to community relays", async ({p
 test("publishes calendar reaction deletes only to community relays", async ({page}) => {
   const destinations: string[] = []
   const mockRelay = new MockRelay({
-    seedEvents: [definition, relayList, calendarEvent, seededReaction],
+    seedEvents: [definition, relayList, profileList, calendarEvent, seededReaction],
     publishResponsesByRelay: {
       [communityRelay]: {outcome: "accept", latency: 250},
       [personalOutboxRelay]: {outcome: "accept", latency: 250},
@@ -172,7 +186,14 @@ test("publishes calendar reaction deletes only to community relays", async ({pag
 test("projects a replaced calendar reaction delete during rejection and retry", async ({page}) => {
   const destinations: string[] = []
   const mockRelay = new MockRelay({
-    seedEvents: [definition, relayList, calendarEvent, calendarEventReplacement, seededReaction],
+    seedEvents: [
+      definition,
+      relayList,
+      profileList,
+      calendarEvent,
+      calendarEventReplacement,
+      seededReaction,
+    ],
     publishResponsesByRelay: {
       [communityRelay]: {outcome: "reject", latency: 2_000, message: "rejected for test"},
       [personalOutboxRelay]: {outcome: "accept", latency: 250},

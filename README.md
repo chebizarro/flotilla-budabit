@@ -81,7 +81,7 @@ The application will be available at `http://localhost:1847`. The dev server use
 
 Budabit combines Communikey communities with decentralized Git functionality through the Nostr Git protocol:
 
-- **Communikey Communities**: Select a community by hex pubkey, `npub`, or `ncommunity`; community definitions provide relays, sections, permissions, and media servers
+- **Communikey Communities**: Select an exact `kind:32222` community branch by its canonical definition `naddr`; definition tags provide metadata, relays, sections, permissions, and media servers
 - **Decentralized Git Repositories**: Discover and manage Git repositories using Nostr relays and Git remotes
 - **Issue And Pull Request Tracking**: Create, manage, and discuss issues and PRs with Nostr-native status updates
 - **Community Catalogs**: Target repositories, calendar events, goals, permalinks, and widgets to `/c/<community>` pages
@@ -105,7 +105,7 @@ App identity and branding:
 
 Community, relay, and discovery defaults:
 
-- `VITE_DEFAULT_COMMUNITY` - Optional recommended starting community as a hex pubkey, `npub`, or `ncommunity`
+- `VITE_DEFAULT_COMMUNITY` - Optional recommended starting community as a canonical `kind:32222` definition `naddr`
 - `VITE_INDEXER_RELAYS` - Optional comma-separated relay URLs used for discovery and community bootstrap
 - `VITE_SIGNER_RELAYS` - Comma-separated relays used for NIP-46 signer discovery
 - `VITE_DEFAULT_BLOSSOM_SERVERS` - Fallback Blossom media servers for uploads

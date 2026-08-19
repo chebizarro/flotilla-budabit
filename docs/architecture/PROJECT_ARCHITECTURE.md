@@ -1,6 +1,6 @@
 # Budabit - Code Flow Overview
 
-This document explains the overall flow of the codebase, with emphasis on Git-related functionality and the role of workers. Budabit's current app shell is community-first: communities are keyed by Communikey pubkeys under `/c/[community]`, while repository collaboration has a canonical top-level `/git` route family.
+This document explains the overall flow of the codebase, with emphasis on Git-related functionality and the role of workers. Budabit's current app shell is community-first: exact Communikey branches are keyed by canonical `kind:32222` definition `naddr` values under `/c/[community]`, while repository collaboration has a canonical top-level `/git` route family.
 
 ## Project Structure
 
@@ -161,24 +161,24 @@ let progress = $state<ForkProgress[]>([])
 
 ## Community Bootstrap
 
-Communities are identified by a pubkey, not by a relay URL.
+Community branches are identified by exact `32222:<controller>:<communityId>` definition addresses, not by a pubkey or relay URL.
 
-- `src/app/core/community.ts` parses hex pubkeys, `npub`, and `ncommunity://...` values. `ncommunity` relay hints are preserved and used first.
-- `src/app/core/community-state.ts` stores the active community session, loads the latest `kind:10222` definition, resolves profile lists, admission forms, moderator requests, reports, and user/community refs, and persists the active session in local storage.
+- `src/app/core/community.ts` parses canonical definition `naddr` values containing kind `32222`, the controller, `communityId`, and optional relay hints.
+- `src/app/core/community-state.ts` stores the active exact branch, resolves its current `kind:32222` definition, profile lists, admission forms, moderator requests, reports, and user/community refs, and persists the active session in local storage.
 - `src/routes/c/[community]/+layout.svelte` activates the route community, hydrates bootstrap data, and provides the shell for community pages.
-- Section definitions in `kind:10222` map community content to rooms, threads, calendar events, goals, repositories, permalinks, widgets, badges, moderation, and admin/access surfaces.
+- Section definitions in `kind:32222` map community content to rooms, threads, calendar events, goals, repositories, permalinks, widgets, badges, moderation, and admin/access surfaces. Definition tags are the only community metadata source.
 
 ---
 
 ## Extension Architecture
 
-Budabit does not bundle extension code. On startup, `src/app/extensions/builtin.ts` resolves the hardcoded default community, validates its latest `kind:10222` definition, and treats that community's curated `kind:30033` widgets as default extensions.
+Budabit does not bundle extension code. On startup, `src/app/extensions/builtin.ts` resolves the hardcoded exact definition `naddr` and treats `kind:30033` widgets targeted to that branch through stable `h` plus marked exact definition `a` pairs as default extensions.
 
 Default community extensions are overlaid into effective extension settings as installed and enabled. Users can disable them, which unloads the runtime and hides enabled surfaces, but they cannot uninstall them because they are not stored as user-installed extension records.
 
 Budabit supports these install and discovery paths:
 
-- Community-curated Smart Widget `kind:30033` events targeted through `kind:30222` by a valid `kind:10222` community.
+- Community-curated Smart Widget `kind:30033` events targeted through `kind:30222` wrappers carrying adjacent `h=<communityId>` and `a=<definitionAddress>` with marker `community`; community association is not a `p` tag.
 - Direct Smart Widget `naddr` installs from Settings > Extensions > Advanced.
 
 Runtime pieces:
@@ -267,7 +267,7 @@ The `RepoCore` class in `repo-core.ts` orchestrates Nostr-based git workflows, i
 
 GRASP and Nostr Git paths are compiled in unless `FEATURE_GRASP=0`. Experimental CI/CD hooks require `FEATURE_CICD=1`.
 
-Notification settings are always available. Git email digest providers are discovered from verified `kind:10222` community definitions and selected explicitly per account.
+Notification settings are always available. Git email digest providers are discovered from verified exact `kind:32222` community definitions and selected explicitly per account.
 
 ---
 

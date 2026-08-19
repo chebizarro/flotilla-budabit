@@ -1,5 +1,6 @@
 import {describe, expect, it} from "vitest"
 import {BADGE_DEFINITION, EVENT_DATE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
+import {getPublicKey} from "nostr-tools/pure"
 import {
   COMMUNITY_DEFINITION_KIND_V2,
   COMMUNITY_SECTION_CALENDAR,
@@ -16,8 +17,8 @@ import {
   sectionSupportsKind,
 } from "./community"
 
-const pubkeyA = "a".repeat(64)
-const pubkeyB = "b".repeat(64)
+const pubkeyA = getPublicKey(new Uint8Array(32).fill(1))
+const pubkeyB = getPublicKey(new Uint8Array(32).fill(2))
 
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
@@ -74,6 +75,9 @@ describe("community shared helpers", () => {
         ["d", "General"],
         ["p", pubkeyA],
         ["p", pubkeyB],
+        ["p", pubkeyA.toUpperCase()],
+        ["p", "npub1invalid"],
+        ["p", "f".repeat(64)],
         ["p", "invalid"],
       ],
     })

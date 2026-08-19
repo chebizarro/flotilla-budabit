@@ -14,6 +14,7 @@ import {
   FORM_RESPONSE_KIND,
   PROFILE_LIST_KIND,
   TARGETED_PUBLICATION_KINDS,
+  makeTargetedPublicationLifecycleFiltersV2,
   parseTargetedPublicationV2,
 } from "@app/core/community"
 import {
@@ -43,6 +44,7 @@ type CommunityLiveFilterInput = {
 type CommunityFiniteFollowUpFilterInput = {
   authorityDefinition: CommunityDefinitionV2
   targetingEvents: TrustedEvent[]
+  targetingCandidateEvents?: TrustedEvent[]
   admissionResponseIds: string[]
   reportEvents: TrustedEvent[]
   moderatorRequests: ModeratorPromotionRequest[]
@@ -203,12 +205,14 @@ export const buildCommunityLiveFilters = ({
 export const buildCommunityFiniteFollowUpFilters = ({
   authorityDefinition,
   targetingEvents,
+  targetingCandidateEvents,
   admissionResponseIds,
   reportEvents,
   moderatorRequests,
   moderatorRequestReactionEvents,
 }: CommunityFiniteFollowUpFilterInput) => {
   const filters: Filter[] = [
+    ...makeTargetedPublicationLifecycleFiltersV2(targetingCandidateEvents || targetingEvents),
     ...makeTargetedPublicationOriginalFilterPlan(targetingEvents).relayFilters,
     ...chunkFiltersByTag(
       makeCommunityModeratorRequestReactionFilters(authorityDefinition, moderatorRequests),
@@ -239,8 +243,11 @@ const buildCommunityWorkflowFollowUpFilters = ({
   reportEvents,
   moderatorRequests,
   moderatorRequestReactionEvents,
+  targetingCandidateEvents,
+  targetingEvents,
 }: CommunityFiniteFollowUpFilterInput) => {
   const filters: Filter[] = [
+    ...makeTargetedPublicationLifecycleFiltersV2(targetingCandidateEvents || targetingEvents),
     ...chunkFiltersByTag(
       makeCommunityModeratorRequestReactionFilters(authorityDefinition, moderatorRequests),
       "#e",

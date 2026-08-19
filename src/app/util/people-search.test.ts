@@ -215,7 +215,7 @@ describe("people-search", () => {
 
   it("collects people from community profile lists", () => {
     const listOwner = "e".repeat(64)
-    const member = "f".repeat(64)
+    const member = getPublicKey(new Uint8Array(32).fill(9))
     const unrelated = "0".repeat(64)
 
     const pubkeys = getCommunityPeoplePubkeys({

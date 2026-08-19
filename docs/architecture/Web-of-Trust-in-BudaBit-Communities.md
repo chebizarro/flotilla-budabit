@@ -8,20 +8,20 @@ Social Nostr signals remain useful because users may carry valuable context from
 
 ## Policy Summary
 
-| Policy | Decision |
-| --- | --- |
-| Primary trust source | Communikey communities defined by kind `10222` and their referenced kind `30000` profile lists. |
-| Community infrastructure | The latest valid kind `10222` definition is authoritative for infrastructure declared by that community. |
+| Policy                               | Decision                                                                                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Primary trust source                 | Exact Communikey branches defined by kind `32222` and their referenced kind `30000` profile lists.                                                     |
+| Community infrastructure             | The current valid event at an exact `32222:<controller>:<communityId>` address is authoritative for that branch.                                       |
 | Person-level infrastructure evidence | Kinds `10063` and `10317` describe user server choices; `10019` is Nutzap receiving configuration whose mint tags may provide recommendation evidence. |
-| Infrastructure recommendations | An eligible, non-renounced community declaration is viable evidence, but configuration requires an explicit **Add**. |
-| Social graph depth | Direct only. Do not calculate a 2-hop follows-of-follows graph for BudaBit trust. |
-| Direct follows | Small positive discovery/order signal. |
-| Direct mutes | Small negative discovery/order signal, not a hard veto. |
-| Reports | Community-contextual negative signal from current admins and moderators; report penalty weighs twice a mute. |
-| Report reasons | Any reason counts. Trust policy should not special-case only `spam`. |
-| Community bans | Conspicuous and contextual. Suppress community-bound content in that community, but do not create global distrust. |
-| Overlay cap | Direct follows, mutes, and report penalties must not outweigh even the weakest valid community-based score. |
-| UI output | Show semantic connections and counts, never raw compound trust scores. |
+| Infrastructure recommendations       | An eligible, non-renounced community declaration is viable evidence, but configuration requires an explicit **Add**.                                   |
+| Social graph depth                   | Direct only. Do not calculate a 2-hop follows-of-follows graph for BudaBit trust.                                                                      |
+| Direct follows                       | Small positive discovery/order signal.                                                                                                                 |
+| Direct mutes                         | Small negative discovery/order signal, not a hard veto.                                                                                                |
+| Reports                              | Community-contextual negative signal from current admins and moderators; report penalty weighs twice a mute.                                           |
+| Report reasons                       | Any reason counts. Trust policy should not special-case only `spam`.                                                                                   |
+| Community bans                       | Conspicuous and contextual. Suppress community-bound content in that community, but do not create global distrust.                                     |
+| Overlay cap                          | Direct follows, mutes, and report penalties must not outweigh even the weakest valid community-based score.                                            |
+| UI output                            | Show semantic connections and counts, never raw compound trust scores.                                                                                 |
 
 ## Why Direct Social Signals Are Enough
 
@@ -29,34 +29,34 @@ The previous Welshman-derived graph used kind `3` follows and kind `10000` mutes
 
 Profile discovery now keeps transport and ordering separate. Welshman's `profileSearch` performs NIP-50 loading, NIP-05 validation, and text-relevance matching without applying a trust graph. BudaBit's `peopleDiscoverySearch` adapter applies community, repository, and direct-social ordering to those raw matches. This keeps relay selection and profile hydration independent from trust-policy changes.
 
-| Concern | 2-hop social WoT | Direct-only social overlay |
-| --- | --- | --- |
-| Performance | Requires loading many follows and mutes for many followed users. Hundreds of follows can fan out into large relay requests. | Requires only the viewer's direct lists and relevant community data. |
-| Explainability | Hard to explain why a user was ranked or trusted. | Easy to explain with labels like `You follow` or `Muted by you`. |
-| Product fit | Biases toward social-media popularity and relationships outside BudaBit. | Keeps social context as a weak personal signal. |
-| Abuse surface | Large social graphs can import off-topic popularity or drama. | Lower blast radius and clearer provenance. |
-| UI semantics | Usually collapses into opaque numeric trust. | Supports concrete badges and counts. |
+| Concern        | 2-hop social WoT                                                                                                            | Direct-only social overlay                                           |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Performance    | Requires loading many follows and mutes for many followed users. Hundreds of follows can fan out into large relay requests. | Requires only the viewer's direct lists and relevant community data. |
+| Explainability | Hard to explain why a user was ranked or trusted.                                                                           | Easy to explain with labels like `You follow` or `Muted by you`.     |
+| Product fit    | Biases toward social-media popularity and relationships outside BudaBit.                                                    | Keeps social context as a weak personal signal.                      |
+| Abuse surface  | Large social graphs can import off-topic popularity or drama.                                                               | Lower blast radius and clearer provenance.                           |
+| UI semantics   | Usually collapses into opaque numeric trust.                                                                                | Supports concrete badges and counts.                                 |
 
 Direct follows are useful because the viewer intentionally expressed interest in that person. Direct mutes are useful because the viewer intentionally expressed friction with that person. Neither signal should decide software collaboration trust on its own.
 
 ## Trust Sources
 
-| Source | Nostr data | Scope | Role in trust |
-| --- | --- | --- | --- |
-| Community definition | Kind `10222` authored by the community pubkey | Community | Defines sections, relays, and profile-list refs. |
-| Profile lists | Kind `30000` referenced by a community definition | Community section | Defines moderators and members/grantees. |
-| Admin role | Community definition author | Community | Strongest community authority. |
-| Moderator role | Owner of a referenced profile list with loaded evidence | Community section | Strong community authority for grants, reports, and repo associations. |
-| Member/grantee role | Pubkey listed in a referenced profile list | Community section | Basic community participation and write-access evidence. |
-| Repo association | Community targeting/association event such as kind `30222` for a repo | Repo plus community | Gives a repo a community trust context. |
-| Direct follow | Viewer kind `3` list | Viewer personal | Small positive discovery/order signal. |
-| Direct mute | Viewer kind `10000` list | Viewer personal | Small negative discovery/order signal. |
-| Community report | Effective report from current admin/moderator | Community | Negative contextual moderation evidence. |
-| Community ban | Effective person report/ban in a community | Community | Suppresses community-bound content and strongly degrades context-specific trust. |
+| Source               | Nostr data                                                            | Scope               | Role in trust                                                                    |
+| -------------------- | --------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------- |
+| Community definition | Kind `32222` at an exact controller and `d=<communityId>` coordinate  | Community branch    | Defines metadata, sections, relays, and profile-list refs.                       |
+| Profile lists        | Kind `30000` referenced by a community definition                     | Community section   | Defines moderators and members/grantees.                                         |
+| Admin role           | Community definition author                                           | Community           | Strongest community authority.                                                   |
+| Moderator role       | Owner of a referenced profile list with loaded evidence               | Community section   | Strong community authority for grants, reports, and repo associations.           |
+| Member/grantee role  | Pubkey listed in a referenced profile list                            | Community section   | Basic community participation and write-access evidence.                         |
+| Repo association     | Community targeting/association event such as kind `30222` for a repo | Repo plus community | Gives a repo a community trust context.                                          |
+| Direct follow        | Viewer kind `3` list                                                  | Viewer personal     | Small positive discovery/order signal.                                           |
+| Direct mute          | Viewer kind `10000` list                                              | Viewer personal     | Small negative discovery/order signal.                                           |
+| Community report     | Effective report from current admin/moderator                         | Community           | Negative contextual moderation evidence.                                         |
+| Community ban        | Effective person report/ban in a community                            | Community           | Suppresses community-bound content and strongly degrades context-specific trust. |
 
 ## Infrastructure Recommendation Policy
 
-Community infrastructure discovery uses a direct authority rule rather than the compound person-trust score. The latest valid `kind:10222` definition is authoritative for its community's infrastructure. Ordered `["grasp", "wss://..."]` tags declare GRASP servers the community endorses or offers to members; `g` remains a geohash.
+Community infrastructure discovery uses a direct authority rule rather than the compound person-trust score. The current valid `kind:32222` definition at the selected exact address is authoritative for that branch's metadata and infrastructure. Ordered `["grasp", "wss://..."]` tags declare GRASP servers the community endorses or offers to members; `g` remains a geohash. The stable community ID has no person or signing meaning.
 
 A user's `kind:10063` Blossom and `kind:10317` GRASP lists remain person-level evidence and do not override community declarations. NIP-61 `kind:10019` remains Nutzap receiving configuration; only its mint tags may contribute person-level recommendation evidence. Budabit does not automatically dual-publish these events from community declarations or publish matching community declarations from them. Infrastructure declared by an eligible, non-renounced community remains a viable recommendation, but a recommendation never changes configuration until the user explicitly chooses **Add**.
 
@@ -64,27 +64,27 @@ A user's `kind:10063` Blossom and `kind:10317` GRASP lists remain person-level e
 
 Trust should be assembled in ordered layers. Higher layers decide whether content is personally or community relevant before weaker overlays are considered.
 
-| Priority | Layer | Examples | Intended effect |
-| --- | --- | --- | --- |
-| 1 | Personal ownership and stars | Repos owned by viewer, repos starred by viewer | Always rank first in repo discovery. |
-| 2 | Repo community context | Repo associated with the active or selected community | Uses the associated community as the strongest trust context for that repo. |
-| 3 | Community role evidence | Admin, moderator, member, section grant | Main trust graph for BudaBit collaboration. |
-| 4 | Community moderation evidence | Reports, event censors, person bans | Degrades or suppresses trust inside the relevant community. |
-| 5 | Direct social overlay | You follow, muted by you | Helps with discovery and ordering only. |
-| 6 | Known repository fallback | Known repo owners from loaded events | Discovery fallback with no trust claim. |
+| Priority | Layer                         | Examples                                              | Intended effect                                                             |
+| -------- | ----------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| 1        | Personal ownership and stars  | Repos owned by viewer, repos starred by viewer        | Always rank first in repo discovery.                                        |
+| 2        | Repo community context        | Repo associated with the active or selected community | Uses the associated community as the strongest trust context for that repo. |
+| 3        | Community role evidence       | Admin, moderator, member, section grant               | Main trust graph for BudaBit collaboration.                                 |
+| 4        | Community moderation evidence | Reports, event censors, person bans                   | Degrades or suppresses trust inside the relevant community.                 |
+| 5        | Direct social overlay         | You follow, muted by you                              | Helps with discovery and ordering only.                                     |
+| 6        | Known repository fallback     | Known repo owners from loaded events                  | Discovery fallback with no trust claim.                                     |
 
 ## Community Role Policy
 
 Community roles are the core positive trust evidence.
 
-| Evidence | Minimum meaning | Suggested internal strength | Human label examples |
-| --- | --- | --- | --- |
-| Viewer | The logged-in user | Highest personal baseline | `You` |
-| Community admin | Target authored the relevant kind `10222` definition | Very strong | `Community admin` |
-| Section moderator | Target owns a loaded profile list referenced by a section | Strong | `Moderator`, `Repo moderator` |
-| Community member/grantee | Target appears in a referenced profile list | Basic community trust | `Community member`, `Can participate` |
-| Shared section | Viewer and target can write in the same section | Small additive context | `Shared Repo curator section` |
-| Multiple shared communities | Viewer and target overlap in more than one community | Diminishing additive context | `3 shared communities` |
+| Evidence                    | Minimum meaning                                            | Suggested internal strength  | Human label examples                  |
+| --------------------------- | ---------------------------------------------------------- | ---------------------------- | ------------------------------------- |
+| Viewer                      | The logged-in user                                         | Highest personal baseline    | `You`                                 |
+| Community admin             | Target controls the relevant exact kind `32222` definition | Very strong                  | `Community admin`                     |
+| Section moderator           | Target owns a loaded profile list referenced by a section  | Strong                       | `Moderator`, `Repo moderator`         |
+| Community member/grantee    | Target appears in a referenced profile list                | Basic community trust        | `Community member`, `Can participate` |
+| Shared section              | Viewer and target can write in the same section            | Small additive context       | `Shared Repo curator section`         |
+| Multiple shared communities | Viewer and target overlap in more than one community       | Diminishing additive context | `3 shared communities`                |
 
 The weakest valid community role must be stronger than the strongest possible aggregate social overlay. This ensures social-media relationships cannot outweigh community membership or grants.
 
@@ -92,12 +92,12 @@ The weakest valid community role must be stronger than the strongest possible ag
 
 Direct social signals are personal context, not BudaBit trust. Community reports are moderation evidence, not social gossip. Both kinds of overlay can affect ordering or contextual degradation, but they must remain bounded so they do not outweigh basic community evidence.
 
-| Signal | Suggested unit | UI label | Notes |
-| --- | --- | --- | --- |
-| Viewer directly follows target | `+1` | `You follow` | Positive discovery/order signal. |
-| Viewer directly mutes target | `-1` | `Muted by you` | Negative ordering signal, not a veto. |
-| Relevant community report | `-2` | `Reported here` or `Moderation reports` | Weighs twice a mute. Applies in the report's community context. |
-| Overlay cap | Absolute value below basic community membership | Not shown | Prevents direct social signals and report penalties from outweighing community evidence. |
+| Signal                         | Suggested unit                                  | UI label                                | Notes                                                                                    |
+| ------------------------------ | ----------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Viewer directly follows target | `+1`                                            | `You follow`                            | Positive discovery/order signal.                                                         |
+| Viewer directly mutes target   | `-1`                                            | `Muted by you`                          | Negative ordering signal, not a veto.                                                    |
+| Relevant community report      | `-2`                                            | `Reported here` or `Moderation reports` | Weighs twice a mute. Applies in the report's community context.                          |
+| Overlay cap                    | Absolute value below basic community membership | Not shown                               | Prevents direct social signals and report penalties from outweighing community evidence. |
 
 There should be no `Social-known` badge in the direct-only model. If the only positive social evidence is a direct follow, the UI should say `You follow`. If there is no direct follow, direct mute, or report evidence, there is no social label.
 
@@ -105,16 +105,16 @@ There should be no `Social-known` badge in the direct-only model. If the only po
 
 Reports are moderation evidence, not social gossip. BudaBit should use reports from current community authorities.
 
-| Rule | Policy |
-| --- | --- |
-| Report authors | Current community admins and moderators. |
-| Report reasons | Any reason counts. Do not restrict trust calculations to `spam`. |
-| Person reports | Apply directly to the reported pubkey in that community. |
-| Event reports | Apply to the event author when resolvable. |
-| Event report scope | Section-scoped when the report is section-scoped. |
-| Person ban scope | Community-wide within the reporting community. |
-| Weight | A report penalty counts twice as much as a mute. |
-| Global effect | No global distrust signal. Reports only matter in relevant community contexts. |
+| Rule               | Policy                                                                         |
+| ------------------ | ------------------------------------------------------------------------------ |
+| Report authors     | Current community admins and moderators.                                       |
+| Report reasons     | Any reason counts. Do not restrict trust calculations to `spam`.               |
+| Person reports     | Apply directly to the reported pubkey in that community.                       |
+| Event reports      | Apply to the event author when resolvable.                                     |
+| Event report scope | Section-scoped when the report is section-scoped.                              |
+| Person ban scope   | Community-wide within the reporting community.                                 |
+| Weight             | A report penalty counts twice as much as a mute.                               |
+| Global effect      | No global distrust signal. Reports only matter in relevant community contexts. |
 
 Community report evidence should be based on effective moderation state, meaning deleted reports are ignored and removed moderators do not continue to provide valid authority. This matches the existing community moderation model where bans and event censors are explicit, reversible, and auditable.
 
@@ -124,13 +124,13 @@ Side note: BudaBit may enable member-authored reporting on events as a moderatio
 
 Community bans should be visible and contextual.
 
-| Context | Effect |
-| --- | --- |
-| Active community feed/catalog | Hide or suppress community-bound content by a person banned in that community. |
+| Context                        | Effect                                                                                        |
+| ------------------------------ | --------------------------------------------------------------------------------------------- |
+| Active community feed/catalog  | Hide or suppress community-bound content by a person banned in that community.                |
 | Community-bound repo discovery | Do not load or present that person's repo as endorsed by the community where they are banned. |
-| Canonical repo route | The repo can still be viewed outside the community context if otherwise resolvable. |
-| Profile page | Show conspicuous context such as `Banned in this community` when relevant. |
-| Other communities | Do not carry the ban as a global negative signal. |
+| Canonical repo route           | The repo can still be viewed outside the community context if otherwise resolvable.           |
+| Profile page                   | Show conspicuous context such as `Banned in this community` when relevant.                    |
+| Other communities              | Do not carry the ban as a global negative signal.                                             |
 
 Bans should not mutate profile-list grants or membership history. They are an override layer. When a ban is revoked, historical grants can become relevant again unless separately revoked.
 
@@ -138,14 +138,14 @@ Bans should not mutate profile-list grants or membership history. They are an ov
 
 Repositories need context. A repo associated with a community should be evaluated first through that community.
 
-| Association evidence | Trust treatment |
-| --- | --- |
-| Association to active community exists | The active community becomes the primary repo trust context. |
-| Association was made by a current admin or Repo curator moderator | Strong association evidence. |
-| Association was made by a user with current Repo curator write grant | Valid association evidence. |
-| Association was made by someone without current repo-scoped authority | Weak or ignored association evidence. |
-| Associating user is banned in that community | Association should not endorse the repo in that community. |
-| Repo owner is banned in that community | Do not show the repo as community-bound there. |
+| Association evidence                                                  | Trust treatment                                              |
+| --------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Association to active community exists                                | The active community becomes the primary repo trust context. |
+| Association was made by a current admin or Repo curator moderator     | Strong association evidence.                                 |
+| Association was made by a user with current Repo curator write grant  | Valid association evidence.                                  |
+| Association was made by someone without current repo-scoped authority | Weak or ignored association evidence.                        |
+| Associating user is banned in that community                          | Association should not endorse the repo in that community.   |
+| Repo owner is banned in that community                                | Do not show the repo as community-bound there.               |
 
 The important distinction is that a repo-community link is not equally meaningful from every author. If the association was made by someone who had a repo-scoped grant or authority to publish repository content in that community, that association should be trusted more than a random targeting event.
 
@@ -153,15 +153,15 @@ The important distinction is that a repo-community link is not equally meaningfu
 
 Repo discovery should put personally intentional signals first, then community context, then social hints.
 
-| Order | Bucket | Rationale |
-| --- | --- | --- |
-| 1 | Viewer-owned repos | The user should always see their own work first. |
-| 2 | Starred repos | Stars are explicit personal curation. |
-| 3 | Active or selected community repos | The current community context is the app's primary collaboration surface. |
-| 4 | Preferred/shared community repos | Community participation is stronger than social media context. |
-| 5 | Community-associated owners/contributors | Useful when the repo is not directly in the active catalog. |
-| 6 | Direct follows | Useful social discovery, but not collaboration trust. |
-| 7 | Known repo owners | Fallback from already loaded repository events. |
+| Order | Bucket                                   | Rationale                                                                 |
+| ----- | ---------------------------------------- | ------------------------------------------------------------------------- |
+| 1     | Viewer-owned repos                       | The user should always see their own work first.                          |
+| 2     | Starred repos                            | Stars are explicit personal curation.                                     |
+| 3     | Active or selected community repos       | The current community context is the app's primary collaboration surface. |
+| 4     | Preferred/shared community repos         | Community participation is stronger than social media context.            |
+| 5     | Community-associated owners/contributors | Useful when the repo is not directly in the active catalog.               |
+| 6     | Direct follows                           | Useful social discovery, but not collaboration trust.                     |
+| 7     | Known repo owners                        | Fallback from already loaded repository events.                           |
 
 Text relevance and recency can sort within each bucket. Internal trust scores can break ties, but the UI should describe the bucket and evidence rather than showing the score.
 
@@ -169,10 +169,10 @@ Text relevance and recency can sort within each bucket. Internal trust scores ca
 
 People search uses separate community and repository contexts that can be combined when a repository has a relevant community.
 
-| Context | Primary ordering evidence |
-| --- | --- |
-| Global | Exact identity, recent conversation where applicable, shared community roles, direct follows, known profiles. |
-| Community | Admin, moderator, and member evidence from the selected community, followed by direct social and known-profile fallbacks. |
+| Context    | Primary ordering evidence                                                                                                                                       |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Global     | Exact identity, recent conversation where applicable, shared community roles, direct follows, known profiles.                                                   |
+| Community  | Admin, moderator, and member evidence from the selected community, followed by direct social and known-profile fallbacks.                                       |
 | Repository | Repository owner, maintainers declared in the owner's current kind `30617` announcement, then repository-community evidence, direct social, and known profiles. |
 
 Repository authority is independent from community authority. A community admin or moderator is not a repository maintainer unless the repository owner declared them. Conversely, an owner-declared maintainer remains repository authority even when they have no community role.
@@ -183,53 +183,53 @@ For a published repository, a parsed community binding contributes community ord
 
 Repo and PR surfaces should not render community-evidence labels, trust badges, or trust filters. Profiles can still show relationship evidence in profile modals or explicit profile analysis views. Repo-scoped Git evidence is separate from community trust evidence and may be shown where it is explicitly tied to the current repo.
 
-| Current concept | Direction |
-| --- | --- |
-| Trusted author on PRs | Do not show on PR or repo pages. Profile modals carry profile evidence instead. |
-| Verified maintainer | May show only in repo contexts when the current repo owner has marked at least one PR from a currently declared maintainer as merged. This is Git collaboration evidence, not community trust. |
-| Trusted collaborators | Keep collaboration evidence behind profile-focused analysis. |
-| Social-only trusted actor | Do not count as trusted. Use only profile/search context where appropriate. |
-| Raw trust score | Never display. |
+| Current concept           | Direction                                                                                                                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trusted author on PRs     | Do not show on PR or repo pages. Profile modals carry profile evidence instead.                                                                                                                |
+| Verified maintainer       | May show only in repo contexts when the current repo owner has marked at least one PR from a currently declared maintainer as merged. This is Git collaboration evidence, not community trust. |
+| Trusted collaborators     | Keep collaboration evidence behind profile-focused analysis.                                                                                                                                   |
+| Social-only trusted actor | Do not count as trusted. Use only profile/search context where appropriate.                                                                                                                    |
+| Raw trust score           | Never display.                                                                                                                                                                                 |
 
 Examples of acceptable UI phrases:
 
-| UI phrase | Why it is acceptable |
-| --- | --- |
-| `3 shared communities` | Count-based and understandable. |
-| `You follow` | Concrete direct social reason. |
-| `Banned here` | Conspicuous contextual moderation state. |
+| UI phrase              | Why it is acceptable                     |
+| ---------------------- | ---------------------------------------- |
+| `3 shared communities` | Count-based and understandable.          |
+| `You follow`           | Concrete direct social reason.           |
+| `Banned here`          | Conspicuous contextual moderation state. |
 
 Examples to avoid:
 
-| UI phrase | Problem |
-| --- | --- |
-| `Trust score: 7` | Opaque compound algorithm. |
-| `Trusted` with only a direct follow | Overstates social context. |
-| `Globally distrusted` | BudaBit does not create global distrust from community reports. |
+| UI phrase                           | Problem                                                         |
+| ----------------------------------- | --------------------------------------------------------------- |
+| `Trust score: 7`                    | Opaque compound algorithm.                                      |
+| `Trusted` with only a direct follow | Overstates social context.                                      |
+| `Globally distrusted`               | BudaBit does not create global distrust from community reports. |
 
 ## Context-Specific Decisions
 
-| Surface | Trust behavior |
-| --- | --- |
-| Community feeds | Use community bans and event reports to suppress content in that community. |
-| Community repo catalog | Prefer validated repo associations and suppress banned owners/associators. |
-| Canonical repo page | Show community context if known, but do not hide the repo solely because of a community ban elsewhere. |
-| PR list | Do not show, sort, or filter by community evidence. |
-| Profile page | Show common communities, community roles, and relevant bans/reports as semantic evidence. |
-| Settings | Describe BudaBit trust as community-based, not provider-based or social-rank-based. |
+| Surface                | Trust behavior                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ |
+| Community feeds        | Use community bans and event reports to suppress content in that community.                            |
+| Community repo catalog | Prefer validated repo associations and suppress banned owners/associators.                             |
+| Canonical repo page    | Show community context if known, but do not hide the repo solely because of a community ban elsewhere. |
+| PR list                | Do not show, sort, or filter by community evidence.                                                    |
+| Profile page           | Show common communities, community roles, and relevant bans/reports as semantic evidence.              |
+| Settings               | Describe BudaBit trust as community-based, not provider-based or social-rank-based.                    |
 
 ## Internal Scoring Constraints
 
 BudaBit may still use internal scores to sort candidates, but they are implementation details.
 
-| Constraint | Reason |
-| --- | --- |
-| Community membership floor is greater than maximum social cap | Social signals cannot outweigh community participation. |
-| Moderator/admin evidence is stronger than member evidence | Role authority matters in communities. |
-| Repo-associated community is weighted above unrelated communities | Trust should follow the repo's actual context. |
-| Reports are negative and weigh twice a mute | Community moderation signal is stronger than personal social friction. |
-| Bans can suppress only in their community context | Avoid global distrust from local moderation. |
-| Raw scores are not displayed | Users need understandable evidence, not algorithmic numbers. |
+| Constraint                                                        | Reason                                                                 |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Community membership floor is greater than maximum social cap     | Social signals cannot outweigh community participation.                |
+| Moderator/admin evidence is stronger than member evidence         | Role authority matters in communities.                                 |
+| Repo-associated community is weighted above unrelated communities | Trust should follow the repo's actual context.                         |
+| Reports are negative and weigh twice a mute                       | Community moderation signal is stronger than personal social friction. |
+| Bans can suppress only in their community context                 | Avoid global distrust from local moderation.                           |
+| Raw scores are not displayed                                      | Users need understandable evidence, not algorithmic numbers.           |
 
 ## Reasoning Principles
 

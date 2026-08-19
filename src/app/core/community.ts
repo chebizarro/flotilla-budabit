@@ -7,7 +7,7 @@ import {
   isRelayUrl,
   normalizeRelayUrl,
 } from "@welshman/util"
-import {randomId} from "@welshman/lib"
+import {parseControllerPubkey} from "./community-v2"
 
 export * from "./community-v2"
 
@@ -16,7 +16,6 @@ export const PROFILE_LIST_KIND = 30000
 export const FORM_TEMPLATE_KIND = 30168
 export const FORM_RESPONSE_KIND = 1069
 export const COMMUNITY_EMAIL_DIGEST_HANDLER_KIND = 31990
-export const MAX_TARGET_COMMUNITIES = 12
 export const PROFILE_LIST_STATUS_DECLINED = "declined"
 export const RENOUNCED_COMMUNITIES_DTAG = "app/budabit/renounced-communities"
 
@@ -129,22 +128,6 @@ export type CommunityEmailDigestService = CommunityServiceDescriptor
 export type CommunityAlertService = CommunityServiceDescriptor
 
 export type CommunityOtherServiceTag = ["service", ...string[]]
-
-export type CommunityTarget = {
-  pubkey: string
-  relay?: string
-}
-
-export type TargetedPublicationRef =
-  | {type: "e"; value: string; relay?: string; pubkey?: string}
-  | {type: "a"; value: string; relay?: string}
-
-export type TargetedPublication = {
-  id: string
-  kind: number
-  ref?: TargetedPublicationRef
-  communities: CommunityTarget[]
-}
 
 export type CommunityDefinitionSectionInput = {
   name: string
@@ -456,7 +439,7 @@ export const isRenouncedCommunitiesListEvent = (
     event.tags?.some(tag => tag[0] === "d" && tag[1] === RENOUNCED_COMMUNITIES_DTAG),
   )
 
-export const getProfileListPubkeys = (event: TrustedEvent | undefined) => {
+export const getProfileListPubkeys = (event: TrustedEvent | undefined): string[] => {
   if (!event || event.kind !== PROFILE_LIST_KIND) return []
   if (isRenouncedCommunitiesListEvent(event)) return []
   if (isProfileListDeclined(event)) return []
@@ -465,7 +448,7 @@ export const getProfileListPubkeys = (event: TrustedEvent | undefined) => {
     new Set(
       (event.tags || [])
         .filter(tag => tag[0] === "p")
-        .map(tag => normalizePubkey(tag[1] || ""))
+        .map(tag => (parseControllerPubkey(tag[1] || "") as string | undefined) || "")
         .filter(Boolean),
     ),
   )
@@ -482,76 +465,3 @@ export const userCanManageProfileList = (
   profileListRef: CommunityProfileListRef | undefined,
   pubkey: string,
 ) => Boolean(profileListRef && normalizePubkey(pubkey) === profileListRef.pubkey)
-
-const appendDefined = (base: string[], ...values: Array<string | undefined>) => {
-  for (const value of values) {
-    if (value) base.push(value)
-  }
-
-  return base
-}
-
-export const buildTargetedPublication = ({
-  id = randomId(),
-  kind,
-  ref,
-  communities,
-}: Partial<Pick<TargetedPublication, "id">> & Omit<TargetedPublication, "id">): EventContent => {
-  const tags: string[][] = [["d", id]]
-
-  if (ref?.type === "e") {
-    tags.push(appendDefined(["e", ref.value], normalizeRelay(ref.relay) || undefined, ref.pubkey))
-  } else if (ref?.type === "a") {
-    tags.push(appendDefined(["a", ref.value], normalizeRelay(ref.relay) || undefined))
-  }
-
-  tags.push(["k", String(kind)])
-
-  for (const community of communities.slice(0, MAX_TARGET_COMMUNITIES)) {
-    const pubkey = normalizePubkey(community.pubkey)
-    if (!pubkey) continue
-
-    tags.push(["p", pubkey])
-    if (community.relay) {
-      const relay = normalizeRelay(community.relay)
-      if (relay) tags.push(["r", relay])
-    }
-  }
-
-  return {content: "", tags}
-}
-
-export const parseTargetedPublication = (event: TrustedEvent): TargetedPublication | undefined => {
-  if (event.kind !== TARGETED_PUBLICATION_KIND) return undefined
-
-  const id = (event.tags || []).find(tag => tag[0] === "d")?.[1]
-  const kind = Number.parseInt((event.tags || []).find(tag => tag[0] === "k")?.[1] || "", 10)
-  if (!id || !Number.isInteger(kind)) return undefined
-
-  const eTag = (event.tags || []).find(tag => tag[0] === "e")
-  const aTag = (event.tags || []).find(tag => tag[0] === "a")
-  const ref: TargetedPublicationRef | undefined = eTag?.[1]
-    ? {type: "e", value: eTag[1], relay: normalizeRelay(eTag[2]) || undefined, pubkey: eTag[3]}
-    : aTag?.[1]
-      ? {type: "a", value: aTag[1], relay: normalizeRelay(aTag[2]) || undefined}
-      : undefined
-  const communities: CommunityTarget[] = []
-  let lastCommunity: CommunityTarget | undefined
-
-  for (const tag of event.tags || []) {
-    if (tag[0] === "p") {
-      const pubkey = normalizePubkey(tag[1] || "")
-      if (!pubkey) continue
-
-      lastCommunity = {pubkey}
-      communities.push(lastCommunity)
-      continue
-    }
-
-    if (tag[0] === "r" && lastCommunity && !lastCommunity.relay) {
-      lastCommunity.relay = normalizeRelay(tag[1]) || undefined
-    }
-  }
-
-  return {id, kind, ref, communities: communities.slice(0, MAX_TARGET_COMMUNITIES)}
-}

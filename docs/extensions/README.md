@@ -8,27 +8,27 @@ See [`XX.md`](./XX.md) for the Smart Widget specification details. This guide fo
 
 ## Terminology
 
-| Term | Meaning |
-| --- | --- |
-| Smart Widget Event | A `kind:30033` event describing a widget payload published to relays. |
-| Widget Types | `basic` (host-rendered), `action` (iframe app without return channel), `tool` (iframe app expecting bidirectional data). |
-| Widget Slot | A supported placement declared by the widget `slot` tag. |
-| Extension Runtime | Budabit host infrastructure (`registry`, `provider`, `bridge`) that loads and enforces widgets. |
-| Permissions | Capabilities declared by widget `permission` tags. |
+| Term               | Meaning                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Smart Widget Event | A `kind:30033` event describing a widget payload published to relays.                                                    |
+| Widget Types       | `basic` (host-rendered), `action` (iframe app without return channel), `tool` (iframe app expecting bidirectional data). |
+| Widget Slot        | A supported placement declared by the widget `slot` tag.                                                                 |
+| Extension Runtime  | Budabit host infrastructure (`registry`, `provider`, `bridge`) that loads and enforces widgets.                          |
+| Permissions        | Capabilities declared by widget `permission` tags.                                                                       |
 
 ---
 
 ## Support Matrix
 
-| Capability | Smart Widgets - `basic` | Smart Widgets - `action` / `tool` |
-| --- | --- | --- |
-| Discovery | Community-curated `kind:30033` events or direct `naddr` | Same as `basic` |
-| Install UX | Search a community's curated widgets or paste `naddr` under Advanced settings | Same as `basic` |
-| Runtime Container | Host-rendered via slot handler, no iframe | Sandboxed iframe from the widget app URL |
-| Storage Bucket | `extensionSettings.installed.widget[id]` | `extensionSettings.installed.widget[id]` |
-| Enable / Disable | Settings `enabled[]` controls whether the widget is available to slots | Settings `enabled[]` controls iframe preload/slot availability |
-| Permissions | Default deny for privileged bridge actions | Same as `basic`, enforced before bridge requests |
-| UI Slot Rendering | Slot handlers see `extension.type === "widget"` and render metadata | Slot handlers launch or mount the widget iframe |
+| Capability        | Smart Widgets - `basic`                                                       | Smart Widgets - `action` / `tool`                              |
+| ----------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Discovery         | Community-curated `kind:30033` events or direct `naddr`                       | Same as `basic`                                                |
+| Install UX        | Search a community's curated widgets or paste `naddr` under Advanced settings | Same as `basic`                                                |
+| Runtime Container | Host-rendered via slot handler, no iframe                                     | Sandboxed iframe from the widget app URL                       |
+| Storage Bucket    | `extensionSettings.installed.widget[id]`                                      | `extensionSettings.installed.widget[id]`                       |
+| Enable / Disable  | Settings `enabled[]` controls whether the widget is available to slots        | Settings `enabled[]` controls iframe preload/slot availability |
+| Permissions       | Default deny for privileged bridge actions                                    | Same as `basic`, enforced before bridge requests               |
+| UI Slot Rendering | Slot handlers see `extension.type === "widget"` and render metadata           | Slot handlers launch or mount the widget iframe                |
 
 ---
 
@@ -59,7 +59,7 @@ type ExtensionSettings = {
 
 Budabit installs Smart Widgets through these paths:
 
-- Default community curation: `VITE_DEFAULT_COMMUNITY` points at a community whose latest `kind:10222` definition is validated, then its targeted `kind:30033` widgets are loaded as default extensions.
+- Default community curation: `VITE_DEFAULT_COMMUNITY` contains a canonical `kind:32222` definition `naddr`. After resolving that exact branch, Budabit loads `kind:30033` widgets targeted by adjacent `h=<communityId>` and marked `a=<definitionAddress>` pairs in `kind:30222` wrappers.
 - Settings discovery: users choose a community in Settings > Extensions and install from that community's curated widgets.
 - Direct install: users paste a Smart Widget `naddr` in Settings > Extensions > Advanced.
 
@@ -92,13 +92,13 @@ Budabit enforces these rules:
 
 Smart Widgets declare one supported slot with a `slot` tag in the `kind:30033` event. Current supported slots are:
 
-| Slot | Tag shape | Rendering model |
-| --- | --- | --- |
-| `repo-tab` | `["slot", "repo-tab", label, path]` | Full repository tab iframe |
-| `community-home-before-quicklinks` | `["slot", "community-home-before-quicklinks", label]` | Community home card/launcher |
-| `community-home-after-quicklinks` | `["slot", "community-home-after-quicklinks", label]` | Community home card/launcher |
-| `chat-message-actions` | `["slot", "chat-message-actions", label]` | Compact message action launcher that opens a modal |
-| `global-menu` | `["slot", "global-menu", label]` | Community-route top control launcher that opens a modal |
+| Slot                               | Tag shape                                             | Rendering model                                         |
+| ---------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
+| `repo-tab`                         | `["slot", "repo-tab", label, path]`                   | Full repository tab iframe                              |
+| `community-home-before-quicklinks` | `["slot", "community-home-before-quicklinks", label]` | Community home card/launcher                            |
+| `community-home-after-quicklinks`  | `["slot", "community-home-after-quicklinks", label]`  | Community home card/launcher                            |
+| `chat-message-actions`             | `["slot", "chat-message-actions", label]`             | Compact message action launcher that opens a modal      |
+| `global-menu`                      | `["slot", "global-menu", label]`                      | Community-route top control launcher that opens a modal |
 
 Example `chat-message-actions` tag:
 

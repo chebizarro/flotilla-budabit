@@ -58,4 +58,34 @@ describe("exact community identity source contracts", () => {
     expect(discovery).toContain("parseCommunityDefinitionV2")
     expect(discovery).not.toMatch(/COMMUNITY_DEFINITION_KIND\b|parseCommunityDefinition\b/)
   })
+
+  it("renders community cards and suggestions from definition identity", () => {
+    const preview = readProjectFile("../components/community/CommunityPreviewCard.svelte")
+    const selector = readProjectFile("../components/community/CommunitySelectorCard.svelte")
+    const suggestion = readProjectFile("../components/community/CommunitySuggestion.svelte")
+    const explore = readProjectFile("../../routes/explore/+page.svelte")
+
+    for (const source of [preview, selector]) {
+      expect(source).toContain("definition?.metadata.name")
+      expect(source).toContain("definition?.metadata.picture")
+      expect(source).not.toContain("deriveBudabitProfile")
+      expect(source).not.toContain("hydratePubkeyProfiles")
+      expect(source).not.toContain("ProfileCircle")
+    }
+    expect(suggestion).toContain("definition?.metadata.name")
+    expect(suggestion).toContain("pointer.naddr.slice")
+    expect(explore).toContain("inputSuggestionDefinitions={communityDefinitions}")
+    expect(preview).toContain("component: CommunitySuggestion")
+    expect(preview).not.toContain("component: ProfileSuggestion")
+  })
+
+  it("uses exact community routes and definition identity for profile trust evidence", () => {
+    const badges = readProjectFile("../components/ProfileTrustBadges.svelte")
+
+    expect(badges).toContain("getExactCommunityReportTargetPath(item.definition.pointer, item)")
+    expect(badges).toContain("item.definition.metadata.name")
+    expect(badges).toContain("item.definition.metadata.picture")
+    expect(badges).not.toContain("<ProfileName")
+    expect(badges).not.toContain("<ProfileCircle")
+  })
 })

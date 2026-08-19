@@ -4,6 +4,8 @@ import {
   PROFILE_LIST_KIND,
   makeCommunityAuthorityTagsV2,
   makeCommunityProfileListIdentifier,
+  makeCommunityChildIdentifier,
+  getCommunitySectionPurposeV2,
   normalizeCommunityRelayV2,
   parseCommunityAuthorityV2,
   parseControllerPubkey,
@@ -87,8 +89,9 @@ export const makeModeratorRequestIdentifier = ({
   community: CommunityPointer
   sectionName: string
 }) => {
-  const identifier = makeCommunityProfileListIdentifier(
+  const identifier = makeCommunityChildIdentifier(
     community.communityId,
+    "moderator",
     `${sectionName}-moderator`,
   )
   if (!identifier) throw new Error("Invalid moderator request identifier.")
@@ -168,7 +171,11 @@ export const parseModeratorRequestEvent = (
     sectionName !== sectionName.trim() ||
     role !== MODERATOR_REQUEST_ROLE ||
     identifier !==
-      makeCommunityProfileListIdentifier(authority.communityId, `${sectionName}-moderator`) ||
+      makeCommunityChildIdentifier(
+        authority.communityId,
+        "moderator",
+        `${sectionName}-moderator`,
+      ) ||
     (community && authority.address !== community.address)
   ) {
     return undefined
@@ -491,7 +498,13 @@ const makeManualModeratorProfileListRef = ({
   relays?: string[]
 }): CommunityProfileListRefV2 => {
   const pubkey = parseControllerPubkey(moderatorPubkey)
-  const identifier = makeCommunityProfileListIdentifier(community.communityId, sectionName)
+  const purpose = getCommunitySectionPurposeV2(community.communityId, {
+    name: sectionName,
+    profileLists: [],
+  })
+  const identifier = purpose
+    ? makeCommunityProfileListIdentifier(community.communityId, purpose)
+    : undefined
   if (!pubkey || !identifier) throw new Error("Invalid moderator profile-list reference.")
   const relay = relays.map(normalizeCommunityRelayV2).find(Boolean)
   return {

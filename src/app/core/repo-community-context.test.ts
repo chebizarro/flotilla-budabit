@@ -19,6 +19,7 @@ import {
 import {
   buildRepoCommunityContexts,
   getPrimaryRepoCommunityContext,
+  isAuthorizedDirectCommunityRepo,
   isEndorsedRepoCommunityContext,
 } from "./repo-community-context"
 
@@ -61,9 +62,7 @@ const makeDefinition = (pubkey = communityPubkey, sectionName = "Code-curator") 
           {
             name: sectionName,
             kinds: [{kind: GIT_REPO_ANNOUNCEMENT}],
-            profileLists: [
-              {address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${sectionName}`},
-            ],
+            profileLists: [{address: `${PROFILE_LIST_KIND}:${moderatorPubkey}:${sectionName}`}],
           },
         ],
       }).tags,
@@ -114,6 +113,31 @@ const makeAssociation = ({
   })
 
 describe("repo community context", () => {
+  it("accepts direct stable-h repositories only from authorized section writers", () => {
+    const event = makeRepo({
+      pubkey: granteePubkey,
+      tags: [
+        ["d", "demo"],
+        ["h", moderatorPubkey, "wss://relay.example.com"],
+      ],
+    })
+
+    expect(
+      isAuthorizedDirectCommunityRepo({
+        event,
+        communityId: moderatorPubkey,
+        authorPubkeys: [granteePubkey],
+      }),
+    ).toBe(true)
+    expect(
+      isAuthorizedDirectCommunityRepo({
+        event,
+        communityId: moderatorPubkey,
+        authorPubkeys: [outsiderPubkey],
+      }),
+    ).toBe(false)
+  })
+
   it("does not treat legacy direct repository tags as V2 associations", () => {
     const definition = makeDefinition()
     const tags = [

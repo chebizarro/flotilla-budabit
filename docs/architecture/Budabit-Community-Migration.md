@@ -2,7 +2,7 @@
 
 ## Status
 
-This document synthesizes the current design direction for migrating, succeeding, recovering, and forking Communikey communities.
+> **Historical V1 design proposal.** This document records migration ideas for the former pubkey/`kind:10222` model and is not current Communikeys guidance. V2 already separates stable `communityId` from exact controller branch identity at `32222:<controller>:<communityId>`; see `Communikeys.md`. The V1 details below are preserved as design history rather than rewritten as if they had specified V2.
 
 It is an architecture proposal, not a normative protocol specification or implementation plan. Event kinds, tag names, snapshot formats, recovery policies, user prompts, and branch-selection rules remain future design decisions unless this document explicitly states an invariant.
 

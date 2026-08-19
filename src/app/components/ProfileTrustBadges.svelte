@@ -11,6 +11,8 @@
   } from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import type {Filter} from "@welshman/util"
+  import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
+  import Icon from "@lib/components/Icon.svelte"
   import InlinePopover from "@lib/components/InlinePopover.svelte"
   import {PROFILE_LIST_KIND, normalizePubkey, normalizeRelays} from "@app/core/community"
   import {
@@ -30,8 +32,7 @@
     type SharedProfileCommunityRole,
   } from "@app/core/profile-trust-badges"
   import {makeEventNevent} from "@app/util/event-links"
-  import ProfileCircle from "@app/components/ProfileCircle.svelte"
-  import ProfileName from "@app/components/ProfileName.svelte"
+  import {getExactCommunityReportTargetPath} from "@app/util/routes"
 
   type Props = {
     pubkey: string
@@ -44,6 +45,7 @@
   const {pubkey, relays = [], class: className = ""}: Props = $props()
 
   let openGroupKey = $state("")
+  let failedCommunityPictures = $state<Record<string, string>>({})
 
   const targetProfileListFilters = $derived<Filter[]>(
     pubkey
@@ -174,6 +176,28 @@
 
   const formatSectionNames = (names: string[]) => names.join(", ")
 
+  const getCommunityName = (
+    item: SharedProfileCommunityEvidenceItem | ProfileFlagReportEvidenceItem,
+  ) => item.definition.metadata.name || "Community"
+
+  const getCommunityPicture = (
+    item: SharedProfileCommunityEvidenceItem | ProfileFlagReportEvidenceItem,
+  ) => String(item.definition.metadata.picture || "").trim()
+
+  const showCommunityPicture = (
+    item: SharedProfileCommunityEvidenceItem | ProfileFlagReportEvidenceItem,
+  ) => {
+    const picture = getCommunityPicture(item)
+
+    return Boolean(picture && failedCommunityPictures[item.key] !== picture)
+  }
+
+  const failCommunityPicture = (
+    item: SharedProfileCommunityEvidenceItem | ProfileFlagReportEvidenceItem,
+  ) => {
+    failedCommunityPictures = {...failedCommunityPictures, [item.key]: getCommunityPicture(item)}
+  }
+
   const parseReportTargetAddress = (address: string | undefined) => {
     const [kindValue, pubkeyValue, ...identifierParts] = String(address || "").split(":")
     const kind = Number.parseInt(kindValue || "", 10)
@@ -184,6 +208,9 @@
   }
 
   const getFlaggedContentPath = (item: ProfileFlagReportEvidenceItem) => {
+    const exactCommunityPath = getExactCommunityReportTargetPath(item.definition.pointer, item)
+    if (exactCommunityPath) return exactCommunityPath
+
     const address = parseReportTargetAddress(item.targetAddress)
     if (address) {
       return `/${nip19.naddrEncode({...address, relays: item.relayHints})}`
@@ -261,7 +288,7 @@
               {#each group.items as item (item.key)}
                 <span>{getSingleRolePrefix(group.role)}</span>
                 <span class="min-w-0 max-w-32 truncate">
-                  <ProfileName pubkey={item.communityPubkey} relays={item.relayHints} />
+                  {getCommunityName(item)}
                 </span>
               {/each}
             {:else}
@@ -287,13 +314,21 @@
                     {@const sectionNames = getItemSectionNames(item)}
                     <div class="rounded-box bg-base-200/60 p-3">
                       <div class="flex min-w-0 items-center gap-2">
-                        <ProfileCircle
-                          pubkey={item.communityPubkey}
-                          relays={item.relayHints}
-                          size={7} />
+                        <div
+                          class="center !flex h-7 w-7 shrink-0 overflow-hidden rounded-full bg-base-300">
+                          {#if showCommunityPicture(item)}
+                            <img
+                              alt=""
+                              src={getCommunityPicture(item)}
+                              class="h-full w-full object-cover"
+                              onerror={() => failCommunityPicture(item)} />
+                          {:else}
+                            <Icon icon={HomeSmile} size={4} />
+                          {/if}
+                        </div>
                         <div class="min-w-0 flex-1">
                           <div class="truncate text-sm font-medium">
-                            <ProfileName pubkey={item.communityPubkey} relays={item.relayHints} />
+                            {getCommunityName(item)}
                           </div>
                           <div class="text-xs opacity-70">{getItemEvidenceText(item)}</div>
                         </div>
@@ -362,15 +397,23 @@
                   {@const flaggedContentPath = getFlaggedContentPath(item)}
                   <div class="rounded-box bg-base-200/60 p-3">
                     <div class="flex min-w-0 items-start gap-2">
-                      <ProfileCircle
-                        pubkey={item.communityPubkey}
-                        relays={item.relayHints}
-                        size={7} />
+                      <div
+                        class="center !flex h-7 w-7 shrink-0 overflow-hidden rounded-full bg-base-300">
+                        {#if showCommunityPicture(item)}
+                          <img
+                            alt=""
+                            src={getCommunityPicture(item)}
+                            class="h-full w-full object-cover"
+                            onerror={() => failCommunityPicture(item)} />
+                        {:else}
+                          <Icon icon={HomeSmile} size={4} />
+                        {/if}
+                      </div>
                       <div class="min-w-0 flex-1 text-xs leading-relaxed">
                         <div>
                           You flagged this person in
                           <span class="font-medium">
-                            <ProfileName pubkey={item.communityPubkey} relays={item.relayHints} />
+                            {getCommunityName(item)}
                           </span>
                           Community.
                         </div>

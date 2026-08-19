@@ -892,9 +892,11 @@ describe("notification sources", () => {
 
   it("keeps more than 1,000 community writers out of relay filters", async () => {
     const {buildGlobalCommunityNotificationFilterPlan} = await import("./notification-sources")
-    const writers = Array.from({length: 1_001}, (_, index) =>
-      (index + 10).toString(16).padStart(64, "0"),
-    )
+    const writers = Array.from({length: 1_001}, (_, index) => {
+      const secret = new Uint8Array(32)
+      new DataView(secret.buffer).setUint32(28, index + 10)
+      return getPublicKey(secret)
+    })
     const profileList = makeEvent({
       id: "large-profile-list",
       kind: PROFILE_LIST_KIND,

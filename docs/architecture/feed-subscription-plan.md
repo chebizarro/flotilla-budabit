@@ -1,5 +1,7 @@
 # Feed And Subscription Ownership Plan
 
+> **Historical implementation plan.** Community filter examples below record the former V1 pubkey and `#p` targeting model. Current V2 transport uses stable `#h=<communityId>` and exact marked definition `a` references where branch authority is evaluated; see `Communikeys.md`.
+
 ## Goals
 
 - Restore reliable live updates without causing route-navigation churn.

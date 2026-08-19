@@ -12,6 +12,7 @@ import {
   parseCommunityAuthorityV2,
   makeCommunityChildIdentifier,
   makeCommunityProfileListIdentifier,
+  parseCommunityProfileListIdentifier,
   makeCommunityAuthorityTagsV2,
   makeCommunityScopeTagsV2,
   parseCommunityId,
@@ -20,6 +21,7 @@ import {
   removeTargetedCommunityV2,
   selectCurrentAddressableEvent,
   selectCurrentCommunityDefinitionV2,
+  selectCurrentTargetedPublicationEventsV2,
   updateCommunityDefinitionV2,
 } from "./community"
 
@@ -46,7 +48,7 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
 const section = {
   name: "General",
   kinds: [{kind: 1111}],
-  profileLists: [{address: `30000:${listController}:budabit-${communityId}-general`}],
+  profileLists: [{address: `30000:${listController}:${communityId}-general`}],
 }
 
 describe("Communikeys V2 identity", () => {
@@ -310,9 +312,20 @@ describe("Communikeys V2 definitions", () => {
     const siblingId = getPublicKey(secret(6))
     expect(siblingId.slice(0, 16)).not.toBe(sharedPrefix)
 
-    expect(makeCommunityProfileListIdentifier(communityId, "General Writers")).toBe(
-      `budabit-${communityId}-general-writers`,
+    expect(makeCommunityProfileListIdentifier(communityId, "general-writers")).toBe(
+      `${communityId}-general-writers`,
     )
+    expect(makeCommunityProfileListIdentifier(communityId, "General Writers")).toBeUndefined()
+    expect(parseCommunityProfileListIdentifier(communityId, `${communityId}-general-2`)).toEqual({
+      purpose: "general-2",
+    })
+    expect(parseCommunityProfileListIdentifier(communityId, `${communityId}-general-2.2`)).toEqual({
+      purpose: "general-2",
+      shard: 2,
+    })
+    expect(
+      parseCommunityProfileListIdentifier(communityId, `${communityId.slice(0, 32)}-general`),
+    ).toBeUndefined()
     expect(makeCommunityChildIdentifier(communityId, "form", "---")).toBe(
       `budabit-${communityId}-form`,
     )
@@ -521,7 +534,7 @@ describe("Communikeys V2 definitions", () => {
       kind: 5,
       tags: [["e", newer.id]],
     })
-    expect(selectCurrentAddressableEvent([older, newer, deletion], listAddress)?.id).toBe(older.id)
+    expect(selectCurrentAddressableEvent([older, newer, deletion], listAddress)).toBeUndefined()
   })
 
   it("requires a single exact a tag for definition address tombstones", () => {
@@ -611,7 +624,7 @@ describe("Communikeys V2 targeting", () => {
     ).toBeUndefined()
   })
 
-  it("rejects malformed markers, noncanonical relays, community p tags, and incoherent pointers", () => {
+  it("rejects malformed markers, noncanonical relays, and incoherent pointers", () => {
     const pointer = makeCommunityPointer({controllerPubkey: controller, communityId})!
     const base = buildTargetedPublicationV2({
       id: "target-id",
@@ -622,13 +635,21 @@ describe("Communikeys V2 targeting", () => {
       base.map(tag => (tag[0] === "a" ? ["a", tag[1], "community"] : tag)),
       base.map(tag => (tag[0] === "a" ? ["a", tag[1], "wss://relay.example/", "community"] : tag)),
       base.map(tag => (tag[0] === "h" ? ["h", tag[1], "extra"] : tag)),
-      [...base, ["p", communityId]],
     ]
     for (const tags of cases) {
       expect(
         parseTargetedPublicationV2(makeEvent({kind: TARGETED_PUBLICATION_KIND_V2, tags})),
       ).toBeUndefined()
     }
+
+    expect(
+      parseTargetedPublicationV2(
+        makeEvent({
+          kind: TARGETED_PUBLICATION_KIND_V2,
+          tags: [...base, ["x-extension", "source", "community"], ["p", communityId]],
+        }),
+      ),
+    ).toBeTruthy()
 
     expect(() =>
       buildTargetedPublicationV2({
@@ -662,16 +683,62 @@ describe("Communikeys V2 targeting", () => {
     expect(parsed.communities[0].communityId).toBe(communityId)
     expect(removed.tags).toContainEqual(["x-extension", "preserve-me"])
   })
+
+  it("selects effective wrapper replacements and applies timestamp-aware deletions", () => {
+    const first = makeCommunityPointer({controllerPubkey: controller, communityId})!
+    const second = makeCommunityPointer({
+      controllerPubkey: otherController,
+      communityId: otherCommunityId,
+    })!
+    const address = `${TARGETED_PUBLICATION_KIND_V2}:${controller}:target-id`
+    const original = makeEvent({
+      id: "1".repeat(64),
+      created_at: 10,
+      kind: TARGETED_PUBLICATION_KIND_V2,
+      tags: buildTargetedPublicationV2({id: "target-id", kind: 9041, communities: [first, second]})
+        .tags,
+    })
+    const replacement = makeEvent({
+      id: "2".repeat(64),
+      created_at: 20,
+      kind: TARGETED_PUBLICATION_KIND_V2,
+      tags: removeTargetedCommunityV2(original, first.address)!.tags,
+    })
+    const staleDeletion = makeEvent({
+      id: "3".repeat(64),
+      created_at: 19,
+      kind: 5,
+      tags: [["a", address]],
+    })
+    const deletion = makeEvent({
+      id: "4".repeat(64),
+      created_at: 20,
+      kind: 5,
+      tags: [["e", replacement.id]],
+    })
+    const recreation = {...replacement, id: "5".repeat(64), created_at: 21}
+
+    expect(
+      selectCurrentTargetedPublicationEventsV2([original, replacement, staleDeletion]),
+    ).toEqual([replacement])
+    expect(selectCurrentTargetedPublicationEventsV2([original, replacement, deletion])).toEqual([])
+    expect(
+      selectCurrentTargetedPublicationEventsV2([original, replacement, deletion, recreation]),
+    ).toEqual([recreation])
+  })
 })
 
 describe("Communikeys V2 workflow scope", () => {
-  it("builds one stable h without allowing a community person tag", () => {
+  it("builds one stable h while interpreting person tags by position", () => {
     expect(makeCommunityScopeTagsV2(communityId, [["title", "General"]])).toEqual([
       ["h", communityId],
       ["title", "General"],
     ])
     expect(() => makeCommunityScopeTagsV2(communityId, [["h", communityId]])).toThrow()
-    expect(() => makeCommunityScopeTagsV2(communityId, [["p", communityId]])).toThrow()
+    expect(makeCommunityScopeTagsV2(communityId, [["p", communityId]])).toEqual([
+      ["h", communityId],
+      ["p", communityId],
+    ])
   })
 
   it("adds one coherent marked branch authority reference", () => {
@@ -712,7 +779,7 @@ describe("Communikeys V2 workflow scope", () => {
       ),
     ).toBeUndefined()
     expect(
-      parseCommunityAuthorityV2(makeEvent({tags: [...valid.tags, ["p", communityId]]})),
-    ).toBeUndefined()
+      parseCommunityAuthorityV2(makeEvent({tags: [...valid.tags, ["p", communityId]]}))?.address,
+    ).toBe(pointer.address)
   })
 })

@@ -18,7 +18,7 @@ This document summarizes how the Budabit client is structured and how the main p
 - UI is a SvelteKit app under `src/`.
 - Application state and Nostr data are centralized in `src/app/core/state.ts` and domain-specific core modules, built on the Welshman store/repository pattern.
 - Routes under `src/routes/` mount pages that read from derived stores and invoke thunks/loaders.
-- Community routes use `/c/[community]`, where `[community]` parses a hex pubkey, `npub`, or `ncommunity`; legacy relay-space routes are not part of the current architecture.
+- Community routes use `/c/[community]`, where `[community]` is the canonical `naddr` for an exact `kind:32222` definition; legacy pubkey, `npub`, `ncommunity`, and relay-space routes are not part of the current architecture.
 - The canonical Git route family is `/git`, with community Git catalogs available under `/c/[community]/git`.
 - Reusable UI components live in `src/app/components/` and `src/lib/components/`.
 - Nostr Git (NIP-34) UI flows are implemented in `packages/nostr-git-ui/src/lib/components/git/`.
@@ -52,7 +52,7 @@ This document summarizes how the Budabit client is structured and how the main p
 - `src/app/core/community-state.ts` owns the active community session and bootstrap:
   - `VITE_DEFAULT_COMMUNITY` provides the recommended starting community on `/explore`.
   - `VITE_INDEXER_RELAYS` are discovery/bootstrap relays before the community definition relays are known.
-  - The active `kind:10222` definition provides community relays, sections, profile-list references, forms, moderation state, and Blossom refs.
+  - The active `kind:32222` definition at `32222:<controller>:<communityId>` provides community metadata, relays, sections, profile-list references, and Blossom refs. Community-native data uses stable `h=<communityId>` and authority-sensitive workflows additionally mark that exact definition address with `a` marker `community`.
 - Router/Context:
   - `routerContext.getIndexerRelays` is wired to env-configured relays.
   - `appContext.dufflepudUrl` is currently hard-coded to `https://dufflepud.onrender.com`.

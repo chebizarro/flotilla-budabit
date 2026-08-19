@@ -4,7 +4,7 @@ This is the no-BS path for running your own Budabit.
 
 Budabit is a static SPA/PWA. You do not need to run your own email service, Anchor stack, or other backend just to get the app online.
 
-The current architecture is community-first. A deployment can point at a default Communikey community, but the deployment itself is not the community identity. Community identity comes from a community pubkey and its latest valid `kind:10222` definition event. That definition is authoritative for community relays, Blossom servers, ordered GRASP servers, Cashu mints, sections, and write-permission list references.
+The current architecture is community-first. A deployment can point at a default Communikey branch, but the deployment itself is not community identity. The branch identity is exactly `32222:<controllerPubkey>:<communityId>`, represented externally by its canonical definition `naddr`. That definition is authoritative for community metadata, relays, Blossom servers, ordered GRASP servers, Cashu mints, sections, and write-permission list references.
 
 ## Fast Path
 
@@ -30,7 +30,7 @@ VITE_APP_NAME=Your Budabit
 VITE_APP_ACCENT=#0f766e
 VITE_APP_ACCENT_CONTENT=#ecfdf5
 VITE_APP_LOGO=https://your-domain.com/logo.png
-VITE_DEFAULT_COMMUNITY=npub1...
+VITE_DEFAULT_COMMUNITY=naddr1...
 VITE_INDEXER_RELAYS=wss://relay-1.example.com,wss://relay-2.example.com
 VITE_SIGNER_RELAYS=wss://relay.damus.io,wss://nos.lol
 VITE_GIT_RELAYS=wss://relay.ngit.dev,wss://gitnostr.com
@@ -41,8 +41,8 @@ Notes:
 - `VITE_APP_URL` should be the final public URL of the app.
 - `VITE_APP_NAME`, `VITE_APP_URL`, and `VITE_APP_LOGO` provide runtime app metadata. `VITE_APP_LOGO` is also used as the source for generated PWA assets.
 - `VITE_APP_ACCENT`, `VITE_APP_ACCENT_CONTENT`, `VITE_APP_SECONDARY`, and `VITE_APP_SECONDARY_CONTENT` control the DaisyUI theme colors.
-- `VITE_DEFAULT_COMMUNITY` should be a community hex pubkey, `npub`, or `ncommunity` value. `ncommunity` relay hints are used first.
-- `VITE_INDEXER_RELAYS` should include relays that can resolve the default community profile and `kind:10222` definition before the app knows that community's own relays.
+- `VITE_DEFAULT_COMMUNITY` should be the canonical `naddr` for an exact `kind:32222` definition. The pointer contains the controller, `communityId` identifier, and up to three definition-relay hints.
+- `VITE_INDEXER_RELAYS` should include relays that can resolve the exact default `kind:32222` definition before the app knows that definition's own relays.
 - `VITE_SIGNER_RELAYS` are used for NIP-46 signer discovery.
 - `VITE_GIT_RELAYS` are used for top-level `/git` repository discovery and Git-related Nostr events. Community repository catalogs are still selected through `/c/<community>/git` and targeted publication events.
 
@@ -54,7 +54,7 @@ Optional but useful for community media:
 VITE_DEFAULT_BLOSSOM_SERVERS=https://blossom-1.example.com,https://blossom-2.example.com
 ```
 
-Community-specific Blossom servers should live in the community `kind:10222` definition. `VITE_DEFAULT_BLOSSOM_SERVERS` is a fallback, not community identity.
+Community-specific Blossom servers should live in the community `kind:32222` definition. `VITE_DEFAULT_BLOSSOM_SERVERS` is a fallback, not community identity.
 
 Optional widget discovery:
 
@@ -62,7 +62,7 @@ Optional widget discovery:
 VITE_SMART_WIDGET_RELAYS=wss://relay.budabit.club,wss://nos.lol
 ```
 
-If this is empty, Budabit uses built-in widget relay defaults for direct widget lookups. Default extensions are loaded from `VITE_DEFAULT_COMMUNITY`: the app validates that community's latest `kind:10222` definition and shows its curated `kind:30033` widgets as installed and enabled. Users can disable those defaults but cannot uninstall them. Additional direct `naddr` installs live under Settings > Extensions > Advanced.
+If this is empty, Budabit uses built-in widget relay defaults for direct widget lookups. Default extensions are loaded from the exact definition in `VITE_DEFAULT_COMMUNITY` and its `kind:30222` wrappers with adjacent stable community `h` and marked definition `a` tags. The targeted `kind:30033` widgets appear as installed and enabled. Users can disable those defaults but cannot uninstall them. Additional direct `naddr` installs live under Settings > Extensions > Advanced.
 
 Optional trusted NIP-53 streaming providers:
 
@@ -74,10 +74,10 @@ When unset, Budabit trusts the provider pubkeys used by zap.stream. Setting this
 
 ## Community Definition Checklist
 
-Self-hosting Budabit does not create a community by itself. Before setting `VITE_DEFAULT_COMMUNITY`, make sure the community pubkey has public Nostr state that Budabit can resolve:
+Self-hosting Budabit does not create a community by itself. Before setting `VITE_DEFAULT_COMMUNITY`, make sure the exact branch has public Nostr state that Budabit can resolve:
 
-- A `kind:0` profile with name, about, website, and picture for the recommended community card and community pages
-- A latest `kind:10222` Communikey definition authored by the community pubkey
+- A valid `kind:32222` Communikey definition with `d=<communityId>`, authored by its controller
+- Definition-native `name` and optional `description`, `picture`, `banner`, and `website` tags; the controller's personal `kind:0` is not community metadata
 - `r` relay tags in the definition for community reads and writes
 - `content`, `k`, and `a` tags for the sections you want to expose and their `kind:30000` profile-list write permissions
 - Optional `blossom` tags for community-owned media storage
@@ -87,17 +87,17 @@ Self-hosting Budabit does not create a community by itself. Before setting `VITE
 - Optional `mint` tags for community Cashu mints
 - Optional `g` tag for the community geohash; do not use `g` for GRASP servers
 
-Community declarations do not automatically create or update user `kind:10063` Blossom lists, user `kind:10317` GRASP lists, or NIP-61 `kind:10019` Nutzap receiving configuration, and those events do not rewrite `kind:10222`. Budabit may recommend infrastructure declared by eligible, non-renounced communities, but the user must explicitly select **Add** before it becomes configured.
+Community declarations do not automatically create or update user `kind:10063` Blossom lists, user `kind:10317` GRASP lists, or NIP-61 `kind:10019` Nutzap receiving configuration, and those events do not rewrite `kind:32222`. Budabit may recommend infrastructure declared by eligible, non-renounced communities, but the user must explicitly select **Add** before it becomes configured.
 
-Relays are infrastructure, not identity. Do not configure a deployment as if one relay URL is the community. The app routes community state through `/c/<community>`, where `<community>` is parsed as a hex pubkey, `npub`, or `ncommunity` value.
+Relays are infrastructure, not identity. Do not configure a deployment as if one relay URL is the community. The app routes community state through `/c/<community-definition-naddr>`. Community-native events use stable `h=<communityId>`; authority-sensitive workflows also carry `a=<32222:controller:communityId>` with marker `community`. Never encode community association as `p=<communityId>`.
 
 ## Email Digests
 
-In-app badges and notification sounds are always available. Git email digest providers are not configured through deployment variables. A community administrator advertises a provider in the signed `kind:10222` definition, and each user explicitly selects one endorsed provider in Settings > Notifications.
+In-app badges and notification sounds are always available. Git email digest providers are not configured through deployment variables. A branch controller advertises a provider in the signed `kind:32222` definition, and each user explicitly selects one endorsed provider in Settings > Notifications.
 
 The provider receives the user's encrypted subscription on its declared request relay. Removing a service declaration does not transfer existing users to another provider; Budabit preserves their selected snapshot so they can disable the old registration.
 
-Community alert discovery is stricter and remains per-community: Budabit considers only the latest verified `kind:10222` definition for each current member, moderator, or administrator community, and never combines the same provider across communities. Provider identity is the service pubkey's signed `kind:0` profile; the handler pubkey is not provider identity.
+Community alert discovery is stricter and remains per-branch: Budabit considers only the current verified event at each exact `kind:32222` definition address for member, moderator, or controller branches, and never combines the same provider across branches. Provider identity is the service pubkey's signed `kind:0` profile; the handler pubkey is not provider identity.
 
 For community alerts, clients publish a NIP-44 encrypted `kind:32830` event with exact tags `d=budabit/community-alerts/<community>` and `p=<service-pubkey>` to the selected request relay. Providers return per-user encrypted `kind:32831` status at `d=budabit/community-alerts/<community>/<user>` and `p=<user>`, including an `ineligible` state when Anchor rejects eligibility. Client preferences and exact endpoint snapshots live separately from Git settings in a self-encrypted `kind:30078` event with `d=budabit/community-alerts-settings`. Switching providers deletes the old endpoint before registering the new one.
 
@@ -303,7 +303,7 @@ VITE_GIT_DEFAULT_CORS_PROXY=https://your-cors-proxy.example.com
 - Do not deploy under a subfolder unless you plan to rework base-path assumptions.
 - Do not skip submodule sync/update on fresh clones or after submodule changes.
 - Do not use a dumb file server without SPA rewrites and expect deep links to work.
-- Do not point `VITE_DEFAULT_COMMUNITY` at a user profile that has no resolvable `kind:10222` community definition.
+- Do not point `VITE_DEFAULT_COMMUNITY` at a user profile, raw pubkey, `npub`, or `ncommunity`; use a resolvable exact `kind:32222` definition `naddr`.
 - Do not rely on legacy `/spaces/[relay]` routes. They were removed in the Communikey pivot.
 - Do not expect Git email delivery unless an eligible community advertises a provider and the user explicitly enables it.
 

@@ -86,7 +86,7 @@ Budabit assembles Blossom servers from several sources.
 
 | Source                              | Meaning                                                                                              | Default role                                             |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Current community definition        | Servers declared by the active community through `kind:10222` `blossom` tags.                        | Primary for current community content.                   |
+| Current community definition        | Servers declared by the active exact `kind:32222` definition's `blossom` tags.                       | Primary for current community content.                   |
 | User personal list                  | The user's `kind:10063` Blossom server list.                                                         | Primary for personal content and optional mirrors.       |
 | Communities the user can publish to | Communities where the user is an admin, moderator, or has access to publish in at least one section. | Manual mirror candidates.                                |
 | Last-resort servers                 | App-configured fallback servers.                                                                     | Fallback only, not a preferred home for community media. |
@@ -95,13 +95,13 @@ Budabit should not default to Budabit-operated storage for all communities. Comm
 
 ## Community Relay Scope
 
-The community `kind:10222` definition is the discovery entrypoint. Only the community pubkey should publish it, and every published definition must declare at least one relay with an `r` tag.
+The canonical definition `naddr` is the discovery entrypoint. It resolves one exact `32222:<controller>:<communityId>` branch, and every valid definition declares at least one relay with an `r` tag. Community metadata comes from definition tags, not the controller's personal profile.
 
 Root community definition publishes go to:
 
 ```txt
 community relays from the definition
-community-pubkey outbox relays
+controller outbox relays
 Budabit indexer relays
 ```
 
@@ -123,7 +123,7 @@ Budabit should derive "communities you are part of" app-wide, outside of Blossom
 A user is part of a community when at least one of these is true:
 
 - The user is the community admin, meaning the community definition is authored by that pubkey.
-- The user is a moderator for at least one content section, meaning the `kind:10222` section references a `kind:30000` profile list owned by the user, and Budabit has seen that user-authored `kind:30000` event.
+- The user is a moderator for at least one content section, meaning the accepted `kind:32222` section references a `kind:30000` profile list owned by the user, and Budabit has seen that user-authored `kind:30000` event.
 - The user is a member of at least one content section, meaning they are present in one of that section's referenced profile-list events.
 
 Person-banned users are excluded from member-community storage candidates. The root community admin cannot be person-banned.
@@ -133,9 +133,9 @@ This derived list populates both initial-upload fallbacks and mirror target grou
 Profile-list events are a valid discovery entrypoint for moderator communities:
 
 1. Load user-authored `kind:30000` profile-list events from available user and discovery relays.
-2. Build `#a` filters from their addresses and query for `kind:10222` definitions referencing those lists.
-3. If a profile-list event includes an `a` tag pointing to `10222:<community-pubkey>:` with a relay hint, also query that hinted relay for the root definition.
-4. Validate the moderator role only after loading the `kind:10222` and confirming one of its section refs points to the user-owned list.
+2. Build `#a` filters from their addresses and query for `kind:32222` definitions referencing those lists.
+3. If a profile-list workflow event carries a marked community `a` pointing to `32222:<controller>:<communityId>` with a relay hint, query that hinted relay for the exact definition.
+4. Validate the moderator role only after loading that exact `kind:32222` definition and confirming one of its section refs points to the user-owned list.
 5. Load referenced section lists and moderation report state from the loaded definition's declared `r` relays to validate member/grant and ban status.
 
 Starred communities alone should not imply storage intent. Stars are not membership and should not be automatic upload or mirror targets.

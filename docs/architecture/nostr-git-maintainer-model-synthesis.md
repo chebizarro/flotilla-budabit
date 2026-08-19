@@ -29,10 +29,10 @@ Other announcements with the same name, `d` tag, EUC, clone URL, or maintainer t
 
 Budabit-authored repo activity uses the current repo address only:
 
-| Event tag | Include |
-| --- | --- |
-| `a` tags | The current repo address. |
-| `p` tags | Repo author, tagged maintainers, explicit assignees/reviewers/mentions, and active participants where useful. |
+| Event tag | Include                                                                                                       |
+| --------- | ------------------------------------------------------------------------------------------------------------- |
+| `a` tags  | The current repo address.                                                                                     |
+| `p` tags  | Repo author, tagged maintainers, explicit assignees/reviewers/mentions, and active participants where useful. |
 
 Budabit still tolerates events from other clients that contain many `a` or `p` tags. In a repo view, an event belongs when one of its `a` tags matches the current repo address. Extra tags are compatibility/context, not identity.
 
@@ -70,7 +70,7 @@ GRASP or Git servers remain the hard enforcement layer for push access. Budabit'
 This direct repo model is compatible with the community pivot:
 
 - Repos without `h` tags can still be displayed as normal NIP-34 repos.
-- Budabit community repos can add `h = <community-pubkey>` to make the community context explicit.
+- Budabit community repos use stable `h=<communityId>` for association and a marked exact definition `a` when branch authority is evaluated; community association is not encoded as a `p` tag.
 - Community repo lists can query `kind:30617` with `#h`.
 - Child events still use the repo's normal NIP-34 `a` address.
 

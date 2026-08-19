@@ -47,6 +47,7 @@
   import {
     buildRepoCommunityContexts,
     getRepoAddress,
+    isAuthorizedDirectCommunityRepo,
     isEndorsedRepoCommunityContext,
   } from "@app/core/repo-community-context"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -182,6 +183,11 @@
     const latest = new Map<string, TrustedEvent>()
 
     for (const event of candidates) {
+      const direct = isAuthorizedDirectCommunityRepo({
+        event,
+        communityId,
+        authorPubkeys: repoAuthorPubkeys,
+      })
       const context = buildRepoCommunityContexts({
         repoEvent: event,
         associationEvents,
@@ -191,7 +197,7 @@
         activeCommunityPubkey: communityPubkey,
         activeCommunityAddress: $activeExactCommunityPointer?.address,
       }).find(context => context.communityAddress === $activeExactCommunityPointer?.address)
-      if (!isEndorsedRepoCommunityContext(context)) continue
+      if (!direct && !isEndorsedRepoCommunityContext(context)) continue
 
       const address = getRepoAddress(event)
       if (!address) continue

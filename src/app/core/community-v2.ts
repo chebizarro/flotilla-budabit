@@ -1,6 +1,6 @@
 import {schnorr} from "@noble/curves/secp256k1"
 import * as nip19 from "nostr-tools/nip19"
-import type {EventContent, TrustedEvent} from "@welshman/util"
+import type {EventContent, Filter, TrustedEvent} from "@welshman/util"
 
 export const COMMUNITY_DEFINITION_KIND_V2 = 32222
 export const TARGETED_PUBLICATION_KIND_V2 = 30222
@@ -115,6 +115,8 @@ const LOWER_HEX_64 = /^[0-9a-f]{64}$/
 const CANONICAL_UINT = /^(0|[1-9][0-9]*)$/
 const GEOHASH = /^[0123456789bcdefghjkmnpqrstuvwxyz]{1,12}$/
 const CHILD_PURPOSE = /^[a-z][a-z0-9-]{0,31}$/
+const SECTION_PURPOSE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+const SECTION_SHARD = /^(?:[2-9]|[1-9][0-9]+)$/
 const SERVICE_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 const MINT_TYPE = /^[\x21-\x7e]{1,32}$/
 const utf8Length = (value: string) => new TextEncoder().encode(value).length
@@ -245,7 +247,7 @@ export const communityPointersEqual = (
 export const makeCommunityScopeTagsV2 = (communityIdValue: string, tags: string[][] = []) => {
   const communityId = parseCommunityId(communityIdValue)
   if (!communityId) throw new Error("Invalid community ID.")
-  if (tags.some(tag => tag[0] === "h" || (tag[0] === "p" && tag[1] === communityId))) {
+  if (tags.some(tag => tag[0] === "h")) {
     throw new Error("Conflicting community scope tag.")
   }
 
@@ -297,8 +299,7 @@ export const parseCommunityAuthorityV2 = (
     !communityId ||
     !addressPointer ||
     addressPointer.communityId !== communityId ||
-    (authorityTags[0][2] && relay !== authorityTags[0][2]) ||
-    event.tags.some(tag => tag[0] === "p" && tag[1] === communityId)
+    (authorityTags[0][2] && relay !== authorityTags[0][2])
   ) {
     return undefined
   }
@@ -334,9 +335,39 @@ export const makeCommunityChildIdentifier = (
 
 export const makeCommunityProfileListIdentifier = (communityIdValue: string, value: string) => {
   const communityId = parseCommunityId(communityIdValue)
-  if (!communityId) return undefined
-  const identifier = `budabit-${communityId}-${makeCommunityChildSlug(value, "members")}`
+  if (!communityId || !SECTION_PURPOSE.test(value)) return undefined
+  const identifier = `${communityId}-${value}`
   return utf8Length(identifier) <= 200 ? identifier : undefined
+}
+
+export const parseCommunityProfileListIdentifier = (
+  communityIdValue: string,
+  identifier: string,
+) => {
+  const communityId = parseCommunityId(communityIdValue)
+  if (!communityId || !identifier.startsWith(`${communityId}-`) || utf8Length(identifier) > 200) {
+    return undefined
+  }
+  const suffix = identifier.slice(communityId.length + 1)
+  const [purpose, shard, ...extra] = suffix.split(".")
+  if (!SECTION_PURPOSE.test(purpose) || extra.length > 0 || (shard && !SECTION_SHARD.test(shard))) {
+    return undefined
+  }
+  return {purpose, ...(shard ? {shard: Number(shard)} : {})}
+}
+
+export const getCommunitySectionPurposeV2 = (
+  communityIdValue: string,
+  section: Pick<CommunitySectionV2, "name" | "profileLists">,
+) => {
+  for (const ref of section.profileLists) {
+    const identifier = ref.address.split(":").slice(2).join(":")
+    const parsed = parseCommunityProfileListIdentifier(communityIdValue, identifier)
+    if (parsed) return parsed.purpose
+  }
+
+  const purpose = makeCommunityChildSlug(section.name, "section")
+  return SECTION_PURPOSE.test(purpose) ? purpose : undefined
 }
 
 const parseCanonicalKind = (value: string | undefined) => {
@@ -953,19 +984,26 @@ export const selectCurrentAddressableEvent = (
     .sort(
       (first, second) => second.created_at - first.created_at || first.id.localeCompare(second.id),
     )[0]
+  const addressEventIds = new Set(
+    events.filter(event => getAddressableEventAddress(event) === address).map(event => event.id),
+  )
+  const eventTombstone = events
+    .filter(
+      event =>
+        event.kind === 5 &&
+        event.pubkey === parsedAddress.pubkey &&
+        event.tags.some(tag => exactTag(tag, 2) && tag[0] === "e" && addressEventIds.has(tag[1])),
+    )
+    .sort(
+      (first, second) => second.created_at - first.created_at || first.id.localeCompare(second.id),
+    )[0]
 
   return events
     .filter(
       event =>
         getAddressableEventAddress(event) === address &&
         isValid(event) &&
-        !events.some(
-          deletion =>
-            deletion.kind === 5 &&
-            deletion.pubkey === event.pubkey &&
-            deletion.created_at >= event.created_at &&
-            deletion.tags.some(tag => exactTag(tag, 2) && tag[0] === "e" && tag[1] === event.id),
-        ) &&
+        (!eventTombstone || event.created_at > eventTombstone.created_at) &&
         (!tombstone || event.created_at > tombstone.created_at),
     )
     .sort(
@@ -1005,6 +1043,57 @@ export const selectCurrentCommunityDefinitionsV2 = (events: TrustedEvent[]) => {
   }
 
   return definitions
+}
+
+export const selectCurrentTargetedPublicationEventsV2 = (events: TrustedEvent[]) => {
+  const addresses = new Set<string>()
+  for (const event of events) {
+    if (event.kind !== TARGETED_PUBLICATION_KIND_V2) continue
+    const address = getAddressableEventAddress(event)
+    if (address) addresses.add(address)
+  }
+
+  return Array.from(addresses)
+    .map(address =>
+      selectCurrentAddressableEvent(
+        events,
+        address,
+        event => Boolean(parseTargetedPublicationV2(event)),
+        event => {
+          const tags = event.tags.filter(tag => tag[0] === "a")
+          return tags.length === 1 && exactTag(tags[0], 2) && tags[0][1] === address
+        },
+      ),
+    )
+    .filter((event): event is TrustedEvent => Boolean(event))
+}
+
+export const makeTargetedPublicationLifecycleFiltersV2 = (events: TrustedEvent[]): Filter[] => {
+  const filters: Filter[] = []
+  const ids: string[] = []
+  const addresses: string[] = []
+
+  for (const event of events) {
+    if (event.kind !== TARGETED_PUBLICATION_KIND_V2) continue
+    const address = getAddressableEventAddress(event)
+    if (!address || addresses.includes(address)) continue
+    const [, author, ...identifierParts] = address.split(":")
+    filters.push({
+      kinds: [TARGETED_PUBLICATION_KIND_V2],
+      authors: [author],
+      "#d": [identifierParts.join(":")],
+    })
+    addresses.push(address)
+  }
+  for (const event of events) {
+    if (event.kind === TARGETED_PUBLICATION_KIND_V2 && event.id && !ids.includes(event.id))
+      ids.push(event.id)
+  }
+  const authors = Array.from(new Set(addresses.map(address => address.split(":")[1])))
+  if (authors.length && ids.length) filters.push({kinds: [5], authors, "#e": ids})
+  if (authors.length && addresses.length) filters.push({kinds: [5], authors, "#a": addresses})
+
+  return filters
 }
 
 const makeSourceTag = (source: TargetedPublicationSourceV2) => {
@@ -1062,16 +1151,9 @@ export const parseTargetedPublicationV2 = (
   if (
     tags.some(
       tag =>
-        tag.includes("source") &&
-        !(
-          (tag[0] === "a" && exactTag(tag, 4) && tag[3] === "source") ||
-          (tag[0] === "e" && exactTag(tag, 5) && tag[4] === "source")
-        ),
-    ) ||
-    tags.some(
-      tag =>
-        tag.includes("community") &&
-        !(tag[0] === "a" && exactTag(tag, 4) && tag[3] === "community"),
+        (tag[0] === "a" && tag[3] === "source" && !exactTag(tag, 4)) ||
+        (tag[0] === "e" && tag[4] === "source" && !exactTag(tag, 5)) ||
+        (tag[0] === "a" && tag[3] === "community" && !exactTag(tag, 4)),
     )
   ) {
     return undefined
@@ -1145,14 +1227,6 @@ export const parseTargetedPublicationV2 = (
     index += 1
   }
   if (communities.length < 1 || communities.length > MAX_TARGET_COMMUNITIES_V2) return undefined
-  if (
-    tags.some(
-      tag => tag[0] === "p" && communities.some(community => community.communityId === tag[1]),
-    )
-  ) {
-    return undefined
-  }
-
   return {id: dTags[0][1], kind, ...(source ? {source} : {}), communities}
 }
 

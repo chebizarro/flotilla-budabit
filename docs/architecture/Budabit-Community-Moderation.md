@@ -2,11 +2,11 @@
 
 This document describes how moderation, admission, and section access should work in Budabit communities.
 
-The goal is to let communities stay readable and discoverable while keeping publication rights high-signal, fine-grained, and delegated to moderators instead of requiring the community root key for day-to-day work.
+The goal is to let communities stay readable and discoverable while keeping publication rights high-signal, fine-grained, and delegated to moderators instead of requiring the branch controller key for day-to-day work.
 
 ## Summary
 
-Budabit communities use `kind:10222` Communikey definitions for stable community structure. Current section grants from `kind:30000` profile lists govern publishing and permission-governed Budabit visibility. Admission requests use NIP-101 forms created by moderators, not by the community root key.
+Budabit community branches use addressable `kind:32222` Communikey definitions for stable community structure and definition-native metadata. Current section grants from `kind:30000` profile lists govern publishing and permission-governed Budabit visibility. Admission requests use NIP-101 forms created by moderators, not by the branch controller.
 
 Moderators create application forms as `kind:30168` events. A form references the community definition with an `a` tag and identifies the requested section with a `content` tag. Users submit public, identified `kind:1069` responses to request access. Moderators review responses and either grant access by updating the section profile list and publishing a positive review, or reject by reacting negatively to the response.
 
@@ -14,7 +14,7 @@ Moderators create application forms as `kind:30168` events. A form references th
 
 | Topic                    | Decision                                                                                                                                                             |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Community root stability | `kind:10222` should change rarely and must not list application forms.                                                                                               |
+| Community root stability | `kind:32222` should change rarely and must not list application forms.                                                                                               |
 | Form ownership           | Application forms are authored by moderators with grant capability for the section.                                                                                  |
 | Form discovery           | Forms are discovered from community relays by community `a` tag and section `content` tag.                                                                           |
 | Community visibility     | Relays may serve public candidates, but Budabit admits permission-governed content under current section grants.                                                     |
@@ -28,11 +28,11 @@ Moderators create application forms as `kind:30168` events. A form references th
 | Relays                   | Forms, responses, and profile-list edits use community/authority relays. Review reactions also reach applicant/app discovery relays and carry community relay hints. |
 | Anonymous submissions    | Not supported. Admission requests must be tied to the requesting pubkey.                                                                                             |
 
-## Why Forms Are Not In `kind:10222`
+## Why Forms Are Not In `kind:32222`
 
 Application forms are operational moderation state. They may change frequently as moderators improve questions, requirements, onboarding language, and anti-spam checks.
 
-`kind:10222` is community root configuration. It should be stable, rare to update, and usually signed by a cold or high-trust community key. Requiring the community root key to update application forms would make admission workflows too rigid and would prevent delegated moderators from curating section-specific applications.
+`kind:32222` is exact branch configuration. It should be stable, rare to update, and usually signed by a cold or high-trust controller key. Requiring the controller to update application forms would make admission workflows too rigid and would prevent delegated moderators from curating section-specific applications.
 
 Instead, forms self-associate with the community and section:
 
@@ -42,7 +42,8 @@ Instead, forms self-associate with the community and section:
   "pubkey": "<moderator-pubkey>",
   "tags": [
     ["d", "code-curator-application"],
-    ["a", "10222:<community-pubkey>:", "wss://community.example"],
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "wss://community.example", "community"],
     ["content", "Code-curator"],
     ["name", "Code curator application"],
     ["settings", "{\"description\":\"Tell us why you should curate repositories.\"}"],
@@ -67,7 +68,7 @@ Instead, forms self-associate with the community and section:
 }
 ```
 
-The empty identifier in `10222:<community-pubkey>:` is intentional. Budabit treats the community definition as a replaceable community root event rather than a section-specific addressable object.
+The form's stable association is `h=<communityId>`. Its adjacent `a` tag has marker `community` and names the exact definition address whose current grants authorize the workflow.
 
 ## Moderator Authority
 
@@ -97,7 +98,7 @@ Form discovery starts from the active community definition.
 
 For a requested section:
 
-1. Find the section in latest `kind:10222`.
+1. Find the section in the accepted current definition at the exact `kind:32222` address.
 2. Derive grant-capable moderator pubkeys from references whose current list events exist and are not declined.
 3. Query community relays for `kind:30168` authored by those moderators and tagged to the community definition.
 4. Client-side filter to forms with `content = <section name>`.
@@ -109,7 +110,7 @@ Example form query:
 {
   "kinds": [30168],
   "authors": ["<moderator-pubkey-1>", "<moderator-pubkey-2>"],
-  "#a": ["10222:<community-pubkey>:"]
+  "#a": ["32222:<controller-pubkey>:<community-id>"]
 }
 ```
 
@@ -124,7 +125,7 @@ When multiple eligible forms are found for the same section, Budabit should sele
 | 3    | Across eligible form addresses, choose highest `created_at`.           |
 | 4    | If timestamps tie, choose the lowest event id.                         |
 
-This lets moderators supersede forms without touching `kind:10222`.
+This lets moderators supersede forms without touching `kind:32222`.
 
 ## Application Responses
 
@@ -135,7 +136,9 @@ Applications are public NIP-101 responses authored by the applicant.
   "kind": 1069,
   "pubkey": "<applicant-pubkey>",
   "tags": [
-    ["a", "30168:<form-pubkey>:code-curator-application"],
+    ["a", "30168:<form-pubkey>:code-curator-application", "", "form"],
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
     ["response", "experience", "I maintain several Nostr repositories.", "{}"],
     ["response", "focus", "Developer tooling and protocol libraries.", "{}"]
   ],
@@ -168,8 +171,10 @@ Delete event example:
   "kind": 5,
   "pubkey": "<applicant-pubkey>",
   "tags": [
-    ["e", "<form-response-event-id>"],
-    ["k", "1069"]
+    ["e", "<form-response-event-id>", "", "<applicant-pubkey>", "response"],
+    ["k", "1069"],
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"]
   ],
   "content": "Deleted application submission"
 }
@@ -189,7 +194,7 @@ Granting access publishes two events:
     "kind": 30000,
     "pubkey": "<profile-list-manager-pubkey>",
     "tags": [
-      ["d", "Code-curator"],
+      ["d", "<community-id>-code-curator"],
       ["p", "<existing-writer-pubkey>"],
       ["p", "<applicant-pubkey>"]
     ],
@@ -199,11 +204,12 @@ Granting access publishes two events:
     "kind": 7,
     "pubkey": "<moderator-pubkey>",
     "tags": [
-      ["e", "<form-response-event-id>"],
+      ["e", "<form-response-event-id>", "", "<applicant-pubkey>", "response"],
       ["p", "<applicant-pubkey>"],
       ["k", "1069"],
-      ["a", "30168:<form-author-pubkey>:code-curator-application"],
-      ["h", "<community-pubkey>"],
+      ["a", "30168:<form-author-pubkey>:code-curator-application", "", "form"],
+      ["h", "<community-id>"],
+      ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
       ["content", "Code-curator"]
     ],
     "content": "+"
@@ -218,11 +224,12 @@ Rejecting access publishes only a negative reaction:
   "kind": 7,
   "pubkey": "<moderator-pubkey>",
   "tags": [
-    ["e", "<form-response-event-id>"],
+    ["e", "<form-response-event-id>", "", "<applicant-pubkey>", "response"],
     ["p", "<applicant-pubkey>"],
     ["k", "1069"],
-    ["a", "30168:<form-author-pubkey>:code-curator-application"],
-    ["h", "<community-pubkey>"],
+    ["a", "30168:<form-author-pubkey>:code-curator-application", "", "form"],
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
     ["content", "Code-curator"]
   ],
   "content": "-"
@@ -239,7 +246,7 @@ Review history is discovered separately from active responses. For applicants or
 {
   "kinds": [7],
   "#p": ["<applicant-pubkey>"],
-  "#h": ["<community-pubkey>"],
+  "#h": ["<community-id>"],
   "#k": ["1069"]
 }
 ```
@@ -437,8 +444,8 @@ Event censoring:
   "tags": [
     ["e", "<event-id>", "spam"],
     ["p", "<event-author-pubkey>"],
-    ["a", "10222:<community-pubkey>:"],
-    ["h", "<community-pubkey>"],
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
     ["content", "<section-name>"]
   ],
   "content": "Optional moderation note"
@@ -455,15 +462,15 @@ Addressable event censoring:
     ["e", "<specific-event-version-id>", "spam"],
     ["a", "<target-kind>:<event-author-pubkey>:<d-tag>", "spam"],
     ["p", "<event-author-pubkey>"],
-    ["a", "10222:<community-pubkey>:"],
-    ["h", "<community-pubkey>"],
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"],
     ["content", "<section-name>"]
   ],
   "content": "Optional moderation note"
 }
 ```
 
-For addressable events, Budabit treats the reason-bearing target `a` tag as stronger than the `e` tag: the report censors the address, not only the specific event version. Later replacements at the same `kind:pubkey:d` remain censored until the report is revoked. The community scope `a` tag is always `10222:<community-pubkey>:` and is not a report target, even if malformed external reports attach a reason to it.
+For addressable events, Budabit treats the reason-bearing target `a` tag as stronger than the `e` tag: the report censors the address, not only the specific event version. Later replacements at the same `kind:pubkey:d` remain censored until the report is revoked. The community scope `a` tag has marker `community` and names the exact `32222:<controller>:<communityId>` definition; it is not a report target.
 
 Person censoring:
 
@@ -473,8 +480,8 @@ Person censoring:
   "pubkey": "<admin-or-all-section-moderator-pubkey>",
   "tags": [
     ["p", "<reported-pubkey>", "spam"],
-    ["a", "10222:<community-pubkey>:"],
-    ["h", "<community-pubkey>"]
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "", "community"]
   ],
   "content": "Optional moderation note"
 }
@@ -484,9 +491,9 @@ Rules:
 
 - Event moderation is section-scoped and may be performed by an admin or a current moderator with grant capability for that section.
 - A reason-bearing target `a` tag on a parameterized replaceable event applies to every replacement at that address.
-- The community definition `a` tag is scope metadata only; `10222:<community-pubkey>:` must not be interpreted as the moderated target.
+- The marked community definition `a` tag is branch authority metadata only; it must not be interpreted as the moderated target.
 - Person moderation is community-scoped and may be performed by an admin or a current moderator who has grant capability for every section in the latest community definition.
-- Admin means the current community root pubkey.
+- Admin means the controller of the selected exact definition branch.
 - Moderators cannot moderate another current moderator.
 - Admin reports supersede moderator protection.
 - Reports by removed moderators stop counting at render time.
@@ -570,15 +577,15 @@ Relay discovery uses stable structural tags rather than an ACL-sized `authors` a
 ```json
 {
   "kinds": [11],
-  "#h": ["<community-pubkey>"]
+  "#h": ["<community-id>"]
 }
 ```
 
-Targeted content starts with wrappers discovered by `#p = <community-pubkey>` and `#k = <original-kind>`. Budabit admits a wrapper only when its author has the current grant for that kind. An explicit `e` original is then loaded by exact event ID and may have an external author. An explicit `a` original is loaded with the exact coordinate author and `#d` and may also be external. An implicit original must use `h = <wrapper-targeting-id>` and be signed by the same author as the admitted wrapper.
+Targeted content starts with wrappers discovered by stable `#h=<communityId>` and `#k=<original-kind>`. Budabit requires the adjacent marked community `a` for the selected exact branch and admits a wrapper only when its author has the current grant for that kind. An explicit source `e` or `a` may identify an external-author original; an implicit original must use `h=<wrapper-targeting-id>` and be signed by the same author as the admitted wrapper. Community targeting through `p=<communityId>` is invalid.
 
 Current grants are applied locally to historical pages, live updates, repository/cache projections, notifications, shared activity/reaction consumers, and extension results. Revocation therefore hides previously visible direct content and wrappers; regrant changes the admission evidence, restarts/refilters consumers, and permits history to be refetched and reappear. Relays are not assumed to perform this policy.
 
-Exact `authors` filters remain where authorship is the requested authority or identity: `kind:10222` definitions, referenced profile-list shards, grant-capable forms, personal metadata and lists, exact `kind:pubkey:d` coordinates, implicit same-wrapper originals, and same-author deletion requests. These filters are not section writer arrays.
+Exact `authors` filters remain where authorship is the requested authority or identity: exact `kind:32222` definitions, referenced profile-list shards, grant-capable forms, personal metadata and lists, exact `kind:pubkey:d` coordinates, implicit same-wrapper originals, and same-author deletion requests. These filters are not section writer arrays.
 
 Broad historical requests use bounded raw-event cursor scans per relay and per structural filter. The cursor advances from raw relay events, not only admitted events, so outsider-only pages cannot create false emptiness or starve an older current writer. Page-budget exhaustion, timeout, disconnect, `CLOSED`, or a full page with possible same-timestamp overflow is incomplete, not empty. Notifications require complete grant and report evidence, may share foreground live coverage for the same community and relay, and keep bounded finite catch-up separate from local row admission.
 
@@ -586,6 +593,6 @@ Broad historical requests use bounded raw-event cursor scans per relay and per s
 
 This model accepts some application workflow overhead because it gives communities a competitive moderation surface.
 
-Communities can set different requirements for different publishing capabilities. They can keep general participation easy while making higher-impact publication types more curated. Moderators can improve forms and review processes without moving the community root key. Users can still browse the community and understand what capabilities they can unlock.
+Communities can set different requirements for different publishing capabilities. They can keep general participation easy while making higher-impact publication types more curated. Moderators can improve forms and review processes without using the branch controller key. Users can still browse the community and understand what capabilities they can unlock.
 
 Good UX is essential. The process should feel like requesting a community capability, not filing paperwork. The app should keep inaccessible actions visible, explain the missing permission, and route the user to a single place where requests, grants, and rejections are understandable.

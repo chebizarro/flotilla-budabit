@@ -751,7 +751,7 @@ describe("community permissions", () => {
   })
 
   it("merges multiple section profile lists for write access", () => {
-    const secondMemberPubkey = "f".repeat(64)
+    const secondMemberPubkey = testPubkey(78)
     const multiAuthorityDefinition = parseTestDefinition(
       makeEvent({
         kind: COMMUNITY_DEFINITION_KIND,

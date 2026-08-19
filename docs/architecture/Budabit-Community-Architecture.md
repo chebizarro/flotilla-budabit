@@ -6,52 +6,56 @@ Budabit treats this as a clean redesign of the community foundation. Legacy rela
 
 ## Summary
 
-Budabit communities are identified by a pubkey.
+Budabit community branches are identified by an exact definition address:
 
-The community pubkey publishes a `kind:10222` Communikey definition event. That event is authoritative for the community's relays and other infrastructure, including Blossom, ordered GRASP, and Cashu mint declarations, as well as supported content sections, profile lists used for write permissions, and optional badge references for engagement.
+```text
+32222:<controllerPubkey>:<communityId>
+```
+
+The canonical external pointer is the definition `naddr`. The controller publishes the addressable `kind:32222` definition. Its tags are authoritative for community metadata, relays and other infrastructure, supported content sections, profile lists used for write permissions, and optional badge references for engagement.
 
 Relays are infrastructure. They are not identity.
 
-The selected community is the root of the application session. A user may enter either an `npub` or an `ncommunity` value. `ncommunity` provides relay hints, but bare `npub` must be enough.
+The selected exact branch is the root of the application session. Users enter its canonical definition `naddr`, which contains kind `32222`, the controller, the `communityId` identifier, and optional relay hints.
 
 ## Core Principles
 
-| Principle                 | Decision                                                                                                                                            |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Community identity        | The community pubkey is the canonical durable identifier.                                                                                           |
-| Relay identity            | Relay URLs are never community IDs. They are relay hints and publication targets.                                                                   |
-| Session scope             | A Budabit session stores the selected community pubkey and optional relay hints.                                                                    |
-| Community visibility      | Budabit admits permission-governed content under current section grants. Matching events may remain publicly retrievable from relays.               |
-| Write access              | Profile lists are the effective write-permission source.                                                                                            |
-| User-community membership | App-wide membership is derived from community definitions plus section profile lists: admin, moderator/list owner, or member/grantee.               |
-| Badges                    | Badges drive engagement and endorsements; profile list inclusion is what Budabit enforces for write access.                                         |
-| Rooms                     | Rooms are immutable `kind:11` roots with a `room` marker.                                                                                           |
-| Room messages             | Room messages are `kind:9` chat events scoped to the community and room root.                                                                       |
-| Threads                   | Threads remain `kind:11`, distinguished from rooms by absence of a `room` marker.                                                                   |
-| Global chat               | There is no global community chat. Every chat message belongs to a room.                                                                            |
-| Targeted publications     | Calendar events, goals, repo announcements, permalinks, and smart widgets use `kind:30222`.                                                         |
-| Exclusive content         | Rooms, room messages, threads, comments, reactions, labels, deletes, reports, profile data, badges, forms, and lists are not targeted publications. |
-| Migration                 | This is a clean break. Legacy relay-space architecture is not preserved as a compatibility layer.                                                   |
+| Principle                 | Decision                                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Community identity        | Stable association uses `communityId`; exact branch identity is `32222:<controller>:<communityId>` and its canonical pointer is the definition `naddr`. |
+| Relay identity            | Relay URLs are never community IDs. They are relay hints and publication targets.                                                                       |
+| Session scope             | A Budabit session stores the selected exact definition address and optional relay hints.                                                                |
+| Community visibility      | Budabit admits permission-governed content under current section grants. Matching events may remain publicly retrievable from relays.                   |
+| Write access              | Profile lists are the effective write-permission source.                                                                                                |
+| User-community membership | App-wide membership is derived from community definitions plus section profile lists: admin, moderator/list owner, or member/grantee.                   |
+| Badges                    | Badges drive engagement and endorsements; profile list inclusion is what Budabit enforces for write access.                                             |
+| Rooms                     | Rooms are immutable `kind:11` roots with a `room` marker.                                                                                               |
+| Room messages             | Room messages are `kind:9` chat events scoped to the community and room root.                                                                           |
+| Threads                   | Threads remain `kind:11`, distinguished from rooms by absence of a `room` marker.                                                                       |
+| Global chat               | There is no global community chat. Every chat message belongs to a room.                                                                                |
+| Targeted publications     | Calendar events, goals, repo announcements, permalinks, and smart widgets use `kind:30222`.                                                             |
+| Exclusive content         | Rooms, room messages, threads, comments, reactions, labels, deletes, reports, profile data, badges, forms, and lists are not targeted publications.     |
+| Migration                 | This is a clean break. Legacy relay-space architecture is not preserved as a compatibility layer.                                                       |
 
 ## Community Resolution
 
 Budabit should offer an input field labelled along these lines:
 
 ```text
-Community npub or ncommunity
+Community definition naddr
 ```
 
 Resolution flow:
 
-1. Parse input as `ncommunity`, `npub`, or raw hex pubkey.
-2. Extract the community pubkey.
-3. Extract relay hints if the input is `ncommunity`.
-4. Fetch the latest `kind:10222` event authored by the community pubkey.
-5. Fetch the community `kind:0` profile metadata.
-6. Fetch profile lists referenced by the `kind:10222` content sections.
-7. Build the active community model from the community pubkey and latest valid definition.
+1. Parse the canonical definition `naddr` and require kind `32222`, a controller, and a valid `communityId` identifier.
+2. Extract up to three normalized relay hints.
+3. Fetch valid definitions at exact `kind + author + #d` coordinates.
+4. Select the current replacement at that exact address deterministically.
+5. Read community metadata from the accepted definition tags.
+6. Fetch every exact profile-list coordinate referenced by its content sections.
+7. Build the active branch model from the exact definition address and accepted definition.
 
-Bare `npub` resolution should use best-effort discovery through bootstrap relays, indexer relays, outbox discovery, and eventually any relays found from prior cache state.
+Raw pubkeys, `npub`, and `ncommunity` do not identify an exact V2 branch and are not accepted as canonical resolution inputs.
 
 ## Session Model
 
@@ -62,31 +66,36 @@ Suggested shape:
 ```json
 {
   "userPubkey": "<logged-in-user-pubkey>",
-  "communityPubkey": "<selected-community-pubkey>",
+  "communityId": "<stable-community-id>",
+  "communityDefinitionAddress": "32222:<controller-pubkey>:<community-id>",
   "communityRelayHints": ["wss://relay.example.com"],
-  "communityDefinitionId": "<latest-kind-10222-id>"
+  "communityDefinitionId": "<accepted-kind-32222-event-id>"
 }
 ```
 
 `userPubkey` answers who is using Budabit.
 
-`communityPubkey` answers which community Budabit is currently viewing.
+`communityDefinitionAddress` answers which exact branch Budabit is currently viewing. `communityId` is the stable association value, not a person or signer.
 
 Guests can select a community and read content that passes Budabit's current community admission rules. Logged-in users can publish only when they satisfy the section's write rules.
 
 ## Community Definition
 
-Budabit communities are defined by `kind:10222` events authored by the community pubkey.
+Budabit community branches are defined by addressable `kind:32222` events at `32222:<controller>:<communityId>`.
 
-The community profile name, picture, and default description come from the community pubkey's `kind:0` metadata event. A `description` tag in `kind:10222` can override the profile description for Budabit community display.
+Community `name`, `description`, `picture`, `banner`, and `website` metadata comes only from definition tags. The controller's `kind:0` is a personal profile and does not fill or override community metadata.
 
 Example target shape:
 
 ```json
 {
-  "kind": 10222,
-  "pubkey": "<community-pubkey>",
+  "kind": 32222,
+  "pubkey": "<controller-pubkey>",
   "tags": [
+    ["d", "<community-id>"],
+    ["name", "Buda Builders"],
+    ["description", "A community for builders"],
+    ["picture", "https://community.example/picture.png"],
     ["r", "wss://main.community.relay"],
     ["r", "wss://backup.community.relay"],
     ["blossom", "https://blossom.community.example"],
@@ -100,39 +109,47 @@ Example target shape:
     ["k", "7"],
     ["k", "1985"],
     ["k", "9", "room-message"],
-    ["a", "30000:<list-pubkey>:General-1", "wss://main.community.relay"],
-    ["a", "30000:<list-pubkey>:General-2", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:<community-id>-general", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:<community-id>-general.2", "wss://main.community.relay"],
     ["badge", "30009:<issuer-pubkey>:member"],
 
     ["content", "Room-creator"],
     ["k", "11", "room"],
-    ["a", "30000:<list-pubkey>:Room-creator", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:<community-id>-room-creator", "wss://main.community.relay"],
     ["badge", "30009:<issuer-pubkey>:room-admin"],
 
     ["content", "Thread-creator"],
     ["k", "11", "threads"],
-    ["a", "30000:<list-pubkey>:Thread-creator", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:<community-id>-thread-creator", "wss://main.community.relay"],
     ["badge", "30009:<issuer-pubkey>:member"],
 
     ["content", "Calendar-event-creator"],
     ["k", "31922"],
-    ["a", "30000:<list-pubkey>:Calendar-event-creator", "wss://main.community.relay"],
+    [
+      "a",
+      "30000:<list-pubkey>:<community-id>-calendar-event-creator",
+      "wss://main.community.relay"
+    ],
     ["badge", "30009:<issuer-pubkey>:member"],
 
     ["content", "Fundraiser-goals-creator"],
     ["k", "9041"],
-    ["a", "30000:<list-pubkey>:Fundraiser-goals-creator", "wss://main.community.relay"],
+    [
+      "a",
+      "30000:<list-pubkey>:<community-id>-fundraiser-goals-creator",
+      "wss://main.community.relay"
+    ],
     ["badge", "30009:<issuer-pubkey>:member"],
 
     ["content", "Code-curator"],
     ["k", "30617"],
     ["k", "1623"],
-    ["a", "30000:<list-pubkey>:Code-curator", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:<community-id>-code-curator", "wss://main.community.relay"],
     ["badge", "30009:<issuer-pubkey>:code-curator"],
 
     ["content", "Widget-curator"],
     ["k", "30033"],
-    ["a", "30000:<list-pubkey>:Widget-curator", "wss://main.community.relay"],
+    ["a", "30000:<list-pubkey>:<community-id>-widget-curator", "wss://main.community.relay"],
     ["badge", "30009:<issuer-pubkey>:widget-curator"]
   ],
   "content": ""
@@ -141,7 +158,7 @@ Example target shape:
 
 Repeated `["grasp", "wss://..."]` tags are ordered: they declare, in preference order, GRASP servers that the community endorses or offers to members. The `g` tag remains the community geohash and must not be interpreted as a GRASP server.
 
-A user's `kind:10063` Blossom list describes that user's blob hosts, while `kind:10317` describes that user's preferred GRASP servers. NIP-61 `kind:10019` is Nutzap receiving configuration rather than a generic mint list; Budabit may use its mint tags as person-level recommendation evidence. These events are not community infrastructure authority, and Budabit does not automatically dual-publish them from `kind:10222`. A declaration from an eligible, non-renounced community is viable recommendation evidence, but applying a recommendation always requires an explicit **Add** action.
+A user's `kind:10063` Blossom list describes that user's blob hosts, while `kind:10317` describes that user's preferred GRASP servers. NIP-61 `kind:10019` is Nutzap receiving configuration rather than a generic mint list; Budabit may use its mint tags as person-level recommendation evidence. These events are not community infrastructure authority, and Budabit does not automatically dual-publish them from `kind:32222`. A declaration from an eligible, non-renounced community is viable recommendation evidence, but applying a recommendation always requires an explicit **Add** action.
 
 The third value in a `k` tag is a Budabit subtype convention. It is needed when one event kind supports more than one community section.
 
@@ -169,7 +186,7 @@ Budabit uses Communikey grants for both publish permission and client-side commu
 
 Permission workflow:
 
-1. Read the active community's latest `kind:10222` definition.
+1. Read the accepted current `kind:32222` definition at the active exact address.
 2. Find the content section for the attempted publication.
 3. Fetch every exact `kind:30000` coordinate referenced by the section.
 4. Union their current `p` tags, include structural member access for referenced non-admin list owners, and include moderator authority only for coordinates with a current non-declined list event.
@@ -187,16 +204,16 @@ Budabit should derive a canonical app-wide list of communities the active user i
 
 A user is part of a community when at least one of these is true:
 
-- Admin: the latest `kind:10222` definition is authored by the user.
-- Moderator: a section in `kind:10222` references a `kind:30000` profile-list address owned by the user, and Budabit has seen that user-authored `kind:30000` event.
+- Admin: the selected exact `kind:32222` definition is controlled by the user.
+- Moderator: a section in the accepted `kind:32222` definition references a `kind:30000` profile-list address owned by the user, and Budabit has seen that user-authored `kind:30000` event.
 - Invited list owner/member: the latest definition references a non-admin `kind:30000` coordinate owned by the user. Missing and declined responses retain community-wide member/write access while the reference remains, but confer no moderator, grant, or report-review authority.
 - Member/grantee: a referenced section profile-list event contains a `p` tag for the user.
 
 Non-admin users are excluded when effective community report state contains a person-ban for that user. The community admin is never excluded by a person-ban in their own community.
 
-Discovery should keep `kind:30000` profile-list events as a first-class entrypoint. If the user-authored profile list includes an `a` tag pointing to `10222:<community-pubkey>:` with a relay hint, Budabit may use that relay hint to find the community definition. Budabit should still validate the role against the loaded `kind:10222` section refs before treating the user as a moderator.
+Discovery should keep `kind:30000` profile-list events as a first-class entrypoint. A branch reference must be `32222:<controller>:<communityId>` and, where it conveys branch authority, use marker `community`. Budabit validates the role against the loaded exact `kind:32222` section references before treating the user as a moderator.
 
-Community-scoped data used to validate membership, including referenced section profile lists and moderation reports, should be loaded from the relays declared by the loaded `kind:10222` definition. Personal outbox and indexer relays may help discover root `kind:10222` definitions, but they are not fallback sources for scoped membership or moderation state.
+Community-scoped data used to validate membership, including referenced section profile lists and moderation reports, should be loaded from the relays declared by the loaded `kind:32222` definition. Indexer relays may help discover exact definitions, but they are not fallback sources for scoped membership or moderation state.
 
 ## Badge Display And Access Revocation
 
@@ -211,7 +228,7 @@ For Budabit section access, effective revocation is profile-list removal:
   "kind": 30000,
   "pubkey": "<list-manager-pubkey>",
   "tags": [
-    ["d", "General"],
+    ["d", "<community-id>-general"],
     ["p", "<still-allowed-pubkey>"]
   ],
   "content": ""
@@ -234,11 +251,11 @@ If a future standard defines explicit badge revocation, Budabit can support it f
 
 | Budabit feature           |                  Kind | Targeted with `kind:30222` | Target model                                                                                       |
 | ------------------------- | --------------------: | -------------------------- | -------------------------------------------------------------------------------------------------- |
-| Room root                 |                  `11` | No                         | Community-exclusive immutable room root with `h = communityPubkey` and `room` marker.              |
-| Room message              |                   `9` | No                         | Community-exclusive chat event with `h = communityPubkey` and room-root reference.                 |
+| Room root                 |                  `11` | No                         | Community-native immutable room root with stable `h=<communityId>` and `room` marker.              |
+| Room message              |                   `9` | No                         | Community-native chat event with stable `h=<communityId>` and room-root reference.                 |
 | Room reply                |                   `9` | No                         | Same as room message, plus NIP-C7 `q` tag to parent message.                                       |
 | Room archive label        |                `1985` | No                         | Admin label against room root.                                                                     |
-| Thread root               |                  `11` | No                         | Community-exclusive thread with `h = communityPubkey`, no `room` marker.                           |
+| Thread root               |                  `11` | No                         | Community-native thread with stable `h=<communityId>`, no `room` marker.                           |
 | Thread reply              |                `1111` | No                         | NIP-22 comment against thread root.                                                                |
 | Calendar event            |               `31922` | Yes                        | Public publication targeted to the community.                                                      |
 | Calendar comments         |                `1111` | No                         | Comments against calendar event.                                                                   |
@@ -261,7 +278,7 @@ If a future standard defines explicit badge revocation, Budabit can support it f
 | Deletes                   |                   `5` | No                         | Deletion request or moderation action.                                                             |
 | Reports                   |                `1984` | No                         | Moderation signal.                                                                                 |
 | Zaps                      |       `9734` / `9735` | No                         | Payment signal and receipt. Anyone may zap.                                                        |
-| Profile metadata          |                   `0` | No                         | User/community identity metadata.                                                                  |
+| Profile metadata          |                   `0` | No                         | Personal identity metadata only.                                                                   |
 | Follow list               |                   `3` | No                         | User graph and community following.                                                                |
 | Relay list                |               `10002` | No                         | User relay configuration.                                                                          |
 | Messaging relay list      | `10050` or equivalent | No                         | User DM relay configuration.                                                                       |
@@ -276,7 +293,7 @@ If a future standard defines explicit badge revocation, Budabit can support it f
 | Profile list              |               `30000` | No                         | Section grant and moderation infrastructure.                                                       |
 | Form template             |               `30168` | No                         | Admission workflow infrastructure.                                                                 |
 | Form response             |                `1069` | No                         | Admission request.                                                                                 |
-| Community definition      |               `10222` | No                         | Community root configuration.                                                                      |
+| Community definition      |               `32222` | No                         | Addressable branch configuration and community metadata.                                           |
 | Targeted publication      |               `30222` | Not applicable             | Association between publication and community.                                                     |
 
 ## Targeted Publications
@@ -295,21 +312,20 @@ Targeted kinds:
 
 Budabit convention:
 
-| Field                        | Meaning                                                               |
-| ---------------------------- | --------------------------------------------------------------------- |
-| Original publication `h` tag | Targeting identifier, not community pubkey.                           |
-| Targeting event `d` tag      | Same targeting identifier used in the original publication's `h` tag. |
-| Targeting event `p` tags     | Community pubkeys being targeted.                                     |
-| Targeting event `r` tags     | Main relay hints for the corresponding communities.                   |
+| Field                        | Meaning                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| Original publication `h` tag | Targeting identifier, not community identity.                                         |
+| Targeting event `d` tag      | Same targeting identifier used in the original publication's `h` tag.                 |
+| Targeting event target pair  | Adjacent `h=<communityId>` then marked `a=<definitionAddress>` for each exact branch. |
 
 This preserves a strict split:
 
-| `h` value         | Used by                                                  |
-| ----------------- | -------------------------------------------------------- |
-| `communityPubkey` | Exclusive community-native content.                      |
-| `targeting d/id`  | Targetable publications associated through `kind:30222`. |
+| `h` value        | Used by                                                  |
+| ---------------- | -------------------------------------------------------- |
+| `communityId`    | Community-native content.                                |
+| `targeting d/id` | Targetable publications associated through `kind:30222`. |
 
-The wrapper author is the community-facing authority. Budabit discovers wrappers by `#p = communityPubkey` and `#k = originalKind`, then admits only wrappers whose signer has the current section grant. An explicit `e` reference may identify an external-author original by exact event ID. An explicit `a` reference may identify an external-author original by its exact coordinate, retaining that coordinate's author and `#d`. Without either reference, the original is implicit and must have `h = targeting d` and the same signer as the admitted wrapper.
+Budabit discovers wrappers by stable `#h=<communityId>`, then requires each target to be an adjacent `h` and `a` pair whose `a` has marker `community` and names the selected exact definition address. It admits only wrappers whose signer has the current section grant from that branch. An explicit source `e` or `a` uses marker `source`; without one, the original is implicit and must have `h = targeting d` and the same signer as the admitted wrapper. Community association through `p=<communityId>` is invalid.
 
 Example targeted calendar publication:
 
@@ -334,10 +350,10 @@ Example targeting event:
   "kind": 30222,
   "tags": [
     ["d", "targeting-calendar-event-id"],
-    ["a", "31922:<author-pubkey>:calendar-event-id", "wss://author-relay.example"],
+    ["a", "31922:<author-pubkey>:calendar-event-id", "wss://author-relay.example", "source"],
     ["k", "31922"],
-    ["p", "<community-pubkey>"],
-    ["r", "wss://main.community.relay"]
+    ["h", "<community-id>"],
+    ["a", "32222:<controller-pubkey>:<community-id>", "wss://main.community.relay", "community"]
   ],
   "content": ""
 }
@@ -349,13 +365,13 @@ Budabit should support one selected community in the first implementation, but t
 
 Targeting is mutable through the addressable `kind:30222` event.
 
-To remove a publication from a community, publish a newer `kind:30222` with the same `d` tag and without that community's `p`/`r` pair.
+To remove a publication from a branch, publish a newer `kind:30222` with the same `d` tag and without that branch's complete adjacent `h`/marked-`a` pair.
 
 The original publication is not deleted or modified.
 
 ## Exclusive Community Content
 
-Exclusive community-native content uses `h = communityPubkey`.
+Community-native content uses exactly one stable `h=<communityId>`. Authority-sensitive events additionally carry exactly one `a=<definitionAddress>` with marker `community`.
 
 Exclusive content includes rooms, room messages, threads, comments that naturally belong to roots, reactions, labels, deletes, and reports.
 
@@ -365,7 +381,7 @@ Example exclusive thread:
 {
   "kind": 11,
   "tags": [
-    ["h", "<community-pubkey>"],
+    ["h", "<community-id>"],
     ["title", "Thread topic"]
   ],
   "content": "Thread body"
@@ -397,7 +413,7 @@ Room root example:
 ```json
 {
   "kind": 11,
-  "tags": [["h", "<community-pubkey>"], ["room"], ["title", "General"]],
+  "tags": [["h", "<community-id>"], ["room"], ["title", "General"]],
   "content": "Room description"
 }
 ```
@@ -407,7 +423,7 @@ Room root rules:
 | Rule            | Decision                                                  |
 | --------------- | --------------------------------------------------------- |
 | Kind            | `11`.                                                     |
-| Community scope | `h = communityPubkey`.                                    |
+| Community scope | Exactly one `h=<communityId>`.                            |
 | Room marker     | Include a `room` tag.                                     |
 | Title           | Use NIP-7D `title`.                                       |
 | Description     | Use `content`.                                            |
@@ -427,7 +443,7 @@ A room message must be scoped to both the community and the room root:
 {
   "kind": 9,
   "tags": [
-    ["h", "<community-pubkey>"],
+    ["h", "<community-id>"],
     ["E", "<room-root-id>", "wss://main.community.relay", "<room-root-pubkey>"],
     ["K", "11"]
   ],
@@ -441,7 +457,7 @@ Room message replies follow NIP-C7 by adding a `q` tag for the parent chat messa
 {
   "kind": 9,
   "tags": [
-    ["h", "<community-pubkey>"],
+    ["h", "<community-id>"],
     ["E", "<room-root-id>", "wss://main.community.relay", "<room-root-pubkey>"],
     ["K", "11"],
     ["q", "<parent-message-id>", "wss://main.community.relay", "<parent-message-pubkey>"]
@@ -455,12 +471,12 @@ Room message query for one room:
 ```json
 {
   "kinds": [9],
-  "#h": ["<community-pubkey>"],
+  "#h": ["<community-id>"],
   "#E": ["<room-root-id>"]
 }
 ```
 
-Budabit should never query room messages by `#h = roomId`. `h` is reserved for the community pubkey in exclusive content.
+Budabit should never query room messages by `#h = roomId`. Community-native scope uses the stable community ID in `h`.
 
 ## Room Archive Labels
 
@@ -472,7 +488,7 @@ Example:
 {
   "kind": 1985,
   "tags": [
-    ["h", "<community-pubkey>"],
+    ["h", "<community-id>"],
     ["E", "<room-root-id>", "wss://main.community.relay", "<room-root-pubkey>"],
     ["K", "11"],
     ["L", "budabit:room"],
@@ -490,7 +506,7 @@ To unarchive, Budabit can publish a newer authoritative label that removes or su
 
 | Event type                      | Publish relays                                                                          |
 | ------------------------------- | --------------------------------------------------------------------------------------- |
-| Exclusive community events      | All `r` relays from latest `kind:10222`.                                                |
+| Community-native events         | All `r` relays from the accepted exact `kind:32222` definition.                         |
 | Original targetable publication | User write relays plus community relays.                                                |
 | `kind:30222` targeting event    | Community relays.                                                                       |
 | Badge/profile-list admin events | Relays referenced by the community definition plus relevant issuer/list-manager relays. |
@@ -504,9 +520,9 @@ Community bootstrap:
 
 ```json
 {
-  "kinds": [10222],
-  "authors": ["<community-pubkey>"],
-  "limit": 1
+  "kinds": [32222],
+  "authors": ["<controller-pubkey>"],
+  "#d": ["<community-id>"]
 }
 ```
 
@@ -515,7 +531,7 @@ Exclusive room roots:
 ```json
 {
   "kinds": [11],
-  "#h": ["<community-pubkey>"],
+  "#h": ["<community-id>"],
   "#room": [""]
 }
 ```
@@ -527,7 +543,7 @@ Exclusive forum threads:
 ```json
 {
   "kinds": [11],
-  "#h": ["<community-pubkey>"]
+  "#h": ["<community-id>"]
 }
 ```
 
@@ -538,13 +554,13 @@ Targeting events for community publications:
 ```json
 {
   "kinds": [30222],
-  "#p": ["<community-pubkey>"]
+  "#h": ["<community-id>"]
 }
 ```
 
 After loading and admitting `kind:30222`, Budabit fetches an explicit original via its `e` or `a` tag, or an implicit original via the wrapper's `d` targeting ID.
 
-These are transport filters, not authorization filters. Exclusive community content is discovered by stable `#h = communityPubkey` plus feature structure such as kind, root IDs, or date tags. Targeting wrappers are discovered by stable `#p = communityPubkey` and `#k`. Budabit applies current-grant author admission locally to relay events, repository events, cache projections, and live updates instead of putting an ACL-sized `authors` array on the wire.
+These are transport filters, not authorization filters. Community-native content and targeting wrappers are discovered by stable `#h=<communityId>` plus feature structure such as kind, root IDs, `#k`, or date tags. Authority-sensitive candidates must also contain the marked exact definition `a` required by their workflow. Budabit applies current-grant author admission locally instead of putting an ACL-sized `authors` array on the wire.
 
 An `authors` field remains on exact authority, identity, or coordinate queries: community definitions; profile-list shards; grant-capable forms; personal profile and list metadata; `kind:pubkey:d` references; implicit originals tied to the wrapper signer; and same-author delete requests. These are singleton or semantically exact authors, not section ACL arrays.
 
@@ -552,23 +568,23 @@ Historical acquisition uses bounded raw-event cursor scans independently for eac
 
 ## Notifications And Shared Consumers
 
-Active-community notification candidates, global notification rows, route projections, activity/reaction consumers, and extension queries use the same current-grant admission as their destination views. Broad `#h` or `#p` notification acquisition may run before profile-list hydration, but no permission-governed row is emitted without complete referenced profile-list and report-state evidence. Targeted notification roots use the same explicit-external and implicit-same-wrapper rules as routes, and community engagement rows require their referenced community root to pass admission too.
+Active-community notification candidates, global notification rows, route projections, activity/reaction consumers, and extension queries use the same current-grant admission as their destination views. Broad `#h=<communityId>` notification acquisition may run before profile-list hydration, but no permission-governed row is emitted without complete referenced profile-list and report-state evidence. Authority-sensitive rows must identify the selected branch with the workflow's marked exact definition `a`. Targeted notification roots use the same explicit-external and implicit-same-wrapper rules as routes, and community engagement rows require their referenced community root to pass admission too.
 
 Foreground and background consumers coordinate live ownership by community and relay; repository watchers do the same by repository address and relay. When a foreground session already owns matching live coverage, the background notification consumer suppresses only its duplicate live subscription. Bounded finite catch-up may still run, and another community or repository on the same relay keeps its own live filters. Every consumer revalidates repository and live events when grant evidence changes so revocation removes rows and regrant can refetch them.
 
 ## Admin Key Model
 
-Budabit should not require the community root key to be hot.
+Budabit should not require the branch controller key to be hot.
 
-| Key                | Role                                                                                                                                        |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Community root key | Signs `kind:0` and `kind:10222`. Should be cold or rarely used.                                                                             |
-| Moderator key      | Updates delegated profile lists, reviews applications, creates community endorsements, and publishes admin labels. Can be hot or delegated. |
-| User key           | Publishes user content when included in the relevant profile list.                                                                          |
+| Key            | Role                                                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Controller key | Signs the exact branch's `kind:32222` definition. Should be cold or rarely used.                                                            |
+| Moderator key  | Updates delegated profile lists, reviews applications, creates community endorsements, and publishes admin labels. Can be hot or delegated. |
+| User key       | Publishes user content when included in the relevant profile list.                                                                          |
 
 The profile list `a` tags may reference lists managed by delegated pubkeys. Badge definitions and awards are discovered by badge-specific views and should not be required for community bootstrap or section access checks.
 
-This allows Budabit to support practical admin workflows without exposing the main community key in a browser or server process.
+This allows Budabit to support practical admin workflows without exposing the controller key in a browser or server process.
 
 ## Admission Workflow
 
@@ -597,27 +613,27 @@ The route model should move away from relay-encoded spaces.
 
 Target direction:
 
-| Current concept     | Target concept                                                    |
-| ------------------- | ----------------------------------------------------------------- |
-| `/spaces/[relay]`   | Community route keyed by pubkey or ncommunity-derived identifier. |
-| Relay URL in route  | Community pubkey in route/session.                                |
-| Room path `[h]`     | Room path by room root event ID.                                  |
-| Platform relays env | Optional default community npub or bootstrap hints.               |
+| Current concept     | Target concept                                          |
+| ------------------- | ------------------------------------------------------- |
+| `/spaces/[relay]`   | Community route keyed by canonical definition `naddr`.  |
+| Relay URL in route  | Exact definition `naddr` in route/session.              |
+| Room path `[h]`     | Room path by room root event ID.                        |
+| Platform relays env | Optional default definition `naddr` or bootstrap hints. |
 
-The deployed website may default to the Budabit community npub, but the app architecture must not derive community identity from deployment relays.
+The deployed website may default to a Budabit definition `naddr`, but the app architecture must not derive community identity from deployment relays.
 
 ## Clean Break Scope
 
 The target architecture removes these assumptions:
 
-| Removed assumption                    | Replacement                                             |
-| ------------------------------------- | ------------------------------------------------------- |
-| Relay URL is the community.           | Pubkey is the community.                                |
-| `h` identifies a room.                | `h` identifies the community for exclusive events.      |
-| `39000` room metadata drives rooms.   | `kind:11` immutable room roots drive rooms.             |
-| Platform relays define the app space. | `kind:10222` defines community infrastructure.          |
-| Relay auth is the main access model.  | Profile-list write permission is the client-side model. |
-| Global roomless space chat exists.    | Every chat message belongs to a room.                   |
+| Removed assumption                    | Replacement                                                 |
+| ------------------------------------- | ----------------------------------------------------------- |
+| Relay URL is the community.           | Exact `kind:32222` definition address identifies a branch.  |
+| `h` identifies a room.                | Stable `h=<communityId>` associates community events.       |
+| `39000` room metadata drives rooms.   | `kind:11` immutable room roots drive rooms.                 |
+| Platform relays define the app space. | `kind:32222` defines community metadata and infrastructure. |
+| Relay auth is the main access model.  | Profile-list write permission is the client-side model.     |
+| Global roomless space chat exists.    | Every chat message belongs to a room.                       |
 
 ## Implementation Guardrails
 
@@ -627,8 +643,9 @@ Important guardrails:
 
 1. Do not introduce relay URL based compatibility shims into the new core model.
 2. Keep community admission distinct from privacy; current grants control Budabit visibility but do not make relay events confidential.
-3. Keep `h = communityPubkey` reserved for exclusive community-native events.
+3. Keep stable `h=<communityId>` for community-native association and require marked exact definition `a` tags where branch authority is evaluated.
 4. Keep `h = targeting identifier` reserved for targetable publications that have a `kind:30222` association.
 5. Treat the union of current section profile-list shards as the effective grant source for publishing and Budabit visibility.
 6. Treat room root event IDs as canonical room IDs.
 7. Keep one active community in the first UI, but model targeted publications as multi-community capable.
+8. Never treat `communityId` as a person or encode community association in a `p` tag.

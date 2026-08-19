@@ -15,7 +15,6 @@ export default defineConfig({
   testDir: "./tests/e2e",
   outputDir: "./test-results/playwright",
   reporter: [["html", {outputFolder: "playwright-report", open: "never"}]],
-  workers: 2,
 
   // Global setup and teardown
   globalSetup: "./tests/e2e/global-setup.ts",
@@ -79,6 +78,7 @@ export default defineConfig({
       testIgnore: [
         /.*\.setup\.ts/,
         /widget-(acceptance|interop)\.spec\.ts/,
+        // Requires an external Huddle development server on port 5173; it is not an app E2E test.
         /huddle-multiparty\.spec\.ts/,
       ],
       use: {

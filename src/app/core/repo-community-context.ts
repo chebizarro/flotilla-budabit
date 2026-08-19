@@ -2,6 +2,7 @@ import {Address, getTagValue, type TrustedEvent} from "@welshman/util"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {
   normalizePubkey,
+  parseCommunityId,
   parseCommunityDefinitionAddress,
   parseTargetedPublicationV2,
   type CommunityDefinitionV2,
@@ -67,6 +68,21 @@ export const getRepoAddress = (event: TrustedEvent | undefined) => {
     return identifier && pubkey && event.kind ? `${event.kind}:${pubkey}:${identifier}` : ""
   }
 }
+
+export const isAuthorizedDirectCommunityRepo = ({
+  event,
+  communityId,
+  authorPubkeys,
+}: {
+  event: TrustedEvent
+  communityId: string
+  authorPubkeys: string[]
+}) =>
+  event.kind === GIT_REPO_ANNOUNCEMENT &&
+  event.tags.filter(tag => tag[0] === "h").length === 1 &&
+  parseCommunityId(event.tags.find(tag => tag[0] === "h")?.[1] || "") ===
+    parseCommunityId(communityId) &&
+  authorPubkeys.includes(normalizePubkey(event.pubkey))
 
 const getRepoOwnerPubkey = ({
   repoEvent,

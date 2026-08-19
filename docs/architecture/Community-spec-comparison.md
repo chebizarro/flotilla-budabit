@@ -32,10 +32,10 @@ If the relay goes down, the community is out.
 
 **2 event kinds**:
 
-- `kind:10222` — Community Definition
+- `kind:32222` — Addressable Community Definition
 - `kind:30222` — Targeted Publication
 
-Uses existing primitives for everything else: badges (NIP-58), forms (NIP-101), profile metadata (kind:0).
+Uses existing primitives for everything else: badges (NIP-58), forms (NIP-101), and profile lists (`kind:30000`). Community metadata is native to definition tags; a controller's `kind:0` remains personal metadata.
 
 ### NIP-72
 
@@ -116,7 +116,7 @@ No content type declaration. Communities are generic containers. You don't know 
 
 Any existing Nostr event can be targeted to a community via a Targeted Publication event (`kind:30222`). Full backwards compatibility. The association can be updated or removed without affecting the original content.
 
-A single publication can be targeted to up to 12 communities via one Targeted Publication event. The authorized wrapper curator's intended community association is explicit and transparent, including when the original has an external author. This can serve as an organic discovery route for related communities and lowers the bar for bootstrapping new ones.
+A single publication can be targeted to up to 12 exact community branches via one Targeted Publication event. Each target is an adjacent `h=<communityId>` and `a=<32222:controller:communityId>` pair with marker `community`. The authorized wrapper curator's intended branch association is explicit and transparent, including when the original has an external author. Community association through a person `p` tag is invalid.
 
 ### NIP-72 and NIP-29
 
@@ -139,7 +139,7 @@ Best you can do is poletly ask the relay to not propagate your publication (with
 Per-section acquisition and admission:
 
 1. Fetch the exact profile-list shards (`kind:30000`) referenced by the content section and union their current `p` tags.
-2. Discover direct content structurally with `#h = communityPubkey`, or discover `kind:30222` wrappers with `#p = communityPubkey` and `#k`.
+2. Discover direct content and `kind:30222` wrappers structurally with stable `#h=<communityId>`, plus `#k` for wrappers.
 3. Admit candidates locally under current grants. Missing grant evidence fails closed.
 
 No need to query potentially hundreds of badge award events. Profile-list shards keep large communities within relay event/tag limits, while structural relay filters avoid ACL-sized `authors` arrays and allow writers beyond relay filter limits to be discovered. Current grants govern historical and live Budabit visibility: revocation hides prior content, and regrant can refetch and restore it.
@@ -207,17 +207,17 @@ No built-in media solution. Members use their own Blossom servers or external ho
 
 ### Communikeys
 
-Communikeys piggyback on everything profiles already have or need:
+Communikeys separate stable community association from controller identity:
 
-**Social graph** — the npub already has a social network around it. Servers and services already analyze how profiles link to each other. Communities inherit all of this for free.
+**Stable association** — `communityId` is the definition `d` and community-event `h`. It is not a person, profile, signer, outbox identity, or `p` target.
 
-**Identity with agency** — an npub is not just an address, it's an identifier that can sign things. Attestations flow both ways — to and from the profile. The community can vouch for members, members can vouch for the community. This is fundamentally different from a URL or relay address.
+**Exact branch authority** — branch identity is `32222:<controllerPubkey>:<communityId>`. The controller's valid definition signature grants authority only at that exact address; authority-sensitive events mark that definition in an `a` tag.
 
-**Publishing capabilities** — profiles already publish announcements, app recommendations, mute lists, follow lists. Communities get these features automatically. No new specs needed.
+**Canonical navigation** — a NIP-19 `naddr` containing kind `32222`, controller, community ID, and optional definition-relay hints selects one exact branch.
 
-**Key management solutions** — nsec leaking, "this profile is compromised", "this is my new profile" — these problems are being solved for profiles anyway. Communities using npubs inherit these solutions. NIP-29 and NIP-72 would need to add extra tags or specs to handle community key rotation, compromise recovery, etc.
+**Definition-native metadata** — name, description, picture, banner, and website come from definition tags, not from the controller's personal profile.
 
-Badge awarding can be delegated to a separate keypair, allowing assistants or automated systems to handle engagement programs without access to the main community keypair. Profile-list updates remain the permission step.
+Badge awarding can be delegated to a separate keypair, allowing assistants or automated systems to handle engagement programs without access to the branch controller key. Profile-list updates remain the permission step.
 
 ### NIP-72
 
@@ -235,7 +235,7 @@ The relay URL is a DNS-dependent identifier without agency — it can't sign any
 
 ### Communikeys and NIP-72
 
-Portable identifiers. Switch relays by updating your community definition — all references stay intact. Communikeys can also switch blossom servers the same way (and by copying and serving the media based on the hashes).
+Portable identifiers. Switch relays by updating the definition at the same exact address; stable `h=<communityId>` associations and the branch's definition coordinate remain intact. Communikeys can also switch Blossom servers the same way.
 
 ### Relay-as-Community and NIP-29
 
@@ -249,9 +249,9 @@ For migration to work in any way smoothly, the community ID would also need to b
 
 If you take the Nip-72, Nip-29 and Relay-as-Community approaches seriously and try to address their limitations, you'd need to add:
 
-- **An identifier with agency** — Relays and NIP-29 use URLs as identifiers. URLs can't sign things, can't participate in social graphs, can't be analyzed by web-of-trust tools. You'd have to go look for maybe-up-to-date admin profiles behind them. NIP-72 uses separate addressable events, also without agency. You'd need... an npub.
+- **A stable identifier plus explicit authority** — Relays and NIP-29 use URLs as identifiers. Communikeys uses a stable community ID for association and a real controller signer in an exact addressable definition coordinate.
 
-- **Migration without breaking everything** — If your community ID is a relay URL (Relay-as-Community) or tied to a specific relay (NIP-29), switching hosting is a nightmare. All references break. For migration to work smoothly, the ID needs to be portable and sufficiently unique. So why not use an npub anyway?
+- **Migration without breaking everything** — If your community ID is a relay URL (Relay-as-Community) or tied to a specific relay (NIP-29), switching hosting is a nightmare. Communikeys keeps the community ID and exact definition address independent of relay hints.
 
 - **Per-content-type access control** — NIP-72, NIP-29, and Relays treat communities as generic containers. No different rules for chat vs articles vs apps. You'd need content sections with kind declarations and profile-list write rules.
 
@@ -265,6 +265,6 @@ If you take the Nip-72, Nip-29 and Relay-as-Community approaches seriously and t
 
 - **Blossom servers** — Relays and NIP-29 have no integrated media solution. You'd need blossom tags.
 
-Follow these paths to their logical conclusions and you arrive at something that looks like Communikeys: communities as npubs, content sections with profile-list write rules, targeted publications, badge-driven engagement, and integrated infrastructure tags.
+Follow these paths to their logical conclusions and you arrive at something that looks like Communikeys: stable IDs, exact controller branches, content sections with profile-list write rules, targeted publications, badge-driven engagement, and integrated infrastructure tags.
 
 Communikeys isn't an alternative to these approaches — it's what you get when you play them out.

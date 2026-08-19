@@ -6,7 +6,7 @@ This document defines where Budabit should publish events. It separates personal
 
 | Rule                                            | Policy                                                                                                                                                                                                   | Why                                                                                                                 |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Relay URLs are infrastructure                   | Relays are publication targets and discovery hints, not identities.                                                                                                                                      | Community identity is the community pubkey, not a relay URL.                                                        |
+| Relay URLs are infrastructure                   | Relays are publication targets and discovery hints, not identities.                                                                                                                                      | Branch identity is the exact `kind:32222` definition address, not a relay URL.                                      |
 | Do not publish before membership                | Community relays are included for personal user-data updates only after Budabit has validated the user as a current community admin, moderator, or member/grantee.                                       | Avoids letting non-members use community relays as a default profile broadcast surface.                             |
 | Publish to community relays only on update      | When the user updates supported personal user-data events, include all active community relays at that time. Do not backfill automatically just because membership changes.                              | Reduces unnecessary attack surface while making future updates easier to discover inside communities.               |
 | Exclude banned memberships                      | Active community relays come from validated memberships minus communities where the user is effectively person-banned. Community admins are not excluded from their own community by person-ban reports. | Matches the community membership model and avoids disseminating through communities that currently reject the user. |
@@ -36,7 +36,7 @@ Active community relays for personal user-data publication are computed from app
 
 | Role             | Inclusion rule                                                                                                              |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Admin            | User authored the latest loaded community `kind:10222` definition.                                                          |
+| Admin            | User controls the loaded exact community `kind:32222` definition.                                                           |
 | Moderator        | A loaded section `kind:30000` profile-list event is authored by the user and referenced by the latest community definition. |
 | Member/grantee   | A referenced section `kind:30000` profile-list event contains a `p` tag for the user.                                       |
 | Banned non-admin | Excluded when effective community report state contains a person-ban for the user.                                          |
@@ -80,7 +80,7 @@ Community-bound events are scoped to one community or a small explicit set of co
 
 | Event                                      |              Kind | Publish relays                                                                      | Why                                                                                                                                                                    |
 | ------------------------------------------ | ----------------: | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Community definition                       |           `10222` | The community's configured relays, plus explicit setup/admin targets.               | The definition establishes the relay set and should be discoverable at its own relays.                                                                                 |
+| Community definition                       |           `32222` | The branch's configured relays, plus explicit setup/admin targets.                  | The definition establishes the relay set and should be discoverable at its own relays.                                                                                 |
 | Section profile list                       |           `30000` | Scoped community relays.                                                            | Profile lists are access-control state for the community.                                                                                                              |
 | Admission form template                    |           `30168` | Scoped community relays.                                                            | Forms are community moderation workflow state.                                                                                                                         |
 | Admission form response                    |            `1069` | Scoped community relays for the selected community.                                 | Applicant state belongs to the community reviewing it.                                                                                                                 |
@@ -140,14 +140,14 @@ The core `EventIO` adapter has no ambient repository relay source. Every fetch a
 
 Publishing policy and read discovery should align but remain separate.
 
-| Profile read source                       | Use? | Notes                                                  |
-| ----------------------------------------- | ---: | ------------------------------------------------------ |
-| Indexer relays                            |  Yes | Broad fallback and bootstrap.                          |
-| Author outbox relays                      |  Yes | Load through Welshman/NIP-65.                          |
-| Active or scoped community relays         |  Yes | Use for community profile surfaces and profile modals. |
-| Relay hints from nprofile/ncommunity      |  Yes | Explicit hints should be honored.                      |
-| Repo relays                               |   No | Repo relays are not profile storage by default.        |
-| `tracker.getRelays(non-profile-event-id)` |   No | Event provenance is not author profile routing.        |
+| Profile read source                         | Use? | Notes                                                            |
+| ------------------------------------------- | ---: | ---------------------------------------------------------------- |
+| Indexer relays                              |  Yes | Broad fallback and bootstrap.                                    |
+| Author outbox relays                        |  Yes | Load through Welshman/NIP-65.                                    |
+| Active or scoped community relays           |  Yes | Use for community profile surfaces and profile modals.           |
+| Relay hints from canonical definition naddr |  Yes | Explicit hints should be honored for exact definition bootstrap. |
+| Repo relays                                 |   No | Repo relays are not profile storage by default.                  |
+| `tracker.getRelays(non-profile-event-id)`   |   No | Event provenance is not author profile routing.                  |
 
 After accepted community references first become available for a signed-in identity, Budabit makes one nonblocking finite `kind:0` request to at most four deterministically selected definition relays. The request uses one author filter with `limit:1`, times out after three seconds, aborts on identity change, and is not retried during that login session. It installs no live subscription and does not rerun when membership state changes.
 
@@ -157,7 +157,7 @@ After accepted community references first become available for a signed-in ident
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Active user community fanout  | A helper that returns normalized `activeUserCommunityRefs.flatMap(ref => ref.relayHints)`.                                        |
 | Personal user-data publishing | A helper that merges each existing publish target with active community relays at update time.                                    |
-| Scoped community publishing   | A helper that accepts explicit community definitions or community pubkeys and returns only those communities' relays.             |
+| Scoped community publishing   | A helper that accepts explicit exact community definitions and returns only those branches' relays.                               |
 | Repo publishing               | Repo-specific helpers should keep repo relays separate from community and personal fanout.                                        |
 | Profile reads                 | A Budabit wrapper around Welshman profile loading should accept explicit profile/community hints and retry when new hints appear. |
 

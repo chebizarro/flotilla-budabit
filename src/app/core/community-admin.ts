@@ -4,6 +4,7 @@ import {
   PROFILE_LIST_STATUS_DECLINED,
   getProfileListStatus,
   getProfileListPubkeys,
+  getCommunitySectionPurposeV2,
   isProfileListDeclined,
   normalizePubkey,
   normalizeRelays,
@@ -214,7 +215,10 @@ export const getOwnerMembershipGrantProfileList = ({
     .find(ref => parseAddressRef(ref?.address || "")?.pubkey === owner)
   if (existing) return {profileList: existing}
 
-  const identifier = makeCommunityProfileListIdentifier(definition.communityId, section.name)
+  const purpose = getCommunitySectionPurposeV2(definition.communityId, section)
+  const identifier = purpose
+    ? makeCommunityProfileListIdentifier(definition.communityId, purpose)
+    : undefined
   if (!identifier) return {}
   const relay = relays.map(normalizeCommunityRelayV2).find(Boolean)
   const address = `${PROFILE_LIST_KIND}:${owner}:${identifier}`
@@ -320,7 +324,10 @@ export const applyCommunityBootstrapGrants = ({
       )
 
       if (!profileList) {
-        const identifier = makeCommunityProfileListIdentifier(communityId, section.name)
+        const purpose = getCommunitySectionPurposeV2(communityId, section)
+        const identifier = purpose
+          ? makeCommunityProfileListIdentifier(communityId, purpose)
+          : undefined
         if (!identifier) return section
         profileList = {
           address: `${PROFILE_LIST_KIND}:${normalizedProfileListPubkey}:${identifier}`,

@@ -76,6 +76,7 @@ import {
   normalizePubkey,
   parseCommunityDefinitionV2,
   parseTargetedPublicationV2,
+  selectCurrentTargetedPublicationEventsV2,
   type CommunityDefinitionV2,
   type CommunityPointer,
 } from "@app/core/community"
@@ -893,23 +894,7 @@ export const makeTargetingWrapperReplacementFilters = (events: TrustedEvent[]): 
 export const selectCurrentTargetingWrapperEvents = (
   events: TrustedEvent[],
   deleteEvents: TrustedEvent[] = [],
-) => {
-  const currentByAddress = new Map<string, TrustedEvent>()
-
-  for (const event of dedupeTrustedEvents(events)) {
-    const identifier = getTagValue("d", event.tags)
-    const author = normalizePubkey(event.pubkey)
-    if (!identifier || !author) continue
-
-    const address = `${event.kind}:${author}:${identifier}`
-    const current = currentByAddress.get(address)
-    if (isPreferredEvent(event, current)) currentByAddress.set(address, event)
-  }
-
-  return Array.from(currentByAddress.values()).filter(
-    event => !deleteEventsDeleteTarget(deleteEvents, event),
-  )
-}
+) => selectCurrentTargetedPublicationEventsV2([...events, ...deleteEvents])
 
 const getEventRefTags = (event: TrustedEvent, names: string[]) =>
   event.tags

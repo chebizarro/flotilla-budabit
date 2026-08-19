@@ -46,7 +46,11 @@
     setActiveExactCommunityPointer,
     clearActiveExactCommunity,
   } from "@app/core/community-state"
-  import {FORM_RESPONSE_KIND, normalizePubkey} from "@app/core/community"
+  import {
+    FORM_RESPONSE_KIND,
+    makeTargetedPublicationLifecycleFiltersV2,
+    normalizePubkey,
+  } from "@app/core/community"
   import {filterAuthorizedCommunityTargetingEvents} from "@app/core/community-permissions"
   import {
     COMMUNITY_EXCLUSIVE_KINDS,
@@ -160,8 +164,19 @@
       ? [makeCommunityTargetingFilter($activeExactCommunityPointer.communityId)]
       : [],
   )
-  const communityTargetingEventsStore = $derived(
+  const communityTargetingCandidateEventsStore = $derived(
     deriveEventsAsc(deriveEventsById({repository, filters: communityTargetingFilters})),
+  )
+  const communityTargetingLifecycleFilters = $derived(
+    makeTargetedPublicationLifecycleFiltersV2($communityTargetingCandidateEventsStore),
+  )
+  const communityTargetingEventsStore = $derived(
+    deriveEventsAsc(
+      deriveEventsById({
+        repository,
+        filters: [...communityTargetingFilters, ...communityTargetingLifecycleFilters],
+      }),
+    ),
   )
   const authorizedCommunityTargetingEvents = $derived(
     $activeExactCommunityDefinition &&
@@ -274,7 +289,6 @@
     const canonical = makeCanonicalExactCommunityUrl($page.url, pointer)
     const current = `${$page.url.pathname}${$page.url.search}${$page.url.hash}`
     if (canonical !== current) void goto(canonical, {replaceState: true})
-
   })
 
   $effect(() => {
@@ -468,6 +482,7 @@
       authorityDefinition,
       relays,
       targetingEvents: authorizedCommunityTargetingEvents,
+      targetingCandidateEvents: $communityTargetingCandidateEventsStore,
       admissionResponseIds,
       reportEvents: effectiveCommunityReportEvents,
       moderatorRequests: $activeCommunityModeratorRequests,

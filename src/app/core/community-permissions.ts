@@ -28,6 +28,7 @@ import {
   normalizePubkey,
   parseTargetedPublicationV2,
   selectCurrentAddressableEvent,
+  selectCurrentTargetedPublicationEventsV2,
 } from "@app/core/community"
 import {GIT_PERMALINK_KIND, SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
@@ -424,7 +425,7 @@ export const filterAuthorizedCommunityTargetingEvents = ({
 }) => {
   const allowedKinds = kinds ? new Set(kinds) : undefined
 
-  return events.filter(event => {
+  return selectCurrentTargetedPublicationEventsV2(events).filter(event => {
     const targeting = parseTargetedPublicationV2(event)
     if (!targeting || (allowedKinds && !allowedKinds.has(targeting.kind))) return false
     if (!targeting.communities.some(target => target.address === community.address)) {

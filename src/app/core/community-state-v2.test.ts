@@ -242,6 +242,6 @@ describe("exact community state", () => {
       loadEvents: async () => [deleted, older, deletion],
     })
 
-    expect(definition?.event.id).toBe(older.id)
+    expect(definition).toBeUndefined()
   })
 })

@@ -4,12 +4,10 @@
     type CommunityDefinitionV2,
     type CommunityPointer,
   } from "@app/core/community"
-  import {hydratePubkeyProfiles} from "@app/core/community-state"
-  import ProfileCircle from "@app/components/ProfileCircle.svelte"
+  import HomeSmile from "@assets/icons/home-smile.svg?dataurl"
+  import Icon from "@lib/components/Icon.svelte"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
-  import {deriveBudabitProfile, deriveBudabitProfileDisplay} from "@app/core/profile-resolver"
-  import {formatShortNpub} from "@app/util/pubkeys"
 
   type Props = {
     community: CommunityPointer
@@ -41,29 +39,16 @@
     onOpen,
   }: Props = $props()
 
-  const pubkey = $derived(community.controllerPubkey)
-  const profileRelays = $derived(normalizeRelays(relayHints))
   const shareRelays = $derived(normalizeRelays(shareRelayHints))
-  const profile = $derived(deriveBudabitProfile(pubkey, {communityRelays: profileRelays}))
-  const profileDisplay = $derived(
-    deriveBudabitProfileDisplay(pubkey, {communityRelays: profileRelays}),
-  )
-  const fallbackName = $derived(formatShortNpub(pubkey) || "Unknown community")
-  const name = $derived(definition?.metadata.name || $profileDisplay || fallbackName)
+  const fallbackName = $derived(`${community.naddr.slice(0, 18)}...${community.naddr.slice(-8)}`)
+  const name = $derived(definition?.metadata.name || fallbackName)
   const info = $derived(
-    definition?.metadata.description || $profile?.about || profileRelays[0] || fallbackName,
+    definition?.metadata.description || "Community definition metadata unavailable.",
   )
   const showMember = $derived(isMember && !isAdmin && !isModerator)
-
-  let profileHydrationKey = ""
-
-  $effect(() => {
-    const key = pubkey ? `${pubkey}:${profileRelays.join(",")}` : ""
-    if (!key || profileHydrationKey === key) return
-
-    profileHydrationKey = key
-    hydratePubkeyProfiles({pubkeys: [pubkey], relayHints: profileRelays}).catch(() => {})
-  })
+  let failedPicture = $state("")
+  const picture = $derived(String(definition?.metadata.picture || "").trim())
+  const showPicture = $derived(Boolean(picture && failedPicture !== picture))
 </script>
 
 <div
@@ -78,7 +63,15 @@
     <div class="flex min-w-0 items-center gap-2 sm:flex-1 sm:gap-3">
       <div
         class="center !flex h-9 w-9 shrink-0 overflow-hidden rounded-full bg-base-300 sm:h-10 sm:w-10">
-        <ProfileCircle {pubkey} relays={profileRelays} size={10} />
+        {#if showPicture}
+          <img
+            alt=""
+            src={picture}
+            class="h-full w-full object-cover"
+            onerror={() => (failedPicture = picture)} />
+        {:else}
+          <Icon icon={HomeSmile} size={6} />
+        {/if}
       </div>
       <div class="min-w-0 flex-1">
         <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">

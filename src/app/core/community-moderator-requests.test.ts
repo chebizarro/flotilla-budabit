@@ -282,7 +282,7 @@ describe("Communikeys V2 moderator requests", () => {
     const roomsRef = edited.sections[1].profileLists.find(ref =>
       ref.address.includes(requesterPubkey),
     )!
-    expect(roomsRef.address).toContain(`budabit-${communityId}-rooms`)
+    expect(roomsRef.address).toContain(`${communityId}-rooms`)
     expect(editedTemplate.tags).toContainEqual(["x-top", "opaque"])
     expect(editedTemplate.tags).toContainEqual(["x-section", "opaque"])
 

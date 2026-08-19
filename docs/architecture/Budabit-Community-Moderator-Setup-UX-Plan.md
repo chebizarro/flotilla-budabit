@@ -1,5 +1,7 @@
 # Budabit Community Moderator Setup UX Plan
 
+> **Historical implementation plan.** This plan records work against the former Communikeys V1 workflow. Its `kind:10222` address shapes are not V2 guidance. Current authority-sensitive workflows use stable `h=<communityId>` plus a marked exact `a=<32222:controller:communityId>` branch reference; see `Communikeys.md`.
+
 This plan replaces the current protocol-shaped moderation form editor with a moderator-facing setup flow for accepting and reviewing section applications.
 
 The first priority is setup UX: a moderator should quickly understand whether users can apply, create or edit one active form per grantable section, preview the applicant experience, and publish without knowing Nostr form internals.

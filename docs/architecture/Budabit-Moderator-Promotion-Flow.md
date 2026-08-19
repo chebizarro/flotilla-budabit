@@ -1,5 +1,7 @@
 # Budabit Moderator Promotion Flow
 
+> **Historical V1 workflow.** This document records the former `kind:10222` moderator-promotion design and is not current protocol guidance. V2 workflows use stable `h=<communityId>` and marked exact `a=<32222:controller:communityId>` branch authority; see `Communikeys.md`.
+
 This document describes the moderator promotion request flow for Communikey communities.
 
 It is distinct from an admin-issued moderator invitation. For an admin-issued invitation, the community definition references a target-owned profile-list coordinate first. A complete relay read with no matching event means the invitation is pending. The target accepts by publishing the referenced list, which may be empty, or declines by publishing it with `status=declined`. One home-page action responds independently to all currently pending section invitations.

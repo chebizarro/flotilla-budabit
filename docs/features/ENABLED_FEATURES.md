@@ -15,10 +15,11 @@ The root `vite.config.ts` defines these compile-time flags from environment vari
 
 Budabit's current community architecture is Communikey-based:
 
-- Community identity comes from a community pubkey and latest `kind:10222` definition.
-- Community routes are under `/c/[community]`.
+- A branch is identified by the exact definition address `32222:<controller>:<communityId>` and its canonical `naddr`; `communityId` remains the stable `d` and community-event `h` value.
+- Community routes are under `/c/[community]`, with the definition `naddr` as `[community]`.
 - Canonical Git routes are under `/git`.
 - Relay URLs are infrastructure and discovery hints, not community IDs.
+- Community metadata comes from definition tags, not the controller's personal `kind:0` profile, and community association is never encoded as a person `p` tag.
 
 NIP-34 pull request support is always part of Budabit. Terminal UI has been removed for now. Strict NIP-29 validation is not part of the current community access-control model; current write permissions come from community definition sections and their referenced `kind:30000` profile lists.
 
@@ -26,7 +27,7 @@ NIP-34 pull request support is always part of Budabit. Terminal UI has been remo
 
 Budabit does not bundle extension code, but it does load default extensions curated by the configured default community.
 
-`src/app/extensions/builtin.ts` resolves `VITE_DEFAULT_COMMUNITY`, validates that it has a latest `kind:10222` community definition, and loads that community's targeted `kind:30033` widgets as default extensions.
+`src/app/extensions/builtin.ts` resolves the exact `kind:32222` definition `naddr` in `VITE_DEFAULT_COMMUNITY` and loads `kind:30033` widgets targeted through `kind:30222` wrappers whose stable `h=<communityId>` is immediately followed by the marked exact definition `a`.
 
 Default community extensions appear in Settings > Extensions as installed and enabled. Users can disable them, but cannot uninstall them because they come from community curation rather than user-installed storage.
 

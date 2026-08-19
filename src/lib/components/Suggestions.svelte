@@ -10,6 +10,7 @@
     search,
     select,
     component: Component,
+    componentProps = {},
     style = "",
     allowCreate = false,
     showEmpty = true,
@@ -97,7 +98,7 @@
         {onmousedown}
         onclick={stopPropagation(preventDefault(() => !disabled && select(value)))}>
         <div class="flex w-full min-w-0 items-center justify-between gap-3">
-          <Component {value}></Component>
+          <Component {value} {...componentProps}></Component>
           {#if disabled && disabledLabel}
             <span class="badge badge-neutral badge-sm shrink-0">{disabledLabel}</span>
           {/if}

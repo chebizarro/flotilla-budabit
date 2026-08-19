@@ -9,7 +9,7 @@ V2 is a clean protocol generation. This document does not define V1 discovery, m
 ## Identity Model
 
 ```text
-communityId       = random throwaway secp256k1 x-only public key hex
+communityId       = stable secp256k1 x-only public key hex
 definition d      = communityId
 community event h = communityId
 controller        = definition event author
@@ -23,13 +23,15 @@ There is one stable community ID. A definition address identifies one exact cont
 
 A community ID MUST contain exactly 64 lowercase hexadecimal characters and represent an x-coordinate that can be lifted to a point on secp256k1.
 
-For a new community, the creator MUST use a cryptographically secure random source to generate a secp256k1 keypair, retain the x-only public key as the community ID, and immediately discard the private key. The discarded key MUST NOT be persisted, logged, backed up, exported, or used to sign an event.
+For a new community, the creator MUST use a cryptographically secure random source to generate a secp256k1 keypair, retain the x-only public key as the community ID, and immediately discard the private key. The discarded key MUST NOT be persisted, logged, backed up, exported, or used to sign an event. A migrated community MAY instead retain the stable pubkey value already present in immutable community references.
 
-A community ID is not a person or signing identity. It MUST NOT be used as a controller, event author, person `p` tag, outbox or profile identity, DM recipient, NIP-05 identity, `kind:0` profile identity, administrator, or permission-list signer.
+A value read from a community-ID position, including definition `d`, content `h`, or the identifier of a marked community `a`, grants no signing, person, profile, relay, or administrative meaning. Implementations MUST NOT use that field value by itself as an event author, person `p` tag, outbox or profile lookup, DM recipient, NIP-05 identity, administrator, or permission-list signer.
+
+The same 32-byte value MAY independently appear in an explicitly typed signer or person position. In particular, `controllerPubkey` MAY equal `communityId`. In that case controller authority comes only from the valid definition signature and author component of the exact definition address; equality with `d` or `h` confers nothing. Likewise, a role-specific `p` tag may identify that real controller or person, but a `p` tag MUST NOT encode community association.
 
 ### Controller And Branch
 
-The controller is the `pubkey` that signs a community definition. Controller authority applies only to that exact definition address.
+The controller is the `pubkey` that signs a community definition. Controller authority applies only to that exact definition address. The controller and community ID are interpreted by position and MAY contain the same value.
 
 Branch identity is the tuple `(kind=32222, controllerPubkey, communityId)`. Relay hints are retrieval hints and are not part of branch equality.
 
@@ -54,7 +56,7 @@ A community definition is an addressable `kind:32222` event.
     ["k", "1111"],
     ["k", "7"],
     ["k", "1985"],
-    ["a", "30000:<list-controller>:<community-scoped-list-id>", "wss://relay.example"]
+    ["a", "30000:<list-controller>:<community-id>-general", "wss://relay.example"]
   ],
   "content": ""
 }
@@ -84,7 +86,7 @@ URL normalization uses the WHATWG URL parser and serializer. A URL is invalid if
 | ------------- | ----------: | ----------------------------------------------------------------------- |
 | `d`           | Exactly one | Valid community ID; exactly two tag values.                             |
 | `name`        | Exactly one | 1 to 100 bytes.                                                         |
-| `description` | Zero or one | At most 4096 bytes.                                                     |
+| `description` | Zero or one | 1 to 4096 bytes when present.                                           |
 | `picture`     | Zero or one | Absolute HTTPS URL, at most 2048 bytes.                                 |
 | `banner`      | Zero or one | Absolute HTTPS URL, at most 2048 bytes.                                 |
 | `website`     | Zero or one | Absolute HTTP or HTTPS URL, at most 2048 bytes.                         |
@@ -92,7 +94,7 @@ URL normalization uses the WHATWG URL parser and serializer. A URL is invalid if
 | `blossom`     |  Zero to 20 | Absolute HTTPS URL, at most 2048 bytes.                                 |
 | `grasp`       |  Zero to 20 | Normalized `wss://` URL, at most 2048 bytes; order is preference order. |
 | `mint`        |  Zero to 20 | Absolute HTTPS URL; optional type is at most 32 ASCII bytes.            |
-| `location`    | Zero or one | At most 256 bytes.                                                      |
+| `location`    | Zero or one | 1 to 256 bytes when present.                                            |
 | `g`           | Zero or one | Lowercase geohash, 1 to 12 characters.                                  |
 | `tos`         | Zero or one | Non-empty event ID or address and optional normalized relay hint.       |
 | `service`     |  Zero to 50 | Service extension described below.                                      |
@@ -130,7 +132,7 @@ The following tags belong to the current section:
 
 Each section MUST have at least one valid `k` and one valid profile-list `a`. Each exact `(kind, subtype)` pair MUST occur in at most one section. Empty subtype is exact, not a wildcard.
 
-`content` contains exactly two values. `k` contains two or three values. Its kind is canonical unsigned decimal with no sign or leading zero except `0`, in the range 0 through 65535; its optional subtype is 1 to 64 UTF-8 bytes. A profile-list `a` contains two or three values, parses as exact kind `30000`, has a real signer pubkey and non-empty identifier, and has an optional normalized relay. A `badge` follows the same arity and address rules with kind `30009`. `retention` contains exactly four values; its kind follows the `k` integer rule, its value is canonical positive decimal within JavaScript's safe-integer range, and its type is exactly `time` or `count`.
+`content` contains exactly two values. `k` contains two or three values. Its kind is canonical unsigned decimal with no sign or leading zero except `0`, in the range 0 through 65535; its optional subtype is 1 to 64 UTF-8 bytes. A profile-list `a` contains two or three values, parses as exact kind `30000`, has a real signer pubkey and a section-scoped identifier as defined below, and has an optional normalized relay. A `badge` follows the same arity and address rules with kind `30009`. `retention` contains exactly four values; its kind follows the `k` integer rule, its value is canonical positive decimal within JavaScript's safe-integer range, and its type is exactly `time` or `count`.
 
 A recognized section-local tag before the first `content` tag invalidates the definition. Unknown tags before the first section remain top-level extensions. Unknown tags after a `content` tag belong to that section.
 
@@ -186,12 +188,12 @@ The address identifier MUST equal the community `h`. A mismatch invalidates the 
 | Reports and report reviews                 | Exactly one `h`                       | Required marked community `a`.                   |
 | Admission forms, responses, and reviews    | Exactly one `h`                       | Required marked community `a`.                   |
 | Moderator requests, decisions, and deletes | Exactly one `h`                       | Required marked community `a`.                   |
-| Permission lists                           | Community-scoped child `d`            | Referenced by the accepted definition.           |
+| Permission-list shards                     | Section-scoped addressable `d`        | Referenced by the accepted definition.           |
 | Badge definitions, awards, and moderation  | Exactly one `h`                       | Required marked community `a`.                   |
 | Stars, bookmarks, and renunciations        | Exactly one `h`                       | Required marked community `a`; no community `p`. |
 | Targeting wrappers                         | One `h` per target pair               | One marked community `a` per pair.               |
 
-Real authors, recipients, members, moderators, controllers, services, and report targets MAY appear in `p` tags. A community ID MUST NOT.
+Real authors, recipients, members, moderators, controllers, services, and report targets MAY appear in `p` tags, including when a person's pubkey equals the community ID value. Community association itself MUST NOT be encoded as `p=<communityId>`.
 
 ## Targeted Publications
 
@@ -240,17 +242,28 @@ Workflows use markers so branch authority is not confused with another target:
 
 Address role markers occupy tag index 3: `["a", <address>, <optionalRelay>, <marker>]`. Event role markers occupy index 4 after the optional relay and author hints. Empty placeholders preserve marker position. Each required role occurs exactly once. Duplicate or conflicting marked references invalidate the event for that workflow. Reports MAY retain reason-bearing `e`, `p`, or `a` targets; those are not community references.
 
-## Generated Child Coordinates
+## Section-Scoped Addressable Identifiers
 
-Budabit-generated addressable child events use:
+An addressable event that is referenced by a specific definition `content` section uses a `d` identifier of this form:
 
 ```text
-budabit:<communityId>:<purpose>:<slug>
+<communityId>-<section-purpose>[.<shard>]
 ```
 
-The complete community ID MUST NOT be truncated or hashed. `purpose` is a lowercase ASCII token such as `profile-list`, `form`, `moderator-request`, `badge`, `shared-config`, or `alert`. `slug` contains lowercase ASCII letters, digits, and hyphens, is 1 to 80 characters, and has no leading, trailing, or repeated hyphen. An empty normalized input uses the purpose as its slug. The result MUST be at most 200 bytes.
+The complete community ID MUST NOT be truncated or hashed. `section-purpose` is a stable lowercase ASCII token containing letters, digits, and single hyphens, with no leading or trailing hyphen or period. It identifies the section purpose, such as `general`, `room-creator`, or `repositories`; it is not the community's display name. The optional `shard` is a canonical decimal integer beginning at `2`. The period is a reserved shard separator, so a multi-word or numbered section such as `general-2` remains distinct from its second shard `general-2.2`. The complete `d` MUST be at most 200 UTF-8 bytes.
 
-The child event author remains a real signer. The community ID is only part of `d`.
+For example, two `kind:30000` grant-list shards for the General section may have these exact coordinates:
+
+```text
+30000:<list-author>:<communityId>-general
+30000:<list-author>:<communityId>-general.2
+```
+
+The accepted definition references both coordinates with separate `a` tags inside the General `content` section, and the effective grant set is the union of their current valid `p` tags. Placement of each exact `a` reference under a section is authoritative; readers MUST NOT infer section membership from an unreferenced identifier.
+
+This convention is only for addressable events that need section association and optional sharding. It is not a generic identifier format for forms, badges, moderator requests, shared configuration, or other community events. It MUST NOT contain the community `name`, an application name such as `budabit`, or any other mutable display label. Renaming the community therefore does not change these coordinates.
+
+The addressable event author remains a real signer. The community ID appears only as part of `d`; this identifier MUST NOT be used as an `h` value. Community-native event scope remains exactly `h=<communityId>`.
 
 ## Canonical Naddr And Routing
 
@@ -284,4 +297,4 @@ This records the identity model only. Snapshot encoding, fork tooling, import va
 
 ## Conformance Summary
 
-A conforming client MUST use exact definition coordinates for branches, `d` and stable `h` for community ID, definition-native metadata, marked branch references for authority workflows, deterministic replacement/deletion, lossless unknown-tag edits, and definition naddr pointers. It MUST keep same-controller siblings and same-ID branches independent and keep community IDs out of person/signing paths.
+A conforming client MUST use exact definition coordinates for branches, `d` and stable `h` for community ID, definition-native metadata, marked branch references for authority workflows, deterministic replacement/deletion, lossless unknown-tag edits, definition naddr pointers, and full-ID section-purpose identifiers for section-referenced addressable shards. It MUST keep same-controller siblings and same-ID branches independent, derive identity and authority from typed field positions rather than value equality, never infer person or signer meaning from a community-ID field, and keep mutable community or application names out of section-scoped coordinates.

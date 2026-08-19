@@ -21,6 +21,8 @@ import {
   getMessagingRelayHints,
 } from "./dm"
 
+const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
+
 const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   ({
     id: overrides.id || "e".repeat(64),
@@ -362,12 +364,12 @@ describe("dm", () => {
 
   describe("getDmRelayRecommendationAuthors", () => {
     it("prioritizes community authors before follows and members", () => {
-      const viewer = "1".repeat(64)
-      const community = "2".repeat(64)
-      const moderator = "3".repeat(64)
-      const member = "4".repeat(64)
-      const follow = "5".repeat(64)
-      const starred = "6".repeat(64)
+      const viewer = testPubkey(1)
+      const community = testPubkey(2)
+      const moderator = testPubkey(3)
+      const member = testPubkey(4)
+      const follow = testPubkey(5)
+      const starred = testPubkey(6)
       const communityRef = makeCommunityRef({
         communityPubkey: community,
         moderatorPubkey: moderator,
@@ -388,12 +390,12 @@ describe("dm", () => {
 
   describe("buildDmRelayRecommendations", () => {
     it("builds community-first recommendations from messaging lists and relay sources", () => {
-      const viewer = "1".repeat(64)
-      const community = "2".repeat(64)
-      const moderator = "3".repeat(64)
-      const member = "4".repeat(64)
-      const follow = "5".repeat(64)
-      const mutedFollow = "6".repeat(64)
+      const viewer = testPubkey(1)
+      const community = testPubkey(2)
+      const moderator = testPubkey(3)
+      const member = testPubkey(4)
+      const follow = testPubkey(5)
+      const mutedFollow = testPubkey(6)
       const communityRef = makeCommunityRef({
         communityPubkey: community,
         moderatorPubkey: moderator,
@@ -455,11 +457,11 @@ describe("dm", () => {
     })
 
     it("keeps same-controller sibling messaging evidence on exact addresses", () => {
-      const viewer = "1".repeat(64)
-      const controller = "2".repeat(64)
-      const moderatorA = "3".repeat(64)
-      const moderatorB = "4".repeat(64)
-      const recommender = "5".repeat(64)
+      const viewer = testPubkey(1)
+      const controller = testPubkey(2)
+      const moderatorA = testPubkey(3)
+      const moderatorB = testPubkey(4)
+      const recommender = testPubkey(5)
       const first = makeCommunityRef({
         communityPubkey: controller,
         moderatorPubkey: moderatorA,
@@ -495,9 +497,9 @@ describe("dm", () => {
     })
 
     it("keeps same-ID messaging branches distinct by controller address", () => {
-      const recommender = "1".repeat(64)
-      const firstController = "2".repeat(64)
-      const secondController = "3".repeat(64)
+      const recommender = testPubkey(1)
+      const firstController = testPubkey(2)
+      const secondController = testPubkey(3)
       const firstModerator = getPublicKey(new Uint8Array(32).fill(54))
       const secondModerator = getPublicKey(new Uint8Array(32).fill(55))
       const recommendations = buildDmRelayRecommendations({
