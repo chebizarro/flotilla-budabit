@@ -750,7 +750,7 @@ export const decryptCommunityAlertSettingsEvent = async ({
   const plaintext = await decrypt(event.pubkey, event.content)
   const parsed = parseJson(plaintext)
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || parsed.version !== 2) {
-    throw new Error("Community alert settings use an invalid or unsupported format.")
+    return undefined
   }
 
   return normalizeCommunityAlertSettings(parsed)

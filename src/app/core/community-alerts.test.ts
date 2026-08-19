@@ -320,7 +320,7 @@ describe("dedicated encrypted community alert settings", () => {
     ).rejects.toThrow("active signer")
   })
 
-  it("fails closed for malformed or unsupported encrypted settings", async () => {
+  it("ignores malformed or unsupported encrypted settings", async () => {
     const event = {
       id: "settings",
       pubkey: userPubkey,
@@ -331,15 +331,41 @@ describe("dedicated encrypted community alert settings", () => {
       sig: "sig",
     } as TrustedEvent
 
-    for (const plaintext of ["not json", JSON.stringify({version: 1})]) {
+    for (const plaintext of [
+      "not json",
+      JSON.stringify(null),
+      JSON.stringify([]),
+      JSON.stringify({version: 1}),
+      JSON.stringify({version: 3}),
+    ]) {
       await expect(
         decryptCommunityAlertSettingsEvent({
           event,
           activePubkey: userPubkey,
           decrypt: vi.fn().mockResolvedValue(plaintext),
         }),
-      ).rejects.toThrow("invalid or unsupported")
+      ).resolves.toBeUndefined()
     }
+  })
+
+  it("preserves decryption failures for encrypted settings", async () => {
+    const event = {
+      id: "settings",
+      pubkey: userPubkey,
+      created_at: 1,
+      kind: 30078,
+      tags: [["d", COMMUNITY_ALERTS_SETTINGS_DTAG]],
+      content: "ciphertext",
+      sig: "sig",
+    } as TrustedEvent
+
+    await expect(
+      decryptCommunityAlertSettingsEvent({
+        event,
+        activePubkey: userPubkey,
+        decrypt: vi.fn().mockRejectedValue(new Error("decrypt failed")),
+      }),
+    ).rejects.toThrow("decrypt failed")
   })
 })
 

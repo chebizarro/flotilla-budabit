@@ -194,6 +194,7 @@
   import {
     buildRepoCommunityContexts,
     getRepoAddress,
+    isAuthorizedDirectCommunityRepo,
     isEndorsedRepoCommunityContext,
   } from "@app/core/repo-community-context"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -1445,6 +1446,11 @@
 
     for (const event of candidates) {
       if (isDeletedRepoAnnouncement(event)) continue
+      const direct = isAuthorizedDirectCommunityRepo({
+        event,
+        communityId: selectedCommunityDefinition.communityId,
+        authorPubkeys: selectedCommunityRepoWriterPubkeys,
+      })
       const context = buildRepoCommunityContexts({
         repoEvent: event,
         associationEvents,
@@ -1456,7 +1462,7 @@
         activeCommunityPubkey: selectedCommunityPubkey,
         activeCommunityAddress: selectedCommunityAddress,
       }).find(context => context.communityAddress === selectedCommunityAddress)
-      if (!isEndorsedRepoCommunityContext(context)) continue
+      if (!direct && !isEndorsedRepoCommunityContext(context)) continue
 
       const address = getRepoAddress(event)
       if (!address) continue
@@ -4497,9 +4503,7 @@
               <option value="" disabled>Select a community</option>
               {#each repoViewCommunityOptions as option (option.address)}
                 <option value={option.address}
-                  >{option.name
-                    ? `${option.name}${option.about ? ` - ${option.about}` : ""}`
-                    : option.label || option.communityId}</option>
+                  >{option.name || option.label || option.communityId}</option>
               {/each}
             {/if}
           </select>

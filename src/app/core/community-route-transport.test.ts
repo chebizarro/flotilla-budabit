@@ -80,6 +80,8 @@ describe("community room and thread route transport", () => {
     expect(globalGit).toContain("communitySnippetTargetFilterPlan.localFilters")
     expect(globalGit).toContain("repoCollectionTargetFilterPlan.localFilters")
     expect(globalGit).toContain("authorizedCommunityRepoTargetEvents")
+    expect(globalGit).toContain("isAuthorizedDirectCommunityRepo({")
+    expect(globalGit).toContain("if (!direct && !isEndorsedRepoCommunityContext(context)) continue")
     expect(globalGit).toContain("authorizedCommunityStarTargetEvents")
     expect(globalGit).toContain("authorizedCommunitySnippetTargetEvents")
     expect(globalGit).toContain("authorizedRepoCollectionTargetEvents")
@@ -92,6 +94,7 @@ describe("community room and thread route transport", () => {
     expect(globalGit).not.toContain("makeTargetedPublicationOriginalFilters")
     expect(globalGit).not.toContain("Community repository history is incomplete")
     expect(globalGit).not.toContain("retryCommunityRepoHistory")
+    expect(globalGit).not.toContain("option.about ?")
   })
 
   it("uses authorized wrappers and split original plans for community widgets", () => {

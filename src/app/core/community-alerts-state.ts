@@ -157,6 +157,7 @@ export const communityAlertSettingsByPubkey = deriveItemsByKey<CommunityAlertSet
       decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
     })
     assertSessionActive(session)
+    if (!values) return undefined
 
     return {event, values}
   },
@@ -228,6 +229,7 @@ const decryptLatestCommunityAlertSettings = async (session: CommunityAlertSessio
     decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
   })
   assertSessionActive(session)
+  if (!values) return undefined
 
   return {event, values}
 }
