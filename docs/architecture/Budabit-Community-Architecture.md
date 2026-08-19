@@ -33,8 +33,9 @@ The selected exact branch is the root of the application session. Users enter it
 | Room messages             | Room messages are `kind:9` chat events scoped to the community and room root.                                                                           |
 | Threads                   | Threads remain `kind:11`, distinguished from rooms by absence of a `room` marker.                                                                       |
 | Global chat               | There is no global community chat. Every chat message belongs to a room.                                                                                |
-| Targeted publications     | Calendar events, goals, repo announcements, permalinks, and smart widgets use `kind:30222`.                                                             |
-| Exclusive content         | Rooms, room messages, threads, comments, reactions, labels, deletes, reports, profile data, badges, forms, and lists are not targeted publications.     |
+| Targeted publications     | Calendar events, goals, permalinks, and smart widgets use `kind:30222`.                                                                                 |
+| Direct repository binding | A community repo announcement has exactly one `h=<communityId>` and is admitted under the current repository-section grant.                            |
+| Exclusive content         | Rooms, room messages, threads, comments, reactions, labels, deletes, reports, profile data, badges, forms, lists, and repo announcements are not targeted publications. |
 | Migration                 | This is a clean break. Legacy relay-space architecture is not preserved as a compatibility layer.                                                       |
 
 ## Community Resolution
@@ -261,7 +262,7 @@ If a future standard defines explicit badge revocation, Budabit can support it f
 | Calendar comments         |                `1111` | No                         | Comments against calendar event.                                                                   |
 | Goal                      |                `9041` | Yes                        | Public publication targeted to the community.                                                      |
 | Goal comments             |                `1111` | No                         | Comments against a goal.                                                                           |
-| Repo announcement         |               `30617` | Yes                        | Public repo publication targeted to the community catalog. Controlled by the Code curator section. |
+| Repo announcement         |               `30617` | No                         | Directly bound to one community by exactly one `h=<communityId>`. Controlled by the Code curator section. |
 | Repo state                |               `30618` | No                         | Repo infrastructure state. Inherits repo context.                                                  |
 | Git issue                 |                `1621` | No                         | Repo-scoped collaboration. Inherits repo context.                                                  |
 | Git PR                    |                `1618` | No                         | Repo-scoped collaboration. Inherits repo context.                                                  |
@@ -306,7 +307,6 @@ Targeted kinds:
 | ------: | ------------------- |
 | `31922` | Calendar events.    |
 |  `9041` | Fundraiser goals.   |
-| `30617` | Repo announcements. |
 |  `1623` | Git permalinks.     |
 | `30033` | Smart widgets.      |
 
@@ -326,6 +326,8 @@ This preserves a strict split:
 | `targeting d/id` | Targetable publications associated through `kind:30222`. |
 
 Budabit discovers wrappers by stable `#h=<communityId>`, then requires each target to be an adjacent `h` and `a` pair whose `a` has marker `community` and names the selected exact definition address. It admits only wrappers whose signer has the current section grant from that branch. An explicit source `e` or `a` uses marker `source`; without one, the original is implicit and must have `h = targeting d` and the same signer as the admitted wrapper. Community association through `p=<communityId>` is invalid.
+
+Repository announcements are a deliberate exception to this targeting model. Budabit currently supports only direct repository association: a community `kind:30617` MUST contain exactly one `h=<communityId>` and belongs to no other community. Catalogs query `kind:30617` with `#h=<communityId>` and locally require a current repository-section writer. Generic targeting and repository-context plumbing remains available for a future explicit multi-community repository feature, but current clients MUST NOT publish, request, or admit `kind:30222` as a repository association.
 
 Example targeted calendar publication:
 

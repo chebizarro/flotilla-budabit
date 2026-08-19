@@ -155,7 +155,7 @@ let progress = $state<ForkProgress[]>([])
 
 - `src/routes/git/[id=naddr]/+layout.ts` decodes the `naddr`, validates the canonical repo key, and builds a broad relay set used only to discover the matching repository announcement.
 - `src/routes/git/[id=naddr]/+layout.svelte` accepts only a valid coordinate-matching `kind:30617` announcement with declared relays before loading repository state/activity, constructs the `Repo` class, wires repo-scoped derived stores, creates settings/actions contexts, and mounts repo tabs for overview, code, feed, commits, issues, PRs, settings, and enabled repo-tab extensions.
-- Community repository catalogs are separate from canonical repository routes: `/c/[community]/git` lists community-targeted repository publications, while `/git/[id]` is the canonical repo workspace.
+- Community repository catalogs are separate from canonical repository routes: `/c/[community]/git` lists authorized `kind:30617` announcements directly bound by exactly one `h=<communityId>`, while `/git/[id]` is the canonical repo workspace. Repository targeting-wrapper support is reserved plumbing, not a currently supported association path.
 
 ---
 

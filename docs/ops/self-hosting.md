@@ -44,7 +44,7 @@ Notes:
 - `VITE_DEFAULT_COMMUNITY` should be the canonical `naddr` for an exact `kind:32222` definition. The pointer contains the controller, `communityId` identifier, and up to three definition-relay hints.
 - `VITE_INDEXER_RELAYS` should include relays that can resolve the exact default `kind:32222` definition before the app knows that definition's own relays.
 - `VITE_SIGNER_RELAYS` are used for NIP-46 signer discovery.
-- `VITE_GIT_RELAYS` are used for top-level `/git` repository discovery and Git-related Nostr events. Community repository catalogs are still selected through `/c/<community>/git` and targeted publication events.
+- `VITE_GIT_RELAYS` are used for top-level `/git` repository discovery and Git-related Nostr events. Community repository catalogs query authorized `kind:30617` announcements with exactly one matching `h=<communityId>`; repository targeting events are not currently supported.
 
 `build.sh` currently post-processes generated HTML and `manifest.webmanifest` from `VITE_PLATFORM_NAME`, `VITE_PLATFORM_SHORT_NAME`, `VITE_PLATFORM_DESCRIPTION`, `VITE_PLATFORM_ACCENT`, and `VITE_PLATFORM_URL`. Set those too if you need install-card, Open Graph, and manifest metadata to differ from the built-in Budabit defaults. Runtime metadata still comes from `VITE_APP_*`.
 

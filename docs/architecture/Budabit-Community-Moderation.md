@@ -264,7 +264,7 @@ Example:
 | Section      | Section grants                                                                       | User result                                                             |
 | ------------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | General      | `kind:9` room messages, `kind:1111` comments, `kind:7` reactions, `kind:1985` labels | User may chat, comment, react, and label where those actions are valid. |
-| Code curator | `kind:30617` repo announcements and `kind:1623` permalinks                           | User may publish repos and permalinks targeted to the community.        |
+| Code curator | `kind:30617` repo announcements and `kind:1623` permalinks                           | User may publish directly bound repos and targeted permalinks.          |
 
 A user with General access but not Code curator access may react to a repository event but may not publish a new repository announcement or permalink for the community.
 
@@ -396,7 +396,7 @@ Examples of root-level events include:
 | Threads                  | Thread root `kind:11` without the room marker.                                                         |
 | Calendar-event-creator   | `kind:31922` event explicitly targeted to the community.                                               |
 | Fundraiser-goals-creator | `kind:9041` event explicitly targeted to the community.                                                |
-| Code-curator             | `kind:30617` repository announcements and `kind:1623` permalinks explicitly targeted to the community. |
+| Code-curator             | `kind:30617` repository announcements directly bound by one `h=<communityId>`, and `kind:1623` permalinks explicitly targeted to the community. |
 | Widget-curator           | `kind:30033` event explicitly targeted to the community.                                               |
 
 Rules:

@@ -48,7 +48,7 @@ describe("community targeting helpers", () => {
     expect(shouldTargetPublicationKind(EVENT_TIME)).toBe(true)
     expect(shouldTargetPublicationKind(EVENT_DATE)).toBe(true)
     expect(shouldTargetPublicationKind(9041)).toBe(true)
-    expect(shouldTargetPublicationKind(30617)).toBe(true)
+    expect(shouldTargetPublicationKind(30617)).toBe(false)
     expect(shouldTargetPublicationKind(1623)).toBe(true)
     expect(shouldTargetPublicationKind(30033)).toBe(true)
     expect(shouldTargetPublicationKind(11)).toBe(false)

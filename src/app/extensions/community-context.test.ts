@@ -1,6 +1,7 @@
 import {describe, expect, it} from "vitest"
 import {EVENT_DATE, EVENT_TIME, THREAD, type TrustedEvent} from "@welshman/util"
 import {getPublicKey} from "nostr-tools/pure"
+import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {
   COMMUNITY_SUBTYPE_ROOM,
   COMMUNITY_SUBTYPE_THREADS,
@@ -438,6 +439,65 @@ describe("community widget context", () => {
         limit: 5,
       },
     ])
+  })
+
+  it("queries and admits repository announcements only through one direct community h tag", () => {
+    const repoDefinition = makeDefinition([
+      {
+        name: "Repositories",
+        kinds: [{kind: GIT_REPO_ANNOUNCEMENT}],
+        profileLists: [{address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Repositories`}],
+      },
+    ])
+    const repoProfileList = makeEvent({
+      kind: PROFILE_LIST_KIND,
+      pubkey: calendarWriterPubkey,
+      tags: [
+        ["d", "Repositories"],
+        ["p", calendarWriterPubkey],
+      ],
+    })
+    const plan = makeCommunityDescriptorQueryPlan({
+      community: communityPointer,
+      definition: repoDefinition,
+      profileListEvents: [repoProfileList],
+      descriptors: [{kind: GIT_REPO_ANNOUNCEMENT}],
+      limit: 5,
+    })
+    const direct = makeEvent({
+      kind: GIT_REPO_ANNOUNCEMENT,
+      pubkey: calendarWriterPubkey,
+      tags: [
+        ["d", "repo"],
+        ["h", communityPointer.communityId],
+      ],
+    })
+    const duplicateScope = {...direct, tags: [...direct.tags, ["h", communityPointer.communityId]]}
+
+    expect(plan.targetKinds).toEqual([])
+    expect(plan.relayTargetingFilters).toEqual([])
+    expect(plan.relayOriginalFilters).toEqual([
+      {kinds: [GIT_REPO_ANNOUNCEMENT], "#h": [communityPointer.communityId], limit: 5},
+    ])
+    expect(plan.localOriginalFilters).toEqual([
+      {
+        kinds: [GIT_REPO_ANNOUNCEMENT],
+        "#h": [communityPointer.communityId],
+        authors: [communityPubkey, calendarWriterPubkey],
+        limit: 5,
+      },
+    ])
+    expect(
+      filterAuthorizedCommunityDescriptorEvents(
+        [direct, duplicateScope],
+        communityPointer.communityId,
+        resolveCommunityEventDescriptors({
+          definition: repoDefinition,
+          profileListEvents: [repoProfileList],
+          descriptors: [{kind: GIT_REPO_ANNOUNCEMENT}],
+        }),
+      ),
+    ).toEqual([direct])
   })
 
   it("post-filters direct descriptor events by known subtypes", () => {

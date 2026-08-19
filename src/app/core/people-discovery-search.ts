@@ -7,9 +7,7 @@ import {
   profileSearch as welshmanProfileSearch,
   profilesByPubkey,
   pubkey,
-  repository,
 } from "@welshman/app"
-import {deriveEvents} from "@welshman/store"
 import type {TrustedEvent} from "@welshman/util"
 import {
   activeExactCommunityDefinition,
@@ -25,7 +23,6 @@ import {
 import {
   normalizePubkey,
   selectCurrentCommunityDefinitionsV2,
-  TARGETED_PUBLICATION_KIND_V2,
   type CommunityDefinitionV2,
 } from "@app/core/community"
 import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations"
@@ -34,9 +31,7 @@ import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 import {
   resolvePeopleDiscoveryContext,
   type PeopleDiscoveryContext,
-  type RepoPeopleDiscoveryContext,
 } from "@app/core/people-discovery-context"
-import {getRepoAddress} from "@app/core/repo-community-context"
 import {
   buildPeopleSearchCandidates,
   getCommunityPeoplePubkeys,
@@ -110,35 +105,6 @@ const getContextCommunityPeoplePubkeys = (
   })
 }
 
-const withLoadedRepoAssociations = (
-  context: PeopleDiscoveryContext | undefined,
-  loadedAssociationEvents: TrustedEvent[],
-): PeopleDiscoveryContext | undefined => {
-  if (
-    context?.scope !== "repo" ||
-    context.authority.source !== "announcement" ||
-    context.associationEvents !== undefined
-  ) {
-    return context
-  }
-
-  const repoEvent = context.authority.event
-  const repoAddress = context.repoAddress || getRepoAddress(repoEvent as TrustedEvent)
-  const associationEvents = loadedAssociationEvents.filter(event =>
-    event.tags.some(
-      tag =>
-        (tag[0] === "a" && tag[1] === repoAddress) || (tag[0] === "e" && tag[1] === repoEvent.id),
-    ),
-  )
-
-  return {...context, repoAddress, associationEvents} satisfies RepoPeopleDiscoveryContext
-}
-
-const loadedRepoAssociationEvents = deriveEvents({
-  repository,
-  filters: [{kinds: [TARGETED_PUBLICATION_KIND_V2]}],
-})
-
 export const peopleDiscoverySearch = derived(
   [
     welshmanProfileSearch,
@@ -156,7 +122,6 @@ export const peopleDiscoverySearch = derived(
     activeCommunityProfileListEvents,
     activeCommunityReportState,
     userRenouncedCommunityAddresses,
-    loadedRepoAssociationEvents,
   ] as const,
   ([
     $welshmanProfileSearch,
@@ -174,7 +139,6 @@ export const peopleDiscoverySearch = derived(
     $activeCommunityProfileListEvents,
     $activeCommunityReportState,
     $userRenouncedCommunityAddresses,
-    $loadedRepoAssociationEvents,
   ]): PeopleDiscoverySearch => {
     const definitionEvents = dedupeEvents([
       ...$communityAdminDefinitionEvents,
@@ -207,11 +171,7 @@ export const peopleDiscoverySearch = derived(
       options: PeopleDiscoverySearchOptions = {},
     ): PeopleSearchBatch => {
       const normalizedQuery = query.trim()
-      const resolvedContext = resolvePeopleDiscoveryContext(
-        withLoadedRepoAssociations(options.context, $loadedRepoAssociationEvents),
-        evidence,
-        viewerPubkey,
-      )
+      const resolvedContext = resolvePeopleDiscoveryContext(options.context, evidence, viewerPubkey)
       const rawCommunityPubkeys = getContextCommunityPeoplePubkeys(
         resolvedContext.communityAddress,
         resolvedContext.communityPubkey,

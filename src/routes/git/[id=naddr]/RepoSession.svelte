@@ -3383,9 +3383,6 @@
     {communityAddress}: ProfileSearchContext = {},
   ) => {
     const repoEvent = getStore(repoEventStore) || repoClass?.repoEvent
-    const boundCommunityController = repoCommunityOptions.find(
-      option => option.address === repoBoundCommunity?.address,
-    )?.controllerPubkey
     const selectedCommunity = repoCommunityOptions.find(
       option => option.address === communityAddress,
     )
@@ -3397,7 +3394,7 @@
         authority: repoEvent
           ? {source: "announcement", event: repoEvent}
           : {source: "draft", ownerPubkey: repoPubkey},
-        ...(selectedCommunity && selectedCommunity.controllerPubkey !== boundCommunityController
+        ...(selectedCommunity
           ? {
               community: {
                 scope: "community" as const,

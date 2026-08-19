@@ -98,7 +98,7 @@ Generic child retry must not own these workflows:
 
 - `src/routes/c/[community]/goals/create/+page.svelte`: original plus targeting event.
 - `src/routes/c/[community]/calendar/create/+page.svelte`: original plus targeting event.
-- `src/routes/c/[community]/git/+page.svelte`: repository announcement plus association.
+- `src/routes/c/[community]/git/+page.svelte`: direct single-community repository announcement.
 - `src/routes/c/[community]/permalinks/+page.svelte`: permalink plus association.
 - `src/routes/c/[community]/moderation/+page.svelte`: definition, profile-list, and review chains.
 - `src/app/util/permalink-publishing.ts`: personal/community permalink fanout.

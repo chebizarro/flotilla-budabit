@@ -3,6 +3,7 @@ import type {TrustedEvent} from "@welshman/util"
 import {
   getProfileListPubkeys,
   normalizePubkey,
+  parseCommunityId,
   parseTargetedPublicationV2,
   type CommunityDefinitionV2,
 } from "@app/core/community"
@@ -86,6 +87,37 @@ const getEndorsedRepoCommunity = ({
   const profileLists = new Map(
     evidence.profileListEvents.map(event => [getEventAddress(event), event]),
   )
+  const repoOwner = normalizePubkey(announcement.pubkey)
+  const getAuthorityPubkeys = (definition: CommunityDefinitionV2) => {
+    const authorityPubkeys = new Set<string>([normalizePubkey(definition.controllerPubkey)])
+    for (const section of definition.sections) {
+      if (!section.kinds.some(item => item.kind === announcement.kind)) continue
+      for (const ref of section.profileLists) {
+        const profileList = profileLists.get(ref.address)
+        if (!profileList) continue
+        authorityPubkeys.add(normalizePubkey(profileList.pubkey))
+        for (const pubkey of getProfileListPubkeys(profileList)) authorityPubkeys.add(pubkey)
+      }
+    }
+    return authorityPubkeys
+  }
+
+  const communityTags = announcement.tags.filter(tag => tag[0] === "h")
+  if (communityTags.length === 1) {
+    const communityId = parseCommunityId(communityTags[0]?.[1] || "")
+    const definition = Array.from(definitions.values()).find(
+      candidate => parseCommunityId(candidate.communityId) === communityId,
+    )
+    if (definition) {
+      const reportState = getReportState(evidence.reportStates, definition.pointer.address)
+      if (
+        getAuthorityPubkeys(definition).has(repoOwner) &&
+        !isCommunityPersonBanned(reportState, repoOwner)
+      ) {
+        return definition.pointer
+      }
+    }
+  }
 
   for (const event of [...(context.associationEvents || [])].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -97,7 +129,6 @@ const getEndorsedRepoCommunity = ({
     if (!targeting.source) continue
 
     const associationAuthor = normalizePubkey(event.pubkey)
-    const repoOwner = normalizePubkey(announcement.pubkey)
     for (const community of targeting.communities) {
       const definition = definitions.get(community.address)
       if (!definition) continue
@@ -110,18 +141,7 @@ const getEndorsedRepoCommunity = ({
         continue
       }
 
-      const authorityPubkeys = new Set<string>([normalizePubkey(definition.controllerPubkey)])
-      for (const section of definition.sections) {
-        if (!section.kinds.some(item => item.kind === announcement.kind)) continue
-        for (const ref of section.profileLists) {
-          const profileList = profileLists.get(ref.address)
-          if (!profileList) continue
-          authorityPubkeys.add(normalizePubkey(profileList.pubkey))
-          for (const pubkey of getProfileListPubkeys(profileList)) authorityPubkeys.add(pubkey)
-        }
-      }
-
-      if (authorityPubkeys.has(associationAuthor)) return definition.pointer
+      if (getAuthorityPubkeys(definition).has(associationAuthor)) return definition.pointer
     }
   }
 

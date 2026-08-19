@@ -49,14 +49,7 @@ export const getCommunitySectionKindLabel = (kind: number, subtype?: string) => 
   return normalizedSubtype ? `${kind}/${normalizedSubtype}` : String(kind)
 }
 
-export const TARGETED_PUBLICATION_KINDS = [
-  EVENT_DATE,
-  EVENT_TIME,
-  9041,
-  30617,
-  1623,
-  30033,
-] as const
+export const TARGETED_PUBLICATION_KINDS = [EVENT_DATE, EVENT_TIME, 9041, 1623, 30033] as const
 
 export type AddressRef = {
   kind: number

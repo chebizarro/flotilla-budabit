@@ -99,6 +99,15 @@ describe("strict community publication source contracts", () => {
     expect(explore).toContain("publishRelayHints={item.publishRelayHints}")
   })
 
+  it("publishes community repositories as direct single-community announcements", () => {
+    const repositories = readProjectFile("../../routes/c/[community]/git/+page.svelte")
+
+    expect(repositories).toContain('["h", communityId, relays[0]]')
+    expect(repositories).toContain("publishThunk({relays: announcementRelays, event: repoEvent})")
+    expect(repositories).not.toContain("TARGETED_PUBLICATION_KIND_V2")
+    expect(repositories).not.toContain("makeTargetedPublicationForCommunityV2")
+  })
+
   it("keeps pending community stars outside the canonical repository", () => {
     const star = readProjectFile("../components/community/CommunityStarButton.svelte")
 

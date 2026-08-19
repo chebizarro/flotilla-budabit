@@ -13,6 +13,7 @@ import {
 } from "@app/core/community"
 import {
   COMMUNITY_TARGETABLE_KINDS,
+  eventTargetsCommunity,
   isRoomMessage,
   isRoomRoot,
   isThreadRoot,
@@ -21,6 +22,7 @@ import {
   makeCommunityTargetingFilter,
   makeTargetedPublicationOriginalFilterPlan,
 } from "@app/core/community-feeds"
+import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {
   canWriteCommunitySection,
   filterAuthorizedCommunityTargetingEvents,
@@ -214,8 +216,12 @@ export const eventMatchesCommunityEventDescriptor = (
   event: TrustedEvent,
   communityPubkey: string,
   descriptor: CommunityEventDescriptor,
+  communityId = communityPubkey,
 ) => {
   if (event.kind !== descriptor.kind) return false
+  if (descriptor.kind === GIT_REPO_ANNOUNCEMENT) {
+    return eventTargetsCommunity(event, communityId)
+  }
   if (!descriptor.subtype) return true
 
   switch (descriptor.subtype) {
@@ -234,12 +240,13 @@ export const filterCommunityDescriptorEvents = (
   events: TrustedEvent[],
   communityPubkey: string,
   descriptors: CommunityEventDescriptor[],
+  communityId = communityPubkey,
 ) => {
   const normalizedDescriptors = normalizeCommunityEventDescriptors(descriptors)
 
   return events.filter(event =>
     normalizedDescriptors.some(descriptor =>
-      eventMatchesCommunityEventDescriptor(event, communityPubkey, descriptor),
+      eventMatchesCommunityEventDescriptor(event, communityPubkey, descriptor, communityId),
     ),
   )
 }
@@ -248,14 +255,19 @@ export const filterAuthorizedCommunityDescriptorEvents = (
   events: TrustedEvent[],
   communityPubkey: string,
   descriptorInfos: ResolvedCommunityEventDescriptor[],
+  communityId = communityPubkey,
 ) =>
   events.filter(event => {
     const author = normalizePubkey(event.pubkey)
 
     return descriptorInfos.some(
       info =>
-        eventMatchesCommunityEventDescriptor(event, communityPubkey, info.descriptor) &&
-        info.writerPubkeys.includes(author),
+        eventMatchesCommunityEventDescriptor(
+          event,
+          communityPubkey,
+          info.descriptor,
+          communityId,
+        ) && info.writerPubkeys.includes(author),
     )
   })
 
@@ -499,8 +511,12 @@ export const makeCommunityDescriptorQueryPlan = ({
   for (const info of directInfos) {
     if (info.writerPubkeys.length === 0) continue
 
+    const directCommunityId =
+      info.descriptor.kind === GIT_REPO_ANNOUNCEMENT
+        ? community.communityId
+        : definition.controllerPubkey
     const directPlan = makeCommunityContentFilterPlan(
-      [makeCommunityExclusiveFilter(definition.controllerPubkey, [info.descriptor.kind])],
+      [makeCommunityExclusiveFilter(directCommunityId, [info.descriptor.kind])],
       info.writerPubkeys,
     )
     localOriginalFilters.push(...directPlan.localFilters)

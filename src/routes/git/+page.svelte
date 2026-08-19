@@ -191,12 +191,7 @@
     type RepoCollectionReadState,
   } from "@app/core/repo-collection-read-model"
   import {loadRepoCardVerification} from "@app/core/repo-card-verification"
-  import {
-    buildRepoCommunityContexts,
-    getRepoAddress,
-    isAuthorizedDirectCommunityRepo,
-    isEndorsedRepoCommunityContext,
-  } from "@app/core/repo-community-context"
+  import {getRepoAddress, isAuthorizedDirectCommunityRepo} from "@app/core/repo-community-context"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {loadBoundedCommunityHistory, makeSameAuthorDeleteFilters} from "@app/core/requests"
 
@@ -1148,79 +1143,10 @@
         )
       : undefined,
   )
-  const communityRepoTargetFilters = $derived.by(() =>
-    selectedCommunityPointer
-      ? [
-          makeCommunityTargetingFilter(
-            selectedCommunityPointer.communityId,
-            [GIT_REPO_ANNOUNCEMENT],
-            {
-              limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
-            },
-          ),
-        ]
-      : [],
-  )
-  const communityRepoTargetFilterPlan = $derived.by(() =>
-    selectedCommunityDefinition
-      ? makeCommunityContentFilterPlan(
-          communityRepoTargetFilters,
-          selectedCommunityRepoWriterPubkeys,
-        )
-      : {relayFilters: [], localFilters: []},
-  )
-  const communityRepoTargetEventsStore = $derived.by(() =>
-    communityRepoTargetFilterPlan.localFilters.length
-      ? deriveEventsDesc(
-          deriveEventsById({
-            repository,
-            filters: communityRepoTargetFilterPlan.localFilters as any,
-          }),
-        )
-      : undefined,
-  )
-  const authorizedCommunityRepoTargetEvents = $derived.by(() =>
-    selectedCommunityDefinition && selectedCommunityPointer && $communityRepoTargetEventsStore
-      ? filterAuthorizedCommunityTargetingEvents({
-          community: selectedCommunityPointer,
-          definition: selectedCommunityDefinition,
-          profileListEvents: $selectedCommunityProfileListEvents
-            ? ($selectedCommunityProfileListEvents as TrustedEvent[])
-            : [],
-          events: $communityRepoTargetEventsStore as TrustedEvent[],
-          reportState: selectedCommunityReportState,
-          kinds: [GIT_REPO_ANNOUNCEMENT],
-        })
-      : [],
-  )
-  const targetedCommunityRepoFilterPlan = $derived.by(() =>
-    makeTargetedPublicationOriginalFilterPlan(authorizedCommunityRepoTargetEvents),
-  )
-  const targetedCommunityRepoRelayHintPlans = $derived.by(() =>
-    makeTargetedPublicationOriginalRelayHintPlans(authorizedCommunityRepoTargetEvents),
-  )
-  const targetedCommunityRepoEventsStore = $derived.by(() =>
-    targetedCommunityRepoFilterPlan.localFilters.length
-      ? deriveEventsDesc(
-          deriveEventsById({
-            repository,
-            filters: targetedCommunityRepoFilterPlan.localFilters as any,
-          }),
-        )
-      : undefined,
-  )
   let communityRepoLoadKey = ""
   let communityRepoLoadRequestId = 0
   let communityRepoAnnouncementsSettled = $state(false)
-  let communityTargetedRepoLoadKey = ""
-  let communityTargetedRepoLoadRequestId = 0
-  let communityTargetedReposSettled = $state(false)
-  let communityRepoOriginalLoadKey = ""
-  let communityRepoOriginalLoadRequestId = 0
-  let communityRepoOriginalsSettled = $state(false)
   let directCommunityRepoHistoryIncomplete = $state(false)
-  let communityRepoTargetHistoryIncomplete = $state(false)
-  let communityRepoOriginalHistoryIncomplete = $state(false)
   let communityRepoRetryVersion = $state(0)
   $effect(() => {
     void communityRepoRetryVersion
@@ -1285,184 +1211,23 @@
     return () => controller.abort()
   })
 
-  $effect(() => {
-    void communityRepoRetryVersion
-    const relayFilters = communityRepoTargetFilterPlan.relayFilters
-    const localFilters = communityRepoTargetFilterPlan.localFilters
-    const relays = selectedCommunityListRelays
-    if (
-      !$repoListHydrationReadyStore ||
-      activeMode !== "community" ||
-      activeTab !== "my-repos" ||
-      !selectedCommunityAddress ||
-      relayFilters.length === 0 ||
-      localFilters.length === 0
-    ) {
-      communityTargetedRepoLoadRequestId += 1
-      communityTargetedRepoLoadKey = ""
-      communityTargetedReposSettled = true
-      communityRepoTargetHistoryIncomplete = false
-      return
-    }
-    if (relays.length === 0) {
-      communityTargetedRepoLoadRequestId += 1
-      communityTargetedRepoLoadKey = ""
-      communityTargetedReposSettled = true
-      communityRepoTargetHistoryIncomplete = true
-      return
-    }
-
-    const key = JSON.stringify({
-      community: selectedCommunityAddress,
-      relays,
-      relayFilters,
-      localFilters,
-      retry: communityRepoRetryVersion,
-    })
-    if (key === communityTargetedRepoLoadKey) return
-    communityTargetedRepoLoadKey = key
-    communityTargetedReposSettled = false
-    communityRepoTargetHistoryIncomplete = false
-    const requestId = ++communityTargetedRepoLoadRequestId
-    const controller = new AbortController()
-    const signal = AbortSignal.any([controller.signal, gitPageLoadController.signal])
-    void loadBoundedCommunityHistory({
-      relays,
-      relayFilters,
-      localFilters,
-      priority: RELAY_REQUEST_PRIORITY.interactive,
-      owner: `global-git-community-targets:${selectedCommunityAddress}`,
-      signal,
-    })
-      .then(result => {
-        if (signal.aborted || requestId !== communityTargetedRepoLoadRequestId) return
-        communityRepoTargetHistoryIncomplete = !result.complete
-      })
-      .catch(error => {
-        if (signal.aborted || requestId !== communityTargetedRepoLoadRequestId) return
-        communityRepoTargetHistoryIncomplete = true
-        console.warn("[git/+page] Failed to load targeted community repos", error)
-      })
-      .finally(() => {
-        if (signal.aborted || requestId !== communityTargetedRepoLoadRequestId) return
-        afterRepoLoadSettle(() => {
-          if (requestId === communityTargetedRepoLoadRequestId) {
-            communityTargetedReposSettled = true
-          }
-        })
-      })
-
-    return () => controller.abort()
-  })
-
-  $effect(() => {
-    void communityRepoRetryVersion
-    const basePlan = {
-      relays: selectedCommunityListRelays,
-      relayFilters: targetedCommunityRepoFilterPlan.relayFilters,
-      localFilters: targetedCommunityRepoFilterPlan.localFilters,
-    }
-    const plans = [basePlan, ...targetedCommunityRepoRelayHintPlans].filter(
-      plan => plan.relays.length > 0,
-    )
-    if (
-      !$repoListHydrationReadyStore ||
-      activeMode !== "community" ||
-      activeTab !== "my-repos" ||
-      !selectedCommunityAddress ||
-      targetedCommunityRepoFilterPlan.relayFilters.length === 0
-    ) {
-      communityRepoOriginalLoadRequestId += 1
-      communityRepoOriginalLoadKey = ""
-      communityRepoOriginalsSettled = true
-      communityRepoOriginalHistoryIncomplete = false
-      return
-    }
-    if (plans.length === 0) {
-      communityRepoOriginalLoadRequestId += 1
-      communityRepoOriginalLoadKey = ""
-      communityRepoOriginalsSettled = true
-      communityRepoOriginalHistoryIncomplete = true
-      return
-    }
-
-    const key = JSON.stringify({
-      community: selectedCommunityAddress,
-      plans,
-      retry: communityRepoRetryVersion,
-    })
-    if (key === communityRepoOriginalLoadKey) return
-    communityRepoOriginalLoadKey = key
-    communityRepoOriginalsSettled = false
-    communityRepoOriginalHistoryIncomplete = false
-    const requestId = ++communityRepoOriginalLoadRequestId
-    const controller = new AbortController()
-    const signal = AbortSignal.any([controller.signal, gitPageLoadController.signal])
-    void Promise.all(
-      plans.map(plan =>
-        loadBoundedCommunityHistory({
-          ...plan,
-          priority: RELAY_REQUEST_PRIORITY.interactive,
-          owner: `global-git-community-originals:${selectedCommunityAddress}`,
-          signal,
-        }),
-      ),
-    )
-      .then(results => {
-        if (signal.aborted || requestId !== communityRepoOriginalLoadRequestId) return
-        communityRepoOriginalHistoryIncomplete = results.some(result => !result.complete)
-      })
-      .catch(error => {
-        if (signal.aborted || requestId !== communityRepoOriginalLoadRequestId) return
-        communityRepoOriginalHistoryIncomplete = true
-        console.warn("[git/+page] Failed to load targeted community repo originals", error)
-      })
-      .finally(() => {
-        if (signal.aborted || requestId !== communityRepoOriginalLoadRequestId) return
-        afterRepoLoadSettle(() => {
-          if (requestId === communityRepoOriginalLoadRequestId) {
-            communityRepoOriginalsSettled = true
-          }
-        })
-      })
-
-    return () => controller.abort()
-  })
-
   const latestCommunityRepos = $derived.by(() => {
     if (!selectedCommunityDefinition || !selectedCommunityAddress) return []
 
     const latest = new Map<string, RepoAnnouncementEvent>()
-    const associationEvents = authorizedCommunityRepoTargetEvents
-    const candidates = [
-      ...($communityRepoEvents ? ($communityRepoEvents as RepoAnnouncementEvent[]) : []),
-      ...($targetedCommunityRepoEventsStore
-        ? ($targetedCommunityRepoEventsStore as RepoAnnouncementEvent[])
-        : []),
-    ]
-    const reportStates = selectedCommunityReportState
-      ? new Map([[selectedCommunityAddress, selectedCommunityReportState]])
-      : undefined
+    const candidates = $communityRepoEvents ? ($communityRepoEvents as RepoAnnouncementEvent[]) : []
 
     for (const event of candidates) {
       if (isDeletedRepoAnnouncement(event)) continue
-      const direct = isAuthorizedDirectCommunityRepo({
-        event,
-        communityId: selectedCommunityDefinition.communityId,
-        authorPubkeys: selectedCommunityRepoWriterPubkeys,
-      })
-      const context = buildRepoCommunityContexts({
-        repoEvent: event,
-        associationEvents,
-        definitions: [selectedCommunityDefinition],
-        profileListEvents: $selectedCommunityProfileListEvents
-          ? ($selectedCommunityProfileListEvents as TrustedEvent[])
-          : [],
-        reportStates,
-        activeCommunityPubkey: selectedCommunityPubkey,
-        activeCommunityAddress: selectedCommunityAddress,
-      }).find(context => context.communityAddress === selectedCommunityAddress)
-      if (!direct && !isEndorsedRepoCommunityContext(context)) continue
+      if (
+        !isAuthorizedDirectCommunityRepo({
+          event,
+          communityId: selectedCommunityDefinition.communityId,
+          authorPubkeys: selectedCommunityRepoWriterPubkeys,
+        })
+      ) {
+        continue
+      }
 
       const address = getRepoAddress(event)
       if (!address) continue
@@ -3355,13 +3120,7 @@
 
     if (activeMode === "community") {
       if (!selectedCommunityAddress) return false
-      if (activeTab === "my-repos") {
-        return (
-          !communityRepoAnnouncementsSettled ||
-          !communityTargetedReposSettled ||
-          !communityRepoOriginalsSettled
-        )
-      }
+      if (activeTab === "my-repos") return !communityRepoAnnouncementsSettled
       if (activeTab === "bookmarks") {
         return (
           !communityTargetsSettled ||

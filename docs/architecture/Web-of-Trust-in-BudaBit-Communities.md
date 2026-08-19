@@ -136,18 +136,9 @@ Bans should not mutate profile-list grants or membership history. They are an ov
 
 ## Repo Association Policy
 
-Repositories need context. A repo associated with a community should be evaluated first through that community.
+Budabit currently supports one direct community association per repository announcement. A community repo has exactly one `h=<communityId>` and is visible in that catalog only while its author has the current repository-section grant. A foreign, missing, malformed, or repeated `h` does not establish community context, and a `kind:30222` wrapper is not an active repository association path.
 
-| Association evidence                                                  | Trust treatment                                              |
-| --------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Association to active community exists                                | The active community becomes the primary repo trust context. |
-| Association was made by a current admin or Repo curator moderator     | Strong association evidence.                                 |
-| Association was made by a user with current Repo curator write grant  | Valid association evidence.                                  |
-| Association was made by someone without current repo-scoped authority | Weak or ignored association evidence.                        |
-| Associating user is banned in that community                          | Association should not endorse the repo in that community.   |
-| Repo owner is banned in that community                                | Do not show the repo as community-bound there.               |
-
-The important distinction is that a repo-community link is not equally meaningful from every author. If the association was made by someone who had a repo-scoped grant or authority to publish repository content in that community, that association should be trusted more than a random targeting event.
+The generic repository-context validator remains available as reserved plumbing for a future explicit multi-community feature. Until such a feature is specified, targeting-wrapper evidence must not elevate or display a repository in a community catalog.
 
 ## Repo Discovery Policy
 
@@ -177,7 +168,7 @@ People search uses separate community and repository contexts that can be combin
 
 Repository authority is independent from community authority. A community admin or moderator is not a repository maintainer unless the repository owner declared them. Conversely, an owner-declared maintainer remains repository authority even when they have no community role.
 
-For a published repository, a parsed community binding contributes community ordering only when the existing repo-community validator considers the association `strong` or `valid`. Draft and edit flows may use the community explicitly selected by the user as prospective context. Unvalidated bindings do not become community trust evidence.
+For a published repository, a valid direct `h=<communityId>` binding and current repository-section authorization contribute community ordering. Draft and edit flows may use the community explicitly selected by the user as prospective context. Wrapper-only or otherwise invalid bindings do not become community trust evidence.
 
 ## PR And Collaboration Policy
 

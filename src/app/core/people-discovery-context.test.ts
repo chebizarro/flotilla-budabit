@@ -23,7 +23,7 @@ const siblingController = key(6)
 const communityAddress = `${COMMUNITY_DEFINITION_KIND_V2}:${community}:${communityId}`
 const pointer = makeCommunityPointer({controllerPubkey: community, communityId})!
 
-const makeRepoEvent = (communityPubkey = community) =>
+const makeRepoEvent = (communityPubkey = communityId) =>
   ({
     id: "repo",
     kind: 30617,
@@ -137,7 +137,7 @@ describe("people discovery contexts", () => {
     const endorsed = resolveRepoPeopleDiscoveryContext(
       {
         scope: "repo",
-        authority: {source: "announcement", event: makeRepoEvent()},
+        authority: {source: "announcement", event: makeRepoEvent("e".repeat(64))},
         associationEvents: [associationEvent],
       },
       {
@@ -173,6 +173,38 @@ describe("people discovery contexts", () => {
     expect(endorsed.trustContext.communityAddress).toBe(communityAddress)
     expect(unvalidated.communityPubkey).toBe("")
     expect(unvalidated.trustContext.communityPubkey).toBeUndefined()
+  })
+
+  it("infers an authorized direct repository community without targeting events", () => {
+    const direct = resolveRepoPeopleDiscoveryContext(
+      {
+        scope: "repo",
+        authority: {source: "announcement", event: makeRepoEvent()},
+      },
+      {
+        definitions: new Map([[definition.pointer.address, definition]]),
+        profileListEvents: [profileListEvent],
+        reportStates: new Map(),
+      },
+    )
+    const duplicateScope = resolveRepoPeopleDiscoveryContext(
+      {
+        scope: "repo",
+        authority: {
+          source: "announcement",
+          event: {...makeRepoEvent(), tags: [...makeRepoEvent().tags, ["h", communityId]]},
+        },
+      },
+      {
+        definitions: new Map([[definition.pointer.address, definition]]),
+        profileListEvents: [profileListEvent],
+        reportStates: new Map(),
+      },
+    )
+
+    expect(direct.communityPubkey).toBe(community)
+    expect(direct.communityAddress).toBe(communityAddress)
+    expect(duplicateScope.communityPubkey).toBe("")
   })
 
   it("normalizes draft owner declarations without mixing in community authority", () => {

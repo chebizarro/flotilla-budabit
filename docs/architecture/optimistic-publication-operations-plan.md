@@ -409,7 +409,7 @@ These require workflow-level recovery rather than generic event retry:
   definition update.
 - Admission Reject/Revoke when it publishes a profile-list replacement followed by a review.
 - Admin moderator acceptance/revocation chains.
-- Community repository announcement plus targeting association.
+- Community repository announcement, published directly with one `h=<communityId>`.
 - Community permalink plus targeting association.
 - Widget publication plus community targeting changes.
 - Community repository collections, where community add/remove requires paired star and targeting
