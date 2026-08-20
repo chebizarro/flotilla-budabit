@@ -341,20 +341,18 @@ const hasKind = (filters: Filter[], kind: number) =>
 const hasBroadCommunityDefinitionFilter = (filters: Filter[]) =>
   filters.some(filter => filter.kinds?.includes(COMMUNITY_DEFINITION_KIND) && !filter.authors)
 
-const hasProfileListFilter = (filters: Filter[], author: string, identifier: string) =>
+const hasProfileListFilter = (filters: Filter[], _author: string, identifier: string) =>
   filters.some(filter => {
     const dTags = (filter as Filter & {"#d"?: string[]})["#d"] || []
 
     return (
-      filter.kinds?.includes(PROFILE_LIST_KIND) &&
-      filter.authors?.includes(author) &&
-      dTags.includes(identifier)
+      filter.kinds?.includes(PROFILE_LIST_KIND) && !filter.authors && dTags.includes(identifier)
     )
   })
 
 const hasMemberProfileListFilter = (
   filters: Filter[],
-  author: string,
+  _author: string,
   identifier: string,
   member: string,
 ) =>
@@ -364,7 +362,7 @@ const hasMemberProfileListFilter = (
 
     return (
       filter.kinds?.includes(PROFILE_LIST_KIND) &&
-      filter.authors?.includes(author) &&
+      !filter.authors &&
       dTags.includes(identifier) &&
       pTags.includes(member)
     )

@@ -77,9 +77,13 @@ describe("community state helpers", () => {
     expect(getCommunityBlossomServers(definition)).toEqual(["https://blossom.example.com"])
     expect(makeCommunityProfileListFilters(definition)).toContainEqual({
       kinds: [PROFILE_LIST_KIND],
-      authors: [listPubkey],
       "#d": [`${communityId}-general`],
-      limit: 1,
+      limit: 200,
+    })
+    expect(makeCommunityProfileListFilters(definition)).toContainEqual({
+      kinds: [5],
+      "#a": [`${PROFILE_LIST_KIND}:${listPubkey}:${communityId}-general`],
+      limit: 200,
     })
     expect(makeCommunityAdmissionFormFilters(definition)[0]).toMatchObject({
       "#a": [pointer.address],

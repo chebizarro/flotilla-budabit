@@ -1703,9 +1703,8 @@ const loadDiscoveredMemberProfileLists = async (
         relayFilters.set(profileList.address, filter)
         relayFilters.set(`${profileList.address}:delete`, {
           kinds: [DELETE],
-          authors: [address.pubkey],
           "#a": [profileList.address],
-          limit: 1,
+          limit: 200,
         })
         filtersByRelay.set(relay, relayFilters)
       }
@@ -2323,9 +2322,8 @@ const makeAddressRefFilter = (ref: {address: string}): Filter => {
 
   return {
     kinds: [address.kind],
-    authors: [address.pubkey],
     "#d": [address.identifier],
-    limit: 1,
+    limit: 200,
   }
 }
 
@@ -2334,10 +2332,7 @@ export const makeCommunityProfileListFilters = (definition: CommunityDefinition)
     const address = parseAddressRef(ref.address)
     if (!address) return []
 
-    return [
-      makeAddressRefFilter(ref),
-      {kinds: [DELETE], authors: [address.pubkey], "#a": [ref.address], limit: 1},
-    ]
+    return [makeAddressRefFilter(ref), {kinds: [DELETE], "#a": [ref.address], limit: 200}]
   })
 
 export const activeUserCommunityProfileListEvents: Readable<TrustedEvent[]> = derived(
@@ -2358,9 +2353,7 @@ export const activeUserCommunityProfileListEvents: Readable<TrustedEvent[]> = de
 )
 
 export const getAdmissionFormModeratorPubkeys = (definition: CommunityDefinition) =>
-  Array.from(
-    new Set([definition.ownerPubkey, ...getCommunityModeratorRefPubkeys({definition})]),
-  )
+  Array.from(new Set([definition.ownerPubkey, ...getCommunityModeratorRefPubkeys({definition})]))
 
 export const makeCommunityAdmissionFormFilters = (definition: CommunityDefinition): Filter[] => {
   const authors = getAdmissionFormModeratorPubkeys(definition)

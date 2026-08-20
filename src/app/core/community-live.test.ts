@@ -154,7 +154,7 @@ describe("community live filters", () => {
     expect(
       profileFilters.some(
         filter =>
-          filter.authors?.includes(listPubkey) &&
+          !filter.authors &&
           [
             `${community.communityId}-calendar`,
             `${community.communityId}-general`,

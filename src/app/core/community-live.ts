@@ -173,9 +173,6 @@ export const buildCommunityLiveFilters = ({
 }: CommunityLiveFilterInput) => {
   const community = authorityDefinition.pointer
   const profileListFilters = makeCommunityProfileListFilters(authorityDefinition)
-  const profileListAuthors = normalizeCommunityLiveValues(
-    profileListFilters.flatMap(filter => filter.authors || []),
-  )
   const profileListIdentifiers = normalizeCommunityLiveValues(
     profileListFilters.flatMap(filter => filter["#d"] || []),
   )
@@ -183,11 +180,10 @@ export const buildCommunityLiveFilters = ({
     makeExactCommunityDefinitionFilter(community),
     {kinds: COMMUNITY_EXCLUSIVE_KINDS, "#h": [community.communityId]},
     makeCommunityTargetingFilter(community.communityId, TARGETED_PUBLICATION_KINDS),
-    ...(profileListAuthors.length && profileListIdentifiers.length
+    ...(profileListIdentifiers.length
       ? [
           {
             kinds: [PROFILE_LIST_KIND],
-            authors: profileListAuthors,
             "#d": profileListIdentifiers,
           } as Filter,
         ]
