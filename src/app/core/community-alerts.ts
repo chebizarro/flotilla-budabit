@@ -92,6 +92,25 @@ export type DecryptedCommunityAlertSettings = {
   sourceVersion: 1 | 2
 }
 
+export type CommunityAlertSettingsItem = DecryptedCommunityAlertSettings & {
+  event: TrustedEvent
+}
+
+export const resolveCommunityAlertSettingsItem = async ({
+  event,
+  hydrated,
+  decrypt,
+}: {
+  event: TrustedEvent
+  hydrated?: CommunityAlertSettingsItem
+  decrypt: () => Promise<DecryptedCommunityAlertSettings | undefined>
+}): Promise<CommunityAlertSettingsItem | undefined> => {
+  if (hydrated?.event.id === event.id) return hydrated
+
+  const decrypted = await decrypt()
+  return decrypted ? {event, ...decrypted} : undefined
+}
+
 export type CommunityAlertPayload = {
   version: 1
   channel: typeof COMMUNITY_ALERTS_CHANNEL

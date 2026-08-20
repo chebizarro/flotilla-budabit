@@ -25,7 +25,6 @@ import {
   assertCommunityAlertProviderQueryComplete,
   buildCommunityAlertPayload,
   createCommunityAlertOperationQueue,
-  decryptCommunityAlertSettingsEvent,
   decryptCommunityAlertSettingsEventWithSource,
   defaultCommunityAlertSettings,
   discoverCommunityAlertProviders,
@@ -42,6 +41,7 @@ import {
   normalizeCommunityAlertSettings,
   parseCommunityAlertPayload,
   parseCommunityAlertStatus,
+  resolveCommunityAlertSettingsItem,
   runCommunityAlertSaveSequence,
   selectCommunityAlertStatusEvent,
   selectCommunityAlertSubscriptionEvent,
@@ -51,6 +51,7 @@ import {
   type CommunityAlertProviderGroup,
   type CommunityAlertRegistration,
   type CommunityAlertSettings,
+  type CommunityAlertSettingsItem,
   type CommunityAlertStatus,
 } from "@app/core/community-alerts"
 import {
@@ -74,12 +75,7 @@ type CommunityAlertSession = {
   currentSigner: ActiveSigner
 }
 
-type HydratedCommunityAlertSettingsItem = CommunityAlertSettingsItem & {sourceVersion: 1 | 2}
-
-export type CommunityAlertSettingsItem = {
-  event: TrustedEvent
-  values: CommunityAlertSettings
-}
+export type {CommunityAlertSettingsItem} from "@app/core/community-alerts"
 
 export type CommunityAlertSettingsHydration = {
   pubkey: string
@@ -160,16 +156,20 @@ export const communityAlertSettingsByPubkey = deriveItemsByKey<CommunityAlertSet
     if (!activePubkey || !isCommunityAlertSettingsEvent(event, activePubkey)) return undefined
     const session = captureSession(event.pubkey)
     assertSessionActive(session)
-    const values = await decryptCommunityAlertSettingsEvent({
+    return resolveCommunityAlertSettingsItem({
       event,
-      activePubkey: session.userPubkey,
-      decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
-      definitions: get(activeUserCommunityRefs).map(ref => ref.definition),
+      decrypt: async () => {
+        assertSessionActive(session)
+        const decrypted = await decryptCommunityAlertSettingsEventWithSource({
+          event,
+          activePubkey: session.userPubkey,
+          decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
+          definitions: get(activeUserCommunityRefs).map(ref => ref.definition),
+        })
+        assertSessionActive(session)
+        return decrypted
+      },
     })
-    assertSessionActive(session)
-    if (!values) return undefined
-
-    return {event, values}
   },
 })
 
@@ -221,7 +221,7 @@ let pendingSettingsHydration:
 
 const decryptLatestCommunityAlertSettings = async (
   session: CommunityAlertSession,
-): Promise<HydratedCommunityAlertSettingsItem | undefined> => {
+): Promise<CommunityAlertSettingsItem | undefined> => {
   const event = repository
     .query([
       {
@@ -234,17 +234,21 @@ const decryptLatestCommunityAlertSettings = async (
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0]
   if (!event) return undefined
 
-  assertSessionActive(session)
-  const decrypted = await decryptCommunityAlertSettingsEventWithSource({
+  return resolveCommunityAlertSettingsItem({
     event,
-    activePubkey: session.userPubkey,
-    decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
-    definitions: get(activeUserCommunityRefs).map(ref => ref.definition),
+    hydrated: getCommunityAlertSettings(session.userPubkey),
+    decrypt: async () => {
+      assertSessionActive(session)
+      const decrypted = await decryptCommunityAlertSettingsEventWithSource({
+        event,
+        activePubkey: session.userPubkey,
+        decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
+        definitions: get(activeUserCommunityRefs).map(ref => ref.definition),
+      })
+      assertSessionActive(session)
+      return decrypted
+    },
   })
-  assertSessionActive(session)
-  if (!decrypted) return undefined
-
-  return {event, ...decrypted}
 }
 
 const fetchLatestCommunityAlertSettings = async (session: CommunityAlertSession) => {
@@ -357,7 +361,7 @@ export const hydrateCommunityAlertSettings = async (
   const promise: Promise<CommunityAlertSettingsItem | undefined> = (async () => {
     await hydrateCommunityPreferences()
     assertSessionActive(session)
-    let item: HydratedCommunityAlertSettingsItem | undefined
+    let item: CommunityAlertSettingsItem | undefined
     if (force) {
       item = await fetchLatestCommunityAlertSettings(session)
     } else {
@@ -452,7 +456,7 @@ const publishSettingsForSession = async (
           pubkey: session.userPubkey,
           signer: session.currentSigner,
           status: "ready",
-          item: {event, values: normalized},
+          item: {event, values: normalized, sourceVersion: 2},
         }
       : hydration,
   )

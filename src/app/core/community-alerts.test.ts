@@ -3,6 +3,7 @@ import {finalizeEvent, generateSecretKey, getPublicKey} from "nostr-tools/pure"
 import type {TrustedEvent} from "@welshman/util"
 import {
   buildCommunityDefinition,
+  normalizeCommunityAlertService,
   parseCommunityDefinition,
   makeCommunityPointer,
   type CommunityAlertService,
@@ -33,6 +34,7 @@ import {
   normalizeCommunityAlertSettings,
   parseCommunityAlertPayload,
   parseCommunityAlertStatus,
+  resolveCommunityAlertSettingsItem,
   runCommunityAlertSaveSequence,
   selectCommunityAlertProviderIdentity,
   selectCommunityAlertStatusEvent,
@@ -55,9 +57,9 @@ const communityAddressA = makeCommunityPointer({
 })!.address
 const provider: CommunityAlertService = {
   servicePubkey: providerPubkey,
-  requestRelay: "wss://alerts.example.com/",
+  requestRelay: "wss://alerts.example.com",
   handlerAddress: `31990:${handlerPubkey}:community-alerts`,
-  handlerRelay: "wss://handlers.example.com/",
+  handlerRelay: "wss://handlers.example.com",
 }
 
 const makeDefinition = ({
@@ -85,9 +87,9 @@ const makeDefinition = ({
     services: services.map(service => ({
       name: "community-alerts",
       pubkey: service.servicePubkey,
-      requestRelay: service.requestRelay.replace(/\/$/, ""),
+      requestRelay: normalizeCommunityAlertService(service)!.requestRelay,
       handlerAddress: service.handlerAddress,
-      handlerRelay: service.handlerRelay.replace(/\/$/, ""),
+      handlerRelay: normalizeCommunityAlertService(service)!.handlerRelay,
     })),
   })
 
@@ -121,7 +123,7 @@ const makePayload = (overrides: Record<string, unknown> = {}) =>
 describe("verified per-community alert discovery", () => {
   it("uses the latest verified definition without deduplicating providers across communities", () => {
     const older = makeDefinition({secret: communitySecretA, services: [provider], createdAt: 10})
-    const replacement = {...provider, requestRelay: "wss://new-alerts.example.com/"}
+    const replacement = {...provider, requestRelay: "wss://new-alerts.example.com"}
     const latest = makeDefinition({
       secret: communitySecretA,
       services: [replacement],
@@ -230,7 +232,7 @@ describe("dedicated encrypted community alert settings", () => {
       services: [provider],
       createdAt: 10,
     })
-    const pendingProvider = {...provider, requestRelay: "wss://pending.example.com/"}
+    const pendingProvider = {...provider, requestRelay: "wss://pending.example.com"}
     const migrated = migrateCommunityAlertSettingsV1(
       {
         version: 1,
@@ -384,6 +386,16 @@ describe("dedicated encrypted community alert settings", () => {
     })
   })
 
+  it("normalizes root service relay URLs to definition-canonical form", () => {
+    expect(
+      normalizeCommunityAlertService({
+        ...provider,
+        requestRelay: `${provider.requestRelay}/`,
+        handlerRelay: `${provider.handlerRelay}/`,
+      }),
+    ).toEqual(provider)
+  })
+
   it("does not copy unversioned Git-shaped settings into the community aggregate", () => {
     expect(
       normalizeCommunityAlertSettings({
@@ -460,6 +472,38 @@ describe("dedicated encrypted community alert settings", () => {
         communities: {[definition.pointer.address]: {enabled: true, provider}},
       },
     })
+  })
+
+  it("reuses hydrated settings and preserves source metadata on new items", async () => {
+    const event = {
+      id: "settings-item",
+      pubkey: userPubkey,
+      created_at: 1,
+      kind: 30078,
+      tags: [["d", COMMUNITY_ALERTS_SETTINGS_DTAG]],
+      content: "ciphertext",
+      sig: "sig",
+    } as TrustedEvent
+    const hydrated = {
+      event,
+      values: normalizeCommunityAlertSettings({version: 2}),
+      sourceVersion: 2 as const,
+    }
+    const decrypt = vi.fn().mockResolvedValue({
+      values: normalizeCommunityAlertSettings({version: 2}),
+      sourceVersion: 1 as const,
+    })
+
+    await expect(resolveCommunityAlertSettingsItem({event, hydrated, decrypt})).resolves.toBe(
+      hydrated,
+    )
+    expect(decrypt).not.toHaveBeenCalled()
+
+    const replacement = {...event, id: "replacement-settings-item"}
+    await expect(
+      resolveCommunityAlertSettingsItem({event: replacement, hydrated, decrypt}),
+    ).resolves.toMatchObject({event: replacement, sourceVersion: 1})
+    expect(decrypt).toHaveBeenCalledOnce()
   })
 
   it("ignores malformed or unsupported encrypted settings", async () => {

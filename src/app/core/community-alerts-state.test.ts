@@ -23,6 +23,7 @@ describe("community alert state boundaries", () => {
     expect(source).toContain("hydrateCommunityAlertSettings(session.userPubkey, {force: true})")
     expect(source).toContain("await hydrateCommunityPreferences()")
     expect(source).toContain("item?.sourceVersion === 1")
+    expect(source).toContain("resolveCommunityAlertSettingsItem")
     expect(source).toContain(
       "publishSettingsForSession(session, item.values, item.event.created_at)",
     )
