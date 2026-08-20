@@ -17,6 +17,7 @@ import {
   buildCommunityAlertPayload,
   createCommunityAlertOperationQueue,
   decryptCommunityAlertSettingsEvent,
+  decryptCommunityAlertSettingsEventWithSource,
   defaultCommunityAlertPreferences,
   discoverCommunityAlertProviders,
   getCommunityAlertDeletionTags,
@@ -25,7 +26,10 @@ import {
   getCommunityAlertStatusTags,
   getCommunityAlertSubscriptionDtag,
   getCommunityAlertSubscriptionTags,
+  getLegacyCommunityAlertStatusDtag,
+  getLegacyCommunityAlertSubscriptionDtag,
   isCommunityAlertEligibleRef,
+  migrateCommunityAlertSettingsV1,
   normalizeCommunityAlertSettings,
   parseCommunityAlertPayload,
   parseCommunityAlertStatus,
@@ -219,6 +223,103 @@ describe("verified per-community alert discovery", () => {
 })
 
 describe("dedicated encrypted community alert settings", () => {
+  it("migrates a redacted V1 registration to its unique exact V2 branch without data loss", () => {
+    const definition = makeDefinition({
+      secret: communitySecretB,
+      communityId: communityA,
+      services: [provider],
+      createdAt: 10,
+    })
+    const pendingProvider = {...provider, requestRelay: "wss://pending.example.com/"}
+    const migrated = migrateCommunityAlertSettingsV1(
+      {
+        version: 1,
+        deliveryProfile: {
+          email: " Person@Example.com ",
+          intervalDays: 1,
+          localTime: "08:00",
+          timezone: "Europe/Budapest",
+        },
+        communities: {
+          [communityA]: {
+            enabled: true,
+            provider,
+            pendingProvider,
+            pendingCleanup: [provider],
+            lastDeletionCreatedAt: 123,
+            lastError: " retry cleanup ",
+            preferences: {
+              density: "expanded",
+              engagement: {replies: false, mentions: true, reactions: false, zaps: true},
+              access: {membership: false, publishing: true, moderatorRequests: false},
+              moderation: {reports: false, actions: true},
+              highlights: {rooms: false, threads: true, calendar: false, goals: true},
+            },
+          },
+        },
+      },
+      [definition],
+    )
+
+    expect(migrated).toEqual({
+      version: 2,
+      deliveryProfile: {
+        email: "person@example.com",
+        intervalDays: 1,
+        localTime: "08:00",
+        timezone: "Europe/Budapest",
+      },
+      communities: {
+        [definition.pointer.address]: {
+          enabled: true,
+          legacyCommunityId: communityA,
+          provider,
+          pendingProvider,
+          pendingCleanup: [provider],
+          lastDeletionCreatedAt: 123,
+          lastError: "retry cleanup",
+          preferences: {
+            density: "expanded",
+            engagement: {replies: false, mentions: true, reactions: false, zaps: true},
+            access: {membership: false, publishing: true, moderatorRequests: false},
+            moderation: {reports: false, actions: true},
+            highlights: {rooms: false, threads: true, calendar: false, goals: true},
+          },
+        },
+      },
+    })
+  })
+
+  it("rejects missing and ambiguous V1 branch mappings independent of definition order", () => {
+    const first = makeDefinition({
+      secret: communitySecretA,
+      communityId: communityA,
+      services: [provider],
+      createdAt: 10,
+    })
+    const sibling = makeDefinition({
+      secret: communitySecretB,
+      communityId: communityA,
+      services: [provider],
+      createdAt: 20,
+    })
+    const value = {
+      version: 1,
+      deliveryProfile: {},
+      communities: {[communityA]: {enabled: true, provider, preferences: {}}},
+    }
+
+    expect(() => migrateCommunityAlertSettingsV1(value, [])).toThrow("No exact V2")
+    for (const definitions of [
+      [first, sibling],
+      [sibling, first],
+    ]) {
+      expect(() => migrateCommunityAlertSettingsV1(value, definitions)).toThrow(
+        "Multiple V2 community branches",
+      )
+    }
+  })
+
   it("keeps same-owner sibling registrations independent by exact address", () => {
     const first = makeCommunityPointer({ownerPubkey: communityA, communityId: communityA})!
     const sibling = makeCommunityPointer({ownerPubkey: communityA, communityId: communityB})!
@@ -320,6 +421,47 @@ describe("dedicated encrypted community alert settings", () => {
     ).rejects.toThrow("active signer")
   })
 
+  it("decrypts V1 settings with source metadata for a unique loaded definition", async () => {
+    const definition = makeDefinition({
+      secret: communitySecretB,
+      communityId: communityA,
+      services: [provider],
+      createdAt: 10,
+    })
+    const event = {
+      id: "settings-v1",
+      pubkey: userPubkey,
+      created_at: 1,
+      kind: 30078,
+      tags: [["d", COMMUNITY_ALERTS_SETTINGS_DTAG]],
+      content: "ciphertext",
+      sig: "sig",
+    } as TrustedEvent
+    const decrypt = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        version: 1,
+        deliveryProfile: {email: "Person@Example.com"},
+        communities: {[communityA]: {enabled: true, provider, preferences: {}}},
+      }),
+    )
+
+    await expect(
+      decryptCommunityAlertSettingsEventWithSource({
+        event,
+        activePubkey: userPubkey,
+        decrypt,
+        definitions: [definition],
+      }),
+    ).resolves.toMatchObject({
+      sourceVersion: 1,
+      values: {
+        version: 2,
+        deliveryProfile: {email: "person@example.com"},
+        communities: {[definition.pointer.address]: {enabled: true, provider}},
+      },
+    })
+  })
+
   it("ignores malformed or unsupported encrypted settings", async () => {
     const event = {
       id: "settings",
@@ -335,7 +477,6 @@ describe("dedicated encrypted community alert settings", () => {
       "not json",
       JSON.stringify(null),
       JSON.stringify([]),
-      JSON.stringify({version: 1}),
       JSON.stringify({version: 3}),
     ]) {
       await expect(
@@ -442,6 +583,17 @@ describe("strict community alert payloads and event tags", () => {
       ["a", `32830:${userPubkey}:budabit/community-alerts/${communityAddressA}`],
       ["p", providerPubkey],
     ])
+    expect(
+      getCommunityAlertDeletionTags({
+        communityAddress: communityAddressA,
+        legacyCommunityId: communityA,
+        userPubkey,
+        servicePubkey: providerPubkey,
+      }),
+    ).toEqual([
+      ["a", `32830:${userPubkey}:budabit/community-alerts/${communityA}`],
+      ["p", providerPubkey],
+    ])
   })
 
   it("selects only signed events with exact tags and per-community addresses", () => {
@@ -487,6 +639,60 @@ describe("strict community alert payloads and event tags", () => {
         provider,
       ),
     ).toBeUndefined()
+  })
+
+  it("selects legacy provider coordinates only when the migrated ID is explicit", () => {
+    const subscription = finalizeEvent(
+      {
+        kind: COMMUNITY_ALERTS_SUBSCRIPTION_KIND,
+        created_at: 10,
+        tags: [
+          ["d", getLegacyCommunityAlertSubscriptionDtag(communityA)],
+          ["p", providerPubkey],
+        ],
+        content: "encrypted",
+      },
+      userSecret,
+    )
+    const status = finalizeEvent(
+      {
+        kind: COMMUNITY_ALERTS_STATUS_KIND,
+        created_at: 10,
+        tags: [
+          ["d", getLegacyCommunityAlertStatusDtag(communityA, userPubkey)],
+          ["p", userPubkey],
+        ],
+        content: "encrypted",
+      },
+      providerSecret,
+    )
+
+    expect(
+      selectCommunityAlertSubscriptionEvent(
+        [subscription],
+        communityAddressA,
+        userPubkey,
+        provider,
+      ),
+    ).toBeUndefined()
+    expect(
+      selectCommunityAlertSubscriptionEvent(
+        [subscription],
+        communityAddressA,
+        userPubkey,
+        provider,
+        communityA,
+      ),
+    ).toEqual(subscription)
+    expect(
+      selectCommunityAlertStatusEvent(
+        [status],
+        communityAddressA,
+        userPubkey,
+        provider,
+        communityA,
+      ),
+    ).toEqual(status)
   })
 
   it("accepts ineligible as provider state but not as a summary status value", () => {

@@ -66,6 +66,7 @@ export type CommunityAlertPreferences = {
 
 export type CommunityAlertRegistration = {
   enabled: boolean
+  legacyCommunityId?: string
   provider?: CommunityAlertService
   pendingProvider?: CommunityAlertService
   pendingCleanup?: CommunityAlertService[]
@@ -78,6 +79,17 @@ export type CommunityAlertSettings = {
   version: 2
   deliveryProfile: CommunityAlertDeliveryProfile
   communities: Record<string, CommunityAlertRegistration>
+}
+
+export type CommunityAlertSettingsV1 = {
+  version: 1
+  deliveryProfile: CommunityAlertDeliveryProfile
+  communities: Record<string, CommunityAlertRegistration>
+}
+
+export type DecryptedCommunityAlertSettings = {
+  values: CommunityAlertSettings
+  sourceVersion: 1 | 2
 }
 
 export type CommunityAlertPayload = {
@@ -295,9 +307,14 @@ export const normalizeCommunityAlertRegistration = (value: unknown): CommunityAl
       : undefined
   const lastError =
     typeof source.lastError === "string" ? source.lastError.trim().slice(0, 500) : ""
+  const legacyCommunityId =
+    typeof source.legacyCommunityId === "string"
+      ? normalizePubkey(source.legacyCommunityId)
+      : undefined
 
   return {
     enabled: source.enabled === true && Boolean(provider),
+    ...(legacyCommunityId ? {legacyCommunityId} : {}),
     ...(provider ? {provider} : {}),
     ...(pendingProvider ? {pendingProvider} : {}),
     ...(pendingCleanup.length > 0 ? {pendingCleanup} : {}),
@@ -329,6 +346,51 @@ export const normalizeCommunityAlertSettings = (value: unknown): CommunityAlertS
     const community = parseCommunityDefinitionAddress(rawAddress)
     if (community) {
       communities[community.address] = normalizeCommunityAlertRegistration(registration)
+    }
+  }
+
+  return {
+    version: 2,
+    deliveryProfile: normalizeCommunityAlertDeliveryProfile(source.deliveryProfile),
+    communities,
+  }
+}
+
+export const migrateCommunityAlertSettingsV1 = (
+  value: unknown,
+  definitions: CommunityDefinition[],
+): CommunityAlertSettings => {
+  const source = asRecord(value)
+  if (source.version !== 1) throw new Error("Expected version 1 community alert settings.")
+
+  const definitionsByCommunityId = new Map<string, Map<string, CommunityDefinition>>()
+  for (const definition of definitions) {
+    const communityId = normalizePubkey(definition.communityId)
+    if (!communityId) continue
+    const matches = definitionsByCommunityId.get(communityId) || new Map()
+    matches.set(definition.pointer.address, definition)
+    definitionsByCommunityId.set(communityId, matches)
+  }
+
+  const communities: Record<string, CommunityAlertRegistration> = {}
+  for (const [rawCommunityId, registration] of Object.entries(asRecord(source.communities)).sort(
+    ([first], [second]) => first.localeCompare(second),
+  )) {
+    const communityId = normalizePubkey(rawCommunityId)
+    const matches = communityId
+      ? Array.from(definitionsByCommunityId.get(communityId)?.values() || []).sort((a, b) =>
+          a.pointer.address.localeCompare(b.pointer.address),
+        )
+      : []
+    if (matches.length === 0) {
+      throw new Error(`No exact V2 community definition is loaded for ${rawCommunityId}.`)
+    }
+    if (matches.length > 1) {
+      throw new Error(`Multiple V2 community branches share the ID ${rawCommunityId}.`)
+    }
+    communities[matches[0].pointer.address] = {
+      ...normalizeCommunityAlertRegistration(registration),
+      legacyCommunityId: communityId,
     }
   }
 
@@ -632,6 +694,19 @@ export const getCommunityAlertStatusDtag = (communityAddress: string, userPubkey
   return community && user ? `${COMMUNITY_ALERTS_DTAG_PREFIX}/${community}/${user}` : ""
 }
 
+export const getLegacyCommunityAlertSubscriptionDtag = (communityId: string) => {
+  const community = normalizePubkey(communityId)
+
+  return community ? `${COMMUNITY_ALERTS_DTAG_PREFIX}/${community}` : ""
+}
+
+export const getLegacyCommunityAlertStatusDtag = (communityId: string, userPubkey: string) => {
+  const dtag = getLegacyCommunityAlertSubscriptionDtag(communityId)
+  const user = normalizePubkey(userPubkey)
+
+  return dtag && user ? `${dtag}/${user}` : ""
+}
+
 export const getCommunityAlertSubscriptionTags = (
   communityAddress: string,
   servicePubkey: string,
@@ -659,16 +734,20 @@ export const getCommunityAlertStatusTags = (communityAddress: string, userPubkey
 
 export const getCommunityAlertDeletionTags = ({
   communityAddress,
+  legacyCommunityId,
   userPubkey,
   servicePubkey,
 }: {
   communityAddress: string
+  legacyCommunityId?: string
   userPubkey: string
   servicePubkey: string
 }) => {
   const user = normalizePubkey(userPubkey)
   const provider = normalizePubkey(servicePubkey)
-  const dtag = getCommunityAlertSubscriptionDtag(communityAddress)
+  const dtag = legacyCommunityId
+    ? getLegacyCommunityAlertSubscriptionDtag(legacyCommunityId)
+    : getCommunityAlertSubscriptionDtag(communityAddress)
   if (!user || !provider || !dtag) throw new Error("Invalid community alert deletion tags.")
 
   return [
@@ -682,16 +761,23 @@ export const selectCommunityAlertSubscriptionEvent = (
   communityAddress: string,
   userPubkey: string,
   provider: CommunityAlertService,
+  legacyCommunityId?: string,
 ) =>
   selectLatest(
     events.filter(
       event =>
         event.kind === COMMUNITY_ALERTS_SUBSCRIPTION_KIND &&
         event.pubkey === normalizePubkey(userPubkey) &&
-        hasExactTags(
+        (hasExactTags(
           event.tags,
           getCommunityAlertSubscriptionTags(communityAddress, provider.servicePubkey),
-        ) &&
+        ) ||
+          (legacyCommunityId
+            ? hasExactTags(event.tags, [
+                ["d", getLegacyCommunityAlertSubscriptionDtag(legacyCommunityId)],
+                ["p", normalizePubkey(provider.servicePubkey)],
+              ])
+            : false)) &&
         verifyEventSignature(event),
     ),
   )
@@ -701,13 +787,20 @@ export const selectCommunityAlertStatusEvent = (
   communityAddress: string,
   userPubkey: string,
   provider: CommunityAlertService,
+  legacyCommunityId?: string,
 ) =>
   selectLatest(
     events.filter(
       event =>
         event.kind === COMMUNITY_ALERTS_STATUS_KIND &&
         event.pubkey === normalizePubkey(provider.servicePubkey) &&
-        hasExactTags(event.tags, getCommunityAlertStatusTags(communityAddress, userPubkey)) &&
+        (hasExactTags(event.tags, getCommunityAlertStatusTags(communityAddress, userPubkey)) ||
+          (legacyCommunityId
+            ? hasExactTags(event.tags, [
+                ["d", getLegacyCommunityAlertStatusDtag(legacyCommunityId, userPubkey)],
+                ["p", normalizePubkey(userPubkey)],
+              ])
+            : false)) &&
         verifyEventSignature(event),
     ),
   )
@@ -735,26 +828,36 @@ export const parseCommunityAlertStatus = (value: unknown): CommunityAlertStatus 
   return source as CommunityAlertStatus
 }
 
-export const decryptCommunityAlertSettingsEvent = async ({
+export const decryptCommunityAlertSettingsEventWithSource = async ({
   event,
   activePubkey,
   decrypt,
+  definitions = [],
 }: {
   event: TrustedEvent
   activePubkey: string
   decrypt: (pubkey: string, content: string) => Promise<string>
-}) => {
+  definitions?: CommunityDefinition[]
+}): Promise<DecryptedCommunityAlertSettings | undefined> => {
   if (!activePubkey || event.pubkey !== activePubkey) {
     throw new Error("Community alert settings do not belong to the active signer.")
   }
   const plaintext = await decrypt(event.pubkey, event.content)
   const parsed = parseJson(plaintext)
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || parsed.version !== 2) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return undefined
   }
+  if (parsed.version === 1) {
+    return {values: migrateCommunityAlertSettingsV1(parsed, definitions), sourceVersion: 1}
+  }
+  if (parsed.version !== 2) return undefined
 
-  return normalizeCommunityAlertSettings(parsed)
+  return {values: normalizeCommunityAlertSettings(parsed), sourceVersion: 2}
 }
+
+export const decryptCommunityAlertSettingsEvent = async (
+  options: Parameters<typeof decryptCommunityAlertSettingsEventWithSource>[0],
+) => (await decryptCommunityAlertSettingsEventWithSource(options))?.values
 
 export const assertCommunityAlertProviderQueryComplete = (
   completion: CommunityAlertProviderQueryCompletion,

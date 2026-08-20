@@ -7,7 +7,11 @@ import {DELETE, makeEvent, type SignedEvent, type TrustedEvent} from "@welshman/
 import {makeOutboxLoader, makeUserData, pubkey, repository, signer} from "@welshman/app"
 import {getUserDataPublishRelays} from "@app/core/community-relays"
 import {publishRequiredCommunityEvent} from "@app/core/community-publish"
-import {activeExactCommunityPointer, activeUserCommunityRefs} from "@app/core/community-state"
+import {
+  activeExactCommunityPointer,
+  activeUserCommunityRefs,
+  hydrateCommunityPreferences,
+} from "@app/core/community-state"
 import {APP_BASE_URL} from "@app/core/state"
 import {
   waitForProviderRelayAuth,
@@ -22,9 +26,12 @@ import {
   buildCommunityAlertPayload,
   createCommunityAlertOperationQueue,
   decryptCommunityAlertSettingsEvent,
+  decryptCommunityAlertSettingsEventWithSource,
   defaultCommunityAlertSettings,
   discoverCommunityAlertProviders,
   getCommunityAlertDeletionTags,
+  getLegacyCommunityAlertStatusDtag,
+  getLegacyCommunityAlertSubscriptionDtag,
   getCommunityAlertStatusDtag,
   getCommunityAlertSubscriptionDtag,
   getCommunityAlertSubscriptionTags,
@@ -66,6 +73,8 @@ type CommunityAlertSession = {
   userPubkey: string
   currentSigner: ActiveSigner
 }
+
+type HydratedCommunityAlertSettingsItem = CommunityAlertSettingsItem & {sourceVersion: 1 | 2}
 
 export type CommunityAlertSettingsItem = {
   event: TrustedEvent
@@ -155,6 +164,7 @@ export const communityAlertSettingsByPubkey = deriveItemsByKey<CommunityAlertSet
       event,
       activePubkey: session.userPubkey,
       decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
+      definitions: get(activeUserCommunityRefs).map(ref => ref.definition),
     })
     assertSessionActive(session)
     if (!values) return undefined
@@ -209,7 +219,9 @@ let pendingSettingsHydration:
   | {session: CommunityAlertSession; promise: Promise<CommunityAlertSettingsItem | undefined>}
   | undefined
 
-const decryptLatestCommunityAlertSettings = async (session: CommunityAlertSession) => {
+const decryptLatestCommunityAlertSettings = async (
+  session: CommunityAlertSession,
+): Promise<HydratedCommunityAlertSettingsItem | undefined> => {
   const event = repository
     .query([
       {
@@ -223,15 +235,16 @@ const decryptLatestCommunityAlertSettings = async (session: CommunityAlertSessio
   if (!event) return undefined
 
   assertSessionActive(session)
-  const values = await decryptCommunityAlertSettingsEvent({
+  const decrypted = await decryptCommunityAlertSettingsEventWithSource({
     event,
     activePubkey: session.userPubkey,
     decrypt: (recipient, content) => session.currentSigner.nip44.decrypt(recipient, content),
+    definitions: get(activeUserCommunityRefs).map(ref => ref.definition),
   })
   assertSessionActive(session)
-  if (!values) return undefined
+  if (!decrypted) return undefined
 
-  return {event, values}
+  return {event, ...decrypted}
 }
 
 const fetchLatestCommunityAlertSettings = async (session: CommunityAlertSession) => {
@@ -342,13 +355,20 @@ export const hydrateCommunityAlertSettings = async (
     status: "loading",
   })
   const promise: Promise<CommunityAlertSettingsItem | undefined> = (async () => {
-    let item: CommunityAlertSettingsItem | undefined
+    await hydrateCommunityPreferences()
+    assertSessionActive(session)
+    let item: HydratedCommunityAlertSettingsItem | undefined
     if (force) {
       item = await fetchLatestCommunityAlertSettings(session)
     } else {
-      item = await loadCommunityAlertSettings(session.userPubkey)
+      await loadCommunityAlertSettings(session.userPubkey)
       assertSessionActive(session)
-      item ||= await decryptLatestCommunityAlertSettings(session)
+      item = await decryptLatestCommunityAlertSettings(session)
+    }
+    if (item?.sourceVersion === 1) {
+      await publishSettingsForSession(session, item.values, item.event.created_at)
+      assertSessionActive(session)
+      item = {...get(communityAlertSettingsHydration).item!, sourceVersion: 2}
     }
 
     if (isSessionActive(session)) {
@@ -399,6 +419,7 @@ const requireSettingsHydrated = (session: CommunityAlertSession) => {
 const publishSettingsForSession = async (
   session: CommunityAlertSession,
   settings: CommunityAlertSettings,
+  currentCreatedAt = get(userCommunityAlertSettings)?.event.created_at,
 ) => {
   assertSessionActive(session)
   const normalized = normalizeCommunityAlertSettings(settings)
@@ -411,7 +432,7 @@ const publishSettingsForSession = async (
     makeEvent(COMMUNITY_ALERTS_SETTINGS_KIND, {
       content,
       tags: [["d", COMMUNITY_ALERTS_SETTINGS_DTAG]],
-      created_at: getNextCommunityAlertCreatedAt(get(userCommunityAlertSettings)?.event.created_at),
+      created_at: getNextCommunityAlertCreatedAt(currentCreatedAt),
     }),
   )
   assertSessionActive(session)
@@ -576,6 +597,18 @@ const queryProviderStateForSession = async ({
   const community = parseCommunityDefinitionAddress(communityAddress)?.address || ""
   const normalizedProvider = normalizeCommunityAlertService(provider)
   if (!community || !normalizedProvider) throw new Error("Invalid community alert provider query.")
+  const legacyCommunityId = get(userCommunityAlertSettingsValues).communities[community]
+    ?.legacyCommunityId
+  const subscriptionDtags = [
+    getCommunityAlertSubscriptionDtag(community),
+    ...(legacyCommunityId ? [getLegacyCommunityAlertSubscriptionDtag(legacyCommunityId)] : []),
+  ]
+  const statusDtags = [
+    getCommunityAlertStatusDtag(community, session.userPubkey),
+    ...(legacyCommunityId
+      ? [getLegacyCommunityAlertStatusDtag(legacyCommunityId, session.userPubkey)]
+      : []),
+  ]
 
   return withAuthenticatedProvider(session, normalizedProvider, async pool => {
     const completion = {
@@ -598,14 +631,14 @@ const queryProviderStateForSession = async ({
           {
             kinds: [COMMUNITY_ALERTS_SUBSCRIPTION_KIND],
             authors: [session.userPubkey],
-            "#d": [getCommunityAlertSubscriptionDtag(community)],
+            "#d": subscriptionDtags,
             "#p": [normalizedProvider.servicePubkey],
             limit: 10,
           },
           {
             kinds: [COMMUNITY_ALERTS_STATUS_KIND],
             authors: [normalizedProvider.servicePubkey],
-            "#d": [getCommunityAlertStatusDtag(community, session.userPubkey)],
+            "#d": statusDtags,
             "#p": [session.userPubkey],
             limit: 10,
           },
@@ -639,12 +672,14 @@ const queryProviderStateForSession = async ({
       community,
       session.userPubkey,
       normalizedProvider,
+      legacyCommunityId,
     )
     const statusEvent = selectCommunityAlertStatusEvent(
       events,
       community,
       session.userPubkey,
       normalizedProvider,
+      legacyCommunityId,
     )
     let subscriptionPayload: CommunityAlertPayload | undefined
     let status: CommunityAlertStatus | undefined
@@ -658,7 +693,15 @@ const queryProviderStateForSession = async ({
           subscription.content,
         )
         assertSessionActive(session)
-        subscriptionPayload = parseCommunityAlertPayload(parseJson(plaintext))
+        const parsedPayload = parseJson(plaintext)
+        subscriptionPayload = parseCommunityAlertPayload(parsedPayload)
+        if (
+          !subscriptionPayload &&
+          legacyCommunityId &&
+          parsedPayload?.community === legacyCommunityId
+        ) {
+          subscriptionPayload = parseCommunityAlertPayload({...parsedPayload, community})
+        }
         if (!subscriptionPayload || subscriptionPayload.community !== community) {
           subscriptionPayload = undefined
           statusError = "The saved provider registration is invalid."
@@ -777,12 +820,19 @@ const deleteRegistrationForSession = async ({
 }) => {
   const providerState = await queryProviderStateForSession({session, communityAddress, provider})
   if (!providerState.subscription) return undefined
+  const legacyCommunityId = get(userCommunityAlertSettingsValues).communities[communityAddress]
+    ?.legacyCommunityId
+  const subscriptionUsesLegacyCoordinate =
+    legacyCommunityId &&
+    providerState.subscription.tags[0]?.[1] ===
+      getLegacyCommunityAlertSubscriptionDtag(legacyCommunityId)
   assertSessionActive(session)
   const event = await session.currentSigner.sign(
     makeEvent(DELETE, {
       created_at: getNextCommunityAlertCreatedAt(providerState.subscription.created_at),
       tags: getCommunityAlertDeletionTags({
         communityAddress,
+        ...(subscriptionUsesLegacyCoordinate ? {legacyCommunityId} : {}),
         userPubkey: session.userPubkey,
         servicePubkey: provider.servicePubkey,
       }),
@@ -895,6 +945,7 @@ export const saveAndEnableCommunityAlerts = async ({
     const pending = withLastDeletionCreatedAt(
       {
         enabled: Boolean(current?.enabled && current.provider),
+        ...(current?.legacyCommunityId ? {legacyCommunityId: current.legacyCommunityId} : {}),
         ...(current?.provider ? {provider: current.provider} : {}),
         pendingProvider: normalizedProvider,
         ...(providersToDelete.length > 0 ? {pendingCleanup: providersToDelete} : {}),
@@ -1068,6 +1119,7 @@ export const disableCommunityAlerts = async (communityAddress: string) => {
     const pending = withLastDeletionCreatedAt(
       {
         enabled: false,
+        ...(current.legacyCommunityId ? {legacyCommunityId: current.legacyCommunityId} : {}),
         ...(savedProvider ? {provider: savedProvider} : {}),
         ...(providers.length > 0 ? {pendingCleanup: providers} : {}),
         preferences: current.preferences,
@@ -1104,6 +1156,9 @@ export const disableCommunityAlerts = async (communityAddress: string) => {
     const disabled = withLastDeletionCreatedAt(
       {
         enabled: false,
+        ...(failed.length > 0 && current.legacyCommunityId
+          ? {legacyCommunityId: current.legacyCommunityId}
+          : {}),
         ...(savedProvider ? {provider: savedProvider} : {}),
         ...(failed.length > 0 ? {pendingCleanup: failed} : {}),
         preferences: current.preferences,

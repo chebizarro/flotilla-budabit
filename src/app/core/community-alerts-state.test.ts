@@ -21,6 +21,11 @@ describe("community alert state boundaries", () => {
     expect(source).toContain("session.currentSigner.nip44.decrypt")
     expect(source).toContain("session.currentSigner.sign")
     expect(source).toContain("hydrateCommunityAlertSettings(session.userPubkey, {force: true})")
+    expect(source).toContain("await hydrateCommunityPreferences()")
+    expect(source).toContain("item?.sourceVersion === 1")
+    expect(source).toContain(
+      "publishSettingsForSession(session, item.values, item.event.created_at)",
+    )
     expect(source).toContain("lastDeletionCreatedAt")
   })
 
