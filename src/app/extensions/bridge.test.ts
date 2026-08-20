@@ -417,6 +417,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   localStorage.clear()
 })
 
@@ -678,6 +679,7 @@ describe("ExtensionBridge", () => {
   })
 
   it("navigates the host app through ui:navigate", async () => {
+    vi.useFakeTimers()
     const {ExtensionBridge} = await import("./bridge")
     const extension = makeExtension()
     const bridge = new ExtensionBridge(extension as any)
@@ -687,11 +689,14 @@ describe("ExtensionBridge", () => {
         path: "/c/npub1example/calendar/event-1",
       }),
     ).resolves.toEqual({status: "ok"})
+    expect(mocks.goto).not.toHaveBeenCalled()
+    await vi.runAllTimersAsync()
     expect(mocks.goto).toHaveBeenCalledWith("/c/npub1example/calendar/event-1")
 
     await expect(
       sendBridgeRequest(bridge, extension, "ui:navigate", {path: "https://example.com/"}),
     ).resolves.toEqual({error: "Invalid navigation path"})
+    vi.useRealTimers()
   })
 
   it("forwards ui:resize requests to the widget resize callback", async () => {

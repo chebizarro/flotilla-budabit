@@ -2154,7 +2154,11 @@ registerBridgeHandler("ui:navigate", async (payload, ext) => {
       throw new Error("Invalid navigation path")
     }
 
-    await goto(path)
+    // Let the bridge acknowledge the request before navigation destroys the
+    // widget iframe that initiated it.
+    setTimeout(() => {
+      void goto(path).catch(err => console.error("Error in deferred widget navigation:", err))
+    }, 0)
     return {status: "ok"}
   } catch (err: any) {
     console.error("Error in ui:navigate bridge handler:", err)
