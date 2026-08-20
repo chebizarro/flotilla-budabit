@@ -1158,17 +1158,64 @@ export const makeTargetedPublicationLifecycleFilters = (events: TrustedEvent[]):
   return [...replacements, ...deletions]
 }
 
-const makeSourceTag = (source: TargetedPublicationSource) => {
+const makeSourceTag = (source: TargetedPublicationSource, kind: number) => {
   const relay = source.relay ? normalizeCommunityRelay(source.relay) : undefined
   if (source.relay && !relay) throw new Error("Invalid source relay.")
   if (source.type === "a") {
-    if (!parseAddress(source.value)) throw new Error("Invalid source address.")
-    return ["a", source.value, relay || "", "source"]
+    if (!parseAddress(source.value, kind)) throw new Error("Invalid source address.")
+    return relay ? ["a", source.value, relay] : ["a", source.value]
   }
   if (!LOWER_HEX_64.test(source.value)) throw new Error("Invalid source event ID.")
   if (source.pubkey && !parseOwnerPubkey(source.pubkey)) throw new Error("Invalid source author.")
-  return ["e", source.value, relay || "", source.pubkey || "", "source"]
+  return source.pubkey
+    ? ["e", source.value, relay || "", source.pubkey]
+    : relay
+      ? ["e", source.value, relay]
+      : ["e", source.value]
 }
+
+const parseTargetingAddressTag = (tag: string[], role: "source" | "community") => {
+  const marked = exactTag(tag, 4) && tag[3] === role
+  if (!marked && !exactTag(tag, 2) && !exactTag(tag, 3)) return undefined
+
+  const address = parseAddress(tag[1] || "")
+  const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
+  if (!address || (tag[2] && (!relay || relay !== tag[2]))) return undefined
+
+  return {address, ...(relay ? {relay} : {})}
+}
+
+const parseTargetingEventTag = (tag: string[]) => {
+  const marked = exactTag(tag, 5) && tag[4] === "source"
+  if (!marked && !exactTag(tag, 2) && !exactTag(tag, 3) && !exactTag(tag, 4)) {
+    return undefined
+  }
+  if (!LOWER_HEX_64.test(tag[1] || "")) return undefined
+
+  const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
+  const pubkey = tag[3] ? parseOwnerPubkey(tag[3]) : undefined
+  if ((tag[2] && (!relay || relay !== tag[2])) || (tag[3] && !pubkey)) return undefined
+
+  return {
+    type: "e" as const,
+    value: tag[1],
+    ...(relay ? {relay} : {}),
+    ...(pubkey ? {pubkey} : {}),
+  }
+}
+
+export const normalizeTargetedPublicationTags = (tags: string[][]) =>
+  tags.map(tag => {
+    if (exactTag(tag, 4) && tag[0] === "a" && ["source", "community"].includes(tag[3])) {
+      return tag[2] ? tag.slice(0, 3) : tag.slice(0, 2)
+    }
+    if (exactTag(tag, 5) && tag[0] === "e" && tag[4] === "source") {
+      if (tag[3]) return tag.slice(0, 4)
+      return tag[2] ? tag.slice(0, 3) : tag.slice(0, 2)
+    }
+
+    return [...tag]
+  })
 
 export const buildTargetedPublication = ({
   id,
@@ -1184,7 +1231,7 @@ export const buildTargetedPublication = ({
   }
 
   const tags: string[][] = [["d", id]]
-  if (source) tags.push(makeSourceTag(source))
+  if (source) tags.push(makeSourceTag(source, kind))
   tags.push(["k", String(kind)])
   const addresses = new Set<string>()
   for (const community of communities) {
@@ -1199,7 +1246,11 @@ export const buildTargetedPublication = ({
     if (addresses.has(pointer.address)) throw new Error("Duplicate community target.")
     addresses.add(pointer.address)
     tags.push(["h", pointer.communityId])
-    tags.push(["a", pointer.address, pointer.relayHints[0] || "", "community"])
+    tags.push(
+      pointer.relayHints[0]
+        ? ["a", pointer.address, pointer.relayHints[0]]
+        : ["a", pointer.address],
+    )
   }
   return {kind: TARGETED_PUBLICATION_KIND, content: "", tags}
 }
@@ -1224,54 +1275,21 @@ export const parseTargetedPublication = (event: TrustedEvent): TargetedPublicati
   const kind = parseCanonicalKind(kTags[0][1])
   if (kind === undefined) return undefined
 
-  const sourceTags = tags.filter(
-    tag => (tag[0] === "a" && tag[3] === "source") || (tag[0] === "e" && tag[4] === "source"),
-  )
-  if (sourceTags.length > 1) return undefined
-  let source: TargetedPublicationSource | undefined
-  if (sourceTags[0]?.[0] === "a") {
-    const tag = sourceTags[0]
-    if (!exactTag(tag, 4) || !parseAddress(tag[1])) return undefined
-    const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
-    if (tag[2] && (!relay || relay !== tag[2])) return undefined
-    source = {type: "a", value: tag[1], ...(relay ? {relay} : {})}
-  } else if (sourceTags[0]?.[0] === "e") {
-    const tag = sourceTags[0]
-    if (!exactTag(tag, 5) || !LOWER_HEX_64.test(tag[1])) return undefined
-    const relay = tag[2] ? normalizeCommunityRelay(tag[2]) : undefined
-    const pubkey = tag[3] ? parseOwnerPubkey(tag[3]) : undefined
-    if ((tag[2] && (!relay || relay !== tag[2])) || (tag[3] && !pubkey)) return undefined
-    source = {
-      type: "e",
-      value: tag[1],
-      ...(relay ? {relay} : {}),
-      ...(pubkey ? {pubkey} : {}),
-    }
-  }
-
   const communities: CommunityPointer[] = []
   const addresses = new Set<string>()
+  const communityAddressTagIndexes = new Set<number>()
   for (let index = 0; index < tags.length; index += 1) {
     const tag = tags[index]
-    if (tag[0] === "a" && tag[3] === "community") {
-      if (index === 0 || tags[index - 1][0] !== "h") return undefined
-      continue
-    }
     if (tag[0] !== "h") continue
     if (!exactTag(tag, 2)) return undefined
     const next = tags[index + 1]
-    if (!next || next[0] !== "a" || next[3] !== "community" || !exactTag(next, 4)) {
-      return undefined
-    }
+    if (!next || next[0] !== "a") return undefined
+    const communityTag = parseTargetingAddressTag(next, "community")
     const id = parseCommunityId(tag[1] || "")
-    const addressPointer = parseCommunityDefinitionAddress(next[1] || "")
-    const relay = next[2] ? normalizeCommunityRelay(next[2]) : undefined
-    if (
-      !id ||
-      !addressPointer ||
-      addressPointer.communityId !== id ||
-      (next[2] && (!relay || relay !== next[2]))
-    ) {
+    const addressPointer = communityTag
+      ? parseCommunityDefinitionAddress(communityTag.address.address)
+      : undefined
+    if (!id || !addressPointer || addressPointer.communityId !== id) {
       return undefined
     }
     if (addresses.has(addressPointer.address)) return undefined
@@ -1280,12 +1298,34 @@ export const parseTargetedPublication = (event: TrustedEvent): TargetedPublicati
       makeCommunityPointer({
         ownerPubkey: addressPointer.ownerPubkey,
         communityId: id,
-        relayHints: relay ? [relay] : [],
+        relayHints: communityTag?.relay ? [communityTag.relay] : [],
       })!,
     )
+    communityAddressTagIndexes.add(index + 1)
     index += 1
   }
   if (communities.length < 1 || communities.length > MAX_TARGET_COMMUNITIES) return undefined
+
+  let source: TargetedPublicationSource | undefined
+  for (let index = 0; index < tags.length; index += 1) {
+    const tag = tags[index]
+    if (tag[0] === "h" || communityAddressTagIndexes.has(index)) continue
+    if (tag[0] === "a") {
+      if (source || tag[3] === "community") return undefined
+      const sourceTag = parseTargetingAddressTag(tag, "source")
+      if (!sourceTag || sourceTag.address.kind !== kind) return undefined
+      source = {
+        type: "a",
+        value: sourceTag.address.address,
+        ...(sourceTag.relay ? {relay: sourceTag.relay} : {}),
+      }
+    } else if (tag[0] === "e") {
+      if (source) return undefined
+      source = parseTargetingEventTag(tag)
+      if (!source) return undefined
+    }
+  }
+
   return {id: dTags[0][1], kind, ...(source ? {source} : {}), communities}
 }
 
@@ -1293,13 +1333,12 @@ export const removeTargetedCommunity = (event: TrustedEvent, definitionAddress: 
   const parsed = parseTargetedPublication(event)
   if (!parsed) return undefined
   if (parsed.communities.length === 1) return undefined
-  const tags = event.tags.map(tag => [...tag])
+  const tags = normalizeTargetedPublicationTags(event.tags)
   const index = tags.findIndex(
     (tag, itemIndex) =>
       tag[0] === "h" &&
       tags[itemIndex + 1]?.[0] === "a" &&
-      tags[itemIndex + 1]?.[1] === definitionAddress &&
-      tags[itemIndex + 1]?.[3] === "community",
+      tags[itemIndex + 1]?.[1] === definitionAddress,
   )
   if (index < 0) return undefined
   tags.splice(index, 2)

@@ -115,10 +115,10 @@ describe("community targeting helpers", () => {
       content: "",
       tags: [
         ["d", "target-id"],
-        ["a", `${EVENT_TIME}:${authorPubkey}:calendar-1`, "", "source"],
+        ["a", `${EVENT_TIME}:${authorPubkey}:calendar-1`],
         ["k", String(EVENT_TIME)],
         ["h", first.communityId],
-        ["a", first.address, "wss://first.example", "community"],
+        ["a", first.address, "wss://first.example"],
       ],
     })
     expect(template.tags.some(tag => tag[0] === "p")).toBe(false)

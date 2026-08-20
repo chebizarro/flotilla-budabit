@@ -592,7 +592,7 @@ describe("Communikeys definitions", () => {
 })
 
 describe("Communikeys targeting", () => {
-  it("builds and parses marked source and community pairs without person p tags", () => {
+  it("builds and parses semantic source and community pairs without role markers", () => {
     const target = makeCommunityPointer({ownerPubkey: owner, communityId})!
     const otherTarget = makeCommunityPointer({
       ownerPubkey: otherController,
@@ -607,12 +607,12 @@ describe("Communikeys targeting", () => {
 
     expect(template.tags).toEqual([
       ["d", "target-id"],
-      ["a", `31922:${owner}:event`, "wss://source.example", "source"],
+      ["a", `31922:${owner}:event`, "wss://source.example"],
       ["k", "31922"],
       ["h", communityId],
-      ["a", target.address, "", "community"],
+      ["a", target.address],
       ["h", otherCommunityId],
-      ["a", otherTarget.address, "", "community"],
+      ["a", otherTarget.address],
     ])
     expect(template.kind).toBe(TARGETED_PUBLICATION_KIND)
     expect(template.tags.some(tag => tag[0] === "p")).toBe(false)
@@ -629,14 +629,14 @@ describe("Communikeys targeting", () => {
       ["d", "target-id"],
       ["k", "31922"],
       ["h", otherCommunityId],
-      ["a", pointer.address, "", "community"],
+      ["a", pointer.address],
     ]
     const separated = [
       ["d", "target-id"],
       ["k", "31922"],
       ["h", communityId],
       ["alt", "separator"],
-      ["a", pointer.address, "", "community"],
+      ["a", pointer.address],
     ]
 
     expect(
@@ -647,7 +647,7 @@ describe("Communikeys targeting", () => {
     ).toBeUndefined()
   })
 
-  it("rejects malformed markers, noncanonical relays, and incoherent pointers", () => {
+  it("rejects malformed references, noncanonical relays, and incoherent pointers", () => {
     const pointer = makeCommunityPointer({ownerPubkey: owner, communityId})!
     const base = buildTargetedPublication({
       id: "target-id",
@@ -655,8 +655,8 @@ describe("Communikeys targeting", () => {
       communities: [pointer],
     }).tags
     const cases = [
-      base.map(tag => (tag[0] === "a" ? ["a", tag[1], "community"] : tag)),
-      base.map(tag => (tag[0] === "a" ? ["a", tag[1], "wss://relay.example/", "community"] : tag)),
+      base.map(tag => (tag[0] === "a" ? ["a", tag[1], "", "extra"] : tag)),
+      base.map(tag => (tag[0] === "a" ? ["a", tag[1], "wss://relay.example/"] : tag)),
       base.map(tag => (tag[0] === "h" ? ["h", tag[1], "extra"] : tag)),
     ]
     for (const tags of cases) {
@@ -674,6 +674,15 @@ describe("Communikeys targeting", () => {
       ),
     ).toBeTruthy()
 
+    expect(
+      parseTargetedPublication(
+        makeEvent({
+          kind: TARGETED_PUBLICATION_KIND,
+          tags: [...base, ["a", `30009:${owner}:unclassified`]],
+        }),
+      ),
+    ).toBeUndefined()
+
     expect(() =>
       buildTargetedPublication({
         id: "target-id",
@@ -681,6 +690,32 @@ describe("Communikeys targeting", () => {
         communities: [{...pointer, address: `${pointer.address}-tampered`}],
       }),
     ).toThrow("Incoherent community target")
+  })
+
+  it("reads shipped marked V2 wrappers while normalizing replacements", () => {
+    const pointer = makeCommunityPointer({ownerPubkey: owner, communityId})!
+    const other = makeCommunityPointer({ownerPubkey: otherController, communityId})!
+    const event = makeEvent({
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: [
+        ["d", "target-id"],
+        ["e", "1".repeat(64), "", "", "source"],
+        ["k", "1"],
+        ["h", communityId],
+        ["a", pointer.address, "", "community"],
+        ["h", communityId],
+        ["a", other.address, "", "community"],
+      ],
+    })
+
+    expect(parseTargetedPublication(event)).toMatchObject({
+      source: {type: "e", value: "1".repeat(64)},
+    })
+    const removed = removeTargetedCommunity(event, pointer.address)!
+    expect(removed.tags).toContainEqual(["e", "1".repeat(64)])
+    expect(removed.tags).toContainEqual(["a", other.address])
+    expect(removed.tags.flat().includes("source")).toBe(false)
+    expect(removed.tags.flat().includes("community")).toBe(false)
   })
 
   it("removes targets by exact definition address", () => {

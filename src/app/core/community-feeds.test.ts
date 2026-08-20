@@ -373,14 +373,28 @@ describe("community feed helpers", () => {
   })
 
   it("rejects targeted address references whose coordinate kind contradicts the wrapper", () => {
-    const mismatchedTarget = makeEvent({
-      kind: TARGETED_PUBLICATION_KIND,
-      tags: buildTargetedPublication({
+    expect(() =>
+      buildTargetedPublication({
         id: "mismatched-target",
         kind: EVENT_TIME,
         ref: {type: "a", value: `${EVENT_DATE}:${authorPubkey}:calendar-1`},
         communities: [{pubkey: communityPubkey}],
-      }).tags,
+      }),
+    ).toThrow("Invalid source address")
+
+    const validTags = buildTargetedPublication({
+      id: "mismatched-target",
+      kind: EVENT_TIME,
+      ref: {type: "a", value: `${EVENT_TIME}:${authorPubkey}:calendar-1`},
+      communities: [{pubkey: communityPubkey}],
+    }).tags
+    const mismatchedTarget = makeEvent({
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: validTags.map(tag =>
+        tag[0] === "a" && tag[1] === `${EVENT_TIME}:${authorPubkey}:calendar-1`
+          ? ["a", `${EVENT_DATE}:${authorPubkey}:calendar-1`]
+          : tag,
+      ),
     })
 
     expect(makeTargetedPublicationOriginalFilterPlan([mismatchedTarget])).toEqual({

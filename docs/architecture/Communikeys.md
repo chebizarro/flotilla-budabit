@@ -206,43 +206,42 @@ Targetable originals retain their targeting ID in `h`; community associations ar
   "kind": 30222,
   "tags": [
     ["d", "<targeting-id>"],
-    ["a", "31922:<publication-author>:<publication-d>", "wss://author-relay", "source"],
+    ["a", "31922:<publication-author>:<publication-d>", "wss://author-relay"],
     ["k", "31922"],
     ["h", "<community-id-1>"],
-    ["a", "32222:<owner-1>:<community-id-1>", "wss://community-relay-1", "community"],
+    ["a", "32222:<owner-1>:<community-id-1>", "wss://community-relay-1"],
     ["h", "<community-id-2>"],
-    ["a", "32222:<owner-2>:<community-id-2>", "wss://community-relay-2", "community"]
+    ["a", "32222:<owner-2>:<community-id-2>", "wss://community-relay-2"]
   ],
   "content": ""
 }
 ```
 
-A wrapper MUST contain exactly one non-empty `d` and one valid `k`. An explicit address source is `["a", <address>, <optionalRelay>, "source"]`. An explicit event source is `["e", <eventId>, <optionalRelay>, <optionalAuthorPubkey>, "source"]`; empty placeholders preserve the marker position. A wrapper has at most one marked source of either form. Without a marked source, the original MUST use the wrapper `d` as its targeting `h` and have the same author as the wrapper.
+A wrapper MUST contain exactly one non-empty `d` and one valid `k`. An explicit address source is `["a", <address>, <optionalRelay>]`, and its address kind MUST equal `k`. An explicit event source is `["e", <eventId>, <optionalRelay>, <optionalAuthorPubkey>]`; an empty relay placeholder preserves the optional author position. A wrapper has at most one source of either form. Without a source, the original MUST use the wrapper `d` as its targeting `h` and have the same author as the wrapper. Because kind `30222` is a closed targeting grammar, every unpaired `a` or `e` is interpreted as the source and any additional or malformed reference invalidates the wrapper.
 
 Each community target is an adjacent ordered pair:
 
 ```text
 ["h", <communityId>]
-["a", <definitionAddress>, <optionalRelay>, "community"]
+["a", <definitionAddress>, <optionalRelay>]
 ```
 
-The marked `a` MUST immediately follow its `h`; its address kind MUST be `32222`, and its identifier MUST equal that `h`. An unmatched, malformed, duplicate-address, or mismatched pair invalidates the wrapper. A wrapper MUST contain 1 to 12 pairs. Two branches with the same community ID MAY both be targets.
+The `a` MUST immediately follow its `h`; its address kind MUST be `32222`, and its identifier MUST equal that `h`. These semantics identify it as a community target without a role marker. An unmatched, malformed, duplicate-address, or mismatched pair invalidates the wrapper. A wrapper MUST contain 1 to 12 pairs. Two branches with the same community ID MAY both be targets.
 
 Target identity is the exact definition address. Removing a target publishes a newer wrapper at the same wrapper address without that complete pair. Source tags and remaining target order MUST be preserved. Wrappers are discovered by `#h=<communityId>`. `p=<communityId>` targeting is invalid.
 
 ## Workflow Reference Markers
 
-Workflows use markers so branch authority is not confused with another target:
+Other workflows use markers when their event kind and reference structure do not determine the role:
 
-- `community`: exact community definition;
-- `source`: targeted-publication original;
+- `community`: exact community definition outside kind `30222`;
 - `form`: admission form;
 - `response`: admission response;
 - `report`: community report;
 - `badge`: badge definition; and
 - `request`: moderator request.
 
-Address role markers occupy tag index 3: `["a", <address>, <optionalRelay>, <marker>]`. Event role markers occupy index 4 after the optional relay and author hints. Empty placeholders preserve marker position. Each required role occurs exactly once. Duplicate or conflicting marked references invalidate the event for that workflow. Reports MAY retain reason-bearing `e`, `p`, or `a` targets; those are not community references.
+Address role markers occupy tag index 3: `["a", <address>, <optionalRelay>, <marker>]`. Event role markers occupy index 4 after the optional relay and author hints. Empty placeholders preserve marker position. Each required role occurs exactly once. Duplicate or conflicting marked references invalidate the event for that workflow. Kind `30222` is the exception: its source and adjacent `h` plus kind-`32222` community pairs are semantic parts of its closed grammar and carry no role markers. Reports MAY retain reason-bearing `e`, `p`, or `a` targets; those are not community references.
 
 ## Section-Scoped Addressable Identifiers
 

@@ -8,6 +8,7 @@ import {
   type TargetedPublicationSource,
   buildTargetedPublication,
   makeCommunityPointer,
+  normalizeTargetedPublicationTags,
   normalizePubkey,
   parseTargetedPublication,
   removeTargetedCommunity,
@@ -92,16 +93,22 @@ export const upsertCommunityTarget = (
   if (!pointer || pointer.address !== target.address || pointer.naddr !== target.naddr)
     return undefined
 
-  const tags = event.tags.map(tag => [...tag])
+  const tags = normalizeTargetedPublicationTags(event.tags)
   const existingIndex = tags.findIndex(
-    tag => tag[0] === "a" && tag[1] === pointer.address && tag[3] === "community",
+    (tag, index) => tag[0] === "a" && tag[1] === pointer.address && tags[index - 1]?.[0] === "h",
   )
   if (existingIndex >= 0) {
-    tags[existingIndex] = ["a", pointer.address, pointer.relayHints[0] || "", "community"]
+    tags[existingIndex] = pointer.relayHints[0]
+      ? ["a", pointer.address, pointer.relayHints[0]]
+      : ["a", pointer.address]
   } else {
     if (parsed.communities.length >= MAX_TARGET_COMMUNITIES) return undefined
     tags.push(["h", pointer.communityId])
-    tags.push(["a", pointer.address, pointer.relayHints[0] || "", "community"])
+    tags.push(
+      pointer.relayHints[0]
+        ? ["a", pointer.address, pointer.relayHints[0]]
+        : ["a", pointer.address],
+    )
   }
 
   return {content: event.content, tags}

@@ -177,12 +177,12 @@ describe("widget targeting", () => {
     expect(event).toMatchObject({kind: TARGETED_PUBLICATION_KIND, content: "", created_at: 123})
     expect(event.tags).toEqual([
       ["d", "target-weather"],
-      ["a", `${SMART_WIDGET_KIND}:${widgetPubkey}:weather`, "wss://widgets.example", "source"],
+      ["a", `${SMART_WIDGET_KIND}:${widgetPubkey}:weather`, "wss://widgets.example"],
       ["k", String(SMART_WIDGET_KIND)],
       ["h", firstCommunity.communityId],
-      ["a", firstCommunity.address, "wss://community.example", "community"],
+      ["a", firstCommunity.address, "wss://community.example"],
       ["h", secondCommunity.communityId],
-      ["a", secondCommunity.address, "wss://second.example", "community"],
+      ["a", secondCommunity.address, "wss://second.example"],
     ])
     const publishedEvent = event as TrustedEvent
     expect(
