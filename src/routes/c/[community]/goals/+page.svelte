@@ -30,6 +30,7 @@
     activeCommunityProfileListEvents,
     activeExactCommunityRelays,
     activeCommunityReportState,
+    getCommunityBootstrapKey,
     hasCommunityHydrationCompleted,
     markCommunityHydrationCompleted,
     recoverCommunityBootstrap,
@@ -45,10 +46,16 @@
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
     filterAuthorizedCommunityTargetingEvents,
+    filterAuthorizedLegacyCommunityTargetingEvents,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
+  import {
+    makeLegacyCommunityTargetingFilter,
+    makeLegacyTargetedPublicationOriginalFilterPlan,
+    makeLegacyTargetedPublicationOriginalRelayHintPlans,
+  } from "@app/core/community-targeting-legacy"
   import {loadBoundedCommunityHistory, makeFeed} from "@app/core/requests"
   import {publicationOperations} from "@app/core/publication-operations"
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
@@ -84,6 +91,13 @@
       ? $activeExactCommunityDefinition
       : undefined,
   )
+  const expectedCommunityBootstrapKey = $derived.by(() => {
+    const session = $activeExactCommunitySession
+
+    return communityAddress && $activeExactCommunityPointer?.address === communityAddress && session
+      ? getCommunityBootstrapKey(session, $pubkey || "")
+      : ""
+  })
   const goalsPath = $derived(
     routeCommunity ? makeExactCommunityGoalPath(routeCommunity) : $page.url.pathname,
   )
@@ -94,15 +108,24 @@
     Boolean(
       communityAddress &&
       communityDefinition &&
+      expectedCommunityBootstrapKey &&
+      $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
-      !$activeCommunityBootstrapStatus.loading,
+      !$activeCommunityBootstrapStatus.loading &&
+      !$activeCommunityBootstrapStatus.error,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(
+      communityAddress &&
+      !communityBootstrapReady &&
+      ($activeCommunityBootstrapStatus.key !== expectedCommunityBootstrapKey ||
+        !$activeCommunityBootstrapStatus.error),
+    ),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
+    $activeExactCommunityPointer?.address === communityAddress &&
+      $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -114,7 +137,13 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
-    Boolean(communityAddress && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+    Boolean(
+      communityAddress &&
+      expectedCommunityBootstrapKey &&
+      $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
+      !communityBootstrapReady &&
+      $activeCommunityBootstrapStatus.error,
+    ),
   )
   const goalSectionName = $derived(
     getCommunityWriteTargetSectionName(
@@ -124,7 +153,12 @@
   )
   const targetingFilters = $derived(
     communityAuthorityReady && routeCommunity
-      ? [makeCommunityTargetingFilter(communityId, [ZAP_GOAL])]
+      ? [
+          makeCommunityTargetingFilter(communityId, [ZAP_GOAL]),
+          ...(communityOwnerPubkey === communityId
+            ? [makeLegacyCommunityTargetingFilter(communityId, [ZAP_GOAL])]
+            : []),
+        ]
       : [],
   )
   const goalAuthorPubkeys = $derived(
@@ -187,12 +221,31 @@
         })
       : [],
   )
-  const targetedGoalFilterPlan = $derived(
-    makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents),
+  const authorizedLegacyTargetingEvents = $derived.by(() =>
+    communityAuthorityReady && communityDefinition && routeCommunity
+      ? filterAuthorizedLegacyCommunityTargetingEvents({
+          community: routeCommunity,
+          definition: communityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: [ZAP_GOAL],
+        })
+      : [],
   )
-  const targetedGoalRelayHintPlans = $derived(
-    makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
-  )
+  const targetedGoalFilterPlan = $derived.by(() => {
+    const current = makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents)
+    const legacy = makeLegacyTargetedPublicationOriginalFilterPlan(authorizedLegacyTargetingEvents)
+
+    return {
+      relayFilters: [...current.relayFilters, ...legacy.relayFilters],
+      localFilters: [...current.localFilters, ...legacy.localFilters],
+    }
+  })
+  const targetedGoalRelayHintPlans = $derived([
+    ...makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+    ...makeLegacyTargetedPublicationOriginalRelayHintPlans(authorizedLegacyTargetingEvents),
+  ])
   const targetedGoalEvents = $derived(
     targetedGoalFilterPlan.localFilters.length
       ? deriveEventsAsc(
@@ -227,6 +280,11 @@
     ...goalFilterPlan.relayFilters,
     ...commentFilterPlan.relayFilters,
   ] as Filter[])
+  const repositoryGoalEvents = $derived(
+    goalFeedFilters.length
+      ? deriveEventsAsc(deriveEventsById({repository, filters: goalFeedFilters}))
+      : readable<TrustedEvent[]>([]),
+  )
   const feedKey = $derived.by(() =>
     communityAuthorityReady &&
     communityAddress &&
@@ -259,7 +317,12 @@
   const goalProjection = $derived.by(() =>
     projectAuthoredPublicationEvents({
       events: Array.from(
-        new Map([...$events, ...$targetedGoalEvents].map(event => [event.id, event])).values(),
+        new Map(
+          [...$repositoryGoalEvents, ...$events, ...$targetedGoalEvents].map(event => [
+            event.id,
+            event,
+          ]),
+        ).values(),
       ),
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
@@ -549,7 +612,7 @@
   {/each}
   {#if communityBootstrapLoading || communityAuthorityLoading}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading>Loading Goals...</Spinner>
+      <Spinner loading>Loading Goals</Spinner>
     </p>
   {:else if communityBootstrapFailed || communityAuthorityUnavailable}
     <div class="flex flex-col items-center gap-3 py-20 text-center">
@@ -559,14 +622,7 @@
     </div>
   {:else if loadingTargets || loadingHintedOriginals || waitingForFeed || loadingEvents || (!emptyStateSettled && items.length === 0 && targetLoadStatus !== "incomplete" && targetLoadStatus !== "failed" && hintedOriginalLoadStatus !== "incomplete" && hintedOriginalLoadStatus !== "failed" && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed") || (targetLoadStatus === "idle" && items.length === 0)}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading
-        >{!emptyStateSettled &&
-        !loadingTargets &&
-        !loadingHintedOriginals &&
-        !waitingForFeed &&
-        !loadingEvents
-          ? "Still looking for goals..."
-          : "Looking for goals..."}</Spinner>
+      <Spinner loading>Loading Goals</Spinner>
     </p>
   {:else if items.length === 0}
     <p class="flex h-10 items-center justify-center py-20 text-center">No goals found.</p>

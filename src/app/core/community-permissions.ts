@@ -31,6 +31,10 @@ import {
   selectCurrentTargetedPublicationEvents,
 } from "@app/core/community"
 import {GIT_PERMALINK_KIND, SMART_WIDGET_KIND} from "@app/core/community-feeds"
+import {
+  parseLegacyTargetedPublication,
+  selectCurrentLegacyTargetedPublicationEvents,
+} from "@app/core/community-targeting-legacy"
 import type {EffectiveCommunityReportState} from "@app/core/community-reports"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 
@@ -449,6 +453,47 @@ export const filterAuthorizedCommunityTargetingEvents = ({
   })
 }
 
+export const filterAuthorizedLegacyCommunityTargetingEvents = ({
+  community,
+  definition,
+  profileListEvents,
+  events,
+  reportState,
+  kinds,
+}: {
+  community: CommunityPointer
+  definition: CommunityDefinition
+  profileListEvents: TrustedEvent[]
+  events: TrustedEvent[]
+  reportState?: EffectiveCommunityReportState
+  kinds?: readonly number[]
+}) => {
+  if (String(community.ownerPubkey) !== String(community.communityId)) return []
+
+  const allowedKinds = kinds ? new Set(kinds) : undefined
+
+  return selectCurrentLegacyTargetedPublicationEvents(events).filter(event => {
+    const targeting = parseLegacyTargetedPublication(event)
+    if (!targeting || targeting.communityPubkey !== community.communityId) return false
+    if (allowedKinds && !allowedKinds.has(targeting.kind)) return false
+
+    const targets =
+      targeting.kind === EVENT_DATE || targeting.kind === EVENT_TIME
+        ? COMMUNITY_CALENDAR_WRITE_TARGETS
+        : [{sectionName: "", kind: targeting.kind}]
+
+    return targets.some(target =>
+      canWriteCommunityTarget({
+        definition,
+        profileListEvents,
+        userPubkey: event.pubkey,
+        target,
+        reportState,
+      }),
+    )
+  })
+}
+
 export const canWriteCommunityCalendarTarget = ({
   definition,
   profileListEvents,
@@ -703,8 +748,7 @@ export const getCommunitySectionAuthorityPubkeys = ({
     ),
   ).filter(
     pubkey =>
-      pubkey === definition.ownerPubkey ||
-      !isCommunityReportStatePersonBanned(reportState, pubkey),
+      pubkey === definition.ownerPubkey || !isCommunityReportStatePersonBanned(reportState, pubkey),
   )
 }
 

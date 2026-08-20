@@ -15,6 +15,8 @@ describe("community widgets route history", () => {
     expect(source).toContain("return {relayFilters: filters, localFilters: filters}")
     expect(source).toContain("filters: targetDeleteFilterPlan.localFilters")
     expect(source).toContain("targetAuthors.get(tag[1]) === author")
+    expect(source).not.toContain("LegacyCommunityTargeting")
+    expect(source).not.toContain("LegacyTargetedPublication")
   })
 
   it("tracks bounded wrapper, delete, and explicit-hint original reads", () => {

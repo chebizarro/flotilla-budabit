@@ -33,6 +33,7 @@ import {
   canWriteCommunityTarget,
   findProfileListEvent,
   filterAuthorizedCommunityTargetingEvents,
+  filterAuthorizedLegacyCommunityTargetingEvents,
   getCommunityCalendarTargetWriterPubkeys,
   getCommunityCalendarWriteTarget,
   getCommunityCalendarWriteTargetSectionName,
@@ -449,6 +450,48 @@ describe("community permissions", () => {
         kinds: [30617],
       }),
     ).toEqual([selectedTarget])
+  })
+
+  it("admits shipped legacy wrappers only for their self-owned community branch", () => {
+    const legacyTarget = makeEvent({
+      id: "legacy-target",
+      pubkey: communityPubkey,
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: [
+        ["d", "legacy-repository"],
+        ["k", "30617"],
+        ["p", communityPubkey],
+        ["r", "wss://relay.example/"],
+      ],
+    })
+
+    expect(
+      filterAuthorizedLegacyCommunityTargetingEvents({
+        community: communityPointer,
+        definition,
+        profileListEvents: [generalProfileList, repoProfileList],
+        events: [legacyTarget],
+        kinds: [30617],
+      }),
+    ).toEqual([legacyTarget])
+    expect(
+      filterAuthorizedLegacyCommunityTargetingEvents({
+        community: otherCommunityPointer,
+        definition,
+        profileListEvents: [generalProfileList, repoProfileList],
+        events: [legacyTarget],
+        kinds: [30617],
+      }),
+    ).toEqual([])
+    expect(
+      filterAuthorizedCommunityTargetingEvents({
+        community: communityPointer,
+        definition,
+        profileListEvents: [generalProfileList, repoProfileList],
+        events: [legacyTarget],
+        kinds: [30617],
+      }),
+    ).toEqual([])
   })
 
   it("lets person bans override existing write and grant permissions", () => {

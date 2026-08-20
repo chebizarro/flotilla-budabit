@@ -2,7 +2,8 @@
   import {onDestroy} from "svelte"
   import {readable, type Readable} from "svelte/store"
   import {page} from "$app/stores"
-  import {pubkey} from "@welshman/app"
+  import {pubkey, repository} from "@welshman/app"
+  import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {type Filter, type TrustedEvent} from "@welshman/util"
   import NotesMinimalistic from "@assets/icons/notes-minimalistic.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
@@ -21,6 +22,7 @@
     activeExactCommunityRelays,
     activeCommunityReportState,
     activeExactCommunitySession,
+    getCommunityBootstrapKey,
     hasCommunityHydrationCompleted,
     markCommunityHydrationCompleted,
     recoverCommunityBootstrap,
@@ -56,6 +58,13 @@
       ? $activeExactCommunityDefinition
       : undefined,
   )
+  const expectedCommunityBootstrapKey = $derived.by(() => {
+    const session = $activeExactCommunitySession
+
+    return communityAddress && $activeExactCommunityPointer?.address === communityAddress && session
+      ? getCommunityBootstrapKey(session, $pubkey || "")
+      : ""
+  })
   const threadsPath = $derived(
     routeCommunity ? makeExactCommunityThreadPath(routeCommunity) : $page.url.pathname,
   )
@@ -106,15 +115,24 @@
     Boolean(
       communityAddress &&
       communityDefinition &&
+      expectedCommunityBootstrapKey &&
+      $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
-      !$activeCommunityBootstrapStatus.loading,
+      !$activeCommunityBootstrapStatus.loading &&
+      !$activeCommunityBootstrapStatus.error,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(
+      communityAddress &&
+      !communityBootstrapReady &&
+      ($activeCommunityBootstrapStatus.key !== expectedCommunityBootstrapKey ||
+        !$activeCommunityBootstrapStatus.error),
+    ),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
+    $activeExactCommunityPointer?.address === communityAddress &&
+      $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -126,7 +144,13 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
-    Boolean(communityAddress && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+    Boolean(
+      communityAddress &&
+      expectedCommunityBootstrapKey &&
+      $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
+      !communityBootstrapReady &&
+      $activeCommunityBootstrapStatus.error,
+    ),
   )
   const threadSectionName = $derived(
     getCommunityWriteTargetSectionName(
@@ -158,6 +182,11 @@
     ...threadFilterPlan.relayFilters,
     ...replyFilterPlan.relayFilters,
   ] as Filter[])
+  const repositoryEvents = $derived(
+    feedFilters.length
+      ? deriveEventsAsc(deriveEventsById({repository, filters: feedFilters}))
+      : readable<TrustedEvent[]>([]),
+  )
   const feedKey = $derived.by(() =>
     communityAuthorityReady &&
     communityAddress &&
@@ -186,7 +215,9 @@
 
   const threadProjection = $derived.by(() =>
     projectAuthoredPublicationEvents({
-      events: $events,
+      events: Array.from(
+        new Map([...$repositoryEvents, ...$events].map(event => [event.id, event])).values(),
+      ),
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
       matches: event =>
@@ -401,7 +432,7 @@
     {/each}
     {#if communityBootstrapLoading || communityAuthorityLoading}
       <p class="flex h-10 items-center justify-center py-20 text-center">
-        <Spinner loading>Loading Threads...</Spinner>
+        <Spinner loading>Loading Threads</Spinner>
       </p>
     {:else if communityBootstrapFailed || communityAuthorityUnavailable}
       <div class="flex flex-col items-center gap-3 py-8 text-center opacity-70">
@@ -414,10 +445,7 @@
       </div>
     {:else if waitingForFeed || loadingEvents || (!feedEmptySettled && threads.length === 0 && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed")}
       <p class="flex h-10 items-center justify-center py-20 text-center">
-        <Spinner loading
-          >{!waitingForFeed && !loadingEvents
-            ? "Still looking for threads..."
-            : "Looking for threads..."}</Spinner>
+        <Spinner loading>Loading Threads</Spinner>
       </p>
     {:else if threads.length === 0}
       <p class="py-8 text-center opacity-70">No threads found.</p>

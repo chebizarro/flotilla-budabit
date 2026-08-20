@@ -53,6 +53,7 @@
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
     filterAuthorizedCommunityTargetingEvents,
+    filterAuthorizedLegacyCommunityTargetingEvents,
     getCommunityWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
@@ -69,6 +70,11 @@
   import {publishEditedReply} from "@app/core/event-edit-publish"
   import {publicationOperations, startPublication} from "@app/core/publication-operations"
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
+  import {
+    makeLegacyCommunityTargetingFilter,
+    makeLegacyTargetedPublicationOriginalFilterPlan,
+    makeLegacyTargetedPublicationOriginalRelayHintPlans,
+  } from "@app/core/community-targeting-legacy"
   import {setChecked} from "@app/util/notifications"
   import {pushToast} from "@app/util/toast"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
@@ -192,7 +198,12 @@
   )
   const targetingFilters = $derived<Filter[]>(
     communityAuthorityReady && routeCommunity
-      ? [makeCommunityTargetingFilter(communityId, [ZAP_GOAL])]
+      ? [
+          makeCommunityTargetingFilter(communityId, [ZAP_GOAL]),
+          ...(communityOwnerPubkey === communityId
+            ? [makeLegacyCommunityTargetingFilter(communityId, [ZAP_GOAL])]
+            : []),
+        ]
       : [],
   )
   const targetingFilterPlan = $derived(
@@ -215,12 +226,31 @@
         })
       : [],
   )
-  const targetedGoalFilterPlan = $derived(
-    makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents),
+  const authorizedLegacyTargetingEvents = $derived.by(() =>
+    communityAuthorityReady && communityDefinition && routeCommunity
+      ? filterAuthorizedLegacyCommunityTargetingEvents({
+          community: routeCommunity,
+          definition: communityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: [ZAP_GOAL],
+        })
+      : [],
   )
-  const targetedGoalRelayHintPlans = $derived(
-    makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
-  )
+  const targetedGoalFilterPlan = $derived.by(() => {
+    const current = makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents)
+    const legacy = makeLegacyTargetedPublicationOriginalFilterPlan(authorizedLegacyTargetingEvents)
+
+    return {
+      relayFilters: [...current.relayFilters, ...legacy.relayFilters],
+      localFilters: [...current.localFilters, ...legacy.localFilters],
+    }
+  })
+  const targetedGoalRelayHintPlans = $derived([
+    ...makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+    ...makeLegacyTargetedPublicationOriginalRelayHintPlans(authorizedLegacyTargetingEvents),
+  ])
   const directGoalFilterPlan = $derived(
     communityAuthorityReady && communityId && goalId
       ? makeCommunityContentFilterPlan(

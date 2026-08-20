@@ -26,6 +26,7 @@
     activeExactCommunityRelays,
     activeCommunityReportState,
     getUserOutboxRelays,
+    getCommunityBootstrapKey,
     hasCommunityHydrationCompleted,
     markCommunityHydrationCompleted,
     recoverCommunityBootstrap,
@@ -48,11 +49,17 @@
     COMMUNITY_WRITE_TARGETS,
     canWriteCommunityTarget,
     filterAuthorizedCommunityTargetingEvents,
+    filterAuthorizedLegacyCommunityTargetingEvents,
     getCommunityCalendarTargetWriterPubkeys,
     getCommunityCalendarWriteTargetSectionName,
     getCommunityTargetWriterPubkeys,
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
+  import {
+    makeLegacyCommunityTargetingFilter,
+    makeLegacyTargetedPublicationOriginalFilterPlan,
+    makeLegacyTargetedPublicationOriginalRelayHintPlans,
+  } from "@app/core/community-targeting-legacy"
   import {loadBoundedCommunityHistory, makeCalendarFeed} from "@app/core/requests"
   import {publicationOperations} from "@app/core/publication-operations"
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
@@ -97,6 +104,13 @@
       ? $activeExactCommunityDefinition
       : undefined,
   )
+  const expectedCommunityBootstrapKey = $derived.by(() => {
+    const session = $activeExactCommunitySession
+
+    return communityAddress && $activeExactCommunityPointer?.address === communityAddress && session
+      ? getCommunityBootstrapKey(session, $pubkey || "")
+      : ""
+  })
   const calendarPath = $derived(
     routeCommunity ? makeExactCommunityCalendarPath(routeCommunity) : $page.url.pathname,
   )
@@ -110,15 +124,24 @@
     Boolean(
       communityAddress &&
       communityDefinition &&
+      expectedCommunityBootstrapKey &&
+      $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
-      !$activeCommunityBootstrapStatus.loading,
+      !$activeCommunityBootstrapStatus.loading &&
+      !$activeCommunityBootstrapStatus.error,
     ),
   )
   const communityBootstrapLoading = $derived(
-    Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
+    Boolean(
+      communityAddress &&
+      !communityBootstrapReady &&
+      ($activeCommunityBootstrapStatus.key !== expectedCommunityBootstrapKey ||
+        !$activeCommunityBootstrapStatus.error),
+    ),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
+    $activeExactCommunityPointer?.address === communityAddress &&
+      $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -130,7 +153,13 @@
   )
   const communityAuthorityUnavailable = $derived(communityAuthorityReadiness === "unavailable")
   const communityBootstrapFailed = $derived(
-    Boolean(communityAddress && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
+    Boolean(
+      communityAddress &&
+      expectedCommunityBootstrapKey &&
+      $activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey &&
+      !communityBootstrapReady &&
+      $activeCommunityBootstrapStatus.error,
+    ),
   )
   const getCalendarEventSectionName = (_kind: number) =>
     getCommunityCalendarWriteTargetSectionName(
@@ -152,7 +181,12 @@
 
     for (const target of COMMUNITY_CALENDAR_WRITE_TARGETS) {
       const plan = makeCommunityContentFilterPlan(
-        [makeCommunityTargetingFilter(communityId, [target.kind])],
+        [
+          makeCommunityTargetingFilter(communityId, [target.kind]),
+          ...(communityOwnerPubkey === communityId
+            ? [makeLegacyCommunityTargetingFilter(communityId, [target.kind])]
+            : []),
+        ],
         calendarWriterPubkeys,
       )
       relayFilters.push(...plan.relayFilters)
@@ -168,6 +202,18 @@
   const authorizedTargetingEvents = $derived.by(() =>
     communityAuthorityReady && communityDefinition && routeCommunity
       ? filterAuthorizedCommunityTargetingEvents({
+          community: routeCommunity,
+          definition: communityDefinition,
+          profileListEvents: $activeCommunityProfileListEvents,
+          events: $targetingEvents,
+          reportState: $activeCommunityReportState,
+          kinds: CALENDAR_EVENT_KINDS,
+        })
+      : [],
+  )
+  const authorizedLegacyTargetingEvents = $derived.by(() =>
+    communityAuthorityReady && communityDefinition && routeCommunity
+      ? filterAuthorizedLegacyCommunityTargetingEvents({
           community: routeCommunity,
           definition: communityDefinition,
           profileListEvents: $activeCommunityProfileListEvents,
@@ -207,12 +253,19 @@
         })
       : [],
   )
-  const targetedOriginalFilterPlan = $derived(
-    makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents),
-  )
-  const targetedOriginalRelayHintPlans = $derived(
-    makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
-  )
+  const targetedOriginalFilterPlan = $derived.by(() => {
+    const current = makeTargetedPublicationOriginalFilterPlan(authorizedTargetingEvents)
+    const legacy = makeLegacyTargetedPublicationOriginalFilterPlan(authorizedLegacyTargetingEvents)
+
+    return {
+      relayFilters: [...current.relayFilters, ...legacy.relayFilters],
+      localFilters: [...current.localFilters, ...legacy.localFilters],
+    }
+  })
+  const targetedOriginalRelayHintPlans = $derived([
+    ...makeTargetedPublicationOriginalRelayHintPlans(authorizedTargetingEvents),
+    ...makeLegacyTargetedPublicationOriginalRelayHintPlans(authorizedLegacyTargetingEvents),
+  ])
   const targetedOriginalEvents = $derived(
     targetedOriginalFilterPlan.localFilters.length
       ? deriveEventsAsc(
@@ -244,6 +297,11 @@
     ...directCalendarFilterPlan.relayFilters,
     ...targetedOriginalFilterPlan.relayFilters,
   ] as Filter[])
+  const repositoryCalendarEvents = $derived(
+    calendarFeedFilters.length
+      ? deriveEventsAsc(deriveEventsById({repository, filters: calendarFeedFilters}))
+      : readable<TrustedEvent[]>([]),
+  )
   const feedKey = $derived.by(() =>
     communityAuthorityReady &&
     communityAddress &&
@@ -284,7 +342,12 @@
   const calendarProjection = $derived.by(() =>
     projectAuthoredPublicationEvents({
       events: Array.from(
-        new Map([...$events, ...$targetedOriginalEvents].map(event => [event.id, event])).values(),
+        new Map(
+          [...$repositoryCalendarEvents, ...$events, ...$targetedOriginalEvents].map(event => [
+            event.id,
+            event,
+          ]),
+        ).values(),
       ),
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
@@ -634,7 +697,7 @@
   {/each}
   {#if communityBootstrapLoading || communityAuthorityLoading}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading>Loading Calendar...</Spinner>
+      <Spinner loading>Loading Events</Spinner>
     </p>
   {:else if communityBootstrapFailed || communityAuthorityUnavailable}
     <div class="flex flex-col items-center gap-3 py-20 text-center">
@@ -647,14 +710,7 @@
     </div>
   {:else if loadingTargets || loadingHintedOriginals || waitingForFeed || loadingEvents || (!emptyStateSettled && items.length === 0 && targetLoadStatus !== "incomplete" && targetLoadStatus !== "failed" && hintedOriginalLoadStatus !== "incomplete" && hintedOriginalLoadStatus !== "failed" && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed") || (targetLoadStatus === "idle" && items.length === 0)}
     <p class="flex h-10 items-center justify-center py-20 text-center">
-      <Spinner loading
-        >{!emptyStateSettled &&
-        !loadingTargets &&
-        !loadingHintedOriginals &&
-        !waitingForFeed &&
-        !loadingEvents
-          ? "Still looking for events..."
-          : "Looking for events..."}</Spinner>
+      <Spinner loading>Loading Events</Spinner>
     </p>
   {:else if items.length === 0}
     <p class="flex h-10 items-center justify-center py-20 text-center">No events found.</p>

@@ -9,6 +9,27 @@ const routes = [
   "../../routes/c/[community]/threads/[thread]/+page.svelte",
 ]
 
+const listRoutes = [
+  {
+    path: "../../routes/c/[community]/threads/+page.svelte",
+    filters: "feedFilters",
+    repositoryEvents: "repositoryEvents",
+    loadingCopy: "Loading Threads",
+  },
+  {
+    path: "../../routes/c/[community]/goals/+page.svelte",
+    filters: "goalFeedFilters",
+    repositoryEvents: "repositoryGoalEvents",
+    loadingCopy: "Loading Goals",
+  },
+  {
+    path: "../../routes/c/[community]/calendar/+page.svelte",
+    filters: "calendarFeedFilters",
+    repositoryEvents: "repositoryCalendarEvents",
+    loadingCopy: "Loading Events",
+  },
+]
+
 describe("exact community thread route contract", () => {
   it("parses only the exact naddr route pointer on direct refresh", () => {
     for (const route of routes) {
@@ -90,6 +111,39 @@ describe("exact community thread route contract", () => {
       expect(source, route).not.toContain(
         "session?.definition.ownerPubkey !== routeCommunity.ownerPubkey",
       )
+    }
+  })
+
+  it("projects authorized cached events alongside relay feed events", () => {
+    for (const {path, filters, repositoryEvents} of listRoutes) {
+      const source = readProjectFile(path)
+
+      expect(source, path).toContain(
+        `deriveEventsAsc(deriveEventsById({repository, filters: ${filters}}))`,
+      )
+      expect(source, path).toContain(`...$${repositoryEvents}`)
+      expect(source, path).toContain("...$events")
+    }
+  })
+
+  it("binds list readiness to the exact route bootstrap", () => {
+    for (const {path} of listRoutes) {
+      const source = readProjectFile(path)
+
+      expect(source, path).toContain('getCommunityBootstrapKey(session, $pubkey || "")')
+      expect(source, path).toContain(
+        "$activeCommunityBootstrapStatus.key === expectedCommunityBootstrapKey",
+      )
+      expect(source, path).toContain("$activeExactCommunityPointer?.address === communityAddress")
+    }
+  })
+
+  it("keeps list loading copy stable", () => {
+    for (const {path, loadingCopy} of listRoutes) {
+      const source = readProjectFile(path)
+
+      expect(source, path).toContain(`<Spinner loading>${loadingCopy}</Spinner>`)
+      expect(source, path).not.toMatch(/(?:Still looking|Looking for) (?:threads|goals|events)/i)
     }
   })
 })

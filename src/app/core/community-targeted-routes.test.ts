@@ -34,6 +34,23 @@ describe("community targeted publication routes", () => {
     expect(routes.permalinks).toContain("targetedPermalinkFilterPlan.localFilters")
   })
 
+  it("reads shipped legacy targets only through self-owned branch guards", () => {
+    for (const source of [
+      routes.calendar,
+      routes.calendarDetail,
+      routes.goals,
+      routes.goalDetail,
+    ]) {
+      expect(source).toContain("makeLegacyCommunityTargetingFilter(")
+      expect(source).toContain("communityOwnerPubkey === communityId")
+      expect(source).toContain("filterAuthorizedLegacyCommunityTargetingEvents({")
+      expect(source).toContain("makeLegacyTargetedPublicationOriginalFilterPlan(")
+    }
+
+    expect(routes.permalinks).not.toContain("LegacyCommunityTargeting")
+    expect(routes.permalinks).not.toContain("LegacyTargetedPublication")
+  })
+
   it("uses aggregate calendar writers for both direct events and wrappers", () => {
     for (const source of [routes.calendar, routes.calendarDetail]) {
       expect(source).toContain("getCommunityCalendarTargetWriterPubkeys({")
