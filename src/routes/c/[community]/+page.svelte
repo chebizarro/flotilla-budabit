@@ -75,7 +75,6 @@
   import {formatShortNpub} from "@app/util/pubkeys"
   import {
     makeExactCommunityCalendarPath,
-    makeExactCommunityGitPath,
     makeExactCommunityGoalPath,
     makeExactCommunityRoomPath,
     makeExactCommunityThreadPath,
@@ -110,7 +109,7 @@
     communityPointer ? makeExactCommunityCalendarPath(communityPointer) : "",
   )
   const goalsPath = $derived(communityPointer ? makeExactCommunityGoalPath(communityPointer) : "")
-  const gitPath = $derived(communityPointer ? makeExactCommunityGitPath(communityPointer) : "")
+  const gitPath = "/git"
   const communityDefinitionReady = $derived(Boolean(communityPointer && routeCommunityDefinition))
   const expectedCommunityBootstrapKey = $derived(communityPointer?.address || "")
   const retryCommunityBootstrap = async () => {
