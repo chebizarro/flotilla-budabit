@@ -1,9 +1,10 @@
 import {describe, expect, it} from "vitest"
-import {EVENT_DATE, EVENT_TIME, THREAD, type TrustedEvent} from "@welshman/util"
+import {EVENT_DATE, EVENT_TIME, MESSAGE, THREAD, type TrustedEvent} from "@welshman/util"
 import {getPublicKey} from "nostr-tools/pure"
 import {GIT_REPO_ANNOUNCEMENT} from "@nostr-git/core/events"
 import {
   COMMUNITY_SUBTYPE_ROOM,
+  COMMUNITY_SUBTYPE_ROOM_MESSAGE,
   COMMUNITY_SUBTYPE_THREADS,
   COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
@@ -27,9 +28,10 @@ import {
 
 const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
 const communityPubkey = testPubkey(41)
+const communityId = testPubkey(45)
 const communityPointer = makeCommunityPointer({
   ownerPubkey: communityPubkey,
-  communityId: communityPubkey,
+  communityId,
   relayHints: ["wss://relay.example.com/"],
 })!
 const calendarWriterPubkey = testPubkey(42)
@@ -49,7 +51,7 @@ const makeEvent = (overrides: Partial<TrustedEvent>): TrustedEvent =>
   }) as TrustedEvent
 
 const profileListIdentifier = (value: string) =>
-  `${communityPubkey}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+  `${communityId}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
 
 const makeDefinition = (sections: CommunityDefinitionSectionInput[]) =>
   parseCommunityDefinition(
@@ -57,7 +59,7 @@ const makeDefinition = (sections: CommunityDefinitionSectionInput[]) =>
       kind: COMMUNITY_DEFINITION_KIND,
       content: "",
       tags: buildCommunityDefinition({
-        communityId: communityPubkey,
+        communityId,
         name: "Test community",
         description: "Definition description",
         picture: "https://community.example/picture.png",
@@ -326,14 +328,14 @@ describe("community widget context", () => {
     expect(plan.relayTargetingFilters).toEqual([
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#h": [communityPubkey],
+        "#h": [communityId],
         "#k": [String(EVENT_TIME)],
       },
     ])
     expect(plan.localTargetingFilters).toEqual([
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#h": [communityPubkey],
+        "#h": [communityId],
         "#k": [String(EVENT_TIME)],
         authors: [communityPubkey, calendarWriterPubkey, calendarMemberPubkey],
       },
@@ -401,12 +403,12 @@ describe("community widget context", () => {
     expect(plan.relayTargetingFilters).toEqual([
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#h": [communityPubkey],
+        "#h": [communityId],
         "#k": [String(EVENT_TIME)],
       },
       {
         kinds: [TARGETED_PUBLICATION_KIND],
-        "#h": [communityPubkey],
+        "#h": [communityId],
         "#k": [String(EVENT_DATE)],
       },
     ])
@@ -442,11 +444,11 @@ describe("community widget context", () => {
       limit: 5,
     })
 
-    expect(plan.relayOriginalFilters).toEqual([{kinds: [1], "#h": [communityPubkey], limit: 5}])
+    expect(plan.relayOriginalFilters).toEqual([{kinds: [1], "#h": [communityId], limit: 5}])
     expect(plan.localOriginalFilters).toEqual([
       {
         kinds: [1],
-        "#h": [communityPubkey],
+        "#h": [communityId],
         authors: [communityPubkey, calendarWriterPubkey, calendarMemberPubkey],
         limit: 5,
       },
@@ -512,28 +514,46 @@ describe("community widget context", () => {
     ).toEqual([direct])
   })
 
-  it("post-filters direct descriptor events by known subtypes", () => {
+  it("post-filters direct descriptor events by subtype and stable community ID", () => {
     const roomRoot = makeEvent({
       id: "room-root",
       kind: THREAD,
-      tags: [["h", communityPubkey], ["room"]],
+      tags: [["h", communityId], ["room"]],
     })
     const threadRoot = makeEvent({
       id: "thread-root",
       kind: THREAD,
-      tags: [["h", communityPubkey]],
+      tags: [["h", communityId]],
+    })
+    const roomMessage = makeEvent({
+      id: "room-message",
+      kind: MESSAGE,
+      tags: [
+        ["h", communityId],
+        ["E", roomRoot.id],
+      ],
+    })
+    const ownerScopedRoom = makeEvent({
+      id: "owner-scoped-room",
+      kind: THREAD,
+      tags: [["h", communityPubkey], ["room"]],
     })
 
     expect(
-      filterCommunityDescriptorEvents([roomRoot, threadRoot], communityPubkey, [
+      filterCommunityDescriptorEvents([roomRoot, threadRoot, ownerScopedRoom], communityId, [
         {kind: THREAD, subtype: COMMUNITY_SUBTYPE_ROOM},
       ]).map(event => event.id),
     ).toEqual(["room-root"])
     expect(
-      filterCommunityDescriptorEvents([roomRoot, threadRoot], communityPubkey, [
+      filterCommunityDescriptorEvents([roomRoot, threadRoot], communityId, [
         {kind: THREAD, subtype: COMMUNITY_SUBTYPE_THREADS},
       ]).map(event => event.id),
     ).toEqual(["thread-root"])
+    expect(
+      filterCommunityDescriptorEvents([roomMessage], communityId, [
+        {kind: MESSAGE, subtype: COMMUNITY_SUBTYPE_ROOM_MESSAGE},
+      ]),
+    ).toEqual([roomMessage])
   })
 
   it("authorizes same-kind direct events only through their matching descriptor", () => {
@@ -582,30 +602,30 @@ describe("community widget context", () => {
         id: "room-by-room-writer",
         kind: THREAD,
         pubkey: roomWriter,
-        tags: [["h", communityPubkey], ["room"]],
+        tags: [["h", communityId], ["room"]],
       }),
       makeEvent({
         id: "thread-by-thread-writer",
         kind: THREAD,
         pubkey: threadWriter,
-        tags: [["h", communityPubkey]],
+        tags: [["h", communityId]],
       }),
       makeEvent({
         id: "room-by-thread-writer",
         kind: THREAD,
         pubkey: threadWriter,
-        tags: [["h", communityPubkey], ["room"]],
+        tags: [["h", communityId], ["room"]],
       }),
       makeEvent({
         id: "thread-by-room-writer",
         kind: THREAD,
         pubkey: roomWriter,
-        tags: [["h", communityPubkey]],
+        tags: [["h", communityId]],
       }),
     ]
 
     expect(
-      filterAuthorizedCommunityDescriptorEvents(events, communityPubkey, resolved).map(
+      filterAuthorizedCommunityDescriptorEvents(events, communityId, resolved).map(
         event => event.id,
       ),
     ).toEqual(["room-by-room-writer", "thread-by-thread-writer"])

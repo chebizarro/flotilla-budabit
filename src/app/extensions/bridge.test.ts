@@ -98,9 +98,10 @@ const mocks = vi.hoisted(() => {
 
 const testPubkey = (value: number) => getPublicKey(new Uint8Array(32).fill(value))
 const communityPubkey = testPubkey(51)
+const communityId = testPubkey(57)
 const communityPointer = makeCommunityPointer({
   ownerPubkey: communityPubkey,
-  communityId: communityPubkey,
+  communityId,
   relayHints: ["wss://relay.example.com/"],
 })!
 const calendarWriterPubkey = testPubkey(52)
@@ -483,7 +484,7 @@ describe("ExtensionBridge", () => {
           kind: 30311,
           created_at: 1,
           content: "",
-          tags: [["h", communityPubkey]],
+          tags: [["h", communityId]],
         },
         relays: ["wss://relay.example.com/"],
       }),
@@ -1343,7 +1344,7 @@ describe("ExtensionBridge", () => {
       created_at: 100,
       tags: [
         ["d", "missing-manager-stream"],
-        ["h", communityPubkey],
+        ["h", communityId],
       ],
     })
     mocks.repository.query.mockImplementation(((filters: any[]) => {
@@ -2015,7 +2016,7 @@ describe("ExtensionBridge", () => {
         filters: [
           expect.objectContaining({
             kinds: [TARGETED_PUBLICATION_KIND],
-            "#h": [communityPubkey],
+            "#h": [communityId],
             "#k": [String(EVENT_TIME)],
           }),
         ],
@@ -2124,7 +2125,7 @@ describe("ExtensionBridge", () => {
     expect(targetingLoads).toHaveLength(3)
     expect(targetingLoads[0][1][0]).toEqual({
       kinds: [TARGETED_PUBLICATION_KIND],
-      "#h": [communityPubkey],
+      "#h": [communityId],
       "#k": [String(EVENT_TIME)],
       limit: 100,
     })
@@ -2165,7 +2166,7 @@ describe("ExtensionBridge", () => {
           pubkey: directPage === 1 && index === 0 ? calendarMemberPubkey : outsiderPubkey,
           created_at: pageCreatedAt - index,
           kind: 1,
-          tags: [["h", communityPubkey]],
+          tags: [["h", communityId]],
         }),
       ).forEach(onEvent)
     })
@@ -2192,7 +2193,7 @@ describe("ExtensionBridge", () => {
       call => call[1]?.[0]?.kinds?.[0] === 1,
     )
     expect(directLoads).toHaveLength(3)
-    expect(directLoads[0][1]).toEqual([{kinds: [1], "#h": [communityPubkey], limit: 100}])
+    expect(directLoads[0][1]).toEqual([{kinds: [1], "#h": [communityId], limit: 100}])
     expect(directLoads[1][1][0]).toHaveProperty("until")
   })
 
@@ -2223,7 +2224,7 @@ describe("ExtensionBridge", () => {
           pubkey: directPage === 1 && index < 5 ? calendarMemberPubkey : outsiderPubkey,
           created_at: pageCreatedAt - index,
           kind: 1,
-          tags: [["h", communityPubkey]],
+          tags: [["h", communityId]],
         }),
       ).forEach(onEvent)
     })
@@ -2422,13 +2423,13 @@ describe("ExtensionBridge", () => {
       id: "authorized-direct",
       pubkey: calendarMemberPubkey,
       kind: 1,
-      tags: [["h", communityPubkey]],
+      tags: [["h", communityId]],
     })
     const unauthorizedEvent = makeEvent({
       id: "unauthorized-direct",
       pubkey: outsiderPubkey,
       kind: 1,
-      tags: [["h", communityPubkey]],
+      tags: [["h", communityId]],
     })
 
     mocks.activeExactCommunityDefinition.set(directDefinition)
@@ -2459,14 +2460,14 @@ describe("ExtensionBridge", () => {
     expect(mocks.repository.query).toHaveBeenCalledWith([
       {
         kinds: [1],
-        "#h": [communityPubkey],
+        "#h": [communityId],
         authors: [communityPubkey, calendarWriterPubkey, calendarMemberPubkey],
         limit: 5,
       },
     ])
     expect(mocks.loadCommunityEvents).toHaveBeenCalledWith(
       ["wss://relay.example.com/"],
-      [{kinds: [1], "#h": [communityPubkey], limit: 100}],
+      [{kinds: [1], "#h": [communityId], limit: 100}],
       expect.objectContaining({authenticate: false}),
     )
   })
@@ -2511,7 +2512,7 @@ describe("ExtensionBridge", () => {
       created_at: 40,
       kind: THREAD,
       pubkey: roomWriter,
-      tags: [["d", "room-allowed"], ["h", communityPubkey], ["room"]],
+      tags: [["d", "room-allowed"], ["h", communityId], ["room"]],
     })
     const threadByThreadWriter = makeEvent({
       id: "2".repeat(64),
@@ -2520,7 +2521,7 @@ describe("ExtensionBridge", () => {
       pubkey: threadWriter,
       tags: [
         ["d", "thread-allowed"],
-        ["h", communityPubkey],
+        ["h", communityId],
       ],
     })
     const roomByThreadWriter = makeEvent({
@@ -2528,7 +2529,7 @@ describe("ExtensionBridge", () => {
       created_at: 60,
       kind: THREAD,
       pubkey: threadWriter,
-      tags: [["d", "room-cross-authorized"], ["h", communityPubkey], ["room"]],
+      tags: [["d", "room-cross-authorized"], ["h", communityId], ["room"]],
     })
     const threadByRoomWriter = makeEvent({
       id: "4".repeat(64),
@@ -2537,7 +2538,7 @@ describe("ExtensionBridge", () => {
       pubkey: roomWriter,
       tags: [
         ["d", "thread-cross-authorized"],
-        ["h", communityPubkey],
+        ["h", communityId],
       ],
     })
     const allEvents = [
@@ -2823,7 +2824,7 @@ describe("ExtensionBridge", () => {
       created_at: 20,
       tags: [
         ["d", "cached-stream"],
-        ["h", communityPubkey],
+        ["h", communityId],
         ["status", "live"],
       ],
     })
@@ -2863,7 +2864,7 @@ describe("ExtensionBridge", () => {
         created_at: 20,
         tags: [
           ["d", "tie-stream"],
-          ["h", communityPubkey],
+          ["h", communityId],
           ["title", id === lowerId ? "Preferred" : "Discarded"],
         ],
       })

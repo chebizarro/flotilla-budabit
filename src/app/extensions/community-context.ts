@@ -214,9 +214,8 @@ const getDescriptorLabel = (descriptor: CommunityEventDescriptor) =>
 
 export const eventMatchesCommunityEventDescriptor = (
   event: TrustedEvent,
-  communityPubkey: string,
+  communityId: string,
   descriptor: CommunityEventDescriptor,
-  communityId = communityPubkey,
 ) => {
   if (event.kind !== descriptor.kind) return false
   if (descriptor.kind === GIT_REPO_ANNOUNCEMENT) {
@@ -226,11 +225,11 @@ export const eventMatchesCommunityEventDescriptor = (
 
   switch (descriptor.subtype) {
     case COMMUNITY_SUBTYPE_ROOM:
-      return isRoomRoot(event, communityPubkey)
+      return isRoomRoot(event, communityId)
     case COMMUNITY_SUBTYPE_THREADS:
-      return isThreadRoot(event, communityPubkey)
+      return isThreadRoot(event, communityId)
     case COMMUNITY_SUBTYPE_ROOM_MESSAGE:
-      return isRoomMessage(event, communityPubkey)
+      return isRoomMessage(event, communityId)
     default:
       return true
   }
@@ -238,36 +237,30 @@ export const eventMatchesCommunityEventDescriptor = (
 
 export const filterCommunityDescriptorEvents = (
   events: TrustedEvent[],
-  communityPubkey: string,
+  communityId: string,
   descriptors: CommunityEventDescriptor[],
-  communityId = communityPubkey,
 ) => {
   const normalizedDescriptors = normalizeCommunityEventDescriptors(descriptors)
 
   return events.filter(event =>
     normalizedDescriptors.some(descriptor =>
-      eventMatchesCommunityEventDescriptor(event, communityPubkey, descriptor, communityId),
+      eventMatchesCommunityEventDescriptor(event, communityId, descriptor),
     ),
   )
 }
 
 export const filterAuthorizedCommunityDescriptorEvents = (
   events: TrustedEvent[],
-  communityPubkey: string,
+  communityId: string,
   descriptorInfos: ResolvedCommunityEventDescriptor[],
-  communityId = communityPubkey,
 ) =>
   events.filter(event => {
     const author = normalizePubkey(event.pubkey)
 
     return descriptorInfos.some(
       info =>
-        eventMatchesCommunityEventDescriptor(
-          event,
-          communityPubkey,
-          info.descriptor,
-          communityId,
-        ) && info.writerPubkeys.includes(author),
+        eventMatchesCommunityEventDescriptor(event, communityId, info.descriptor) &&
+        info.writerPubkeys.includes(author),
     )
   })
 
@@ -511,12 +504,8 @@ export const makeCommunityDescriptorQueryPlan = ({
   for (const info of directInfos) {
     if (info.writerPubkeys.length === 0) continue
 
-    const directCommunityId =
-      info.descriptor.kind === GIT_REPO_ANNOUNCEMENT
-        ? community.communityId
-        : definition.ownerPubkey
     const directPlan = makeCommunityContentFilterPlan(
-      [makeCommunityExclusiveFilter(directCommunityId, [info.descriptor.kind])],
+      [makeCommunityExclusiveFilter(community.communityId, [info.descriptor.kind])],
       info.writerPubkeys,
     )
     localOriginalFilters.push(...directPlan.localFilters)

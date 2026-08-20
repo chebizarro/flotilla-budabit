@@ -105,10 +105,11 @@ const getEndorsedRepoCommunity = ({
   const communityTags = announcement.tags.filter(tag => tag[0] === "h")
   if (communityTags.length === 1) {
     const communityId = parseCommunityId(communityTags[0]?.[1] || "")
-    const definition = Array.from(definitions.values()).find(
+    const matchingDefinitions = Array.from(definitions.values()).filter(
       candidate => parseCommunityId(candidate.communityId) === communityId,
     )
-    if (definition) {
+    if (matchingDefinitions.length === 1) {
+      const definition = matchingDefinitions[0]
       const reportState = getReportState(evidence.reportStates, definition.pointer.address)
       if (
         getAuthorityPubkeys(definition).has(repoOwner) &&

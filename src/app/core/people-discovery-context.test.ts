@@ -207,6 +207,78 @@ describe("people discovery contexts", () => {
     expect(duplicateScope.communityPubkey).toBe("")
   })
 
+  it("leaves ID-only repository context unresolved when no branch matches", () => {
+    const result = resolveRepoPeopleDiscoveryContext(
+      {
+        scope: "repo",
+        authority: {source: "announcement", event: makeRepoEvent()},
+      },
+      {definitions: new Map(), profileListEvents: [profileListEvent], reportStates: new Map()},
+    )
+
+    expect(result.communityPubkey).toBe("")
+    expect(result.communityAddress).toBe("")
+    expect(result.trustContext.communityPubkey).toBeUndefined()
+    expect(result.trustContext.communityAddress).toBeUndefined()
+  })
+
+  it("does not choose among same-ID owner branches by definition order", () => {
+    const resolve = (definitions: Map<string, typeof definition>) =>
+      resolveRepoPeopleDiscoveryContext(
+        {
+          scope: "repo",
+          authority: {source: "announcement", event: makeRepoEvent()},
+        },
+        {definitions, profileListEvents: [profileListEvent], reportStates: new Map()},
+      )
+    const firstOrder = resolve(
+      new Map([
+        [definition.pointer.address, definition],
+        [siblingDefinition.pointer.address, siblingDefinition],
+      ]),
+    )
+    const reverseOrder = resolve(
+      new Map([
+        [siblingDefinition.pointer.address, siblingDefinition],
+        [definition.pointer.address, definition],
+      ]),
+    )
+
+    expect(firstOrder.communityPubkey).toBe("")
+    expect(firstOrder.communityAddress).toBe("")
+    expect(reverseOrder.communityPubkey).toBe("")
+    expect(reverseOrder.communityAddress).toBe("")
+  })
+
+  it("preserves an explicitly selected exact branch when the community ID is ambiguous", () => {
+    const result = resolveRepoPeopleDiscoveryContext(
+      {
+        scope: "repo",
+        authority: {source: "announcement", event: makeRepoEvent()},
+        community: {
+          scope: "community",
+          communityPubkey: siblingController,
+          communityAddress: siblingDefinition.pointer.address,
+        },
+      },
+      {
+        definitions: new Map([
+          [definition.pointer.address, definition],
+          [siblingDefinition.pointer.address, siblingDefinition],
+        ]),
+        profileListEvents: [profileListEvent],
+        reportStates: new Map(),
+      },
+    )
+
+    expect(result.communityPubkey).toBe(siblingController)
+    expect(result.communityAddress).toBe(siblingDefinition.pointer.address)
+    expect(result.trustContext).toMatchObject({
+      communityPubkey: siblingController,
+      communityAddress: siblingDefinition.pointer.address,
+    })
+  })
+
   it("normalizes draft owner declarations without mixing in community authority", () => {
     const result = resolveRepoPeopleDiscoveryContext(
       {

@@ -1107,18 +1107,12 @@ const makeExactCommunityEventRefFilters = ({
 const filterExactCommunityRefEvents = (
   events: TrustedEvent[],
   filters: Record<string, unknown>[],
-  communityPubkey: string,
+  communityId: string,
   descriptorInfos: ResolvedCommunityEventDescriptor[],
-  communityId = communityPubkey,
 ) => {
   const matchingEvents = events.filter(event => matchFilters(filters as any, event))
 
-  return filterAuthorizedCommunityDescriptorEvents(
-    matchingEvents,
-    communityPubkey,
-    descriptorInfos,
-    communityId,
-  )
+  return filterAuthorizedCommunityDescriptorEvents(matchingEvents, communityId, descriptorInfos)
 }
 
 const exactCommunityRefsCovered = (refs: string[], events: any[]) =>
@@ -1642,9 +1636,8 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const authorizedCachedExactRefEvents = filterExactCommunityRefEvents(
       cachedExactRefEvents as TrustedEvent[],
       exactRefFilters,
-      snapshot.definition.ownerPubkey,
-      descriptorInfos,
       snapshot.community.communityId,
+      descriptorInfos,
     )
 
     if (
@@ -1660,9 +1653,8 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       })
       const events = filterCommunityDescriptorEvents(
         authorizedCachedExactRefEvents as any,
-        snapshot.definition.ownerPubkey,
-        descriptorInfos.map(info => info.descriptor),
         snapshot.community.communityId,
+        descriptorInfos.map(info => info.descriptor),
       )
         .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
         .slice(0, request.limit)
@@ -1687,17 +1679,15 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const exactRefEvents = filterExactCommunityRefEvents(
       dedupeEvents([...cachedExactRefEvents, ...loadedExactRefResult.events]) as TrustedEvent[],
       exactRefFilters,
-      snapshot.definition.ownerPubkey,
-      descriptorInfos,
       snapshot.community.communityId,
+      descriptorInfos,
     )
 
     if (request.refs?.length) {
       const events = filterCommunityDescriptorEvents(
         exactRefEvents as any,
-        snapshot.definition.ownerPubkey,
-        descriptorInfos.map(info => info.descriptor),
         snapshot.community.communityId,
+        descriptorInfos.map(info => info.descriptor),
       )
         .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
         .slice(0, request.limit)
@@ -1772,9 +1762,8 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
         return (
           filterCommunityDescriptorEvents(
             [event],
-            snapshot.definition.ownerPubkey,
-            plan.descriptors.filter(descriptor => targetKindSet.has(descriptor.kind)),
             snapshot.community.communityId,
+            plan.descriptors.filter(descriptor => targetKindSet.has(descriptor.kind)),
           ).length > 0
         )
       }
@@ -1782,9 +1771,8 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
       return (
         filterAuthorizedCommunityDescriptorEvents(
           [event],
-          snapshot.definition.ownerPubkey,
-          descriptorInfos,
           snapshot.community.communityId,
+          descriptorInfos,
         ).length > 0
       )
     }
@@ -1804,9 +1792,8 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     )
     const events = filterCommunityDescriptorEvents(
       dedupeEvents([...exactRefEvents, ...admittedOriginalEvents]) as any,
-      snapshot.definition.ownerPubkey,
-      plan.descriptors,
       snapshot.community.communityId,
+      plan.descriptors,
     ).sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
     const limitedEvents = events.slice(0, request.limit)
 
