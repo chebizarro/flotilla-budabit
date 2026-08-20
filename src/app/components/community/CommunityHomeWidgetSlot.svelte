@@ -511,6 +511,7 @@
           {widget}
           context={makeWidgetContext(widget)}
           class="w-full"
+          frameClass="relative block h-full w-full border-0"
           minHeight={1}
           resizeMinHeight={1} />
       </section>
