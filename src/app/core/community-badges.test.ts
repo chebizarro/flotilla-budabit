@@ -5,7 +5,6 @@ import {
   COMMUNITY_DEFINITION_KIND,
   PROFILE_LIST_KIND,
   buildCommunityDefinition,
-  makeCommunityAuthorityTags,
   makeCommunityProfileListIdentifier,
   makeCommunityPointer,
   parseCommunityDefinition,
@@ -100,10 +99,10 @@ const makeProfileListEvent = (pubkey: string, tags: string[][] = []) =>
     id: `profile-list-${pubkey[0]}`,
     kind: PROFILE_LIST_KIND,
     pubkey,
-    tags: makeCommunityAuthorityTags(community, undefined, [
+    tags: [
       ["d", pubkey === moderatorPubkey ? moderatorListIdentifier : bannedListIdentifier],
       ...tags,
-    ]),
+    ],
   })
 
 describe("community badges", () => {
@@ -465,6 +464,20 @@ describe("community badges", () => {
       getCommunityBadgeCreatorPubkeys({
         definition,
         profileListEvents: [makeProfileListEvent(moderatorPubkey, [["status", "declined"]])],
+        reportState,
+      }),
+    ).toEqual([ownerPubkey])
+    expect(
+      getCommunityBadgeCreatorPubkeys({
+        definition,
+        profileListEvents: [
+          makeProfileListEvent(moderatorPubkey),
+          makeEvent({
+            kind: DELETE,
+            pubkey: moderatorPubkey,
+            tags: [["a", `${PROFILE_LIST_KIND}:${moderatorPubkey}:${moderatorListIdentifier}`]],
+          }),
+        ],
         reportState,
       }),
     ).toEqual([ownerPubkey])

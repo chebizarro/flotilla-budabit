@@ -12,8 +12,10 @@ import {
   makeAddress,
   makeCommunityAuthorityTags,
   makeCommunityChildIdentifier,
+  isProfileListDeclined,
   normalizePubkey,
   parseCommunityAuthority,
+  selectCurrentAddressableEvent,
   type CommunityDefinition,
   type CommunityPointer,
 } from "@app/core/community"
@@ -168,13 +170,17 @@ export const getCommunityBadgeCreatorPubkeys = ({
   reportState?: EffectiveCommunityReportState
 }) => {
   const activeAddresses = new Set(
-    (profileListEvents || []).flatMap(event => {
-      const identifier = getTagValue(event, "d")
-      const community = parseCommunityAuthority(event)
-      if (!identifier || community?.address !== definition.pointer.address) return []
-      if (event.tags.some(tag => tag[0] === "status" && tag[1] === "declined")) return []
-      return [makeAddress(event.kind, event.pubkey, identifier)]
-    }),
+    definition.sections.flatMap(section =>
+      section.profileLists.flatMap(ref => {
+        const event = selectCurrentAddressableEvent(
+          profileListEvents || [],
+          ref.address,
+          candidate => candidate.kind === PROFILE_LIST_KIND,
+        )
+
+        return event && !isProfileListDeclined(event) ? [ref.address] : []
+      }),
+    ),
   )
   const moderators = definition.sections.flatMap(section =>
     section.profileLists.flatMap(ref => {
@@ -185,8 +191,7 @@ export const getCommunityBadgeCreatorPubkeys = ({
 
   return unique([definition.ownerPubkey, ...moderators]).filter(
     pubkey =>
-      pubkey === definition.ownerPubkey ||
-      !isCommunityReportStatePersonBanned(reportState, pubkey),
+      pubkey === definition.ownerPubkey || !isCommunityReportStatePersonBanned(reportState, pubkey),
   )
 }
 
