@@ -34,7 +34,11 @@
   } from "@app/extensions/community-shared-config"
   import {effectiveExtensionSettings} from "@app/extensions/settings"
   import {getWidgetLineId} from "@app/extensions/widget-identity"
-  import type {SmartWidgetEvent, WidgetHomeSlotType} from "@app/extensions/types"
+  import type {
+    SmartWidgetEvent,
+    WidgetHomeSlotType,
+    WidgetResizeRequest,
+  } from "@app/extensions/types"
   import {makeExactCommunityInputValue} from "@app/util/community-stars"
 
   type Props = {
@@ -69,6 +73,8 @@
   let lastLoadEvidenceKey = ""
   let curationRetryTimer: ReturnType<typeof setTimeout> | undefined
   let curationRetryDelay = 1_000
+  let initiallyResolvedWidgetLoads = $state<Record<string, true>>({})
+  const initialWidgetResizeTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let loadedCommunitySharedConfigEvents = $state<any[]>([])
   let sharedConfigLoadKey = ""
   let sharedConfigLoadRequestId = 0
@@ -76,6 +82,7 @@
   let sharedConfigRetryDelay = 1_000
   const FORCED_REFRESH_DEBOUNCE_MS = 1_000
   const MAX_CURATION_RETRY_DELAY_MS = 15_000
+  const INITIAL_WIDGET_RESIZE_TIMEOUT_MS = 15_000
   const MAX_SHARED_CONFIG_RETRY_DELAY_MS = 15_000
 
   const installedWidgets = $derived($effectiveExtensionSettings.installed?.widget || {})
@@ -95,6 +102,15 @@
   const getWidgetDescription = (widget: SmartWidgetEvent) =>
     getTagValue("description", widget.tags) ||
     (getTagValue("title", widget.tags) ? widget.content : "")
+
+  const getWidgetLoadKey = (widget: SmartWidgetEvent) =>
+    [
+      communityAddress,
+      normalizePubkey($pubkey || ""),
+      slotType,
+      getWidgetLineId(widget),
+      widget.appUrls?.join("|") || widget.appUrl || "",
+    ].join(":")
 
   const communityReadinessKey = $derived.by(() => {
     const readiness = $activeCommunityAuthorityReadiness
@@ -257,6 +273,40 @@
       ...(communityRuntimeContext ? {communityRuntimeContext} : {}),
     }
   }
+
+  const resolveInitialWidgetHeight = (loadKey: string, request: WidgetResizeRequest) => {
+    if (request.height === undefined || initiallyResolvedWidgetLoads[loadKey]) return
+
+    const timer = initialWidgetResizeTimers.get(loadKey)
+    if (timer) clearTimeout(timer)
+    initialWidgetResizeTimers.delete(loadKey)
+    initiallyResolvedWidgetLoads[loadKey] = true
+  }
+
+  $effect(() => {
+    const activeLoadKeys = new Set(frameWidgets.map(getWidgetLoadKey))
+
+    for (const loadKey of Object.keys(initiallyResolvedWidgetLoads)) {
+      if (!activeLoadKeys.has(loadKey)) delete initiallyResolvedWidgetLoads[loadKey]
+    }
+
+    for (const [loadKey, timer] of initialWidgetResizeTimers) {
+      if (activeLoadKeys.has(loadKey) && !initiallyResolvedWidgetLoads[loadKey]) continue
+
+      clearTimeout(timer)
+      initialWidgetResizeTimers.delete(loadKey)
+    }
+
+    for (const loadKey of activeLoadKeys) {
+      if (initiallyResolvedWidgetLoads[loadKey] || initialWidgetResizeTimers.has(loadKey)) continue
+
+      const timer = setTimeout(() => {
+        initialWidgetResizeTimers.delete(loadKey)
+        initiallyResolvedWidgetLoads[loadKey] = true
+      }, INITIAL_WIDGET_RESIZE_TIMEOUT_MS)
+      initialWidgetResizeTimers.set(loadKey, timer)
+    }
+  })
 
   const refreshWidgets = (force = false) => {
     if (force) {
@@ -495,6 +545,8 @@
     loadRequestId += 1
     clearCurationRetry()
     clearSharedConfigRetry()
+    for (const timer of initialWidgetResizeTimers.values()) clearTimeout(timer)
+    initialWidgetResizeTimers.clear()
   })
 </script>
 
@@ -503,16 +555,38 @@
     {#each frameWidgets as widget (getWidgetLineId(widget))}
       {@const title = getWidgetTitle(widget)}
       {@const description = getWidgetDescription(widget)}
+      {@const widgetLoadKey = getWidgetLoadKey(widget)}
+      {@const initialHeightResolved = Boolean(initiallyResolvedWidgetLoads[widgetLoadKey])}
       <section
         class="overflow-visible"
         aria-label={widget.slot?.label || title}
+        aria-busy={!initialHeightResolved}
         title={description || undefined}>
-        <WidgetFrame
-          {widget}
-          context={makeWidgetContext(widget)}
-          class="w-full"
-          minHeight={1}
-          resizeMinHeight={1} />
+        <div
+          class={`relative ${initialHeightResolved ? "" : "min-h-[220px] overflow-hidden rounded-box"}`}>
+          <div inert={!initialHeightResolved} aria-hidden={!initialHeightResolved}>
+            <WidgetFrame
+              {widget}
+              context={makeWidgetContext(widget)}
+              class="w-full"
+              minHeight={1}
+              resizeMinHeight={1}
+              onResizeRequest={request => resolveInitialWidgetHeight(widgetLoadKey, request)} />
+          </div>
+          {#if !initialHeightResolved}
+            <div
+              class="absolute inset-0 flex animate-pulse items-center justify-center border border-base-content/10 bg-base-200 p-6"
+              role="status"
+              aria-label="Loading community widget">
+              <div class="w-full max-w-lg space-y-4" aria-hidden="true">
+                <div class="h-5 w-2/5 rounded bg-base-content/25"></div>
+                <div class="h-4 w-full rounded bg-base-content/20"></div>
+                <div class="h-4 w-4/5 rounded bg-base-content/20"></div>
+                <div class="h-10 w-32 rounded-box bg-base-content/25"></div>
+              </div>
+            </div>
+          {/if}
+        </div>
       </section>
     {/each}
   </div>
