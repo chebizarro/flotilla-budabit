@@ -52,7 +52,7 @@
   import {getContext, onMount, onDestroy, untrack} from "svelte"
   import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
-  import {ListFilter, X} from "@lucide/svelte"
+  import {CodeXml, Folder, ListFilter, Star, X} from "@lucide/svelte"
   import {
     GIT_REPO_ANNOUNCEMENT,
     GIT_REPO_STATE,
@@ -135,12 +135,9 @@
   } from "@app/core/community-feeds"
   import {fetchRelayEventsWithTimeout} from "@app/util/fetch-relay-events"
   import AddCircle from "@assets/icons/add-circle.svg?dataurl"
-  import Star from "@assets/icons/star.svg?dataurl"
   import Git from "@assets/icons/git.svg?dataurl"
   import Magnifier from "@assets/icons/magnifier.svg?dataurl"
-  import FolderWithFiles from "@assets/icons/folder-with-files.svg?dataurl"
   import Download from "@assets/icons/download.svg?dataurl"
-  import Code from "@assets/icons/code.svg?dataurl"
   import {GIT_COMMUNITY_PARAM, makeGitCommunityPath, makeGitPath} from "@app/util/routes"
   import {makeRepoNaddrFromEvent} from "@app/util/repo-links"
   import {getEventShareRelayHints} from "@app/util/event-share"
@@ -4210,7 +4207,7 @@
         <Icon icon={AddCircle} />
         New Repo
       </Button>
-      <Button class="btn btn-secondary btn-sm" onclick={() => onImportRepo()}>
+      <Button class="btn btn-secondary btn-sm !text-primary-content" onclick={() => onImportRepo()}>
         <Icon icon={Download} />
         Import Repo
       </Button>
@@ -4225,7 +4222,9 @@
       <Icon icon={AddCircle} />
       New Repo
     </Button>
-    <Button class="btn btn-secondary btn-sm w-full" onclick={() => onImportRepo()}>
+    <Button
+      class="btn btn-secondary btn-sm w-full !text-primary-content"
+      onclick={() => onImportRepo()}>
       <Icon icon={Download} />
       Import Repo
     </Button>
@@ -4277,25 +4276,23 @@
             class="grid !h-auto w-full grid-cols-3 gap-2 !bg-transparent !p-0 sm:flex sm:w-fit sm:max-w-full sm:self-start">
             <TabsTrigger
               value="my-repos"
-              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs leading-tight {activeTab ===
+              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs font-bold leading-tight {activeTab ===
               'my-repos'
                 ? 'btn-primary !bg-primary !text-primary-content'
                 : 'btn-ghost !bg-transparent !text-base-content'} sm:flex-none sm:!px-3 sm:text-sm">
               <span class="flex min-w-0 items-center gap-1 sm:gap-2">
-                <Icon icon={FolderWithFiles} size={4} class="sm:hidden" />
-                <Icon icon={FolderWithFiles} class="hidden sm:inline-block" />
+                <Folder class="h-4 w-4 sm:h-5 sm:w-5" strokeWidth={2} />
                 <span class="min-w-0 truncate">Repos</span>
               </span>
             </TabsTrigger>
             <TabsTrigger
               value="bookmarks"
-              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs leading-tight {activeTab ===
+              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs font-bold leading-tight {activeTab ===
               'bookmarks'
                 ? 'btn-primary !bg-primary !text-primary-content'
                 : 'btn-ghost !bg-transparent !text-base-content'} sm:flex-none sm:!px-3 sm:text-sm">
               <span class="flex min-w-0 items-center gap-1 sm:gap-2">
-                <Icon icon={Star} size={4} class="sm:hidden" />
-                <Icon icon={Star} class="hidden sm:inline-block" />
+                <Star class="h-4 w-4 sm:h-5 sm:w-5" strokeWidth={2} />
                 <span class="min-w-0 truncate">Starred</span>
                 {#if hasStarredRepoNotifications}
                   <span
@@ -4306,13 +4303,12 @@
             </TabsTrigger>
             <TabsTrigger
               value="snippets"
-              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs leading-tight {activeTab ===
+              class="btn btn-sm min-w-0 justify-center whitespace-nowrap !rounded-lg !border-0 !px-2 text-xs font-bold leading-tight {activeTab ===
               'snippets'
                 ? 'btn-primary !bg-primary !text-primary-content'
                 : 'btn-ghost !bg-transparent !text-base-content'} sm:flex-none sm:!px-3 sm:text-sm">
               <span class="flex min-w-0 items-center gap-1 sm:gap-2">
-                <Icon icon={Code} size={4} class="sm:hidden" />
-                <Icon icon={Code} class="hidden sm:inline-block" />
+                <CodeXml class="h-4 w-4 sm:h-5 sm:w-5" strokeWidth={2} />
                 <span class="min-w-0 truncate">Snippets</span>
               </span>
             </TabsTrigger>
