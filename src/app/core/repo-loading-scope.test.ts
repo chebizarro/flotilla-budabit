@@ -131,7 +131,7 @@ describe("authoritative repository loading scope", () => {
     expect(layout).toContain('owner:"repo-foreground:exact-thread"')
     expect(layout).toContain("gapFillQueue.catch(()=>undefined).then")
     expect(layout).toContain(
-      'if($repoRootHistoryState.status!=="complete"||$repoAnnouncementStatus==="loading")return',
+      '$repoRootHistoryState.status==="idle"||$repoRootHistoryState.status==="loading"||$repoAnnouncementStatus==="loading"',
     )
     expect(layout).toContain("subscribe:repoRootHistoryState.subscribe")
     expect(layout).toContain("constliveActivityRelays=activityRelays.slice(0,6)")

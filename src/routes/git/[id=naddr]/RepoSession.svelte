@@ -683,7 +683,13 @@
 
   $effect(() => {
     if (!$repoActivityHydrationReady) return
-    if ($repoRootHistoryState.status !== "complete" || $repoAnnouncementStatus === "loading") return
+    if (
+      $repoRootHistoryState.status === "idle" ||
+      $repoRootHistoryState.status === "loading" ||
+      $repoAnnouncementStatus === "loading"
+    ) {
+      return
+    }
     const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
     const rootIds = normalizeScopeValues(($allRootIdsStore || []).filter(Boolean))
     const pendingRoots = rootIds.filter(

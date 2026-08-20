@@ -4,6 +4,8 @@ import {
   BASE_TIMESTAMP,
   TEST_COMMITS,
   TEST_PUBKEYS,
+  createAppliedStatus,
+  createClosedStatus,
   createIssue,
   createPullRequest,
   createRepoAnnouncement,
@@ -161,6 +163,90 @@ test("replaces an EOSE-backed empty PR list when late live activity arrives", as
   await expect(page.getByText("Cold-start pull request", {exact: true})).toBeVisible({
     timeout: 10_000,
   })
+})
+
+test("loads issue and PR statuses after partial root history without detail navigation", async ({
+  page,
+}) => {
+  const fastRelay = "wss://git-list-status-fast.test"
+  const failedRelay = "wss://git-list-status-failed.test"
+  const identifier = "list-status-partial-history-fixture"
+  const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
+  const announcement = signTestEvent(
+    createRepoAnnouncement({
+      identifier,
+      name: "List status partial history fixture",
+      relays: [fastRelay, failedRelay],
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP,
+    }),
+  )
+  const issue = signTestEvent(
+    createIssue({
+      repoAddress,
+      subject: "Closed from the issue list",
+      content: "The root-scoped status must load after partial root history.",
+      pubkey: TEST_PUBKEYS.charlie,
+      created_at: BASE_TIMESTAMP + 1,
+    }),
+  )
+  const pullRequest = signTestEvent(
+    createPullRequest({
+      repoAddress,
+      subject: "Merged from the PR list",
+      content: "The root-scoped status must load without opening the PR.",
+      tipCommitOid: TEST_COMMITS.second,
+      pubkey: TEST_PUBKEYS.bob,
+      created_at: BASE_TIMESTAMP + 2,
+    }),
+  )
+  const closedStatus = signTestEvent(
+    createClosedStatus(issue.id, {
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP + 3,
+    }),
+  )
+  const mergedStatus = signTestEvent(
+    createAppliedStatus(pullRequest.id, {
+      pubkey: TEST_PUBKEYS.alice,
+      created_at: BASE_TIMESTAMP + 4,
+    }),
+  )
+  let statusGapRequests = 0
+  const mockRelay = new MockRelay({
+    seedEvents: [announcement, issue, pullRequest, closedStatus, mergedStatus],
+    subscriptionOutcomesByRelay: {[`${failedRelay}/`]: "disconnect"},
+    onSubscribe: (_subscriptionId, filters, relay) => {
+      if (
+        relay === `${fastRelay}/` &&
+        filters.some(
+          filter =>
+            filter["#e"]?.some(id => id === issue.id || id === pullRequest.id) &&
+            filter.kinds?.some(kind => kind >= 1630 && kind <= 1633),
+        )
+      ) {
+        statusGapRequests += 1
+      }
+    },
+  })
+
+  await page.addInitScript(() => localStorage.clear())
+  await mockRelay.setup(page)
+  const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [fastRelay])
+  await page.goto(`/git/${naddr}/issues`)
+  await page.getByRole("button", {name: "All", exact: true}).click()
+
+  const issueRow = page.locator(`[data-issue-id="${issue.id}"]`)
+  await expect(issueRow).toBeVisible({timeout: 15_000})
+  await expect(issueRow.getByLabel("Closed")).toBeVisible({timeout: 15_000})
+  await expect.poll(() => statusGapRequests).toBeGreaterThan(0)
+
+  await page.goto(`/git/${naddr}/prs`)
+  await page.getByRole("button", {name: "All", exact: true}).click()
+
+  const prRow = page.locator(`[data-pr-id="${pullRequest.id}"]`)
+  await expect(prRow).toBeVisible({timeout: 15_000})
+  await expect(prRow.getByLabel("Merged")).toBeVisible({timeout: 15_000})
 })
 
 test("loads a bounded recent issue page before requesting older relay history", async ({page}) => {
