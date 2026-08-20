@@ -21,6 +21,7 @@
   import CommunityExtensionsPrompt from "@app/components/community/CommunityExtensionsPrompt.svelte"
   import CommunityHomeWidgetSlot from "@app/components/community/CommunityHomeWidgetSlot.svelte"
   import CommunityRoomCreate from "@app/components/community/CommunityRoomCreate.svelte"
+  import CommunityMenuButton from "@app/components/CommunityMenuButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
   import PublicationStatus from "@app/components/PublicationStatus.svelte"
@@ -701,21 +702,21 @@
     <strong>Home</strong>
   {/snippet}
   {#snippet action()}
-    {#if communityPointer}
-      <CommunityStarButton
-        community={communityPointer}
-        publishRelayHints={routeCommunityDefinition?.relays || communityPointer.relayHints} />
-      <CommunityShareButton
-        value={communityPointer}
-        definitionRelays={routeCommunityDefinition?.relays || []} />
-    {/if}
+    <CommunityMenuButton />
   {/snippet}
 </PageBar>
 
 <PageContent class="flex flex-col gap-2 p-2 pt-4">
   <div class="card2 bg-alt relative flex flex-col items-center gap-4 text-left">
     {#if communityPointer}
-      <div class="flex w-full justify-end gap-2"></div>
+      <div class="flex w-full justify-end gap-2">
+        <CommunityShareButton
+          value={communityPointer}
+          definitionRelays={routeCommunityDefinition?.relays || []} />
+        <CommunityStarButton
+          community={communityPointer}
+          publishRelayHints={routeCommunityDefinition?.relays || communityPointer.relayHints} />
+      </div>
     {/if}
     <div class="relative flex gap-4">
       <div class="relative">
