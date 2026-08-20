@@ -15,6 +15,7 @@ type CreateCommunityOptions = {
   buildArtifacts: (communityId: string) => CommunityCreationArtifacts
   sign: (template: EventTemplate) => Promise<SignedEvent>
   publishAndVerifyExact: (event: SignedEvent) => Promise<TrustedEvent>
+  validateDefinition?: (event: TrustedEvent) => boolean
   storage?: CommunityCreationIntentStorage
   generateSecretKey?: () => Uint8Array
   getPublicKey?: (secret: Uint8Array) => string
@@ -133,6 +134,7 @@ export const createCommunity = async ({
   buildArtifacts,
   sign,
   publishAndVerifyExact,
+  validateDefinition,
   storage = localStorage,
   generateSecretKey: makeSecret = generateSecretKey,
   getPublicKey: derivePublicKey = getPublicKey,
@@ -154,11 +156,14 @@ export const createCommunity = async ({
     )
   }
 
-  const definition = await publishExactly(
-    await sign(artifacts.definition),
-    ownerPubkey,
-    publishAndVerifyExact,
-  )
+  const signedDefinition = await sign(artifacts.definition)
+  if (validateDefinition && !validateDefinition(signedDefinition)) {
+    throw new Error("Community definition failed protocol validation before publication.")
+  }
+  const definition = await publishExactly(signedDefinition, ownerPubkey, publishAndVerifyExact)
+  if (validateDefinition && !validateDefinition(definition)) {
+    throw new Error("Community definition failed protocol validation after relay readback.")
+  }
   verifiedEvents.push(definition)
   storage.removeItem(getCommunityCreationIntentKey(ownerPubkey, operationId))
 

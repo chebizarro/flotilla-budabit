@@ -1619,6 +1619,7 @@
       operationId: communityCreateOperationId,
       ownerPubkey: validated.community.pubkey,
       sign: template => makeSignedEvent(validated.community, template),
+      validateDefinition: event => Boolean(parseCommunityDefinition(event)),
       publishAndVerifyExact: event => {
         const activation = event.kind === COMMUNITY_DEFINITION_KIND
         const label = activation
@@ -1851,6 +1852,13 @@
           }),
       ]
       const signedDefinition = await makeSignedEvent(validated.community, communityDefinition)
+      const parsedSignedDefinition = parseCommunityDefinition(signedDefinition)
+      if (
+        !parsedSignedDefinition ||
+        parsedSignedDefinition.pointer.address !== exactDefinition.pointer.address
+      ) {
+        throw new Error("Community definition failed protocol validation before publication.")
+      }
       const signedProfileLists = await Promise.all(
         profileLists.map(template => makeSignedEvent(validated.community, template)),
       )

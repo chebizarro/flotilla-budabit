@@ -7,6 +7,7 @@ import type {TrustedEvent} from "@welshman/util"
 import {makeCommunityPointer} from "./community"
 import {
   buildCommunityDefinition,
+  normalizeCommunityEmailDigestService,
   parseCommunityDefinition,
   type CommunityEmailDigestService,
 } from "./community"
@@ -90,9 +91,9 @@ const makeDefinition = (
     services: services.map(service => ({
       name: "email-digest",
       pubkey: service.servicePubkey,
-      requestRelay: service.requestRelay.replace(/\/$/, ""),
+      requestRelay: normalizeCommunityEmailDigestService(service)!.requestRelay,
       handlerAddress: service.handlerAddress,
-      handlerRelay: service.handlerRelay.replace(/\/$/, ""),
+      handlerRelay: normalizeCommunityEmailDigestService(service)!.handlerRelay,
     })),
   })
   return parseCommunityDefinition(finalizeEvent({...template, created_at: createdAt}, secret))!

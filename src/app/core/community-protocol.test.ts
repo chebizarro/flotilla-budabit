@@ -7,6 +7,7 @@ import {
   buildCommunityDefinition,
   buildTargetedPublication,
   communityPointersEqual,
+  getCommunityDefinitionValidationFailure,
   makeCommunityPointer,
   parseCommunityDefinition,
   parseCommunityAuthority,
@@ -167,9 +168,9 @@ describe("Communikeys definitions", () => {
         {
           name: "community-alerts",
           pubkey: servicePubkey,
-          requestRelay: "wss://requests.example",
+          requestRelay: "wss://requests.example/",
           handlerAddress: `31990:${servicePubkey}:alerts`,
-          handlerRelay: "wss://handlers.example",
+          handlerRelay: "wss://handlers.example/",
         },
       ],
       sections: [section],
@@ -189,6 +190,36 @@ describe("Communikeys definitions", () => {
         handlerRelay: "wss://handlers.example",
       },
     ])
+  })
+
+  it("identifies noncanonical service relays in rejected definitions", () => {
+    const template = buildCommunityDefinition({
+      communityId,
+      name: "Buda Builders",
+      relays: ["wss://relay.example"],
+      services: [
+        {
+          name: "community-alerts",
+          pubkey: servicePubkey,
+          requestRelay: "wss://requests.example",
+          handlerAddress: `31990:${servicePubkey}:alerts`,
+          handlerRelay: "wss://handlers.example",
+        },
+      ],
+      sections: [section],
+    })
+    const event = makeEvent({
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: template.tags.map(tag =>
+        tag[0] === "service" ? [tag[0], tag[1], tag[2], `${tag[3]}/`, tag[4], `${tag[5]}/`] : tag,
+      ),
+    })
+
+    expect(parseCommunityDefinition(event)).toBeUndefined()
+    expect(getCommunityDefinitionValidationFailure(event)).toEqual({
+      eventId: event.id,
+      category: "service declaration",
+    })
   })
 
   it("rejects missing, duplicate, uppercase, and malformed definition d tags", () => {

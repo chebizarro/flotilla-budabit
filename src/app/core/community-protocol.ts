@@ -552,6 +552,30 @@ const parseServiceTags = (tags: string[][]): CommunityDefinitionService[] | unde
   return result
 }
 
+export const getCommunityDefinitionValidationFailure = (event: TrustedEvent) => {
+  if (parseCommunityDefinition(event)) return undefined
+
+  const hasInvalidService = getTags(event.tags || [], "service").some(tag => {
+    if (!exactTag(tag, 6) || !SERVICE_NAME.test(tag[1])) return true
+    const requestRelay = normalizeCommunityRelay(tag[3])
+    const handlerRelay = normalizeCommunityRelay(tag[5])
+
+    return (
+      !parseOwnerPubkey(tag[2]) ||
+      !requestRelay ||
+      requestRelay !== tag[3] ||
+      !parseAddress(tag[4]) ||
+      !handlerRelay ||
+      handlerRelay !== tag[5]
+    )
+  })
+
+  return {
+    eventId: event.id || "unknown",
+    category: hasInvalidService ? "service declaration" : "protocol fields",
+  }
+}
+
 export const parseCommunityDefinition = (event: TrustedEvent): CommunityDefinition | undefined => {
   if (event.kind !== COMMUNITY_DEFINITION_KIND || event.content !== "") return undefined
   const ownerPubkey = parseOwnerPubkey(event.pubkey)
@@ -675,6 +699,20 @@ const requireText = (value: string, minimum: number, maximum: number, label: str
   const parsed = parseBoundedText(value, minimum, maximum)
   if (!parsed) throw new Error(`Invalid ${label}.`)
   return parsed
+}
+
+const makeCommunityDefinitionServiceTag = (
+  service: NonNullable<BuildCommunityDefinitionParams["services"]>[number],
+) => {
+  const pubkey = parseOwnerPubkey(service.pubkey)
+  const requestRelay = normalizeCommunityRelay(service.requestRelay)
+  const handler = parseAddress(service.handlerAddress)
+  const handlerRelay = normalizeCommunityRelay(service.handlerRelay)
+  if (!SERVICE_NAME.test(service.name) || !pubkey || !requestRelay || !handler || !handlerRelay) {
+    throw new Error("Invalid service declaration.")
+  }
+
+  return ["service", service.name, pubkey, requestRelay, handler.address, handlerRelay]
 }
 
 const makeSectionTags = (
@@ -809,22 +847,7 @@ export const buildCommunityDefinition = (
   if ((params.services?.length || 0) > 50) throw new Error("Too many service declarations.")
   const serviceKeys = new Set<string>()
   for (const service of params.services || []) {
-    const pubkey = parseOwnerPubkey(service.pubkey)
-    const requestRelay = normalizeCommunityRelay(service.requestRelay)
-    const handler = parseAddress(service.handlerAddress)
-    const handlerRelay = normalizeCommunityRelay(service.handlerRelay)
-    if (
-      !SERVICE_NAME.test(service.name) ||
-      !pubkey ||
-      !requestRelay ||
-      requestRelay !== service.requestRelay ||
-      !handler ||
-      !handlerRelay ||
-      handlerRelay !== service.handlerRelay
-    ) {
-      throw new Error("Invalid service declaration.")
-    }
-    const tag = ["service", service.name, pubkey, requestRelay, handler.address, handlerRelay]
+    const tag = makeCommunityDefinitionServiceTag(service)
     const key = tag.join("\u0000")
     if (serviceKeys.has(key)) continue
     serviceKeys.add(key)

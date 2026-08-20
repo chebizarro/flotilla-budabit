@@ -187,11 +187,13 @@ export const normalizeCommunityServiceRelay = (value: string) => {
     if (url.protocol !== "wss:" || !url.hostname || url.username || url.password || url.hash) {
       return ""
     }
-    const normalized = url.toString()
+    const rootUrl = url.pathname === "/" && !url.search
+    let normalized = url.toString()
+    if (rootUrl) normalized = normalized.slice(0, -1)
     const transportNormalized = normalizeRelayUrl(normalized)
     return normalized.length <= COMMUNITY_SERVICE_MAX_URL_LENGTH &&
-      isRelayUrl(normalized) &&
-      transportNormalized === normalized
+      isRelayUrl(transportNormalized) &&
+      (rootUrl ? transportNormalized.replace(/\/$/, "") : transportNormalized) === normalized
       ? normalized
       : ""
   } catch {

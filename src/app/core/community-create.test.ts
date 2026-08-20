@@ -198,9 +198,7 @@ describe("Communikeys community creation", () => {
 
     expect(result.communityId).toBe(firstCommunityId)
     expect(reloaded.dependencies.generateSecretKey).not.toHaveBeenCalled()
-    expect(storage.values.has(getCommunityCreationIntentKey(ownerPubkey, operationId))).toBe(
-      false,
-    )
+    expect(storage.values.has(getCommunityCreationIntentKey(ownerPubkey, operationId))).toBe(false)
   })
 
   it("publishes no kind-0 event and verifies prerequisites before kind 32222 activation", async () => {
@@ -295,5 +293,39 @@ describe("Communikeys community creation", () => {
     expect(
       context.storage.values.get(getCommunityCreationIntentKey(ownerPubkey, operationId)),
     ).toContain(firstCommunityId)
+  })
+
+  it("rejects an invalid signed definition before publication", async () => {
+    const context = setup()
+    const validateDefinition = vi.fn(() => false)
+
+    await expect(
+      createCommunity({
+        ownerPubkey,
+        buildArtifacts: context.buildArtifacts,
+        validateDefinition,
+        ...context.dependencies,
+      }),
+    ).rejects.toThrow("before publication")
+
+    expect(validateDefinition).toHaveBeenCalledTimes(1)
+    expect(context.published.map(event => event.kind)).toEqual([30000])
+  })
+
+  it("rejects an invalid definition returned by exact relay readback", async () => {
+    const context = setup()
+    const validateDefinition = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false)
+
+    await expect(
+      createCommunity({
+        ownerPubkey,
+        buildArtifacts: context.buildArtifacts,
+        validateDefinition,
+        ...context.dependencies,
+      }),
+    ).rejects.toThrow("after relay readback")
+
+    expect(validateDefinition).toHaveBeenCalledTimes(2)
+    expect(context.published.map(event => event.kind)).toEqual([30000, COMMUNITY_DEFINITION_KIND])
   })
 })
