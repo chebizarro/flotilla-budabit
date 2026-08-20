@@ -12,56 +12,47 @@ describe("notification center read state", () => {
       await import("./notification-center")
 
     expect(defaultNotificationReadState()).toEqual({
-      version: 2,
-      lastReadTimestamp: 0,
-      latestNotificationTimestamp: 0,
+      version: 3,
+      readRowIdsByPubkey: {},
     })
     expect(
-      normalizeNotificationReadState({lastReadTimestamp: 10, latestNotificationTimestamp: 20}),
+      normalizeNotificationReadState({
+        lastReadTimestamp: 10,
+        latestNotificationTimestamp: 20,
+      } as any),
     ).toEqual(defaultNotificationReadState())
   })
-  it("normalizes persisted timestamps", async () => {
+  it("normalizes persisted row ids", async () => {
     const {normalizeNotificationReadState} = await import("./notification-center")
 
     expect(
       normalizeNotificationReadState({
-        version: 2,
-        lastReadTimestamp: 20_000_000_000,
-        latestNotificationTimestamp: 1000,
+        version: 3,
+        readRowIdsByPubkey: {alice: ["one", "one", "", "two"]},
       }),
     ).toEqual({
-      version: 2,
-      lastReadTimestamp: 20_000_000,
-      latestNotificationTimestamp: 1000,
+      version: 3,
+      readRowIdsByPubkey: {alice: ["one", "two"]},
     })
   })
 
-  it("remembers only newer notification timestamps", async () => {
-    const {rememberLatestNotificationTimestampState} = await import("./notification-center")
+  it("marks only the current account rows read", async () => {
+    const {hasUnreadNotificationRowsState, markNotificationRowsReadState} =
+      await import("./notification-center")
+    const initial = {version: 3 as const, readRowIdsByPubkey: {bob: ["bob-row"]}}
+    const read = markNotificationRowsReadState(initial, "alice", ["one", "two"])
 
-    expect(
-      rememberLatestNotificationTimestampState(
-        {version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 100},
-        80,
-      ),
-    ).toEqual({version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 100})
-
-    expect(
-      rememberLatestNotificationTimestampState(
-        {version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 100},
-        120,
-      ),
-    ).toEqual({version: 2, lastReadTimestamp: 50, latestNotificationTimestamp: 120})
+    expect(read.readRowIdsByPubkey).toEqual({bob: ["bob-row"], alice: ["one", "two"]})
+    expect(hasUnreadNotificationRowsState(read, "alice", ["one", "two"])).toBe(false)
+    expect(hasUnreadNotificationRowsState(read, "bob", ["bob-row", "new-row"])).toBe(true)
   })
 
-  it("marks the global notification timestamp read", async () => {
-    const {hasUnreadNotificationsState, markNotificationsReadState} =
+  it("detects a newly materialized row regardless of its timestamp", async () => {
+    const {hasUnreadNotificationRowsState, markNotificationRowsReadState} =
       await import("./notification-center")
-    const unread = {version: 2 as const, lastReadTimestamp: 50, latestNotificationTimestamp: 120}
-    const read = markNotificationsReadState(unread)
+    const read = markNotificationRowsReadState(undefined, "alice", ["newer-event"])
 
-    expect(hasUnreadNotificationsState(unread)).toBe(true)
-    expect(read).toEqual({version: 2, lastReadTimestamp: 120, latestNotificationTimestamp: 120})
-    expect(hasUnreadNotificationsState(read)).toBe(false)
+    expect(hasUnreadNotificationRowsState(read, "alice", ["newer-event"])).toBe(false)
+    expect(hasUnreadNotificationRowsState(read, "alice", ["newer-event", "older-event"])).toBe(true)
   })
 })

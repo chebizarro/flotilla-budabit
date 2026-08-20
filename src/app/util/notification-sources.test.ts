@@ -55,6 +55,16 @@ vi.mock("@app/core/storage", () => ({
   kv: {get: vi.fn(), set: vi.fn(), clear: vi.fn()},
 }))
 
+Object.defineProperty(window, "localStorage", {
+  configurable: true,
+  value: {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+  },
+})
+
 vi.mock("@app/core/repo-watch", () => ({
   repoWatchNotificationSeen: readable({}),
 }))
@@ -1010,6 +1020,22 @@ describe("notification sources", () => {
         renouncedCommunityAddresses: [notificationCommunity.address],
       }),
     ).toEqual([])
+  })
+
+  it("selects only the active exact community branch for notifications", async () => {
+    const {selectActiveNotificationCommunityRefs} = await import("./notification-sources")
+    const activeRef = makeCommunityRef()
+    const siblingRef: ActiveUserCommunityRef = {
+      ...makeCommunityRef(),
+      community: siblingCommunity,
+    }
+
+    expect(
+      selectActiveNotificationCommunityRefs([activeRef, siblingRef], notificationCommunity).map(
+        ref => ref.community.address,
+      ),
+    ).toEqual([notificationCommunity.address])
+    expect(selectActiveNotificationCommunityRefs([activeRef, siblingRef], undefined)).toEqual([])
   })
 
   it("paginates broad notification history past outsider-only raw pages", async () => {

@@ -11,6 +11,7 @@
 
 <script lang="ts">
   import {goto} from "$app/navigation"
+  import {pubkey} from "@welshman/app"
   import {formatTimestamp} from "@welshman/lib"
   import {onDestroy, onMount, tick, untrack} from "svelte"
   import Bell from "@assets/icons/bell.svg?dataurl"
@@ -50,17 +51,14 @@
     getNotificationNavigationKey,
     navigateNotificationTarget,
   } from "@app/util/notification-navigation"
-  import {markNotificationsRead} from "@app/util/notification-center"
+  import {markNotificationRowsRead} from "@app/util/notification-center"
   import {
     loadMoreNotificationHistory,
     NOTIFICATION_HISTORY_ROW_STEP,
     notificationHistoryCanLoadMore,
     resetNotificationHistory,
   } from "@app/util/notification-history"
-  import {
-    latestNotificationCenterTimestamp,
-    notificationCenterRows,
-  } from "@app/util/notification-sources"
+  import {notificationCenterRows} from "@app/util/notification-sources"
   import {
     filterNotificationRows,
     getNotificationRowDisplay,
@@ -119,8 +117,10 @@
   })
 
   $effect(() => {
-    if ($latestNotificationCenterTimestamp > 0)
-      markNotificationsRead($latestNotificationCenterTimestamp)
+    markNotificationRowsRead(
+      $pubkey || undefined,
+      $notificationCenterRows.map(row => row.id),
+    )
   })
 
   $effect(() => {

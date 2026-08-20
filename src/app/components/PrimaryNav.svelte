@@ -16,11 +16,7 @@
   import NotificationsModal from "@app/components/NotificationsModal.svelte"
   import {publicationOperationsNeedingAttention} from "@app/core/publication-operations"
   import {pushModal} from "@app/util/modal"
-  import {
-    hasNotificationCenterUnread,
-    latestNotificationCenterTimestamp,
-  } from "@app/util/notification-sources"
-  import {rememberLatestNotificationTimestamp} from "@app/util/notification-center"
+  import {hasNotificationCenterUnread} from "@app/util/notification-sources"
   import Git from "@assets/icons/git.svg?dataurl"
 
   type Props = {
@@ -40,10 +36,6 @@
   const hasTopLevelNotification = $derived(
     $hasNotificationCenterUnread || $publicationOperationsNeedingAttention.length > 0,
   )
-
-  $effect(() => {
-    rememberLatestNotificationTimestamp($latestNotificationCenterTimestamp)
-  })
 </script>
 
 <div

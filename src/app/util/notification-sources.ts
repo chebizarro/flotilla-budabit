@@ -49,6 +49,7 @@ import {
 } from "@nostr-git/core/events"
 import {APP_RELAYS, DM_KIND, chatsById, type Chat} from "@app/core/state"
 import {
+  activeExactCommunityPointer,
   activeUserCommunityRefs,
   communityMemberDefinitionEvents,
   communityMemberReportDeleteEvents,
@@ -138,7 +139,7 @@ import {
   installedWidgetUpdates,
   type InstalledWidgetUpdate,
 } from "@app/extensions/widget-update-notifications"
-import {hasUnreadNotificationsState, notificationReadState} from "@app/util/notification-center"
+import {hasUnreadNotificationRowsState, notificationReadState} from "@app/util/notification-center"
 import {
   notificationHistoryFilterLimit,
   notificationHistorySince,
@@ -3689,14 +3690,27 @@ export const buildNotificationCommunitySeedRefs = ({
   return Array.from(refsByAddress.values())
 }
 
+export const selectActiveNotificationCommunityRefs = (
+  refs: ActiveUserCommunityRef[],
+  activeCommunity: CommunityPointer | undefined,
+) => (activeCommunity ? refs.filter(ref => ref.community.address === activeCommunity.address) : [])
+
 const globalCommunitySeedRefs: Readable<ActiveUserCommunityRef[]> = derived(
-  [activeUserCommunityRefs, communityMemberDefinitionEvents, userRenouncedCommunityAddresses],
-  ([$refs, $definitionEvents, $renouncedCommunityAddresses]) =>
-    buildNotificationCommunitySeedRefs({
-      refs: $refs,
-      definitionEvents: $definitionEvents,
-      renouncedCommunityAddresses: $renouncedCommunityAddresses,
-    }),
+  [
+    activeUserCommunityRefs,
+    activeExactCommunityPointer,
+    communityMemberDefinitionEvents,
+    userRenouncedCommunityAddresses,
+  ],
+  ([$refs, $activeCommunity, $definitionEvents, $renouncedCommunityAddresses]) =>
+    selectActiveNotificationCommunityRefs(
+      buildNotificationCommunitySeedRefs({
+        refs: $refs,
+        definitionEvents: $definitionEvents,
+        renouncedCommunityAddresses: $renouncedCommunityAddresses,
+      }),
+      $activeCommunity,
+    ),
 )
 
 const globalCommunityDefinitionSources = derived(globalCommunitySeedRefs, $refs =>
@@ -5186,10 +5200,11 @@ export const latestNotificationCenterTimestamp = derived(
 )
 
 export const hasNotificationCenterUnread = derived(
-  [latestNotificationCenterTimestamp, notificationReadState],
-  ([$latestNotificationCenterTimestamp, $notificationReadState]) =>
-    hasUnreadNotificationsState({
-      latestNotificationTimestamp: $latestNotificationCenterTimestamp,
-      lastReadTimestamp: $notificationReadState.lastReadTimestamp,
-    }),
+  [pubkey, notificationCenterRows, notificationReadState],
+  ([$pubkey, $rows, $notificationReadState]) =>
+    hasUnreadNotificationRowsState(
+      $notificationReadState,
+      $pubkey || undefined,
+      $rows.map(row => row.id),
+    ),
 )

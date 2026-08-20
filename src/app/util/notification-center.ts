@@ -2,69 +2,73 @@ import {synced} from "@welshman/store"
 import {kv} from "@app/core/storage"
 
 export type NotificationReadState = {
-  version: 2
-  lastReadTimestamp: number
-  latestNotificationTimestamp: number
+  version: 3
+  readRowIdsByPubkey: Record<string, string[]>
 }
 
 export const defaultNotificationReadState = (): NotificationReadState => ({
-  version: 2,
-  lastReadTimestamp: 0,
-  latestNotificationTimestamp: 0,
+  version: 3,
+  readRowIdsByPubkey: {},
 })
 
-export const normalizeNotificationTimestamp = (timestamp: unknown) => {
-  const value = Number(timestamp || 0)
-  if (!Number.isFinite(value) || value <= 0) return 0
+const MAX_READ_NOTIFICATION_ROWS = 5_000
 
-  return value > 10_000_000_000 ? Math.round(value / 1000) : Math.round(value)
-}
+const normalizeRowIds = (rowIds: unknown) =>
+  Array.from(
+    new Set(
+      (Array.isArray(rowIds) ? rowIds : [])
+        .map(rowId => String(rowId || "").trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, MAX_READ_NOTIFICATION_ROWS)
 
 export const normalizeNotificationReadState = (
   state: Partial<NotificationReadState> | undefined,
 ): NotificationReadState =>
-  state?.version === 2
+  state?.version === 3
     ? {
-        version: 2,
-        lastReadTimestamp: normalizeNotificationTimestamp(state.lastReadTimestamp),
-        latestNotificationTimestamp: normalizeNotificationTimestamp(
-          state.latestNotificationTimestamp,
+        version: 3,
+        readRowIdsByPubkey: Object.fromEntries(
+          Object.entries(state.readRowIdsByPubkey || {}).flatMap(([pubkey, rowIds]) => {
+            const normalizedPubkey = pubkey.trim()
+            return normalizedPubkey ? [[normalizedPubkey, normalizeRowIds(rowIds)]] : []
+          }),
         ),
       }
     : defaultNotificationReadState()
 
-export const rememberLatestNotificationTimestampState = (
+export const markNotificationRowsReadState = (
   state: Partial<NotificationReadState> | undefined,
-  timestamp: unknown,
+  pubkey: string | undefined,
+  rowIds: Iterable<string>,
 ): NotificationReadState => {
   const current = normalizeNotificationReadState(state)
-  const latestNotificationTimestamp = Math.max(
-    current.latestNotificationTimestamp,
-    normalizeNotificationTimestamp(timestamp),
-  )
-
-  return {...current, latestNotificationTimestamp}
-}
-
-export const markNotificationsReadState = (
-  state: Partial<NotificationReadState> | undefined,
-  timestamp?: unknown,
-): NotificationReadState => {
-  const current = rememberLatestNotificationTimestampState(state, timestamp)
-  const readTimestamp =
-    normalizeNotificationTimestamp(timestamp) || current.latestNotificationTimestamp
+  const account = String(pubkey || "").trim()
+  if (!account) return current
 
   return {
-    version: 2,
-    latestNotificationTimestamp: current.latestNotificationTimestamp,
-    lastReadTimestamp: Math.max(current.lastReadTimestamp, readTimestamp),
+    version: 3,
+    readRowIdsByPubkey: {
+      ...current.readRowIdsByPubkey,
+      [account]: normalizeRowIds([
+        ...Array.from(rowIds),
+        ...(current.readRowIdsByPubkey[account] || []),
+      ]),
+    },
   }
 }
 
-export const hasUnreadNotificationsState = (state: Partial<NotificationReadState> | undefined) => {
+export const hasUnreadNotificationRowsState = (
+  state: Partial<NotificationReadState> | undefined,
+  pubkey: string | undefined,
+  rowIds: Iterable<string>,
+) => {
   const current = normalizeNotificationReadState(state)
+  const account = String(pubkey || "").trim()
+  if (!account) return false
+  const readRowIds = new Set(current.readRowIdsByPubkey[account] || [])
 
-  return current.latestNotificationTimestamp > current.lastReadTimestamp
+  return Array.from(rowIds).some(rowId => Boolean(rowId) && !readRowIds.has(rowId))
 }
 
 export const notificationReadState = synced<NotificationReadState>({
@@ -73,11 +77,8 @@ export const notificationReadState = synced<NotificationReadState>({
   storage: kv,
 })
 
-export const rememberLatestNotificationTimestamp = (timestamp: unknown) =>
-  notificationReadState.update(state => rememberLatestNotificationTimestampState(state, timestamp))
-
-export const markNotificationsRead = (timestamp?: unknown) =>
-  notificationReadState.update(state => markNotificationsReadState(state, timestamp))
+export const markNotificationRowsRead = (pubkey: string | undefined, rowIds: Iterable<string>) =>
+  notificationReadState.update(state => markNotificationRowsReadState(state, pubkey, rowIds))
 
 export const clearNotificationReadState = () =>
   notificationReadState.set(defaultNotificationReadState())
