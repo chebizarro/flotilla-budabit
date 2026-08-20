@@ -9,8 +9,6 @@ describe("strict community publication source contracts", () => {
       "../../routes/c/[community]/threads/create/+page.svelte",
       "../../routes/c/[community]/threads/[thread]/+page.svelte",
       "../../routes/c/[community]/rooms/[room]/+page.svelte",
-      "../../routes/c/[community]/goals/create/+page.svelte",
-      "../../routes/c/[community]/calendar/create/+page.svelte",
       "../../routes/c/[community]/calendar/[event]/+page.svelte",
       "../../routes/c/[community]/permalinks/+page.svelte",
       "../../routes/c/[community]/git/+page.svelte",
@@ -20,6 +18,17 @@ describe("strict community publication source contracts", () => {
       const source = readProjectFile(route)
 
       expect(source, route).toContain("const relays = $activeExactCommunityRelays")
+    }
+
+    for (const route of [
+      "../../routes/c/[community]/goals/create/+page.svelte",
+      "../../routes/c/[community]/calendar/create/+page.svelte",
+    ]) {
+      const source = readProjectFile(route)
+
+      expect(source, route).toContain(
+        "const relays = normalizeRelays($activeExactCommunityRelays)",
+      )
     }
 
     expect(readProjectFile("../../routes/c/[community]/+page.svelte")).toContain(

@@ -130,7 +130,7 @@
       return
     }
 
-    const relays = $activeExactCommunityRelays
+    const relays = normalizeRelays($activeExactCommunityRelays)
     if (relays.length === 0) {
       pushToast({theme: "error", message: "Community relays are not loaded yet."})
       return
