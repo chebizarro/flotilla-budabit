@@ -205,11 +205,7 @@ type ResolveExactCommunityDefinitionOptions = {
 
 export const resolveExactCommunityDefinition = async (
   pointer: CommunityPointer,
-  {
-    discoveryRelays = [],
-    hydrateOwnerOutbox,
-    loadEvents,
-  }: ResolveExactCommunityDefinitionOptions,
+  {discoveryRelays = [], hydrateOwnerOutbox, loadEvents}: ResolveExactCommunityDefinitionOptions,
 ) => {
   const filters: Filter[] = [
     makeExactCommunityDefinitionFilter(pointer),
@@ -339,6 +335,7 @@ export type CommunityRelayLoadOptions = {
   authenticate?: boolean
   priorityAuthRelays?: string[]
   settle?: CommunityRelayLoadSettle
+  isSufficientResult?: (events: TrustedEvent[]) => boolean
   priority?: number
   signal?: AbortSignal
   onStart?: (relay: string) => void
@@ -1250,7 +1247,10 @@ export const loadCommunityEventsWithStatus = async (
 
         if (settle === "first") {
           resolveOnce([result])
-        } else if (result.events.length > 0) {
+        } else if (
+          result.events.length > 0 &&
+          (options.isSufficientResult?.(result.events) ?? true)
+        ) {
           resolveOnce([result])
         }
 
@@ -1326,14 +1326,31 @@ export const loadCommunityDefinitionFromRelays = async (
   relays: string[],
   options: CommunityRelayLoadOptions = {},
 ) => {
-  const definitionEvents = await loadCommunityEvents(
+  const result = await loadCommunityEventsWithStatus(
     normalizeRelays(relays),
     [makeExactCommunityDefinitionFilter(pointer)],
-    {settle: "first-non-empty", ...options},
+    {
+      settle: "first-non-empty",
+      isSufficientResult: events => Boolean(selectExactCommunityDefinition(events, pointer)),
+      ...options,
+    },
   )
+  const definitionEvents = result.events
 
-  return selectExactCommunityDefinition(definitionEvents, pointer)
+  const definition = selectExactCommunityDefinition(definitionEvents, pointer)
+  if (definition) return definition
+
+  if (!result.complete && (result.failedRelays.length > 0 || result.timedOutRelays.length > 0)) {
+    const unavailableRelays = [...result.failedRelays, ...result.timedOutRelays]
+    throw new CommunityDefinitionRelayError(
+      `Community definition relay lookup did not complete (${Array.from(new Set(unavailableRelays)).join(", ")}).`,
+    )
+  }
+
+  return undefined
 }
+
+export class CommunityDefinitionRelayError extends Error {}
 
 export const loadCommunityDefinitionWithOutboxFallback = async (
   pointer: CommunityPointer,
@@ -1344,26 +1361,28 @@ export const loadCommunityDefinitionWithOutboxFallback = async (
     timeout: loadOptions.timeout ?? COMMUNITY_DEFINITION_LOOKUP_TIMEOUT,
   }
   const discoveryRelays = normalizeRelays([...relayHints, ...COMMUNITY_DISCOVERY_RELAYS])
+  let relayError: CommunityDefinitionRelayError | undefined
+  const tolerateLookupFailure = async (promise: Promise<CommunityDefinition | undefined>) =>
+    promise.catch(error => {
+      if (error instanceof CommunityDefinitionRelayError) relayError ||= error
+      return undefined
+    })
 
   // Kick off the indexer lookup and the outbox lookup in parallel so cold
   // cases resolve in max(indexer, outbox) wall time rather than indexer +
   // outbox. Whichever returns first (and has a definition) is used; the
   // slower one still runs to give the caller a chance to see a newer
   // version via `onOutboxDefinition`.
-  const indexerPromise = loadCommunityDefinitionFromRelays(
-    pointer,
-    discoveryRelays,
-    definitionLoadOptions,
-  ).catch(() => undefined)
+  const indexerPromise = tolerateLookupFailure(
+    loadCommunityDefinitionFromRelays(pointer, discoveryRelays, definitionLoadOptions),
+  )
   const outboxRelaysPromise = hydratePubkeyOutboxRelays(pointer.ownerPubkey, discoveryRelays)
   const outboxPromise = (async () => {
     const outboxRelays = await outboxRelaysPromise
     if (!outboxRelays?.length) return undefined
-    const outboxDefinition = await loadCommunityDefinitionFromRelays(
-      pointer,
-      outboxRelays,
-      definitionLoadOptions,
-    ).catch(() => undefined)
+    const outboxDefinition = await tolerateLookupFailure(
+      loadCommunityDefinitionFromRelays(pointer, outboxRelays, definitionLoadOptions),
+    )
 
     if (outboxDefinition) onOutboxDefinition?.(outboxDefinition)
 
@@ -1387,6 +1406,7 @@ export const loadCommunityDefinitionWithOutboxFallback = async (
 
   // Both returned undefined; return the settled result (still undefined).
   const [indexerResult, outboxResult] = await Promise.all([indexerPromise, outboxPromise])
+  if (!indexerResult && !outboxResult && relayError) throw relayError
   return indexerResult ?? outboxResult
 }
 

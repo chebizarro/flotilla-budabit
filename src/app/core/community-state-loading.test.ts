@@ -112,6 +112,7 @@ import {
   loadCommunityBootstrap,
   loadCommunityEvents,
   loadCommunityEventsWithStatus,
+  loadCommunityDefinitionFromRelays,
   recoverCommunityRelayAuth,
   recoverCommunityBootstrap,
   RelayAuthenticationTimeoutError,
@@ -478,6 +479,24 @@ describe("community relay loading", () => {
     )
 
     expect(events.map(event => event.id)).toEqual([definitionEvent.id])
+  })
+
+  it("does not let an invalid definition hide a valid response from another relay", async () => {
+    const invalidDefinition = {...definitionEvent, id: "invalid-definition", content: "invalid"}
+    loadMock.mockImplementation(({relays}: {relays: string[]}) =>
+      Promise.resolve(relays[0] === relayA ? [invalidDefinition] : [definitionEvent]),
+    )
+
+    const definition = await loadCommunityDefinitionFromRelays(community, [relayA, relayB])
+
+    expect(definition?.event.id).toBe(definitionEvent.id)
+  })
+
+  it("ignores an invalid definition when every relay completed", async () => {
+    const invalidDefinition = {...definitionEvent, id: "invalid-definition", content: "invalid"}
+    loadMock.mockResolvedValue([invalidDefinition])
+
+    await expect(loadCommunityDefinitionFromRelays(community, [relayA])).resolves.toBeUndefined()
   })
 
   it("resolves first loads from an empty responsive relay", async () => {
@@ -1180,17 +1199,26 @@ describe("community relay loading", () => {
     let settled = false
     const definitionPromise = loadCommunityDefinitionWithOutboxFallback(community, {
       relayHints: [discoveryRelay],
-    }).then(definition => {
-      settled = true
-
-      return definition
     })
+    const resultPromise = definitionPromise.then(
+      definition => {
+        settled = true
+        return definition
+      },
+      error => {
+        settled = true
+        throw error
+      },
+    )
+    const rejection = expect(resultPromise).rejects.toThrow(
+      `Community definition relay lookup did not complete (${relayA}).`,
+    )
 
     await vi.advanceTimersByTimeAsync(2999)
     expect(settled).toBe(false)
 
     await vi.advanceTimersByTimeAsync(1)
-    expect(await definitionPromise).toBeUndefined()
+    await rejection
   })
 
   it("uses authority from one responsive relay without requiring an admission form", async () => {
