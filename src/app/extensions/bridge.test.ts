@@ -796,6 +796,72 @@ describe("ExtensionBridge", () => {
     ).resolves.toEqual({status: "ok", data: {status: "green"}})
   })
 
+  it("migrates shipped global storage namespaces and removes every copy", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const extension = makeStorageExtension({id: "legacy-ext"})
+    const bridge = new ExtensionBridge(extension as any)
+    const v2Key = "budabit:ext:v2:legacy-ext:global:v2%3Akey"
+    const flotillaKey = "flotilla:ext:legacy-ext:flotilla:key"
+    localStorage.setItem(v2Key, JSON.stringify({source: "v2"}))
+    localStorage.setItem(flotillaKey, JSON.stringify({source: "flotilla"}))
+
+    await expect(sendBridgeRequest(bridge, extension, "storage:keys", {})).resolves.toEqual({
+      status: "ok",
+      keys: ["flotilla:key", "v2:key"],
+    })
+    await expect(
+      sendBridgeRequest(bridge, extension, "storage:get", {key: "v2:key"}),
+    ).resolves.toEqual({status: "ok", data: {source: "v2"}})
+    expect(localStorage.getItem(v2Key)).toBeNull()
+    expect(localStorage.getItem("budabit:extension:legacy-ext:global:v2%3Akey")).not.toBeNull()
+
+    await sendBridgeRequest(bridge, extension, "storage:remove", {key: "flotilla:key"})
+    await sendBridgeRequest(bridge, extension, "storage:remove", {key: "v2:key"})
+    expect(localStorage.length).toBe(0)
+  })
+
+  it("migrates shipped repo storage only within the exact repository scope", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const repoContext = {pubkey: "a".repeat(64), name: "repo:name"}
+    const extension = makeStorageExtension({id: "legacy-repo-ext", repoContext})
+    const bridge = new ExtensionBridge(extension as any)
+    const repoAddress = `30617:${repoContext.pubkey}:${repoContext.name}`
+    const v2Key = `budabit:ext:v2:legacy-repo-ext:repo:${encodeURIComponent(repoAddress)}:build%3Astate`
+    const flotillaKey = `flotilla:ext:legacy-repo-ext:repo:${repoContext.pubkey}:${repoContext.name}:cache`
+    localStorage.setItem(v2Key, JSON.stringify({source: "v2"}))
+    localStorage.setItem(flotillaKey, JSON.stringify({source: "flotilla"}))
+
+    await expect(sendBridgeRequest(bridge, extension, "storage:keys", {})).resolves.toEqual({
+      status: "ok",
+      keys: [],
+    })
+    await expect(
+      sendBridgeRequest(bridge, extension, "storage:keys", {repoScoped: true}),
+    ).resolves.toEqual({status: "ok", keys: ["build:state", "cache"]})
+    await expect(
+      sendBridgeRequest(bridge, extension, "storage:get", {
+        key: "cache",
+        repoScoped: true,
+      }),
+    ).resolves.toEqual({status: "ok", data: {source: "flotilla"}})
+    expect(localStorage.getItem(flotillaKey)).toBeNull()
+  })
+
+  it("prefers current storage and clears lower-precedence legacy copies on write", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const extension = makeStorageExtension({id: "precedence-ext"})
+    const bridge = new ExtensionBridge(extension as any)
+    localStorage.setItem("budabit:extension:precedence-ext:global:prefs", JSON.stringify("current"))
+    localStorage.setItem("budabit:ext:v2:precedence-ext:global:prefs", JSON.stringify("v2"))
+    localStorage.setItem("flotilla:ext:precedence-ext:prefs", JSON.stringify("flotilla"))
+
+    await expect(
+      sendBridgeRequest(bridge, extension, "storage:get", {key: "prefs"}),
+    ).resolves.toEqual({status: "ok", data: "current"})
+    await sendBridgeRequest(bridge, extension, "storage:set", {key: "prefs", data: "updated"})
+    expect(getLocalStorageKeys()).toEqual(["budabit:extension:precedence-ext:global:prefs"])
+  })
+
   it("stores same-d widgets from different publishers under separate keys", async () => {
     const {ExtensionBridge} = await import("./bridge")
     const first = makeWidgetStorageExtension({id: `30033:${"a".repeat(64)}:weather`})

@@ -12,6 +12,8 @@ import {
   parseCommunityAuthority,
   makeCommunityChildIdentifier,
   makeCommunityProfileListIdentifier,
+  makeTargetedPublicationLifecycleFilters,
+  MAX_TARGETED_PUBLICATION_LIFECYCLE_COORDINATES,
   parseCommunityProfileListIdentifier,
   makeCommunityAuthorityTags,
   makeCommunityScopeTags,
@@ -755,6 +757,47 @@ describe("Communikeys targeting", () => {
     expect(
       selectCurrentTargetedPublicationEvents([original, replacement, deletion, recreation]),
     ).toEqual([recreation])
+  })
+
+  it("bounds targeting lifecycle expansion deterministically with exact address deletes", () => {
+    const community = makeCommunityPointer({ownerPubkey: owner, communityId})!
+    const candidates = Array.from(
+      {length: MAX_TARGETED_PUBLICATION_LIFECYCLE_COORDINATES + 1},
+      (_, index) =>
+        makeEvent({
+          id: index.toString(16).padStart(64, "0"),
+          kind: TARGETED_PUBLICATION_KIND,
+          tags: buildTargetedPublication({
+            id: `target-${index.toString().padStart(3, "0")}`,
+            kind: 9041,
+            communities: [community],
+          }).tags,
+        }),
+    )
+    const malformed = makeEvent({
+      id: "f".repeat(64),
+      kind: TARGETED_PUBLICATION_KIND,
+      tags: [["d", "malformed"]],
+    })
+    const filters = makeTargetedPublicationLifecycleFilters([malformed, ...candidates])
+    const reversed = makeTargetedPublicationLifecycleFilters([...candidates].reverse())
+
+    expect(filters).toEqual(reversed)
+    expect(filters).toHaveLength(MAX_TARGETED_PUBLICATION_LIFECYCLE_COORDINATES * 2)
+    expect(filters.every(filter => filter.limit === 1)).toBe(true)
+    expect(filters.some(filter => "#e" in filter)).toBe(false)
+    expect(filters.slice(MAX_TARGETED_PUBLICATION_LIFECYCLE_COORDINATES)).toEqual(
+      filters.slice(0, MAX_TARGETED_PUBLICATION_LIFECYCLE_COORDINATES).map(filter => {
+        const author = filter.authors![0]
+        const identifier = filter["#d"]![0]
+        return {
+          kinds: [5],
+          authors: [author],
+          "#a": [`${TARGETED_PUBLICATION_KIND}:${author}:${identifier}`],
+          limit: 1,
+        }
+      }),
+    )
   })
 
   it("selects a large persisted wrapper cache without per-coordinate rescans", () => {

@@ -2176,6 +2176,8 @@ registerBridgeHandler("ui:resize", (payload, ext) => {
 
 // Storage handlers are scoped by encoded extension/widget line ID and optional repo address.
 const STORAGE_PREFIX = "budabit:extension:"
+const V2_STORAGE_PREFIX = "budabit:ext:v2:"
+const FLOTILLA_STORAGE_PREFIX = "flotilla:ext:"
 const encodeStorageComponent = (value: string): string => encodeURIComponent(value)
 
 const decodeStorageComponent = (value: string): string => {
@@ -2186,8 +2188,18 @@ const decodeStorageComponent = (value: string): string => {
   }
 }
 
-const getExtensionStorageKeyPrefix = (ext: LoadedExtension, repoScoped: boolean): string => {
-  const base = `${STORAGE_PREFIX}${encodeStorageComponent(ext.id)}:`
+const getExtensionStorageKeyPrefix = (
+  ext: LoadedExtension,
+  repoScoped: boolean,
+  prefix = STORAGE_PREFIX,
+): string => {
+  if (prefix === FLOTILLA_STORAGE_PREFIX) {
+    const base = `${prefix}${ext.id}:`
+    return repoScoped && ext.repoContext
+      ? `${base}repo:${ext.repoContext.pubkey}:${ext.repoContext.name}:`
+      : base
+  }
+  const base = `${prefix}${encodeStorageComponent(ext.id)}:`
 
   if (repoScoped && ext.repoContext) {
     return `${base}repo:${encodeStorageComponent(getRepoAddress(ext.repoContext))}:`
@@ -2199,8 +2211,16 @@ const getExtensionStorageKeyPrefix = (ext: LoadedExtension, repoScoped: boolean)
 const getExtensionStorageKey = (ext: LoadedExtension, repoScoped: boolean, key: string): string =>
   `${getExtensionStorageKeyPrefix(ext, repoScoped)}${encodeStorageComponent(key)}`
 
+const getExtensionStorageLocations = (ext: LoadedExtension, repoScoped: boolean, key: string) => [
+  getExtensionStorageKey(ext, repoScoped, key),
+  `${getExtensionStorageKeyPrefix(ext, repoScoped, V2_STORAGE_PREFIX)}${encodeStorageComponent(key)}`,
+  `${getExtensionStorageKeyPrefix(ext, repoScoped, FLOTILLA_STORAGE_PREFIX)}${key}`,
+]
+
 const removeStorageKey = (ext: LoadedExtension, repoScoped: boolean, key: string): void => {
-  localStorage.removeItem(getExtensionStorageKey(ext, repoScoped, key))
+  for (const storageKey of getExtensionStorageLocations(ext, repoScoped, key)) {
+    localStorage.removeItem(storageKey)
+  }
 }
 
 registerBridgeHandler("storage:get", (payload, ext) => {
@@ -2216,8 +2236,14 @@ registerBridgeHandler("storage:get", (payload, ext) => {
     if (repoScoped && !ext.repoContext) {
       throw new Error("repoScoped requested but no repository context available")
     }
-    const raw = localStorage.getItem(getExtensionStorageKey(ext, repoScoped, key))
+    const locations = getExtensionStorageLocations(ext, repoScoped, key)
+    const sourceIndex = locations.findIndex(location => localStorage.getItem(location) !== null)
+    const raw = sourceIndex >= 0 ? localStorage.getItem(locations[sourceIndex]) : null
     const data = raw !== null ? JSON.parse(raw) : null
+    if (raw !== null && sourceIndex > 0) {
+      localStorage.setItem(locations[0], raw)
+      for (const location of locations.slice(1)) localStorage.removeItem(location)
+    }
     return {status: "ok", data}
   } catch (err: any) {
     console.error("Error in storage:get bridge handler:", err)
@@ -2247,6 +2273,9 @@ registerBridgeHandler("storage:set", (payload, ext) => {
       throw new Error(`Value exceeds maximum size of ${MAX_STORAGE_VALUE_SIZE} bytes`)
     }
     localStorage.setItem(getExtensionStorageKey(ext, repoScoped, key), serialized)
+    for (const legacyKey of getExtensionStorageLocations(ext, repoScoped, key).slice(1)) {
+      localStorage.removeItem(legacyKey)
+    }
     return {status: "ok"}
   } catch (err: any) {
     console.error("Error in storage:set bridge handler:", err)
@@ -2279,19 +2308,30 @@ registerBridgeHandler("storage:keys", (payload, ext) => {
     if (repoScoped && !ext.repoContext) {
       throw new Error("repoScoped requested but no repository context available")
     }
-    const storagePrefix = getExtensionStorageKeyPrefix(ext, repoScoped)
+    const storagePrefixes = [
+      {value: getExtensionStorageKeyPrefix(ext, repoScoped), encoded: true},
+      {value: getExtensionStorageKeyPrefix(ext, repoScoped, V2_STORAGE_PREFIX), encoded: true},
+      {
+        value: getExtensionStorageKeyPrefix(ext, repoScoped, FLOTILLA_STORAGE_PREFIX),
+        encoded: false,
+      },
+    ]
     const keys = new Set<string>()
 
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       if (!key) continue
 
-      if (key.startsWith(storagePrefix)) {
-        keys.add(decodeStorageComponent(key.slice(storagePrefix.length)))
+      for (const prefix of storagePrefixes) {
+        if (!key.startsWith(prefix.value)) continue
+        const logicalKey = key.slice(prefix.value.length)
+        if (!repoScoped && !prefix.encoded && logicalKey.startsWith("repo:")) continue
+        keys.add(prefix.encoded ? decodeStorageComponent(logicalKey) : logicalKey)
+        break
       }
     }
 
-    return {status: "ok", keys: Array.from(keys)}
+    return {status: "ok", keys: Array.from(keys).sort()}
   } catch (err: any) {
     console.error("Error in storage:keys bridge handler:", err)
     return {error: err.message}

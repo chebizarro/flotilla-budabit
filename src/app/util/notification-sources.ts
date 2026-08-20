@@ -76,6 +76,8 @@ import {
   normalizePubkey,
   parseCommunityDefinition,
   parseTargetedPublication,
+  makeTargetedPublicationLifecycleFilters,
+  selectTargetedPublicationLifecycleCandidates,
   selectCurrentTargetedPublicationEvents,
   type CommunityDefinition,
   type CommunityPointer,
@@ -874,21 +876,8 @@ const dedupeTrustedEvents = (events: TrustedEvent[]) =>
   Array.from(new Map(events.filter(event => event.id).map(event => [event.id, event])).values())
 
 export const makeTargetingWrapperReplacementFilters = (events: TrustedEvent[]): Filter[] =>
-  dedupeNotificationFilters(
-    events.flatMap(event => {
-      const identifier = getTagValue("d", event.tags)
-      const author = normalizePubkey(event.pubkey)
-      if (!identifier || !author) return []
-
-      return [
-        {
-          kinds: [event.kind],
-          authors: [author],
-          "#d": [identifier],
-          limit: 1,
-        },
-      ]
-    }),
+  makeTargetedPublicationLifecycleFilters(events).filter(
+    filter => filter.kinds?.[0] === TARGETED_PUBLICATION_KIND,
   )
 
 export const selectCurrentTargetingWrapperEvents = (
@@ -4670,11 +4659,14 @@ const globalCommunityTargetingDeleteSources = derived(
   ],
   ([$refs, $candidateEvents, $events]) =>
     $refs.map(ref => {
-      const addresses = new Set(
-        $candidateEvents.filter(event => targetsCommunityDefinition(event, ref)).map(getAddress),
+      const candidateEvents = selectTargetedPublicationLifecycleCandidates(
+        $candidateEvents.filter(event => targetsCommunityDefinition(event, ref)),
       )
+      const addresses = new Set(candidateEvents.map(getAddress))
       const communityEvents = $events.filter(event => addresses.has(getAddress(event)))
-      const filters = makeSameAuthorDeleteFilters(communityEvents)
+      const filters = makeTargetedPublicationLifecycleFilters(communityEvents).filter(
+        filter => filter.kinds?.[0] === DELETE,
+      )
 
       return {
         communityAddress: ref.community.address,

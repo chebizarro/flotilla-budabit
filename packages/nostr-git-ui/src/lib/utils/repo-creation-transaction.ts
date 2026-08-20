@@ -149,6 +149,7 @@ export interface RepoCreationRecoveryRecord {
 }
 
 const STORAGE_PREFIX = "nostr-git:repo-creation:transaction:";
+const PREVIOUS_STORAGE_PREFIX = "nostr-git:repo-creation:v2:";
 const LEGACY_STORAGE_PREFIX = "nostr-git:repo-creation:v1:";
 
 class RepoCreationJournalStorageError extends Error {
@@ -194,6 +195,7 @@ function removeRecord(id: string): void {
       throw new Error("localStorage is unavailable");
     }
     storage.removeItem(getStorageKey(id));
+    storage.removeItem(`${PREVIOUS_STORAGE_PREFIX}${encodeURIComponent(id)}`);
     storage.removeItem(`${LEGACY_STORAGE_PREFIX}${encodeURIComponent(id)}`);
   } catch (error) {
     throw new RepoCreationJournalStorageError(
@@ -1451,10 +1453,10 @@ export function getPendingRepoCreationTransactions(
   const records = new Map<string, RepoCreationRecoveryRecord>();
   let keys: Array<string | null>;
   try {
+    const priority = (key: string | null) =>
+      key?.startsWith(STORAGE_PREFIX) ? 0 : key?.startsWith(PREVIOUS_STORAGE_PREFIX) ? 1 : 2;
     keys = Array.from({ length: storage.length }, (_, index) => storage?.key(index) || null).sort(
-      (a, b) =>
-        Number(Boolean(b?.startsWith(STORAGE_PREFIX))) -
-        Number(Boolean(a?.startsWith(STORAGE_PREFIX)))
+      (a, b) => priority(a) - priority(b) || String(a).localeCompare(String(b))
     );
   } catch (error) {
     throw new RepoCreationJournalStorageError(
@@ -1464,8 +1466,9 @@ export function getPendingRepoCreationTransactions(
   }
   for (const key of keys) {
     const isCurrent = key?.startsWith(STORAGE_PREFIX);
+    const isPrevious = key?.startsWith(PREVIOUS_STORAGE_PREFIX);
     const isLegacy = key?.startsWith(LEGACY_STORAGE_PREFIX);
-    if (!key || (!isCurrent && !isLegacy)) continue;
+    if (!key || (!isCurrent && !isPrevious && !isLegacy)) continue;
 
     let serialized: string | null;
     try {
@@ -1492,13 +1495,9 @@ export function getPendingRepoCreationTransactions(
       continue;
     }
 
-    const record = isCurrent
-      ? isRecoveryRecord(value)
-        ? value
-        : undefined
-      : migrateLegacyRecord(value);
+    const record = isRecoveryRecord(value) ? value : migrateLegacyRecord(value);
     if (!record) continue;
-    if (isLegacy) {
+    if (!isCurrent) {
       const current = records.get(record.id);
       if (!current) writeRecord(record);
       try {

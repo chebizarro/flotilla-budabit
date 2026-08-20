@@ -3,6 +3,7 @@ import { nip19 } from "nostr-tools";
 
 import {
   getPendingRepoCreationTransactions,
+  removeRepoCreationRecoveryRecord,
   RepoCreationTransactionJournal,
   retryPendingRepoCreationMetadata,
   retryRepoCreationCompensations,
@@ -239,6 +240,58 @@ describe("RepoCreationTransactionJournal", () => {
     );
     expect(storage.getItem(legacyKey)).toBeNull();
     expect(storage.key(0)).toContain("nostr-git:repo-creation:transaction:");
+  });
+
+  it("canonicalizes shipped v2 journals before recovery", () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+    const journal = new RepoCreationTransactionJournal({
+      id: "import:owner:repo:shipped-v2",
+      operation: "import",
+      ownerPubkey: "f".repeat(64),
+      repoName: "repo",
+    });
+    const currentKey = storage.key(0) as string;
+    const previousKey = currentKey.replace(
+      "nostr-git:repo-creation:transaction:",
+      "nostr-git:repo-creation:v2:"
+    );
+    storage.setItem(previousKey, storage.getItem(currentKey) as string);
+    storage.removeItem(currentKey);
+
+    expect(getPendingRepoCreationTransactions()).toEqual([
+      expect.objectContaining({ id: journal.record.id, version: 2 }),
+    ]);
+    expect(storage.getItem(previousKey)).toBeNull();
+    expect(storage.getItem(currentKey)).not.toBeNull();
+  });
+
+  it("deduplicates current and shipped v2 journals and removes every alias", () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+    const journal = new RepoCreationTransactionJournal({
+      id: "new:owner:repo:duplicate-v2",
+      operation: "new",
+      ownerPubkey: "f".repeat(64),
+      repoName: "current-repo",
+    });
+    const currentKey = storage.key(0) as string;
+    const previousKey = currentKey.replace(
+      "nostr-git:repo-creation:transaction:",
+      "nostr-git:repo-creation:v2:"
+    );
+    storage.setItem(
+      previousKey,
+      JSON.stringify({ ...journal.record, repoName: "previous-repo", updatedAt: Date.now() + 1000 })
+    );
+
+    expect(getPendingRepoCreationTransactions()).toEqual([
+      expect.objectContaining({ id: journal.record.id, repoName: "current-repo" }),
+    ]);
+    expect(storage.getItem(previousKey)).toBeNull();
+    removeRepoCreationRecoveryRecord(journal.record.id);
+    expect(getPendingRepoCreationTransactions()).toEqual([]);
+    expect(storage.length).toBe(0);
   });
 
   it("redacts credentials from checkpoints, results, URLs, errors, and ACK details", () => {

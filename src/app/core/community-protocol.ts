@@ -1122,37 +1122,40 @@ export const selectCurrentTargetedPublicationEvents = (events: TrustedEvent[]) =
   return selected
 }
 
-export const makeTargetedPublicationLifecycleFilters = (events: TrustedEvent[]): Filter[] => {
-  const filters: Filter[] = []
-  const ids: string[] = []
-  const addresses: string[] = []
-  const seenIds = new Set<string>()
-  const seenAddresses = new Set<string>()
+export const MAX_TARGETED_PUBLICATION_LIFECYCLE_COORDINATES = 100
 
+export const selectTargetedPublicationLifecycleCandidates = (events: TrustedEvent[]) => {
+  const candidates = new Map<string, TrustedEvent>()
   for (const event of events) {
-    if (event.kind !== TARGETED_PUBLICATION_KIND) continue
+    if (event.kind !== TARGETED_PUBLICATION_KIND || !parseTargetedPublication(event)) continue
     const address = getAddressableEventAddress(event)
-    if (!address || seenAddresses.has(address)) continue
-    seenAddresses.add(address)
+    if (!address) continue
+    const current = candidates.get(address)
+    if (!current || event.id < current.id) candidates.set(address, event)
+  }
+  return Array.from(candidates.entries())
+    .sort(([first], [second]) => first.localeCompare(second))
+    .slice(0, MAX_TARGETED_PUBLICATION_LIFECYCLE_COORDINATES)
+    .map(([, event]) => event)
+}
+
+export const makeTargetedPublicationLifecycleFilters = (events: TrustedEvent[]): Filter[] => {
+  const replacements: Filter[] = []
+  const deletions: Filter[] = []
+
+  for (const event of selectTargetedPublicationLifecycleCandidates(events)) {
+    const address = getAddressableEventAddress(event)!
     const [, author, ...identifierParts] = address.split(":")
-    filters.push({
+    replacements.push({
       kinds: [TARGETED_PUBLICATION_KIND],
       authors: [author],
       "#d": [identifierParts.join(":")],
+      limit: 1,
     })
-    addresses.push(address)
+    deletions.push({kinds: [5], authors: [author], "#a": [address], limit: 1})
   }
-  for (const event of events) {
-    if (event.kind === TARGETED_PUBLICATION_KIND && event.id && !seenIds.has(event.id)) {
-      seenIds.add(event.id)
-      ids.push(event.id)
-    }
-  }
-  const authors = Array.from(new Set(addresses.map(address => address.split(":")[1])))
-  if (authors.length && ids.length) filters.push({kinds: [5], authors, "#e": ids})
-  if (authors.length && addresses.length) filters.push({kinds: [5], authors, "#a": addresses})
 
-  return filters
+  return [...replacements, ...deletions]
 }
 
 const makeSourceTag = (source: TargetedPublicationSource) => {
