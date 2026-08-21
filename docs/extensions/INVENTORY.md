@@ -168,11 +168,16 @@ type ExtensionMessage = {
 | `storage:keys`                     | `storage:keys`       | List scoped localStorage keys.                                                     |
 | `repo:getBranches`                 | None                 | Read active repo branch metadata.                                                  |
 | `repo:listWorkflows`               | None                 | List workflow files from the active repo.                                          |
+| `repo:listFiles`                   | `repo:listFiles`     | List files and directories in the active repository.                               |
+| `repo:getFile`                     | `repo:getFile`       | Read a file from the active repository.                                            |
 | `context:getRepo`                  | None                 | Get current repository context.                                                    |
 | `ui:toast`                         | None                 | Display a toast notification.                                                      |
+| `ui:notify`                        | `ui:notify`          | Display a browser notification, falling back to a toast.                           |
 | `ui:navigate`                      | None                 | Navigate within host-approved routes.                                              |
 
-Privileged actions are those under `nostr:*`, `storage:*`, and `community:*`; they require exact `permission` tags on the widget event.
+Privileged actions include those under `nostr:*`, `storage:*`, and `community:*`, plus
+`repo:listFiles`, `repo:getFile`, and `ui:notify`. They require exact `permission` tags on the
+widget event.
 
 ### Host-to-Widget Events
 

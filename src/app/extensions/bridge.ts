@@ -394,8 +394,37 @@ const getRepoBranchesPayload = (
   }
 }
 
-const normalizeRepoPath = (path: unknown) =>
-  typeof path === "string" ? path.replace(/^\/+|\/+$/g, "") : ""
+const normalizeRepoPath = (path: unknown) => {
+  if (path === undefined || path === null) return ""
+  if (typeof path !== "string") throw new Error("Invalid repository path")
+
+  const normalized = path.replace(/^\/+|\/+$/g, "")
+  if (!normalized) return ""
+
+  for (const segment of normalized.split("/")) {
+    let decoded = segment
+    for (let pass = 0; pass < 2; pass++) {
+      try {
+        const next = decodeURIComponent(decoded)
+        if (next === decoded) break
+        decoded = next
+      } catch {
+        break
+      }
+    }
+
+    if (
+      !segment ||
+      decoded === "." ||
+      decoded === ".." ||
+      /[\\/?#\u0000-\u001f\u007f]/.test(decoded)
+    ) {
+      throw new Error("Invalid repository path")
+    }
+  }
+
+  return normalized
+}
 
 const listRepoWorkflowFiles = async () => {
   const repo = getActiveRepo()

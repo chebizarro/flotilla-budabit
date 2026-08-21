@@ -600,6 +600,63 @@ describe("ExtensionBridge", () => {
     })
   })
 
+  it("gates repository file access and rejects paths that can escape provider endpoints", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const listRepoFiles = vi.fn(async () => ({
+      files: [{path: "src/app.ts", type: "file"}],
+    }))
+    const getFileContent = vi.fn(async () => ({content: "export {}"}))
+    mocks.activeRepoClass.set({
+      selectedBranch: "dev",
+      mainBranch: "main",
+      branches: [{name: "dev", commitId: "abc"}],
+      listRepoFiles,
+      getFileContent,
+    } as any)
+
+    const unauthorizedExtension = makeExtension()
+    const unauthorizedBridge = new ExtensionBridge(unauthorizedExtension as any)
+    await expect(
+      sendBridgeRequest(unauthorizedBridge, unauthorizedExtension, "repo:getFile", {
+        path: "src/app.ts",
+      }),
+    ).resolves.toEqual({
+      error: 'Extension not permitted to perform "repo:getFile"',
+      code: "CAPABILITY_NOT_AUTHORIZED",
+    })
+
+    const extension = makeExtension({
+      widget: {permissions: ["repo:listFiles", "repo:getFile"]},
+    })
+    const bridge = new ExtensionBridge(extension as any)
+
+    await expect(
+      sendBridgeRequest(bridge, extension, "repo:listFiles", {path: "/src/"}),
+    ).resolves.toMatchObject({
+      status: "ok",
+      files: [{path: "src/app.ts", type: "file"}],
+      resolvedBranch: "dev",
+    })
+    expect(listRepoFiles).toHaveBeenCalledWith({path: "src", branch: "dev"})
+
+    for (const path of ["../private", "src/../../private", "%2e%2e/private", "src\\private"]) {
+      await expect(sendBridgeRequest(bridge, extension, "repo:getFile", {path})).resolves.toEqual({
+        error: "Invalid repository path",
+      })
+    }
+    expect(getFileContent).not.toHaveBeenCalled()
+
+    await expect(
+      sendBridgeRequest(bridge, extension, "repo:getFile", {path: "/src/app.ts/"}),
+    ).resolves.toEqual({
+      status: "ok",
+      path: "src/app.ts",
+      content: "export {}",
+      resolvedBranch: "dev",
+    })
+    expect(getFileContent).toHaveBeenCalledWith({path: "src/app.ts", branch: "dev"})
+  })
+
   it("returns host subscription IDs, forwards matched events, and cleans up on detach", async () => {
     const {ExtensionBridge} = await import("./bridge")
     const extension = makeExtension({
