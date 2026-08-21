@@ -278,8 +278,12 @@
       })
       if (!isCurrentRequest(guard)) return
       providerStates[communityAddress] = result
-      if (result.statusError) errors[communityAddress] = result.statusError
-      pushToast({message: "Community alerts saved"})
+      if (result.statusError) {
+        errors[communityAddress] = result.statusError
+        pushToast({theme: "error", message: `Alerts saved, but ${result.statusError}`})
+      } else {
+        pushToast({message: "Community alerts saved"})
+      }
     } catch (error) {
       if (!isCurrentRequest(guard)) return
       errors[communityAddress] =
