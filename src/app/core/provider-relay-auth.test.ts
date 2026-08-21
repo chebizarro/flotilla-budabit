@@ -1,5 +1,5 @@
 import {EventEmitter} from "node:events"
-import {describe, expect, it} from "vitest"
+import {describe, expect, it, vi} from "vitest"
 import {AuthStateEvent, AuthStatus} from "@welshman/net"
 import {
   isOperationScopedProviderAuthSocket,
@@ -66,10 +66,45 @@ describe("operation-scoped provider relay authentication", () => {
     expect(auth.listenerCount(AuthStateEvent.Status)).toBe(0)
   })
 
+  it("authenticates when the relay challenge arrives after the initial attempt", async () => {
+    const auth = Object.assign(new EventEmitter(), {
+      status: AuthStatus.None,
+      challenge: "late-challenge",
+      doAuth: vi.fn(),
+    })
+    auth.doAuth.mockImplementation(async () => {
+      auth.status = AuthStatus.PendingResponse
+      auth.emit(AuthStateEvent.Status, auth.status)
+      auth.status = AuthStatus.Ok
+      auth.emit(AuthStateEvent.Status, auth.status)
+    })
+    const sign = vi.fn()
+    const waiting = waitForProviderRelayAuth(auth, 100, sign)
+
+    auth.status = AuthStatus.Requested
+    auth.emit(AuthStateEvent.Status, auth.status)
+
+    await expect(waiting).resolves.toBe(AuthStatus.Ok)
+    expect(auth.doAuth).toHaveBeenCalledOnce()
+    expect(auth.listenerCount(AuthStateEvent.Status)).toBe(0)
+  })
+
   it("bounds non-terminal authentication waits", async () => {
     const auth = Object.assign(new EventEmitter(), {status: AuthStatus.None})
 
     await expect(waitForProviderRelayAuth(auth, 5)).rejects.toThrow("timed out")
+    expect(auth.listenerCount(AuthStateEvent.Status)).toBe(0)
+  })
+
+  it("attempts each challenge once and remains bounded", async () => {
+    const auth = Object.assign(new EventEmitter(), {
+      status: AuthStatus.Requested,
+      challenge: "unanswered-challenge",
+      doAuth: vi.fn(async () => undefined),
+    })
+
+    await expect(waitForProviderRelayAuth(auth, 5, vi.fn())).rejects.toThrow("timed out")
+    expect(auth.doAuth).toHaveBeenCalledOnce()
     expect(auth.listenerCount(AuthStateEvent.Status)).toBe(0)
   })
 })

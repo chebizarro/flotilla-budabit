@@ -522,14 +522,15 @@ const withAuthenticatedProvider = <T>(
 
     try {
       assertSessionActive(session)
-      const authAttempt = socket.auth.retryAuth(async event => {
+      const signAuthEvent = async (event: Parameters<typeof session.currentSigner.sign>[0]) => {
         assertSessionActive(session)
         const signed = await session.currentSigner.sign(event)
         assertSessionActive(session)
         if (!signingActive) throw new Error("Community alert provider authentication timed out.")
 
         return signed
-      })
+      }
+      const authAttempt = socket.auth.retryAuth(signAuthEvent)
       await Promise.race([
         authAttempt,
         new Promise<never>((_, reject) => {
@@ -542,7 +543,7 @@ const withAuthenticatedProvider = <T>(
       clearTimeout(authTimeout)
       authTimeout = undefined
       assertSessionActive(session)
-      const status = await waitForProviderRelayAuth(socket.auth)
+      const status = await waitForProviderRelayAuth(socket.auth, 10_000, signAuthEvent)
       assertSessionActive(session)
       if (status !== AuthStatus.Ok) {
         throw new Error("Community alert provider authentication did not complete.")

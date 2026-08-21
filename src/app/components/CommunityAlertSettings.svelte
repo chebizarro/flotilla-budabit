@@ -429,7 +429,8 @@
   })
 </script>
 
-<section class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+<section
+  class="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
   <div class="border-b border-base-300 px-5 py-5 sm:px-6">
     <div class="flex items-start gap-3">
       <div class="rounded-xl bg-primary/10 p-2.5 text-primary">
@@ -550,7 +551,7 @@
     </div>
   </form>
 
-  <div class="grid gap-4 p-5 sm:p-6">
+  <div class="grid min-w-0 gap-4 p-5 sm:p-6">
     {#if $communityAlertProviderGroups.length === 0}
       <div class="rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm">
         <strong>No eligible community alert service is advertised.</strong>
@@ -572,7 +573,7 @@
       {@const disabledReason = enableDisabledReason(group, provider)}
       {#if draft && provider}
         <form
-          class="rounded-2xl border border-base-300 bg-base-200/30 p-4 sm:p-5"
+          class="w-full min-w-0 max-w-full rounded-2xl border border-base-300 bg-base-200/30 p-4 sm:p-5"
           onsubmit={event => save(event, group)}>
           <div class="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div class="min-w-0">
@@ -667,16 +668,18 @@
                 </div>
               {/if}
 
-              <div>
+              <div class="min-w-0">
                 <div class="mb-2 text-sm font-medium">Digest density</div>
-                <div class="grid grid-cols-2 gap-2">
+                <div class="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
                   <Button
-                    class="btn btn-sm justify-center {draft.preferences.density === 'compact'
+                    class="btn btn-sm min-w-0 max-w-full justify-center [&>span]:min-w-0 {draft
+                      .preferences.density === 'compact'
                       ? 'btn-primary'
                       : 'btn-outline'}"
                     onclick={() => setDensity(group.communityAddress, "compact")}>Compact</Button>
                   <Button
-                    class="btn btn-sm justify-center {draft.preferences.density === 'expanded'
+                    class="btn btn-sm min-w-0 max-w-full justify-center [&>span]:min-w-0 {draft
+                      .preferences.density === 'expanded'
                       ? 'btn-primary'
                       : 'btn-outline'}"
                     onclick={() => setDensity(group.communityAddress, "expanded")}>Expanded</Button>
@@ -686,7 +689,9 @@
                 </p>
               </div>
 
-              <details class="rounded-xl border border-base-300 bg-base-100 p-3" open>
+              <details
+                class="min-w-0 max-w-full rounded-xl border border-base-300 bg-base-100 p-3"
+                open>
                 <summary class="cursor-pointer text-sm font-semibold">Activity categories</summary>
                 <div class="mt-4 grid gap-5 sm:grid-cols-2">
                   <div class="grid content-start gap-2">

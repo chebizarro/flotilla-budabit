@@ -1,4 +1,5 @@
 import {AuthStateEvent, AuthStatus} from "@welshman/net"
+import type {SignedEvent, StampedEvent} from "@welshman/util"
 
 type ProviderAuthSocket = {url: string}
 
@@ -23,9 +24,13 @@ export const withOperationScopedProviderAuthSocket = async <T>(
 
 type ProviderAuthState = {
   status: AuthStatus
+  challenge?: string
   on: (event: AuthStateEvent.Status, listener: (status: AuthStatus) => void) => unknown
   off: (event: AuthStateEvent.Status, listener: (status: AuthStatus) => void) => unknown
+  doAuth?: (sign: ProviderAuthSign) => Promise<void>
 }
+
+type ProviderAuthSign = (event: StampedEvent) => Promise<SignedEvent>
 
 const terminalAuthStatuses = new Set([
   AuthStatus.Ok,
@@ -36,25 +41,59 @@ const terminalAuthStatuses = new Set([
 export const waitForProviderRelayAuth = (
   auth: ProviderAuthState,
   timeoutMs = 10_000,
+  sign?: ProviderAuthSign,
 ): Promise<AuthStatus> => {
   if (terminalAuthStatuses.has(auth.status)) return Promise.resolve(auth.status)
 
   return new Promise((resolve, reject) => {
+    let signing = false
+    let settled = false
+    let attemptedChallenge = ""
+    let timeout: ReturnType<typeof setTimeout>
     const cleanup = () => {
       clearTimeout(timeout)
       auth.off(AuthStateEvent.Status, onStatus)
     }
-    const onStatus = (status: AuthStatus) => {
-      if (!terminalAuthStatuses.has(status)) return
+    const fail = (error: unknown) => {
+      if (settled) return
+      settled = true
       cleanup()
-      resolve(status)
+      reject(error)
     }
-    const timeout = setTimeout(() => {
-      cleanup()
-      reject(new Error(`Provider relay authentication timed out after ${timeoutMs}ms.`))
+    const onStatus = (status: AuthStatus) => {
+      if (settled) return
+      if (terminalAuthStatuses.has(status)) {
+        settled = true
+        cleanup()
+        resolve(status)
+        return
+      }
+      if (
+        status !== AuthStatus.Requested ||
+        !auth.challenge ||
+        auth.challenge === attemptedChallenge ||
+        !sign ||
+        !auth.doAuth ||
+        signing
+      ) {
+        return
+      }
+
+      attemptedChallenge = auth.challenge
+      signing = true
+      void auth
+        .doAuth(sign)
+        .catch(fail)
+        .finally(() => {
+          signing = false
+          if (auth.status === AuthStatus.Requested) onStatus(auth.status)
+        })
+    }
+    timeout = setTimeout(() => {
+      fail(new Error(`Provider relay authentication timed out after ${timeoutMs}ms.`))
     }, timeoutMs)
 
     auth.on(AuthStateEvent.Status, onStatus)
-    if (terminalAuthStatuses.has(auth.status)) onStatus(auth.status)
+    onStatus(auth.status)
   })
 }
