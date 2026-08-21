@@ -943,7 +943,7 @@ describe("email digest relay authentication scope", () => {
     expect(getEmailDigestAuthRelays()).toEqual([])
   })
 
-  it("waits only while provider authentication is pending", async () => {
+  it("waits for provider authentication to reach a terminal state", async () => {
     const auth = Object.assign(new EventEmitter(), {status: AuthStatus.PendingSignature})
     const waiting = waitForEmailDigestAuth(auth)
 
@@ -956,6 +956,21 @@ describe("email digest relay authentication scope", () => {
     expect(auth.listenerCount(AuthStateEvent.Status)).toBe(0)
 
     auth.status = AuthStatus.None
-    await expect(waitForEmailDigestAuth(auth)).resolves.toBe(AuthStatus.None)
+    const delayed = waitForEmailDigestAuth(auth, 100)
+    auth.status = AuthStatus.Requested
+    auth.emit(AuthStateEvent.Status, auth.status)
+    auth.status = AuthStatus.PendingSignature
+    auth.emit(AuthStateEvent.Status, auth.status)
+    auth.status = AuthStatus.Ok
+    auth.emit(AuthStateEvent.Status, auth.status)
+    await expect(delayed).resolves.toBe(AuthStatus.Ok)
+    expect(auth.listenerCount(AuthStateEvent.Status)).toBe(0)
+  })
+
+  it("bounds provider authentication waits", async () => {
+    const auth = Object.assign(new EventEmitter(), {status: AuthStatus.None})
+
+    await expect(waitForEmailDigestAuth(auth, 5)).rejects.toThrow("timed out")
+    expect(auth.listenerCount(AuthStateEvent.Status)).toBe(0)
   })
 })

@@ -441,7 +441,7 @@
         <Icon icon={Mailbox} size={5} />
       </div>
       <div>
-        <h2 class="text-lg font-semibold">Community email alerts</h2>
+        <h2 class="text-lg font-semibold">Community email digest</h2>
         <p class="text-sm text-muted-foreground">
           Independent delivery and activity choices for each community where you have an active
           member, moderator, or administrator role.
@@ -454,7 +454,7 @@
     <div class="mb-5">
       <h3 class="font-semibold">Community alert delivery</h3>
       <p class="mt-1 text-sm text-muted-foreground">
-        This profile is encrypted separately from Git digest settings and applies only to community
+        This profile is encrypted separately from repo digest settings and applies only to community
         alerts.
       </p>
     </div>
@@ -486,7 +486,7 @@
             required />
         {/snippet}
         {#snippet info()}
-          Sent only to community providers you enable. Git providers keep their own delivery email.
+          Sent only to community providers you enable. Repo providers keep their own delivery email.
         {/snippet}
       </Field>
 

@@ -63,7 +63,7 @@ describe("email digest notification settings UI", () => {
     expect(communityAlertSource).toContain("onclick={() => refresh(group)}")
   })
 
-  it("mounts independent community alerts between in-app and Git forms", () => {
+  it("mounts independent community alerts between in-app and repo forms", () => {
     expect(source).toContain(
       'import CommunityAlertSettings from "@app/components/CommunityAlertSettings.svelte"',
     )
@@ -72,13 +72,13 @@ describe("email digest notification settings UI", () => {
       source.indexOf("Save in-app settings"),
     )
     expect(source.indexOf("<CommunityAlertSettings />")).toBeLessThan(
-      source.indexOf("Git email digest"),
+      source.indexOf("Repo email digest"),
     )
     expect(communityAlertCoreSource).toContain(
       'COMMUNITY_ALERTS_SETTINGS_DTAG = "budabit/community-alerts-settings"',
     )
-    expect(communityAlertSource).toContain("This profile is encrypted separately from Git")
-    expect(communityAlertSource).toContain("Git providers keep their own delivery email")
+    expect(communityAlertSource).toContain("This profile is encrypted separately from repo")
+    expect(communityAlertSource).toContain("Repo providers keep their own delivery email")
   })
 
   it("exposes density, every Anchor boolean, statuses, and provider selection", () => {

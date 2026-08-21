@@ -479,7 +479,7 @@
           </div>
           <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">Notifications</h1>
           <p class="mt-2 text-sm leading-6 text-muted-foreground sm:text-base">
-            Keep in-app activity useful and send one Git digest across every repository you watch.
+            Keep in-app activity useful and send one repo digest across every repository you watch.
           </p>
         </div>
         <div
@@ -490,7 +490,7 @@
             class:bg-warning={savedDigestEnabled && statusState === "pending"}
             class:bg-error={savedDigestEnabled && ["error", "suppressed"].includes(statusState)}
             class:bg-base-300={!savedDigestEnabled}></span>
-          <span class="min-w-0 break-words text-center">Git digest: {statusLabel}</span>
+          <span class="min-w-0 break-words text-center">Repo digest: {statusLabel}</span>
         </div>
       </div>
     </div>
@@ -552,7 +552,7 @@
             <Icon icon={Mailbox} size={5} />
           </div>
           <div class="min-w-0">
-            <h2 class="text-lg font-semibold">Git email digest</h2>
+            <h2 class="text-lg font-semibold">Repo email digest</h2>
             <p class="text-sm text-muted-foreground">
               One schedule and provider for all explicitly watched repositories.
             </p>

@@ -52,23 +52,29 @@ type EmailDigestAuthState = {
 }
 
 export const waitForEmailDigestAuth = async (auth: EmailDigestAuthState, timeoutMs = 10_000) => {
-  const pending = new Set([AuthStatus.PendingSignature, AuthStatus.PendingResponse])
-  if (!pending.has(auth.status)) return auth.status
+  const terminal = new Set([AuthStatus.Ok, AuthStatus.Forbidden, AuthStatus.DeniedSignature])
+  if (terminal.has(auth.status)) return auth.status
 
-  await new Promise<void>(resolve => {
+  await new Promise<void>((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout>
-    const finish = () => {
+    const cleanup = () => {
       clearTimeout(timeout)
       auth.off(AuthStateEvent.Status, onStatus)
+    }
+    const finish = () => {
+      cleanup()
       resolve()
     }
     const onStatus = (status: AuthStatus) => {
-      if (!pending.has(status)) finish()
+      if (terminal.has(status)) finish()
     }
 
-    timeout = setTimeout(finish, timeoutMs)
+    timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Email digest provider authentication timed out after ${timeoutMs}ms.`))
+    }, timeoutMs)
     auth.on(AuthStateEvent.Status, onStatus)
-    if (!pending.has(auth.status)) finish()
+    if (terminal.has(auth.status)) finish()
   })
 
   return auth.status
