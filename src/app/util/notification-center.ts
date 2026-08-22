@@ -1,5 +1,9 @@
 import {synced} from "@welshman/store"
+import {derived} from "svelte/store"
 import {kv} from "@app/core/storage"
+import {modal} from "@app/util/modal"
+
+export const NOTIFICATION_CENTER_MODAL_KIND = "notification-center"
 
 export type NotificationReadState = {
   version: 3
@@ -70,6 +74,24 @@ export const hasUnreadNotificationRowsState = (
 
   return Array.from(rowIds).some(rowId => Boolean(rowId) && !readRowIds.has(rowId))
 }
+
+export const getUnreadNotificationRowIdsState = (
+  state: Partial<NotificationReadState> | undefined,
+  pubkey: string | undefined,
+  rowIds: Iterable<string>,
+) => {
+  const current = normalizeNotificationReadState(state)
+  const account = String(pubkey || "").trim()
+  if (!account) return []
+  const readRowIds = new Set(current.readRowIdsByPubkey[account] || [])
+
+  return Array.from(rowIds).filter(rowId => Boolean(rowId) && !readRowIds.has(rowId))
+}
+
+export const notificationCenterOpen = derived(
+  modal,
+  $modal => $modal?.options.kind === NOTIFICATION_CENTER_MODAL_KIND,
+)
 
 export const notificationReadState = synced<NotificationReadState>({
   key: "notificationCenter.readState",

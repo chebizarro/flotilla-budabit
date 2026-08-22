@@ -48,11 +48,17 @@ describe("notification center read state", () => {
   })
 
   it("detects a newly materialized row regardless of its timestamp", async () => {
-    const {hasUnreadNotificationRowsState, markNotificationRowsReadState} =
-      await import("./notification-center")
+    const {
+      getUnreadNotificationRowIdsState,
+      hasUnreadNotificationRowsState,
+      markNotificationRowsReadState,
+    } = await import("./notification-center")
     const read = markNotificationRowsReadState(undefined, "alice", ["newer-event"])
 
     expect(hasUnreadNotificationRowsState(read, "alice", ["newer-event"])).toBe(false)
     expect(hasUnreadNotificationRowsState(read, "alice", ["newer-event", "older-event"])).toBe(true)
+    expect(getUnreadNotificationRowIdsState(read, "alice", ["newer-event", "older-event"])).toEqual(
+      ["older-event"],
+    )
   })
 })

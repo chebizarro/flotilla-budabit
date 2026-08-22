@@ -16,6 +16,10 @@
   import NotificationsModal from "@app/components/NotificationsModal.svelte"
   import {publicationOperationsNeedingAttention} from "@app/core/publication-operations"
   import {pushModal} from "@app/util/modal"
+  import {
+    NOTIFICATION_CENTER_MODAL_KIND,
+    notificationCenterOpen,
+  } from "@app/util/notification-center"
   import {hasNotificationCenterUnread} from "@app/util/notification-sources"
   import Git from "@assets/icons/git.svg?dataurl"
 
@@ -27,14 +31,16 @@
 
   const showSettingsMenu = () => pushModal(MenuSettings)
 
-  const showNotifications = () => pushModal(NotificationsModal)
+  const showNotifications = () =>
+    pushModal(NotificationsModal, {}, {kind: NOTIFICATION_CENTER_MODAL_KIND})
 
   const openChat = () => {
     if ($pubkey) goto("/chat")
     else pushModal(LogIn)
   }
   const hasTopLevelNotification = $derived(
-    $hasNotificationCenterUnread || $publicationOperationsNeedingAttention.length > 0,
+    !$notificationCenterOpen &&
+      ($hasNotificationCenterUnread || $publicationOperationsNeedingAttention.length > 0),
   )
 </script>
 

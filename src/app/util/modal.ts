@@ -16,6 +16,7 @@ export type ModalOptions = {
   fullscreen?: boolean
   replaceState?: boolean
   path?: string
+  kind?: string
 }
 
 export type Modal = {

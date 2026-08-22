@@ -51,7 +51,12 @@
     getNotificationNavigationKey,
     navigateNotificationTarget,
   } from "@app/util/notification-navigation"
-  import {markNotificationRowsRead} from "@app/util/notification-center"
+  import {
+    getUnreadNotificationRowIdsState,
+    markNotificationRowsRead,
+    notificationCenterOpen,
+    notificationReadState,
+  } from "@app/util/notification-center"
   import {
     loadMoreNotificationHistory,
     NOTIFICATION_HISTORY_ROW_STEP,
@@ -78,19 +83,65 @@
   let loadMoreHistoryRowCount = $state(0)
   let loadMoreHistoryTimeout: ReturnType<typeof setTimeout> | undefined
   let pendingNavigationKey = $state("")
+  let sessionInitialized = $state(false)
+  let sessionNewOrderById = $state<Record<string, number>>({})
+  let nextSessionNewOrder = 0
+  const knownRowIds = new Set<string>()
 
   let actorNamesByPubkey = $state<Record<string, string>>({})
-  const rows = $derived(
+  const filteredRows = $derived(
     filterNotificationRows($notificationCenterRows, {filters: rowFilters, term}),
   )
-  const visibleRowsWithoutActorNames = $derived(rows.slice(0, visibleRowLimit))
+  const sessionNewRowIds = $derived(new Set(Object.keys(sessionNewOrderById)))
+  const newRows = $derived(
+    filteredRows
+      .filter(row => sessionNewRowIds.has(row.id))
+      .sort((a, b) => sessionNewOrderById[b.id] - sessionNewOrderById[a.id]),
+  )
+  const activityRows = $derived(filteredRows.filter(row => !sessionNewRowIds.has(row.id)))
+  const visibleNewRows = $derived(newRows.slice(0, visibleRowLimit))
+  const visibleActivityRows = $derived(
+    activityRows.slice(0, Math.max(0, visibleRowLimit - visibleNewRows.length)),
+  )
+  const visibleRowsWithoutActorNames = $derived([...visibleNewRows, ...visibleActivityRows])
   const visibleRows = $derived(
     visibleRowsWithoutActorNames.map(row => {
       const actorName = row.actorPubkey ? actorNamesByPubkey[row.actorPubkey] : ""
       return actorName && actorName !== row.actorName ? {...row, actorName} : row
     }),
   )
-  const hasMoreLoadedRows = $derived(rows.length > visibleRows.length)
+  const visibleNewRowCount = $derived(visibleNewRows.length)
+  const hasMoreLoadedRows = $derived(filteredRows.length > visibleRows.length)
+  const unreadSessionRows = $derived.by(() => {
+    const unreadIds = new Set(
+      getUnreadNotificationRowIdsState(
+        $notificationReadState,
+        $pubkey || undefined,
+        $notificationCenterRows.filter(row => sessionNewRowIds.has(row.id)).map(row => row.id),
+      ),
+    )
+
+    return $notificationCenterRows.filter(row => unreadIds.has(row.id))
+  })
+  const hiddenNewCountBySource = $derived.by(() => {
+    if (rowFilters.length === 0) return {} as Partial<Record<NotificationRowFilter, number>>
+
+    return Object.fromEntries(
+      NOTIFICATION_ROW_FILTERS.map(({value}) => [
+        value,
+        rowFilters.includes(value)
+          ? 0
+          : unreadSessionRows.filter(row => row.source === value).length,
+      ]),
+    ) as Partial<Record<NotificationRowFilter, number>>
+  })
+  const searchHiddenNewCount = $derived.by(() => {
+    if (!term.trim()) return 0
+    const sourceRows = filterNotificationRows(unreadSessionRows, {filters: rowFilters})
+    const matchingRows = filterNotificationRows(sourceRows, {term})
+
+    return sourceRows.length - matchingRows.length
+  })
   const canLoadOlderHistory = $derived($notificationHistoryCanLoadMore)
   const loadMoreLabel = $derived(loadMoreHistoryPending ? "Loading..." : "Load more")
   const navigationPending = $derived(Boolean(pendingNavigationKey))
@@ -110,6 +161,22 @@
   onMount(() => {
     visibleRowLimit = NOTIFICATION_HISTORY_ROW_STEP
     resetNotificationHistory()
+
+    for (const row of $notificationCenterRows) knownRowIds.add(row.id)
+    const unreadIds = new Set(
+      getUnreadNotificationRowIdsState(
+        $notificationReadState,
+        $pubkey || undefined,
+        $notificationCenterRows.map(row => row.id),
+      ),
+    )
+    sessionNewOrderById = Object.fromEntries(
+      $notificationCenterRows
+        .filter(row => unreadIds.has(row.id))
+        .reverse()
+        .map(row => [row.id, ++nextSessionNewOrder]),
+    )
+    sessionInitialized = true
   })
 
   onDestroy(() => {
@@ -117,18 +184,46 @@
   })
 
   $effect(() => {
-    markNotificationRowsRead(
-      $pubkey || undefined,
-      $notificationCenterRows.map(row => row.id),
+    if (!sessionInitialized || !$notificationCenterOpen) return
+
+    const additions = $notificationCenterRows.filter(row => !knownRowIds.has(row.id))
+    additions.forEach(row => knownRowIds.add(row.id))
+
+    const unreadAdditionIds = new Set(
+      getUnreadNotificationRowIdsState(
+        $notificationReadState,
+        $pubkey || undefined,
+        additions.map(row => row.id),
+      ),
     )
+    if (unreadAdditionIds.size > 0) {
+      sessionNewOrderById = {
+        ...sessionNewOrderById,
+        ...Object.fromEntries(
+          additions
+            .filter(row => unreadAdditionIds.has(row.id))
+            .reverse()
+            .map(row => [row.id, ++nextSessionNewOrder]),
+        ),
+      }
+    }
+
+    const visibleUnreadIds = getUnreadNotificationRowIdsState(
+      $notificationReadState,
+      $pubkey || undefined,
+      visibleRowsWithoutActorNames.map(row => row.id),
+    )
+    if (visibleUnreadIds.length > 0)
+      markNotificationRowsRead($pubkey || undefined, visibleUnreadIds)
   })
 
   $effect(() => {
-    if (expandedRowId && !rows.some(row => row.id === expandedRowId)) expandedRowId = undefined
+    if (expandedRowId && !filteredRows.some(row => row.id === expandedRowId))
+      expandedRowId = undefined
   })
 
   $effect(() => {
-    if (loadMoreHistoryPending && rows.length > loadMoreHistoryRowCount) {
+    if (loadMoreHistoryPending && filteredRows.length > loadMoreHistoryRowCount) {
       clearLoadMoreHistoryPending()
     }
   })
@@ -255,7 +350,7 @@
 
     visibleRowLimit += NOTIFICATION_HISTORY_ROW_STEP
     if (!hasMoreLoadedRows && canLoadOlderHistory) {
-      loadMoreHistoryRowCount = rows.length
+      loadMoreHistoryRowCount = filteredRows.length
       loadMoreHistoryPending = true
       loadMoreNotificationHistory()
 
@@ -335,6 +430,7 @@
 
     <div class="flex flex-wrap gap-2">
       {#each NOTIFICATION_ROW_FILTERS as option}
+        {@const hiddenNewCount = hiddenNewCountBySource[option.value] || 0}
         <label
           class="btn btn-xs gap-1.5"
           class:btn-primary={isFilterActive(option.value)}
@@ -342,6 +438,9 @@
           <input class="sr-only" type="checkbox" value={option.value} bind:group={rowFilters} />
           <Icon icon={getFilterIcon(option.value)} size={3.5} />
           <span>{option.label}</span>
+          {#if hiddenNewCount > 0}
+            <span class="badge badge-sm">{hiddenNewCount}</span>
+          {/if}
           {#if isFilterActive(option.value)}
             <Icon icon={Check} size={3} />
           {/if}
@@ -359,6 +458,19 @@
         <Icon icon={ArrowRightUp} size={3} />
       </Button>
     </div>
+    {#if searchHiddenNewCount > 0}
+      <div class="flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+        <span>
+          {searchHiddenNewCount} new {searchHiddenNewCount === 1
+            ? "notification doesn't"
+            : "notifications don't"}
+          match your search
+        </span>
+        <button class="link shrink-0 font-medium" type="button" onclick={() => (term = "")}>
+          Clear search
+        </button>
+      </div>
+    {/if}
   </div>
 
   <div class="scroll-container -mx-2 min-h-0 flex-1 overflow-auto px-2">
@@ -366,9 +478,15 @@
       {#if visibleRows.length > 0}
         <section class="grid gap-2">
           <h2 class="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Activity
+            {visibleNewRowCount > 0 ? "New" : "Activity"}
           </h2>
-          {#each visibleRows as row (row.id)}
+          {#each visibleRows as row, index (row.id)}
+            {#if visibleNewRowCount > 0 && index === visibleNewRowCount && visibleActivityRows.length > 0}
+              <h2
+                class="mt-1 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Activity
+              </h2>
+            {/if}
             {@const display = getNotificationRowDisplay(row)}
             {@const isExpanded = expandedRowId === row.id}
             {@const rowNavigating = isNavigationPending(display.primaryAction)}
