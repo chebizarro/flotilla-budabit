@@ -17,7 +17,6 @@
     type TrustedEvent,
   } from "@welshman/util"
   import type {ISigner} from "@welshman/signer"
-  import {normalizeUserGraspServerUrls} from "@nostr-git/core/events"
   import Button from "@lib/components/Button.svelte"
   import Field from "@lib/components/Field.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
@@ -57,15 +56,15 @@
     makeCommunityProfileListIdentifier,
     parseCommunityDefinition,
     parseAddressRef,
+    isCommunityDefinitionReference,
     normalizeCommunityAlertHandlerAddress,
     normalizeCommunityAlertService,
     normalizeCommunityEmailDigestHandlerAddress,
     normalizeCommunityEmailDigestService,
     normalizeCommunityServiceRelay,
+    normalizeCommunityRelay,
     normalizeGeohash,
     normalizePubkey,
-    normalizeRelay,
-    normalizeRelays,
     updateCommunityDefinition,
     PROFILE_LIST_KIND,
     type CommunityAlertService,
@@ -143,6 +142,7 @@
 
   type ValidatedField =
     | "name"
+    | "description"
     | "website"
     | "picture"
     | "primaryRelay"
@@ -160,6 +160,7 @@
     | "mints"
     | "tosRef"
     | "tosRelay"
+    | "location"
     | "geohash"
 
   type SectionKindDraft = {
@@ -268,7 +269,10 @@
   const SUBTYPE_RE = /^[a-z-]{0,20}$/
   const SUBTYPE_HELP =
     "Optional third value in a k tag. Use it when one event kind supports multiple sections, like 11/room, 11/threads, or 9/room-message."
-  const RECOMMENDED_COMMUNITY_RELAYS = normalizeRelays([
+  const normalizeDefinitionRelay = (value?: string) => normalizeCommunityRelay(value?.trim()) || ""
+  const normalizeDefinitionRelays = (relays: string[]) =>
+    Array.from(new Set(relays.map(normalizeDefinitionRelay).filter(Boolean)))
+  const RECOMMENDED_COMMUNITY_RELAYS = normalizeDefinitionRelays([
     "wss://relay.budabit.club",
     "wss://nos.lol",
   ])
@@ -310,6 +314,48 @@
   const sectionSubtypeField = (sectionIndex: number, kindIndex: number) =>
     `section-${sectionIndex}-subtype-${kindIndex}`
   const sectionKindsField = (sectionIndex: number) => `section-${sectionIndex}-kinds`
+  const controlId = (field: string) => `community-${field}`
+  const describedBy = (field: string, hasHint = false) =>
+    [hasHint ? `${controlId(field)}-hint` : "", errors[field] ? `${controlId(field)}-error` : ""]
+      .filter(Boolean)
+      .join(" ") || undefined
+
+  const getErrorLabel = (field: string) => {
+    const labels: Record<string, string> = {
+      auth: "Community owner",
+      name: "Community name",
+      description: "Description",
+      website: "Website",
+      picture: "Picture URL",
+      sections: "Content sections",
+      primaryRelay: "Primary community relay",
+      extraRelays: "Extra relays",
+      blossomServers: "Blossom servers",
+      graspServers: "GRASP servers",
+      mints: "Mints",
+      emailDigestServicePubkey: "Repository digest service pubkey",
+      emailDigestRequestRelay: "Repository digest request relay",
+      emailDigestHandlerAddress: "Repository digest handler address",
+      emailDigestHandlerRelay: "Repository digest handler relay",
+      communityAlertServicePubkey: "Community digest service pubkey",
+      communityAlertRequestRelay: "Community digest request relay",
+      communityAlertHandlerAddress: "Community digest handler address",
+      communityAlertHandlerRelay: "Community digest handler relay",
+      tosRef: "Terms reference",
+      tosRelay: "Terms relay",
+      location: "Location",
+      geohash: "Geohash",
+    }
+    if (labels[field]) return labels[field]
+
+    const sectionMatch = field.match(/^section-(\d+)-(name|kinds|kind-\d+|subtype-\d+)$/)
+    if (!sectionMatch) return "Community settings"
+    const sectionNumber = Number(sectionMatch[1]) + 1
+    const part = sectionMatch[2]
+    if (part === "name") return `Section ${sectionNumber} name`
+    if (part === "kinds") return `Section ${sectionNumber} event kinds`
+    return `Section ${sectionNumber} ${part.startsWith("subtype") ? "subtype" : "event kind"}`
+  }
 
   const toKindDraft = (kind: CommunityDefinitionSectionKind): SectionKindDraft => ({
     kind: String(kind.kind),
@@ -659,13 +705,22 @@
       .map(line => line.trim())
       .filter(Boolean)
 
-  const normalizeWebUrl = (value: string) => {
+  const utf8Length = (value: string) => new TextEncoder().encode(value).length
+
+  const normalizeWebUrl = (value: string, httpsOnly = false) => {
     const trimmed = value.trim()
-    if (!trimmed) return ""
+    if (!trimmed || utf8Length(trimmed) > 2048) return ""
 
     try {
       const url = new URL(trimmed)
-      return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : ""
+      const validProtocol = httpsOnly
+        ? url.protocol === "https:"
+        : url.protocol === "http:" || url.protocol === "https:"
+      if (!validProtocol || !url.hostname || url.username || url.password || url.hash) return ""
+
+      let normalized = url.toString()
+      if (url.pathname === "/" && !url.search) normalized = normalized.slice(0, -1)
+      return normalized
     } catch {
       return ""
     }
@@ -675,10 +730,10 @@
     const relays: string[] = []
 
     for (const [index, line] of splitLines(value).entries()) {
-      const relay = normalizeRelay(line)
+      const relay = normalizeDefinitionRelay(line)
       if (!relay) {
         nextErrors[field] =
-          `Line ${index + 1} must be a valid relay URL, like wss://relay.example.com.`
+          `Line ${index + 1} must be a secure relay URL, like wss://relay.example.com.`
         continue
       }
 
@@ -693,12 +748,17 @@
     field: string,
     label: string,
     nextErrors: FieldErrors,
+    httpsOnly = false,
   ) => {
     const trimmed = value.trim()
     if (!trimmed) return ""
 
-    const url = normalizeWebUrl(trimmed)
-    if (!url) nextErrors[field] = `${label} must be a valid http:// or https:// URL.`
+    const url = normalizeWebUrl(trimmed, httpsOnly)
+    if (!url) {
+      nextErrors[field] = httpsOnly
+        ? `${label} must be a valid https:// URL without login details or a # fragment.`
+        : `${label} must be a valid http:// or https:// URL without login details or a # fragment.`
+    }
 
     return url
   }
@@ -708,9 +768,9 @@
 
     for (const [index, line] of splitLines(mints).entries()) {
       const [urlValue, type, extra] = line.split(/\s+/)
-      const url = normalizeWebUrl(urlValue || "")
+      const url = normalizeWebUrl(urlValue || "", true)
 
-      if (!url || extra) {
+      if (!url || extra || (type && !/^[\x21-\x7e]{1,32}$/.test(type))) {
         nextErrors.mints = `Line ${index + 1} must use: https://mint.example.com optional-type.`
         continue
       }
@@ -864,7 +924,7 @@
 
   const validateTosFields = () => {
     const trimmedTosRef = tosRef.trim()
-    const normalizedTosRelay = normalizeRelay(tosRelay)
+    const normalizedTosRelay = normalizeDefinitionRelay(tosRelay)
 
     if (tosRelay.trim() && normalizedTosRelay) tosRelay = normalizedTosRelay
     setFieldError(
@@ -873,7 +933,11 @@
     )
     setFieldError(
       "tosRef",
-      tosRelay.trim() && !trimmedTosRef ? "Add a terms reference or clear the terms relay." : "",
+      tosRelay.trim() && !trimmedTosRef
+        ? "Add a terms reference or clear the terms relay."
+        : trimmedTosRef && !isCommunityDefinitionReference(trimmedTosRef)
+          ? "Use a 64-character event ID or an address like 30023:<pubkey>:<identifier>."
+          : "",
     )
   }
 
@@ -974,7 +1038,22 @@
   const validateField = (field: ValidatedField) => {
     switch (field) {
       case "name":
-        setFieldError(field, name.trim() ? "" : "Community name is required.")
+        setFieldError(
+          field,
+          !name.trim()
+            ? "Community name is required."
+            : utf8Length(name.trim()) > 100
+              ? "Community name must be 100 characters or fewer."
+              : "",
+        )
+        break
+      case "description":
+        setFieldError(
+          field,
+          utf8Length(description.trim()) > 4096
+            ? "Description must be 4,096 characters or fewer."
+            : "",
+        )
         break
       case "website": {
         const normalized = validateWebUrlField(website, field, "Website", {})
@@ -986,38 +1065,47 @@
         break
       }
       case "picture": {
-        const normalized = validateWebUrlField(picture, field, "Picture URL", {})
+        const normalized = validateWebUrlField(picture, field, "Picture URL", {}, true)
         if (normalized) picture = normalized
         setFieldError(
           field,
           picture.trim() && !normalized
-            ? "Picture URL must be a valid http:// or https:// URL."
+            ? "Picture URL must be a valid https:// URL without login details or a # fragment."
             : "",
         )
         break
       }
       case "primaryRelay": {
-        const normalized = normalizeRelay(primaryRelay)
+        const normalized = normalizeDefinitionRelay(primaryRelay)
         if (normalized) primaryRelay = normalized
         setFieldError(
           field,
-          normalized ? "" : "Primary relay is required and must be a valid wss:// relay URL.",
+          normalized ? "" : "Enter a secure relay URL, like wss://relay.example.com.",
         )
         break
       }
       case "extraRelays": {
         const nextErrors: FieldErrors = {}
         const normalized = validateRelayLines(extraRelays, field, nextErrors)
+        if (
+          !nextErrors[field] &&
+          normalizeDefinitionRelays([primaryRelay, ...normalized]).length > 20
+        ) {
+          nextErrors[field] = "A community can use no more than 20 relays."
+        }
         if (!nextErrors[field]) extraRelays = normalized.join("\n")
         setFieldError(field, nextErrors[field] || "")
         break
       }
       case "blossomServers": {
+        if (splitLines(blossomServers).length > 20) {
+          setFieldError(field, "Add no more than 20 Blossom servers.")
+          break
+        }
         const normalized = splitLines(blossomServers)
           .map((server, index) => {
-            const url = normalizeWebUrl(server)
-            if (!url)
-              setFieldError(field, `Line ${index + 1} must be a valid http:// or https:// URL.`)
+            const url = normalizeWebUrl(server, true)
+            if (!url) setFieldError(field, `Line ${index + 1} must be a valid https:// URL.`)
             return url
           })
           .filter(Boolean)
@@ -1028,11 +1116,15 @@
         break
       }
       case "graspServers": {
+        if (splitLines(graspServers).length > 20) {
+          setFieldError(field, "Add no more than 20 GRASP servers.")
+          break
+        }
         const normalized = splitLines(graspServers)
           .map((server, index) => {
-            const url = normalizeUserGraspServerUrls([server])[0] || ""
+            const url = normalizeDefinitionRelay(server)
             if (!url) {
-              setFieldError(field, `Line ${index + 1} must be a valid ws:// or wss:// URL.`)
+              setFieldError(field, `Line ${index + 1} must be a valid wss:// URL.`)
             }
             return url
           })
@@ -1063,6 +1155,10 @@
       }
       case "mints": {
         const nextErrors: FieldErrors = {}
+        if (splitLines(mints).length > 20) {
+          setFieldError(field, "Add no more than 20 mint declarations.")
+          break
+        }
         const normalized = validateMints(nextErrors)
         if (!nextErrors[field]) {
           mints = normalized.map(mint => [mint.url, mint.type].filter(Boolean).join(" ")).join("\n")
@@ -1074,13 +1170,19 @@
       case "tosRelay":
         validateTosFields()
         break
+      case "location":
+        setFieldError(
+          field,
+          utf8Length(location.trim()) > 256 ? "Location must be 256 characters or fewer." : "",
+        )
+        break
       case "geohash": {
         const normalized = normalizeGeohash(geohash)
         if (normalized) geohash = normalized
         setFieldError(
           field,
-          geohash.trim() && !normalized
-            ? "Geohash must be lowercase base32, with optional geo: prefix."
+          geohash.trim() && (!normalized || normalized.length > 12)
+            ? "Geohash must contain 1 to 12 base32 characters; an optional geo: prefix is accepted."
             : "",
         )
         break
@@ -1203,24 +1305,29 @@
     const nextErrors: FieldErrors = {}
     const community = fromCurrentSession()
     const trimmedName = name.trim()
-    const normalizedPrimaryRelay = normalizeRelay(primaryRelay)
+    const normalizedPrimaryRelay = normalizeDefinitionRelay(primaryRelay)
     const normalizedExtraRelays = validateRelayLines(extraRelays, "extraRelays", nextErrors)
-    const relays = normalizeRelays([normalizedPrimaryRelay, ...normalizedExtraRelays])
+    const relays = normalizeDefinitionRelays([normalizedPrimaryRelay, ...normalizedExtraRelays])
     const normalizedWebsite = validateWebUrlField(website, "website", "Website", nextErrors)
-    const normalizedPicture = validateWebUrlField(picture, "picture", "Picture URL", nextErrors)
+    const normalizedPicture = validateWebUrlField(
+      picture,
+      "picture",
+      "Picture URL",
+      nextErrors,
+      true,
+    )
     const normalizedBlossomServers = splitLines(blossomServers)
       .map((server, index) => {
-        const url = normalizeWebUrl(server)
-        if (!url)
-          nextErrors.blossomServers = `Line ${index + 1} must be a valid http:// or https:// URL.`
+        const url = normalizeWebUrl(server, true)
+        if (!url) nextErrors.blossomServers = `Line ${index + 1} must be a valid https:// URL.`
         return url
       })
       .filter(Boolean)
     const normalizedGraspServers = splitLines(graspServers)
       .map((server, index) => {
-        const url = normalizeUserGraspServerUrls([server])[0] || ""
+        const url = normalizeDefinitionRelay(server)
         if (!url) {
-          nextErrors.graspServers = `Line ${index + 1} must be a valid ws:// or wss:// URL.`
+          nextErrors.graspServers = `Line ${index + 1} must be a valid wss:// URL.`
         }
         return url
       })
@@ -1229,7 +1336,7 @@
     const normalizedCommunityAlertService = validateCommunityAlertServiceFields(nextErrors)
     const normalizedMints = validateMints(nextErrors)
     const trimmedTosRef = tosRef.trim()
-    const normalizedTosRelay = normalizeRelay(tosRelay)
+    const normalizedTosRelay = normalizeDefinitionRelay(tosRelay)
     const normalizedGeohash = normalizeGeohash(geohash)
     const normalizedSections = normalizeSectionDrafts(nextErrors)
     const exactDefinition = $activeExactCommunityDefinition
@@ -1246,23 +1353,48 @@
       nextErrors.auth = "Only the community owner can publish community definition updates."
     }
     if (!trimmedName) nextErrors.name = "Community name is required."
+    else if (utf8Length(trimmedName) > 100) {
+      nextErrors.name = "Community name must be 100 characters or fewer."
+    }
+    if (utf8Length(description.trim()) > 4096) {
+      nextErrors.description = "Description must be 4,096 characters or fewer."
+    }
     if (!normalizedPrimaryRelay) {
-      nextErrors.primaryRelay = "Primary relay is required and must be a valid wss:// relay URL."
+      nextErrors.primaryRelay = "Enter a secure relay URL, like wss://relay.example.com."
+    }
+    if (relays.length > 20) {
+      nextErrors.extraRelays = "A community can use no more than 20 relays."
+    }
+    if (splitLines(blossomServers).length > 20) {
+      nextErrors.blossomServers = "Add no more than 20 Blossom servers."
+    }
+    if (splitLines(graspServers).length > 20) {
+      nextErrors.graspServers = "Add no more than 20 GRASP servers."
+    }
+    if (splitLines(mints).length > 20) {
+      nextErrors.mints = "Add no more than 20 mint declarations."
     }
     if (tosRelay.trim() && !normalizedTosRelay) {
       nextErrors.tosRelay = "Terms relay must be a valid wss:// relay URL."
     }
     if (tosRelay.trim() && !trimmedTosRef) {
       nextErrors.tosRef = "Add a terms reference or clear the terms relay."
+    } else if (trimmedTosRef && !isCommunityDefinitionReference(trimmedTosRef)) {
+      nextErrors.tosRef =
+        "Use a 64-character event ID or an address like 30023:<pubkey>:<identifier>."
     }
-    if (geohash.trim() && !normalizedGeohash) {
-      nextErrors.geohash = "Geohash must be lowercase base32, with optional geo: prefix."
+    if (utf8Length(location.trim()) > 256) {
+      nextErrors.location = "Location must be 256 characters or fewer."
+    }
+    if (geohash.trim() && (!normalizedGeohash || normalizedGeohash.length > 12)) {
+      nextErrors.geohash =
+        "Geohash must contain 1 to 12 base32 characters; an optional geo: prefix is accepted."
     }
 
     errors = nextErrors
 
     if (Object.keys(nextErrors).length > 0 || !community || relays.length === 0) {
-      pushToast({theme: "error", message: "Fix the highlighted fields before publishing."})
+      pushToast({theme: "error", message: "Review the highlighted fields before publishing."})
       return undefined
     }
 
@@ -1924,8 +2056,19 @@
       goto(makeExactCommunityPath(parsedDefinition.pointer))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      publishStatus = message
-      pushToast({theme: "error", message: `Community setup failed: ${message}`})
+      console.error("Community settings publication failed", error)
+      const friendlyMessage = /signer|sign\b/i.test(message)
+        ? "The community owner could not sign the update. Check the active signer and try again."
+        : /accepted but|verified relay|readback|replacement event/i.test(message)
+          ? "The update was sent but could not be confirmed on the primary relay. Try again or check that relay."
+          : /invalid|valid normalized|format/i.test(message)
+            ? "One or more settings have an incorrect format. Review the highlighted fields and try again."
+            : "The primary relay did not accept or confirm the update. Check its availability and your access, then try again."
+      publishStatus = friendlyMessage
+      pushToast({
+        theme: "error",
+        message: `${isEdit ? "Community update" : "Community setup"} failed: ${friendlyMessage}`,
+      })
       throw error
     } finally {
       loading = false
@@ -2167,14 +2310,32 @@
     applyUpdate()
   }
 
+  const focusError = async (field: string) => {
+    if (!field) return
+
+    const sectionMatch = field.match(/^section-(\d+)-/)
+    if (sectionMatch) expandedSectionIndex = Number(sectionMatch[1])
+    await tick()
+    if (!browser) return
+
+    const control = document.getElementById(controlId(field))
+    const details = control?.closest("details")
+    if (details instanceof HTMLDetailsElement) details.open = true
+    await tick()
+
+    const focusTarget = document.getElementById(controlId(field)) || errorSummaryElement
+    focusTarget?.scrollIntoView({behavior: "smooth", block: "center"})
+    focusTarget?.focus({preventScroll: true})
+  }
+
+  const focusFirstError = () => focusError(Object.keys(errors)[0] || "")
+
   const submitCommunitySettings = async () => {
-    if (!$pubkey) {
-      pushToast({theme: "error", message: "Log in with the community owner first."})
+    const validated = validateForm()
+    if (!validated) {
+      await focusFirstError()
       return
     }
-
-    const validated = validateForm()
-    if (!validated) return
 
     name = validated.name
     description = validated.description
@@ -2423,11 +2584,11 @@
   }
 
   const addRecommendedCommunityRelay = (url: string) => {
-    const normalized = normalizeRelay(url)
+    const normalized = normalizeDefinitionRelay(url)
     if (!normalized) return
 
-    const currentPrimary = normalizeRelay(primaryRelay)
-    const currentExtras = normalizeRelays(splitLines(extraRelays))
+    const currentPrimary = normalizeDefinitionRelay(primaryRelay)
+    const currentExtras = normalizeDefinitionRelays(splitLines(extraRelays))
 
     if (currentPrimary === normalized || currentExtras.includes(normalized)) return
 
@@ -2437,7 +2598,7 @@
       return
     }
 
-    extraRelays = normalizeRelays([...currentExtras, normalized]).join("\n")
+    extraRelays = normalizeDefinitionRelays([...currentExtras, normalized]).join("\n")
     setFieldError("extraRelays")
   }
 
@@ -2445,14 +2606,16 @@
     const servers = splitLines(blossomServers)
     const normalizedServers: string[] = []
 
+    if (servers.length > 20) {
+      setFieldError("blossomServers", "Add no more than 20 Blossom servers.")
+      return undefined
+    }
+
     for (const [index, server] of servers.entries()) {
-      const normalized = normalizeWebUrl(server)
+      const normalized = normalizeWebUrl(server, true)
 
       if (!normalized) {
-        setFieldError(
-          "blossomServers",
-          `Line ${index + 1} must be a valid http:// or https:// URL.`,
-        )
+        setFieldError("blossomServers", `Line ${index + 1} must be a valid https:// URL.`)
         return undefined
       }
 
@@ -2536,6 +2699,7 @@
   let expandedSectionIndex = $state(0)
   let initializedKey = $state("")
   let errors = $state<FieldErrors>({})
+  let errorSummaryElement = $state<HTMLElement>()
   let originalDraftState = $state<OriginalDraftState | undefined>()
   let keptImmediateWarningKeys = $state<string[]>([])
 
@@ -2548,7 +2712,7 @@
   const login = () => pushModal(LogIn)
   const pictureUploading = $derived(!["idle", "ready", "failed"].includes(pictureUploadStage))
   const activeCommunityRelays = $derived.by(() =>
-    normalizeRelays([primaryRelay, ...splitLines(extraRelays)]),
+    normalizeDefinitionRelays([primaryRelay, ...splitLines(extraRelays)]),
   )
   const activeAdmissionFormAddresses = $derived(
     Object.values($activeCommunityAdmissionForms).map(form => form.address),
@@ -2675,6 +2839,7 @@
 
 <form
   class={embedded ? "col-4" : "min-h-full bg-base-200"}
+  novalidate
   onsubmit={preventDefault(submitCommunitySettings)}>
   <div class={embedded ? "col-4" : "mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10"}>
     <section
@@ -2708,6 +2873,8 @@
           </div>
         </div>
         <div
+          id={controlId("auth")}
+          tabindex="-1"
           class="min-w-0 rounded-2xl border border-warning/35 bg-warning/15 p-4 text-sm leading-relaxed text-base-content shadow-sm shadow-warning/5">
           <strong class="block text-base font-semibold text-warning">Community signer</strong>
           <span class="mt-1 block text-base-content/80">
@@ -2734,11 +2901,40 @@
 
     <div class="mt-6 space-y-6">
       <div class="space-y-6">
+        {#if Object.keys(errors).length > 0}
+          <section
+            bind:this={errorSummaryElement}
+            class="rounded-[1.5rem] border border-error/40 bg-error/10 p-5 text-error shadow-sm"
+            tabindex="-1"
+            role="alert"
+            aria-labelledby="community-error-summary-title">
+            <strong id="community-error-summary-title" class="text-lg">
+              Review {Object.keys(errors).length}
+              {Object.keys(errors).length === 1 ? "field" : "fields"}
+            </strong>
+            <p class="mt-1 text-sm text-base-content/75">
+              Your changes are still here. Correct the highlighted fields, then publish again.
+            </p>
+            <ul class="mt-3 list-inside list-disc space-y-1 text-sm">
+              {#each Object.entries(errors) as [field, message]}
+                <li>
+                  <button type="button" class="link font-semibold" onclick={() => focusError(field)}
+                    >{getErrorLabel(field)}</button
+                  >: {message}
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+
         {#if errors.auth}
           <p class="rounded-box bg-error/10 p-4 text-sm font-medium text-error">{errors.auth}</p>
         {/if}
 
-        <section class="rounded-[1.5rem] border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
+        <section
+          id={controlId("sections")}
+          tabindex="-1"
+          class="rounded-[1.5rem] border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
           <div class="mb-5 flex items-start justify-between gap-4">
             <div>
               <strong class="text-lg">Community identity</strong>
@@ -2748,13 +2944,18 @@
             </div>
           </div>
           <div class="grid gap-4 md:grid-cols-2">
-            <Field error={errors.name}>
+            <Field for={controlId("name")} error={errors.name}>
               {#snippet label()}<p>Name <span class="text-primary">(required)</span></p>{/snippet}
               {#snippet input()}<input
+                  id={controlId("name")}
                   bind:value={name}
                   class="input input-bordered w-full {errors.name ? 'input-error' : ''}"
                   onblur={() => validateField("name")}
+                  aria-invalid={Boolean(errors.name)}
+                  aria-describedby={describedBy("name", true)}
+                  maxlength="100"
                   type="text" />{/snippet}
+              {#snippet info()}Shown in community headers and discovery. Maximum 100 characters.{/snippet}
             </Field>
             <div class="rounded-xl border border-base-300 bg-base-200 p-3 text-sm">
               <div class="flex items-start justify-between gap-3">
@@ -2770,37 +2971,55 @@
               </div>
             </div>
             <div class="md:col-span-2">
-              <Field>
+              <Field for={controlId("description")} error={errors.description}>
                 {#snippet label()}<p>
                     Description <span class="opacity-60">(optional)</span>
                   </p>{/snippet}
                 {#snippet input()}<textarea
+                    id={controlId("description")}
                     bind:value={description}
-                    class="textarea textarea-bordered min-h-28"
+                    class="textarea textarea-bordered min-h-28 {errors.description
+                      ? 'textarea-error'
+                      : ''}"
+                    onblur={() => validateField("description")}
+                    aria-invalid={Boolean(errors.description)}
+                    aria-describedby={describedBy("description", true)}
+                    maxlength="4096"
                     rows="3"></textarea
                   >{/snippet}
+                {#snippet info()}Explain the community's purpose in up to 4,096 characters.{/snippet}
               </Field>
             </div>
-            <Field error={errors.website}>
+            <Field for={controlId("website")} error={errors.website}>
               {#snippet label()}<p>Website <span class="opacity-60">(optional)</span></p>{/snippet}
               {#snippet input()}<input
+                  id={controlId("website")}
                   bind:value={website}
                   class="input input-bordered w-full {errors.website ? 'input-error' : ''}"
                   onblur={() => validateField("website")}
+                  aria-invalid={Boolean(errors.website)}
+                  aria-describedby={describedBy("website", true)}
+                  placeholder="https://community.example.com"
                   type="url" />{/snippet}
+              {#snippet info()}A complete http:// or https:// URL. Login details and # fragments are
+                not allowed.{/snippet}
             </Field>
-            <Field error={errors.picture}>
+            <Field for={controlId("picture")} error={errors.picture}>
               {#snippet label()}<p>
                   Picture URL <span class="opacity-60">(optional)</span>
                 </p>{/snippet}
               {#snippet input()}<div class="space-y-2">
                   <div class="space-y-2">
                     <input
+                      id={controlId("picture")}
                       bind:value={picture}
                       class="input input-bordered w-full {errors.picture ? 'input-error' : ''}"
                       disabled={pictureUploading}
                       oninput={() => (pictureUploadStage = "idle")}
                       onblur={() => validateField("picture")}
+                      aria-invalid={Boolean(errors.picture)}
+                      aria-describedby={describedBy("picture", true)}
+                      placeholder="https://media.example.com/community.png"
                       type="url" />
                     <label
                       class="btn btn-outline btn-sm w-full sm:w-auto {pictureUploading || loading
@@ -2820,6 +3039,7 @@
                   </div>
                   <BlossomUploadStatus stage={pictureUploadStage} />
                 </div>{/snippet}
+              {#snippet info()}Use a public https:// image URL, or upload an image below.{/snippet}
             </Field>
           </div>
         </section>
@@ -2890,9 +3110,13 @@
                 {#if isExpanded}
                   <div class="space-y-5 border-t border-base-300 p-4">
                     <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                      <Field class="flex-1" error={errors[sectionNameField(sectionIndex)]}>
+                      <Field
+                        class="flex-1"
+                        for={controlId(sectionNameField(sectionIndex))}
+                        error={errors[sectionNameField(sectionIndex)]}>
                         {#snippet label()}<p>Section name</p>{/snippet}
                         {#snippet input()}<input
+                            id={controlId(sectionNameField(sectionIndex))}
                             value={section.name}
                             maxlength="50"
                             class="input input-bordered w-full {errors[
@@ -2908,7 +3132,11 @@
                               validateSectionNames()
                               maybeWarnSectionRename(sectionIndex, event)
                             }}
+                            aria-invalid={Boolean(errors[sectionNameField(sectionIndex)])}
+                            aria-describedby={describedBy(sectionNameField(sectionIndex), true)}
                             type="text" />{/snippet}
+                        {#snippet info()}Use letters and dashes only, up to 50 characters. Names
+                          must be unique.{/snippet}
                       </Field>
                       <Button
                         class="btn btn-outline btn-error btn-sm w-full sm:w-auto"
@@ -2918,7 +3146,10 @@
                       </Button>
                     </div>
 
-                    <div class="space-y-3">
+                    <div
+                      id={controlId(sectionKindsField(sectionIndex))}
+                      tabindex="-1"
+                      class="space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <strong class="text-sm">Event kinds</strong>
                         <Button
@@ -2933,9 +3164,12 @@
                         <div
                           data-section-kind-row={`${sectionIndex}-${kindIndex}`}
                           class="grid gap-2 rounded-2xl border border-base-300 bg-base-100/75 p-3 text-sm shadow-sm sm:grid-cols-2 sm:gap-3 sm:p-4 sm:text-base lg:grid-cols-[minmax(220px,2fr)_minmax(100px,1fr)_minmax(170px,1fr)_auto] lg:items-end">
-                          <Field class="sm:col-span-2 lg:col-span-1">
+                          <Field
+                            class="sm:col-span-2 lg:col-span-1"
+                            for={`known-kind-${sectionIndex}-${kindIndex}`}>
                             {#snippet label()}<p>Known kind</p>{/snippet}
                             {#snippet input()}<select
+                                id={`known-kind-${sectionIndex}-${kindIndex}`}
                                 class="select select-bordered select-sm w-full text-sm sm:select-md sm:text-base"
                                 value={kindDraftOptionValue(kindDraft)}
                                 onchange={event =>
@@ -2952,10 +3186,15 @@
                                       : ""})</option>
                                 {/each}
                               </select>{/snippet}
+                            {#snippet info()}Choose a known type or select Custom kind to enter one
+                              manually.{/snippet}
                           </Field>
-                          <Field error={errors[sectionKindField(sectionIndex, kindIndex)]}>
+                          <Field
+                            for={controlId(sectionKindField(sectionIndex, kindIndex))}
+                            error={errors[sectionKindField(sectionIndex, kindIndex)]}>
                             {#snippet label()}<p>Kind</p>{/snippet}
                             {#snippet input()}<input
+                                id={controlId(sectionKindField(sectionIndex, kindIndex))}
                                 value={kindDraft.kind}
                                 class="input input-sm input-bordered w-full text-sm sm:input-md sm:text-base {errors[
                                   sectionKindField(sectionIndex, kindIndex)
@@ -2967,9 +3206,19 @@
                                   requestSectionKindUpdate(sectionIndex, kindIndex, {
                                     kind: event.currentTarget.value,
                                   })}
+                                aria-invalid={Boolean(
+                                  errors[sectionKindField(sectionIndex, kindIndex)],
+                                )}
+                                aria-describedby={describedBy(
+                                  sectionKindField(sectionIndex, kindIndex),
+                                  true,
+                                )}
                                 type="text" />{/snippet}
+                            {#snippet info()}Nostr event kind number from 0 to 39,999.{/snippet}
                           </Field>
-                          <Field error={errors[sectionSubtypeField(sectionIndex, kindIndex)]}>
+                          <Field
+                            for={controlId(sectionSubtypeField(sectionIndex, kindIndex))}
+                            error={errors[sectionSubtypeField(sectionIndex, kindIndex)]}>
                             {#snippet label()}
                               <p>Subtype</p>
                               <Tooltip content={SUBTYPE_HELP} class="inline-flex">
@@ -2982,6 +3231,7 @@
                               </Tooltip>
                             {/snippet}
                             {#snippet input()}<input
+                                id={controlId(sectionSubtypeField(sectionIndex, kindIndex))}
                                 value={kindDraft.subtype}
                                 maxlength="20"
                                 class="input input-sm input-bordered w-full text-sm sm:input-md sm:text-base {errors[
@@ -2993,7 +3243,16 @@
                                   requestSectionKindUpdate(sectionIndex, kindIndex, {
                                     subtype: event.currentTarget.value,
                                   })}
+                                aria-invalid={Boolean(
+                                  errors[sectionSubtypeField(sectionIndex, kindIndex)],
+                                )}
+                                aria-describedby={describedBy(
+                                  sectionSubtypeField(sectionIndex, kindIndex),
+                                  true,
+                                )}
                                 type="text" />{/snippet}
+                            {#snippet info()}Optional lowercase qualifier using letters and dashes,
+                              up to 20 characters.{/snippet}
                           </Field>
                           <div class="flex sm:col-span-2 lg:col-span-1">
                             <Button
@@ -3072,43 +3331,57 @@
             </div>
           </div>
           <div class="grid gap-4 md:grid-cols-2">
-            <Field error={errors.primaryRelay}>
+            <Field for={controlId("primaryRelay")} error={errors.primaryRelay}>
               {#snippet label()}<p>
                   Primary community relay <span class="text-primary">(required)</span>
                 </p>{/snippet}
               {#snippet input()}<input
+                  id={controlId("primaryRelay")}
                   bind:value={primaryRelay}
                   class="input input-bordered w-full {errors.primaryRelay ? 'input-error' : ''}"
                   onblur={() => validateField("primaryRelay")}
+                  aria-invalid={Boolean(errors.primaryRelay)}
+                  aria-describedby={describedBy("primaryRelay", true)}
                   type="url"
                   placeholder="wss://relay.example.com" />{/snippet}
+              {#snippet info()}Secure wss:// URL. A trailing slash is optional; BudaBit formats it
+                automatically.{/snippet}
             </Field>
-            <Field error={errors.extraRelays}>
+            <Field for={controlId("extraRelays")} error={errors.extraRelays}>
               {#snippet label()}<p>
                   Extra relays <span class="opacity-60">(optional)</span>
                 </p>{/snippet}
               {#snippet input()}<textarea
+                  id={controlId("extraRelays")}
                   bind:value={extraRelays}
                   class="textarea textarea-bordered {errors.extraRelays ? 'textarea-error' : ''}"
                   onblur={() => validateField("extraRelays")}
+                  aria-invalid={Boolean(errors.extraRelays)}
+                  aria-describedby={describedBy("extraRelays", true)}
                   rows="2"
-                  placeholder="One relay per line"></textarea>
+                  placeholder="wss://relay-two.example.com"></textarea>
                 >{/snippet}
+              {#snippet info()}One wss:// URL per line, with or without a trailing slash. Maximum 20
+                relays total.{/snippet}
             </Field>
             <div class="space-y-3">
-              <Field error={errors.blossomServers}>
+              <Field for={controlId("blossomServers")} error={errors.blossomServers}>
                 {#snippet label()}<p>
                     Blossom servers <span class="opacity-60">(optional)</span>
                   </p>{/snippet}
                 {#snippet input()}<textarea
+                    id={controlId("blossomServers")}
                     bind:value={blossomServers}
                     class="textarea textarea-bordered {errors.blossomServers
                       ? 'textarea-error'
                       : ''}"
                     onblur={() => validateField("blossomServers")}
+                    aria-invalid={Boolean(errors.blossomServers)}
+                    aria-describedby={describedBy("blossomServers", true)}
                     rows="2"
-                    placeholder="One server per line"></textarea>
+                    placeholder="https://blossom.example.com"></textarea>
                   >{/snippet}
+                {#snippet info()}One public https:// media server URL per line. Maximum 20 servers.{/snippet}
               </Field>
               <div
                 class="rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm leading-relaxed text-base-content">
@@ -3124,27 +3397,37 @@
                   rel="noopener noreferrer">Blossom server implementation</a>
               </div>
             </div>
-            <Field error={errors.mints}>
+            <Field for={controlId("mints")} error={errors.mints}>
               {#snippet label()}<p>Mints <span class="opacity-60">(optional)</span></p>{/snippet}
               {#snippet input()}<textarea
+                  id={controlId("mints")}
                   bind:value={mints}
                   class="textarea textarea-bordered {errors.mints ? 'textarea-error' : ''}"
                   onblur={() => validateField("mints")}
+                  aria-invalid={Boolean(errors.mints)}
+                  aria-describedby={describedBy("mints", true)}
                   rows="2"
                   placeholder="https://mint.example.com cashu"></textarea>
                 >{/snippet}
+              {#snippet info()}One https:// mint URL per line, optionally followed by a short type
+                such as cashu. Maximum 20.{/snippet}
             </Field>
-            <Field error={errors.graspServers}>
+            <Field for={controlId("graspServers")} error={errors.graspServers}>
               {#snippet label()}<p>
                   GRASP servers <span class="opacity-60">(optional)</span>
                 </p>{/snippet}
               {#snippet input()}<textarea
+                  id={controlId("graspServers")}
                   bind:value={graspServers}
                   class="textarea textarea-bordered {errors.graspServers ? 'textarea-error' : ''}"
                   onblur={() => validateField("graspServers")}
+                  aria-invalid={Boolean(errors.graspServers)}
+                  aria-describedby={describedBy("graspServers", true)}
                   rows="2"
                   placeholder="wss://grasp.example.com"></textarea>
                 >{/snippet}
+              {#snippet info()}One secure wss:// GRASP endpoint per line. A trailing slash is
+                optional; maximum 20.{/snippet}
             </Field>
           </div>
           <details class="mt-5 rounded-2xl border border-base-300 bg-base-200/40 p-4 sm:p-5">
@@ -3183,51 +3466,77 @@
                   {/if}
                 </div>
                 <div class="grid gap-4 md:grid-cols-2">
-                  <Field error={errors.emailDigestServicePubkey}>
+                  <Field
+                    for={controlId("emailDigestServicePubkey")}
+                    error={errors.emailDigestServicePubkey}>
                     {#snippet label()}<p>Service pubkey</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("emailDigestServicePubkey")}
                         bind:value={emailDigestServicePubkey}
                         class="input input-bordered w-full {errors.emailDigestServicePubkey
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("emailDigestServicePubkey")}
+                        aria-invalid={Boolean(errors.emailDigestServicePubkey)}
+                        aria-describedby={describedBy("emailDigestServicePubkey", true)}
                         type="text"
                         spellcheck="false"
                         placeholder="64-character hex pubkey" />{/snippet}
+                    {#snippet info()}The provider's 64-character hexadecimal Nostr public key.{/snippet}
                   </Field>
-                  <Field error={errors.emailDigestRequestRelay}>
+                  <Field
+                    for={controlId("emailDigestRequestRelay")}
+                    error={errors.emailDigestRequestRelay}>
                     {#snippet label()}<p>Request/status relay</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("emailDigestRequestRelay")}
                         bind:value={emailDigestRequestRelay}
                         class="input input-bordered w-full {errors.emailDigestRequestRelay
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("emailDigestRequestRelay")}
+                        aria-invalid={Boolean(errors.emailDigestRequestRelay)}
+                        aria-describedby={describedBy("emailDigestRequestRelay", true)}
                         type="url"
                         placeholder="wss://digest.example.com" />{/snippet}
+                    {#snippet info()}Secure relay used for provider requests and delivery status.{/snippet}
                   </Field>
-                  <Field error={errors.emailDigestHandlerAddress}>
+                  <Field
+                    for={controlId("emailDigestHandlerAddress")}
+                    error={errors.emailDigestHandlerAddress}>
                     {#snippet label()}<p>Handler address</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("emailDigestHandlerAddress")}
                         bind:value={emailDigestHandlerAddress}
                         class="input input-bordered w-full {errors.emailDigestHandlerAddress
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("emailDigestHandlerAddress")}
+                        aria-invalid={Boolean(errors.emailDigestHandlerAddress)}
+                        aria-describedby={describedBy("emailDigestHandlerAddress", true)}
                         type="text"
                         spellcheck="false"
                         placeholder="31990:<handler pubkey>:<id>" />{/snippet}
+                    {#snippet info()}Address format: 31990, provider pubkey, and non-empty
+                      identifier separated by colons.{/snippet}
                   </Field>
-                  <Field error={errors.emailDigestHandlerRelay}>
+                  <Field
+                    for={controlId("emailDigestHandlerRelay")}
+                    error={errors.emailDigestHandlerRelay}>
                     {#snippet label()}<p>Handler relay</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("emailDigestHandlerRelay")}
                         bind:value={emailDigestHandlerRelay}
                         class="input input-bordered w-full {errors.emailDigestHandlerRelay
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("emailDigestHandlerRelay")}
+                        aria-invalid={Boolean(errors.emailDigestHandlerRelay)}
+                        aria-describedby={describedBy("emailDigestHandlerRelay", true)}
                         type="url"
                         placeholder="wss://handlers.example.com" />{/snippet}
+                    {#snippet info()}Secure relay where the provider's handler announcement is
+                      published.{/snippet}
                   </Field>
                 </div>
               </div>
@@ -3249,51 +3558,77 @@
                   {/if}
                 </div>
                 <div class="grid gap-4 md:grid-cols-2">
-                  <Field error={errors.communityAlertServicePubkey}>
+                  <Field
+                    for={controlId("communityAlertServicePubkey")}
+                    error={errors.communityAlertServicePubkey}>
                     {#snippet label()}<p>Service pubkey</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("communityAlertServicePubkey")}
                         bind:value={communityAlertServicePubkey}
                         class="input input-bordered w-full {errors.communityAlertServicePubkey
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("communityAlertServicePubkey")}
+                        aria-invalid={Boolean(errors.communityAlertServicePubkey)}
+                        aria-describedby={describedBy("communityAlertServicePubkey", true)}
                         type="text"
                         spellcheck="false"
                         placeholder="64-character hex pubkey" />{/snippet}
+                    {#snippet info()}The provider's 64-character hexadecimal Nostr public key.{/snippet}
                   </Field>
-                  <Field error={errors.communityAlertRequestRelay}>
+                  <Field
+                    for={controlId("communityAlertRequestRelay")}
+                    error={errors.communityAlertRequestRelay}>
                     {#snippet label()}<p>Request/status relay</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("communityAlertRequestRelay")}
                         bind:value={communityAlertRequestRelay}
                         class="input input-bordered w-full {errors.communityAlertRequestRelay
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("communityAlertRequestRelay")}
+                        aria-invalid={Boolean(errors.communityAlertRequestRelay)}
+                        aria-describedby={describedBy("communityAlertRequestRelay", true)}
                         type="url"
                         placeholder="wss://alerts.example.com" />{/snippet}
+                    {#snippet info()}Secure relay used for provider requests and delivery status.{/snippet}
                   </Field>
-                  <Field error={errors.communityAlertHandlerAddress}>
+                  <Field
+                    for={controlId("communityAlertHandlerAddress")}
+                    error={errors.communityAlertHandlerAddress}>
                     {#snippet label()}<p>Handler address</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("communityAlertHandlerAddress")}
                         bind:value={communityAlertHandlerAddress}
                         class="input input-bordered w-full {errors.communityAlertHandlerAddress
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("communityAlertHandlerAddress")}
+                        aria-invalid={Boolean(errors.communityAlertHandlerAddress)}
+                        aria-describedby={describedBy("communityAlertHandlerAddress", true)}
                         type="text"
                         spellcheck="false"
                         placeholder="31990:<handler pubkey>:<id>" />{/snippet}
+                    {#snippet info()}Address format: 31990, provider pubkey, and non-empty
+                      identifier separated by colons.{/snippet}
                   </Field>
-                  <Field error={errors.communityAlertHandlerRelay}>
+                  <Field
+                    for={controlId("communityAlertHandlerRelay")}
+                    error={errors.communityAlertHandlerRelay}>
                     {#snippet label()}<p>Handler relay</p>{/snippet}
                     {#snippet input()}<input
+                        id={controlId("communityAlertHandlerRelay")}
                         bind:value={communityAlertHandlerRelay}
                         class="input input-bordered w-full {errors.communityAlertHandlerRelay
                           ? 'input-error'
                           : ''}"
                         onblur={() => validateField("communityAlertHandlerRelay")}
+                        aria-invalid={Boolean(errors.communityAlertHandlerRelay)}
+                        aria-describedby={describedBy("communityAlertHandlerRelay", true)}
                         type="url"
                         placeholder="wss://handlers.example.com" />{/snippet}
+                    {#snippet info()}Secure relay where the provider's handler announcement is
+                      published.{/snippet}
                   </Field>
                 </div>
               </div>
@@ -3307,46 +3642,70 @@
           <strong class="text-lg">Policy and location</strong>
           <p class="mt-2 text-sm opacity-65">Optional metadata for rules or regional context.</p>
           <div class="mt-5 space-y-4">
-            <Field error={errors.tosRef}>
+            <Field for={controlId("tosRef")} error={errors.tosRef}>
               {#snippet label()}<p>
                   Terms reference <span class="opacity-60">(optional)</span>
                 </p>{/snippet}
               {#snippet input()}<input
+                  id={controlId("tosRef")}
                   bind:value={tosRef}
                   class="input input-bordered w-full {errors.tosRef ? 'input-error' : ''}"
                   onblur={() => validateField("tosRef")}
+                  aria-invalid={Boolean(errors.tosRef)}
+                  aria-describedby={describedBy("tosRef", true)}
                   type="text"
-                  placeholder="event id, URL, or policy ref" />{/snippet}
+                  placeholder="64-character event ID or 30023:<pubkey>:<id>" />{/snippet}
+              {#snippet info()}Reference a Nostr policy using a 64-character event ID or
+                kind:pubkey:identifier address.{/snippet}
             </Field>
-            <Field error={errors.tosRelay}>
+            <Field for={controlId("tosRelay")} error={errors.tosRelay}>
               {#snippet label()}<p>
                   Terms relay <span class="opacity-60">(optional)</span>
                 </p>{/snippet}
               {#snippet input()}<input
+                  id={controlId("tosRelay")}
                   bind:value={tosRelay}
                   class="input input-bordered w-full {errors.tosRelay ? 'input-error' : ''}"
                   onblur={() => validateField("tosRelay")}
-                  type="url" />{/snippet}
+                  aria-invalid={Boolean(errors.tosRelay)}
+                  aria-describedby={describedBy("tosRelay", true)}
+                  type="url"
+                  placeholder="wss://relay.example.com" />{/snippet}
+              {#snippet info()}Optional wss:// relay hint for finding the referenced policy. A
+                trailing slash is accepted.{/snippet}
             </Field>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-              <Field>
+              <Field for={controlId("location")} error={errors.location}>
                 {#snippet label()}<p>
                     Location <span class="opacity-60">(optional)</span>
                   </p>{/snippet}
                 {#snippet input()}<input
+                    id={controlId("location")}
                     bind:value={location}
-                    class="input input-bordered w-full"
+                    class="input input-bordered w-full {errors.location ? 'input-error' : ''}"
+                    onblur={() => validateField("location")}
+                    aria-invalid={Boolean(errors.location)}
+                    aria-describedby={describedBy("location", true)}
+                    maxlength="256"
+                    placeholder="Berlin, Germany"
                     type="text" />{/snippet}
+                {#snippet info()}Human-readable region or place, up to 256 characters.{/snippet}
               </Field>
-              <Field error={errors.geohash}>
+              <Field for={controlId("geohash")} error={errors.geohash}>
                 {#snippet label()}<p>
                     Geohash <span class="opacity-60">(optional)</span>
                   </p>{/snippet}
                 {#snippet input()}<input
+                    id={controlId("geohash")}
                     bind:value={geohash}
                     class="input input-bordered w-full {errors.geohash ? 'input-error' : ''}"
                     onblur={() => validateField("geohash")}
+                    aria-invalid={Boolean(errors.geohash)}
+                    aria-describedby={describedBy("geohash", true)}
+                    placeholder="u33dc1"
                     type="text" />{/snippet}
+                {#snippet info()}Optional 1-12 character base32 geohash. A geo: prefix and uppercase
+                  input are accepted.{/snippet}
               </Field>
             </div>
           </div>
@@ -3386,12 +3745,7 @@
           <Button
             class="btn btn-primary flex-1"
             type="submit"
-            disabled={disabled ||
-              !$pubkey ||
-              !name.trim() ||
-              !primaryRelay.trim() ||
-              pictureUploading ||
-              sectionDrafts.length === 0}>
+            disabled={disabled || pictureUploading}>
             {#if loading}<span class="loading loading-spinner mr-2"></span>{/if}
             {actionLabel}
           </Button>

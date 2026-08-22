@@ -293,7 +293,15 @@
 
   $effect(() => {
     const currentPubkey = $pubkey || ""
-    const inputKey = JSON.stringify([routeCommunity, currentPubkey])
+    const activeSession = $activeExactCommunitySession
+    const definitionEventId =
+      activeSession &&
+      exactCommunity &&
+      activeSession.definition.ownerPubkey === exactCommunity.ownerPubkey &&
+      activeSession.definition.communityId === exactCommunity.communityId
+        ? activeSession.definitionEventId || ""
+        : ""
+    const inputKey = JSON.stringify([routeCommunity, currentPubkey, definitionEventId])
 
     if (communityBootstrapInputKey === inputKey) return
     communityBootstrapInputKey = inputKey
@@ -304,7 +312,7 @@
         return
       }
 
-      const session = makeExactCommunitySession(exactCommunity)
+      const session = makeExactCommunitySession(exactCommunity, definitionEventId || undefined)
       const communityKey = getCommunityBootstrapKey(session, currentPubkey)
 
       // Immediately clear any stale error left over from a previous community

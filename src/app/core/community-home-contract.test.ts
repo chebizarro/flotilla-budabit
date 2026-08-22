@@ -78,4 +78,14 @@ describe("canonical community home contracts", () => {
     expect(admin).toContain("community owner pubkey")
     expect(admin).not.toContain("this community pubkey")
   })
+
+  it("restarts bootstrap when the active community definition is replaced", () => {
+    expect(communityLayout).toContain("activeSession.definitionEventId")
+    expect(communityLayout).toContain(
+      "JSON.stringify([routeCommunity, currentPubkey, definitionEventId])",
+    )
+    expect(communityLayout).toContain(
+      "makeExactCommunitySession(exactCommunity, definitionEventId || undefined)",
+    )
+  })
 })

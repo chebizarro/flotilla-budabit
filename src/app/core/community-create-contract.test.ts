@@ -71,4 +71,16 @@ describe("Communikeys create source contract", () => {
     expect(page).toContain("<CommunityCreate {operationId} />")
     expect(page).not.toContain("existingCommunityDefinition")
   })
+
+  it("surfaces community setting errors at their fields without protocol jargon", () => {
+    const component = readProjectFile("../components/CommunityCreate.svelte")
+
+    expect(component).toContain("normalizeDefinitionRelay")
+    expect(component).toContain("Review {Object.keys(errors).length}")
+    expect(component).toContain("focusFirstError")
+    expect(component).toContain("novalidate")
+    expect(component).toContain("aria-invalid={Boolean(errors.primaryRelay)}")
+    expect(component).toContain("A trailing slash is optional")
+    expect(component).not.toContain("A valid normalized community relay is required")
+  })
 })

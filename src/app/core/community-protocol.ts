@@ -385,7 +385,10 @@ const parseAddress = (value: string, requiredKind?: number) => {
   return {kind, pubkey, identifier, address: `${kind}:${pubkey}:${identifier}`}
 }
 
-const parseReference = (value: string) => LOWER_HEX_64.test(value) || Boolean(parseAddress(value))
+export const isCommunityDefinitionReference = (value: string) =>
+  LOWER_HEX_64.test(value) || Boolean(parseAddress(value))
+
+const parseReference = isCommunityDefinitionReference
 
 const exactTag = (tag: string[], size: number) => tag.length === size
 const getTags = (tags: string[][], name: string) => tags.filter(tag => tag[0] === name)
@@ -771,11 +774,8 @@ export const buildCommunityDefinition = (
   if (!communityId) throw new Error("Invalid community ID.")
   if (params.relays.length > 20) throw new Error("Too many community relays.")
   const relays = normalizeRelayList(params.relays, 20)
-  if (
-    relays.length === 0 ||
-    params.relays.some(value => normalizeCommunityRelay(value) !== value)
-  ) {
-    throw new Error("A valid normalized community relay is required.")
+  if (relays.length === 0 || params.relays.some(value => !normalizeCommunityRelay(value))) {
+    throw new Error("A valid community relay URL is required.")
   }
   if (params.sections.length === 0) throw new Error("A community section is required.")
 
@@ -817,7 +817,7 @@ export const buildCommunityDefinition = (
   const graspServers = new Set<string>()
   for (const value of params.graspServers || []) {
     const normalized = normalizeCommunityRelay(value)
-    if (!normalized || normalized !== value) throw new Error("Invalid GRASP URL.")
+    if (!normalized) throw new Error("Invalid GRASP URL.")
     if (graspServers.has(normalized)) continue
     graspServers.add(normalized)
     tags.push(["grasp", normalized])
@@ -836,10 +836,7 @@ export const buildCommunityDefinition = (
   }
   if (params.terms) {
     const relay = params.terms.relay ? normalizeCommunityRelay(params.terms.relay) : undefined
-    if (
-      !parseReference(params.terms.reference) ||
-      (params.terms.relay && (!relay || relay !== params.terms.relay))
-    ) {
+    if (!parseReference(params.terms.reference) || (params.terms.relay && !relay)) {
       throw new Error("Invalid terms reference.")
     }
     tags.push(relay ? ["tos", params.terms.reference, relay] : ["tos", params.terms.reference])

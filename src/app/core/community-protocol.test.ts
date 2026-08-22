@@ -157,6 +157,41 @@ describe("Communikeys definitions", () => {
     expect(definition.relays).toEqual(["wss://relay.example"])
   })
 
+  it("accepts community relay inputs with or without a trailing slash", () => {
+    const template = buildCommunityDefinition({
+      communityId,
+      name: "Buda Builders",
+      relays: ["wss://relay.example/", "wss://relay-two.example"],
+      graspServers: ["wss://grasp.example/"],
+      terms: {reference: "c".repeat(64), relay: "wss://terms.example/"},
+      sections: [section],
+    })
+
+    expect(template.tags).toContainEqual(["r", "wss://relay.example"])
+    expect(template.tags).toContainEqual(["r", "wss://relay-two.example"])
+    expect(template.tags).toContainEqual(["grasp", "wss://grasp.example"])
+    expect(template.tags).toContainEqual(["tos", "c".repeat(64), "wss://terms.example"])
+  })
+
+  it("rejects malformed or insecure community relay inputs", () => {
+    for (const relay of [
+      "ws://relay.example",
+      "https://relay.example",
+      "wss://user:password@relay.example",
+      "wss://relay.example/#fragment",
+      "not a relay",
+    ]) {
+      expect(() =>
+        buildCommunityDefinition({
+          communityId,
+          name: "Buda Builders",
+          relays: [relay],
+          sections: [section],
+        }),
+      ).toThrow("A valid community relay URL is required.")
+    }
+  })
+
   it("round-trips typed mint, terms, and service declarations", () => {
     const template = buildCommunityDefinition({
       communityId,
