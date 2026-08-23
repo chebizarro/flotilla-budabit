@@ -253,7 +253,7 @@ test("uses live list replacements and cached roots during warm navigation", asyn
     {pubkey: TEST_PUBKEYS.devUser, secret: DEV_SECRET},
   )
 
-  let listLiveSubscriptions = 0
+  let scopedListRequests = 0
   let stalledRootRequests = 0
   const stalledRelay = new MockRelay({
     subscriptionOutcomesByRelay: {[`${relayUrl}/`]: "stall"},
@@ -262,12 +262,12 @@ test("uses live list replacements and cached roots during warm navigation", asyn
         filters.some(
           filter =>
             filter.kinds?.includes(30617) &&
-            filter.limit === 100 &&
-            !filter.authors &&
+            filter.limit === 18 &&
+            filter.authors?.includes(TEST_PUBKEYS.devUser) &&
             !filter["#d"],
         )
       ) {
-        listLiveSubscriptions += 1
+        scopedListRequests += 1
       }
       if (
         url === `${relayUrl}/` &&
@@ -289,7 +289,7 @@ test("uses live list replacements and cached roots during warm navigation", asyn
   await expect(listPage.getByText("Cached warm repository", {exact: true})).toBeVisible({
     timeout: 10_000,
   })
-  await expect.poll(() => listLiveSubscriptions).toBeGreaterThan(0)
+  await expect.poll(() => scopedListRequests).toBeGreaterThan(0)
 
   await stalledRelay.injectEvents([liveAnnouncement])
   await expect(listPage.getByText("Live replacement repository", {exact: true})).toBeVisible()

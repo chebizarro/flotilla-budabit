@@ -100,6 +100,39 @@ No controlled production/mobile timing, request-count trace, long-task profile,
 or input-latency comparison was captured. These entries therefore use `Landed`
 and must not be promoted to `Validated` from test evidence alone.
 
+## Git Page Loading Batch
+
+Landed 2026-08-23 on `performance-git-page-loading`. Status: `Landed`, not
+`Validated`.
+
+The rendered-page loading implementation is represented by these commits:
+
+- `9045bd551`: active-mode Git list startup and root preference suppression.
+- `0dcddba92`: abortable, incremental repository-list cache hydration.
+- `001461644`: explicit 18-card source/render scope and bounded card projection.
+- `65c51beda`: rendered-card star and collection request ownership.
+- `2c9f625d6`: batched profile enrichment and repository-scoped verification.
+
+The list no longer starts broad kind-30617 discovery. Cache readiness governs
+truthful empty states while scoped network work runs independently. Repository
+sources and enrichment use the committed rendered page, and **Show more
+repositories** is the only action that expands its 18-card increments. No
+viewport observer, scroll trigger, infinite loader, or virtualization dependency
+was added.
+
+Integrated verification passed 13 focused Vitest files with 105 tests,
+`pnpm check`, `pnpm e2e:check`, affected-file Prettier checks, and
+`git diff --check`. Twenty-three Git list/detail/search, anonymous reload, and
+offline-cache Playwright tests passed sequentially. Positive community-mode
+browser coverage remains limited by the pre-existing mock-fixture gap recorded
+for the previous batch; community request ownership is covered by focused source
+and state tests.
+
+No controlled production/mobile timing, request-count trace, long-task profile,
+or input-latency comparison was captured. The batch therefore records bounded
+ownership and correctness evidence only and must not be promoted to `Validated`
+without a documented workload and measurements.
+
 ## Finding 001: Persisted State Hydration Blocks The Entire UI
 
 Observed 2026-08-23 at `217e23abb`. Status: `Observed`.
@@ -822,6 +855,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `9045bd551`, `001461644`: fix landed. Broad list discovery was
+  removed; active personal/community/account sources use explicit rendered-page
+  limits, search pauses when that page is filled, and only **Show more
+  repositories** expands source and render scope. Verified by focused ownership
+  tests and 23 integrated Playwright cases; no production timing was measured.
 
 ## Finding 013: Git Cache Hydration Is Neither Incremental Nor A Real Time Bound
 
@@ -883,6 +921,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `9045bd551`, `0dcddba92`: fix landed. Scoped network requests no
+  longer wait for cache hydration, list hydration runs once per mount, processes
+  announcements newest-first in batches of eight, yields between batches,
+  honors abort, and recalculates affected repository metadata once per pass.
+  Mobile input latency and near-policy-limit wall time remain unmeasured.
 
 ## Finding 014: Stars And Repository Collections Load Outside Their Visible Mode
 
@@ -935,6 +978,12 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `65c51beda`: fix landed. Personal/Starred retains its required
+  star-index source load; other modes request stars only for committed rendered
+  addresses and only newly added addresses after pagination. Equivalent requests
+  share in-flight work, and timeout/scope teardown aborts underlying loads.
+  Collection phases wait for committed cards and share rendered-scope teardown;
+  protocol target wrappers still require broad writable-community history.
 
 ## Finding 015: Repository Card Profile Enrichment Fans Out Per Person
 
@@ -982,6 +1031,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `2c9f625d6`: fix landed. Basic cards continue to use pubkey
+  placeholders with component profile loading disabled. Current rendered-card
+  identities are deduplicated, grouped by normalized relay set, loaded in finite
+  kind-0 batches at concurrency three, and canceled with obsolete scope. Owners
+  complete before community-owner and co-maintainer batches begin.
 
 ## Finding 016: Maintainer Verification Is Eager And Uses Incorrect Relay Grouping
 
@@ -1035,6 +1089,12 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: correctness and performance finding recorded; no fix implemented yet.
+- 2026-08-23 `2c9f625d6`: fix landed. Owner-only cards are skipped. Every
+  repository's PR and applied-status filters now stay on that repository's own
+  normalized relay group, including later-page relay sets, with concurrency
+  three and cached-positive preservation for partial outcomes. Evidence is not
+  yet persisted by announcement/evidence watermark, and no production request
+  trace was captured.
 
 ## Finding 017: Repository Cards Repeat Projection Work And Retain Search Contexts
 
@@ -1090,6 +1150,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `001461644`: partial fix landed. Stable announcement data now uses
+  a bounded projection model reused by rendering and enrichment, account results
+  share the rendered cap, and search card arrays use a four-entry LRU while
+  preserving mounted survivors. Community stargazer reactions are still scanned
+  per rendered card; projection recomputation counts remain unmeasured.
 
 ## Finding 018: Git Navigation Cleanup Can Permanently Stop A Mounted Page
 
@@ -1189,6 +1254,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `9045bd551`: fix landed. Exact `/git` startup suppresses the root
+  full authenticated community-preference pipeline while retaining the Git fast
+  preferred-community list. Selected-community authority/report work remains
+  mode-owned. Positive community browser fixtures remain a documented baseline
+  gap, so this is landed rather than production-validated.
 
 ## Finding 020: Several Interaction-Only Global Services Start Eagerly
 
