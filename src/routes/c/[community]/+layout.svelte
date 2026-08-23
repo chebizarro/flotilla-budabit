@@ -145,6 +145,8 @@
   let communityHistoryRetryTimer: ReturnType<typeof setTimeout> | null = null
   let communityDeleteLoadKey = ""
   let communityDeleteLoadController: AbortController | null = null
+  let communityDeleteRetryVersion = $state(0)
+  let communityDeleteRetryTimer: ReturnType<typeof setTimeout> | null = null
   let latestCommunityDeleteSeenByKey: Record<string, number> = {}
   let communityDeleteCheckpointKey = ""
   let communityFollowUpLoadKey = ""
@@ -241,6 +243,8 @@
   }
 
   const stopCommunityDeleteLoad = () => {
+    if (communityDeleteRetryTimer) clearTimeout(communityDeleteRetryTimer)
+    communityDeleteRetryTimer = null
     communityDeleteLoadController?.abort()
     communityDeleteLoadController = null
     communityDeleteLoadKey = ""
@@ -450,11 +454,13 @@
       timeout: COMMUNITY_HISTORY_LOAD_TIMEOUT_MS,
       priority: RELAY_REQUEST_PRIORITY.community,
       signal: controller.signal,
-    }).then(result => {
-      if (communityHistoryLoadController !== controller) return
-      communityHistoryLoadController = null
+    }).then(
+      result => {
+        if (communityHistoryLoadController !== controller) return
+        communityHistoryLoadController = null
 
-      if (!result.complete && !controller.signal.aborted) {
+        if (result.complete || controller.signal.aborted) return
+
         console.warn("[community-history] Community historical discovery is incomplete", result)
         communityHistoryLoadKey = ""
         if (communityHistoryRetryTimer) clearTimeout(communityHistoryRetryTimer)
@@ -462,8 +468,20 @@
           communityHistoryRetryTimer = null
           communityHistoryRetryVersion += 1
         }, 5000)
-      }
-    })
+      },
+      error => {
+        if (controller.signal.aborted || communityHistoryLoadController !== controller) return
+
+        communityHistoryLoadController = null
+        communityHistoryLoadKey = ""
+        console.warn("[community-history] Failed to load community history", error)
+        if (communityHistoryRetryTimer) clearTimeout(communityHistoryRetryTimer)
+        communityHistoryRetryTimer = setTimeout(() => {
+          communityHistoryRetryTimer = null
+          communityHistoryRetryVersion += 1
+        }, 5000)
+      },
+    )
   })
 
   $effect(() => {
@@ -530,21 +548,37 @@
           priority: RELAY_REQUEST_PRIORITY.community,
         }),
       ),
-    ).then(results => {
-      if (communityFollowUpLoadController !== controller) return
-      communityFollowUpLoadController = null
-      if (results.every(result => result.complete)) return
+    ).then(
+      results => {
+        if (communityFollowUpLoadController !== controller) return
+        communityFollowUpLoadController = null
+        if (results.every(result => result.complete)) return
 
-      communityFollowUpLoadKey = ""
-      if (communityFollowUpRetryTimer) clearTimeout(communityFollowUpRetryTimer)
-      communityFollowUpRetryTimer = setTimeout(() => {
-        communityFollowUpRetryTimer = null
-        communityFollowUpRetryVersion += 1
-      }, 5000)
-    })
+        communityFollowUpLoadKey = ""
+        if (communityFollowUpRetryTimer) clearTimeout(communityFollowUpRetryTimer)
+        communityFollowUpRetryTimer = setTimeout(() => {
+          communityFollowUpRetryTimer = null
+          communityFollowUpRetryVersion += 1
+        }, 5000)
+      },
+      error => {
+        if (controller.signal.aborted || communityFollowUpLoadController !== controller) return
+
+        communityFollowUpLoadController = null
+        communityFollowUpLoadKey = ""
+        console.warn("[community-follow-up] Failed to load community follow-up events", error)
+        if (communityFollowUpRetryTimer) clearTimeout(communityFollowUpRetryTimer)
+        communityFollowUpRetryTimer = setTimeout(() => {
+          communityFollowUpRetryTimer = null
+          communityFollowUpRetryVersion += 1
+        }, 5000)
+      },
+    )
   })
 
   $effect(() => {
+    void communityDeleteRetryVersion
+
     if (!communityBackgroundHydrationReady || activeRoomLoadPending) {
       stopCommunityDeleteLoad()
       return
@@ -592,11 +626,27 @@
       kinds: communityDeleteKinds,
       since,
       signal: controller.signal,
-    }).then(latest => {
-      if (latest > (latestCommunityDeleteSeenByKey[deleteSeenKey] || 0)) {
-        latestCommunityDeleteSeenByKey[deleteSeenKey] = latest
-      }
-    })
+    }).then(
+      latest => {
+        if (communityDeleteLoadController !== controller) return
+        communityDeleteLoadController = null
+        if (latest > (latestCommunityDeleteSeenByKey[deleteSeenKey] || 0)) {
+          latestCommunityDeleteSeenByKey[deleteSeenKey] = latest
+        }
+      },
+      error => {
+        if (controller.signal.aborted || communityDeleteLoadController !== controller) return
+
+        communityDeleteLoadController = null
+        communityDeleteLoadKey = ""
+        console.warn("[community-deletes] Failed to load community delete events", error)
+        if (communityDeleteRetryTimer) clearTimeout(communityDeleteRetryTimer)
+        communityDeleteRetryTimer = setTimeout(() => {
+          communityDeleteRetryTimer = null
+          communityDeleteRetryVersion += 1
+        }, 5000)
+      },
+    )
 
     return () => controller.abort()
   })

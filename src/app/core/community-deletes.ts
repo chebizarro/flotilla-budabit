@@ -66,7 +66,7 @@ export const hydrateCommunityDeleteEvents = async ({
         latestDeleteSeen = event.created_at
       }
     },
-  }).catch(() => undefined)
+  })
 
   return latestDeleteSeen
 }

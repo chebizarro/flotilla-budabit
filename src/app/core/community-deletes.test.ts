@@ -83,4 +83,18 @@ describe("community delete hydration", () => {
     expect(publish).toHaveBeenCalledTimes(1)
     expect(publish).toHaveBeenCalledWith(admitted)
   })
+
+  it("propagates request failures so route ownership can retry", async () => {
+    const failure = new Error("relay unavailable")
+    request.mockRejectedValueOnce(failure)
+
+    await expect(
+      hydrateCommunityDeleteEvents({
+        relays: ["wss://relay.example"],
+        community,
+        kinds: [1],
+        since: 4,
+      }),
+    ).rejects.toBe(failure)
+  })
 })
