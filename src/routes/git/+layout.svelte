@@ -1,6 +1,5 @@
 <script lang="ts">
   import {page} from "$app/stores"
-  import {beforeNavigate} from "$app/navigation"
   import type {Snippet} from "svelte"
   import {setContext} from "svelte"
   import {writable} from "svelte/store"
@@ -24,10 +23,6 @@
   }
 
   setContext(REPO_LIST_HYDRATION_READY_KEY, repoListHydrationReady)
-
-  beforeNavigate(navigation => {
-    if (navigation.to?.url.pathname !== "/git") stopRepoListPreload()
-  })
 
   $effect(() => {
     const isRepositoryList = $page.route.id === "/git"

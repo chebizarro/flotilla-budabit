@@ -48,7 +48,7 @@
     type RepoPublishTransport,
   } from "@app/core/git-commands"
   import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
-  import {beforeNavigate, goto} from "$app/navigation"
+  import {goto} from "$app/navigation"
   import {getContext, onMount, onDestroy, untrack} from "svelte"
   import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
@@ -3483,10 +3483,6 @@
     }
     repoLoadTimeoutTimers.clear()
   }
-
-  beforeNavigate(navigation => {
-    if (navigation.to?.url.pathname !== "/git") stopGitPageReadWork()
-  })
 
   onDestroy(() => {
     stopGitPageReadWork()
