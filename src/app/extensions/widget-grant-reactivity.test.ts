@@ -9,6 +9,7 @@ describe("widget grant reactivity contracts", () => {
     const bridge = readProjectFile("./bridge.ts")
     const frame = readProjectFile("../components/WidgetFrame.svelte")
     const home = readProjectFile("../components/community/CommunityHomeWidgetSlot.svelte")
+    const recovery = readProjectFile("../components/community/CommunityHomeWidgetRecovery.svelte")
     const modal = readProjectFile("../components/WidgetModal.svelte")
     const launcher = readProjectFile("../components/community/CommunityWidgetSlotLaunchers.svelte")
 
@@ -21,39 +22,58 @@ describe("widget grant reactivity contracts", () => {
     expect(frame).toContain("delete publicContext.communityRuntimeContext")
     expect(types).toContain("authorityEvidenceSettled?: boolean")
     expect(home).toContain("authorityEvidenceSettled: true")
-    expect(home).toContain("getCommunitySectionAuthorityPubkeys")
-    expect(home).not.toContain("getSectionAuthorityPubkeysWithPendingRefs")
+    expect(recovery).toContain("getCommunitySectionAuthorityPubkeys")
+    expect(recovery).not.toContain("getSectionAuthorityPubkeysWithPendingRefs")
     expect(modal).toContain("{communityRuntimeContextProvider}")
     expect(launcher).toContain("communityRuntimeContextProvider: getCurrentCommunityRuntimeContext")
     expect(launcher).not.toContain("...(communityRuntimeContext ? {communityRuntimeContext} : {})")
   })
 
   it("keys home and prompt curation by current permission evidence", () => {
-    const home = readProjectFile("../components/community/CommunityHomeWidgetSlot.svelte")
+    const recovery = readProjectFile("../components/community/CommunityHomeWidgetRecovery.svelte")
     const prompt = readProjectFile("../components/community/CommunityExtensionsPrompt.svelte")
 
-    for (const source of [home, prompt]) {
+    for (const source of [recovery, prompt]) {
       expect(source).toContain("getCommunityWidgetCurationEvidenceKey")
       expect(source).toContain("definitionEventId: definition.event.id")
       expect(source).toContain("evidenceKey: evidence.key")
       expect(source).toContain("profileListEvents: evidence.profileListEvents")
       expect(source).toContain("reportState: evidence.reportState")
-      expect(source).toContain("lastLoadEvidenceKey !== evidence.key")
     }
 
-    expect(home).toContain(
+    expect(recovery).toContain("lastEvidenceKey !== evidence.key")
+    expect(prompt).toContain("lastLoadEvidenceKey !== evidence.key")
+    expect(recovery).toContain(
       'getLastValidatedCommunityCuratedWidgets(input, $pubkey || "", evidence.key)',
     )
-    expect(home).not.toContain("getLastValidatedCommunityCuratedWidgets(initialCurationInput)")
+    expect(recovery).not.toContain("getLastValidatedCommunityCuratedWidgets(initialCurationInput)")
   })
 
   it("keeps shared-config retries reactive to the relay-load effect", () => {
-    const home = readProjectFile("../components/community/CommunityHomeWidgetSlot.svelte")
-    const relayLoad = home.indexOf("loadCommunityEventsWithStatus(")
-    const relayLoadEffect = home.lastIndexOf("$effect(() => {", relayLoad)
+    const recovery = readProjectFile("../components/community/CommunityHomeWidgetRecovery.svelte")
+    const relayLoad = recovery.indexOf("loadCommunityEventsWithStatus(")
+    const relayLoadEffect = recovery.lastIndexOf("$effect(() => {", relayLoad)
 
     expect(relayLoad).toBeGreaterThan(-1)
     expect(relayLoadEffect).toBeGreaterThan(-1)
-    expect(home.slice(relayLoadEffect, relayLoad)).toContain("void loadRefreshNonce")
+    expect(recovery.slice(relayLoadEffect, relayLoad)).toContain("void refreshNonce")
+  })
+
+  it("keeps remote recovery and page lifecycle ownership out of each slot", () => {
+    const page = readProjectFile("../../routes/c/[community]/+page.svelte")
+    const home = readProjectFile("../components/community/CommunityHomeWidgetSlot.svelte")
+    const recovery = readProjectFile("../components/community/CommunityHomeWidgetRecovery.svelte")
+
+    expect(page.match(/<CommunityHomeWidgetRecovery/g)).toHaveLength(1)
+    expect(page.match(/recovery=\{\$homeWidgetRecovery\}/g)).toHaveLength(2)
+    expect(page).toMatch(
+      /\{#key communityPointer\.address\}[\s\S]*<CommunityHomeWidgetRecovery[\s\S]*\{\/key\}/,
+    )
+    expect(recovery).toContain("loadCachedCommunityCuratedWidgets(")
+    expect(recovery).toContain("loadCommunityEventsWithStatus(")
+    expect(recovery).toContain('window.addEventListener("pageshow"')
+    expect(home).not.toContain("loadCachedCommunityCuratedWidgets(")
+    expect(home).not.toContain("loadCommunityEventsWithStatus(")
+    expect(home).not.toContain("window.addEventListener(")
   })
 })

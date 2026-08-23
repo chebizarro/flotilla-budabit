@@ -1,5 +1,6 @@
 <script lang="ts">
   import {page} from "$app/stores"
+  import {writable} from "svelte/store"
   import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
   import {makeEvent, type Filter, type TrustedEvent} from "@welshman/util"
@@ -20,6 +21,7 @@
   import Content from "@app/components/Content.svelte"
   import CommunityExtensionsPrompt from "@app/components/community/CommunityExtensionsPrompt.svelte"
   import CommunityHomeWidgetSlot from "@app/components/community/CommunityHomeWidgetSlot.svelte"
+  import CommunityHomeWidgetRecovery from "@app/components/community/CommunityHomeWidgetRecovery.svelte"
   import CommunityRoomCreate from "@app/components/community/CommunityRoomCreate.svelte"
   import CommunityMenuButton from "@app/components/CommunityMenuButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
@@ -69,6 +71,7 @@
     isCompleteCommunityModeratorEvidence,
     type CommunityModeratorEvidenceStatus,
   } from "@app/extensions/community-home-readiness"
+  import {emptyCommunityHomeWidgetRecoveryState} from "@app/extensions/community-home-widget-recovery"
   import {notifications} from "@app/util/notifications"
   import {hasGitNotification} from "@app/util/repo-watch-notifications"
   import {pushModal} from "@app/util/modal"
@@ -82,6 +85,7 @@
   } from "@app/util/routes"
 
   const communityPointer = $derived($activeExactCommunityPointer)
+  const homeWidgetRecovery = writable(emptyCommunityHomeWidgetRecoveryState())
   const routeCommunityDefinition = $derived(
     $activeExactCommunityDefinition?.pointer.address === communityPointer?.address
       ? $activeExactCommunityDefinition
@@ -707,6 +711,15 @@
 </PageBar>
 
 <PageContent class="flex flex-col gap-2 p-2 pt-4">
+  {#if communityPointer}
+    {#key communityPointer.address}
+      <CommunityHomeWidgetRecovery
+        communityAddress={communityPointer.address}
+        relayHints={homeWidgetRelayHints}
+        ready={communityHomeExtensionsReady}
+        recoveryStore={homeWidgetRecovery} />
+    {/key}
+  {/if}
   <div class="card2 bg-alt relative flex flex-col items-center gap-4 text-left">
     {#if communityPointer}
       <div class="flex w-full justify-end gap-2">
@@ -828,6 +841,7 @@
         communityPubkey={ownerPubkey}
         communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
+        recovery={$homeWidgetRecovery}
         slotType="community-home-before-quicklinks" />
     {/key}
   {/if}
@@ -950,6 +964,7 @@
         communityPubkey={ownerPubkey}
         communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
+        recovery={$homeWidgetRecovery}
         slotType="community-home-after-quicklinks" />
     {/key}
   {/if}
