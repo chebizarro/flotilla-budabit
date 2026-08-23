@@ -35,13 +35,13 @@
   })
 </script>
 
-<SecondaryNav visibleClass="md:flex">
+<SecondaryNav visibleClass="md:flex" minWidth={768}>
   <SecondaryNavSection>
     <div class="flex items-center gap-3 px-4 py-2">
       <span class="shrink-0 whitespace-nowrap text-xs font-bold uppercase tracking-wide">
         Recent Conversations
       </span>
-      <Button class="btn btn-primary btn-square h-7 min-h-7 w-7 shrink-0 p-0" onclick={openMenu}>
+      <Button class="btn btn-square btn-primary h-7 min-h-7 w-7 shrink-0 p-0" onclick={openMenu}>
         <Icon icon={MenuDots} size={3} />
       </Button>
     </div>
