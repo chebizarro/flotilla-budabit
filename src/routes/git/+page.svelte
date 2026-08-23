@@ -432,7 +432,7 @@
   const getInitialGitCommunityPubkey = () => getInitialGitCommunityPointer()?.ownerPubkey || ""
 
   const getInitialGitModeForContext = (): GitMode =>
-    getInitialGitCommunityPointer() ? "community" : "personal"
+    getInitialGitCommunityPointer() ? "community" : getInitialGitMode()
 
   let loading = $state(true)
   let activeMode = $state<GitMode>(getInitialGitModeForContext())
@@ -518,13 +518,6 @@
     if (activeMode !== "personal" || activeTab !== "my-repos") {
       personalRepoLoadRequestId += 1
       personalRepoAnnouncementsSettled = true
-      lastLoadedPersonalRepoKey = ""
-      return
-    }
-
-    if (!$repoListHydrationReadyStore) {
-      personalRepoLoadRequestId += 1
-      personalRepoAnnouncementsSettled = false
       lastLoadedPersonalRepoKey = ""
       return
     }
@@ -1012,7 +1005,7 @@
   let repoStarsHydrationSettled = $state(false)
 
   $effect(() => {
-    if (!$pubkey) {
+    if (!$pubkey || activeMode !== "personal" || activeTab !== "bookmarks") {
       repoStarsHydrationRequestId += 1
       repoStarsHydrationSettled = true
       return
@@ -1037,7 +1030,6 @@
 
   const repos = $derived.by(() => {
     if (activeMode !== "personal" || activeTab !== "bookmarks") return undefined
-    if (!$repoListHydrationReadyStore) return undefined
     if (!hasRepoStarAddresses) return undefined
 
     const addresses = repoStarAddresses
@@ -1148,7 +1140,6 @@
   $effect(() => {
     void communityRepoRetryVersion
     if (
-      !$repoListHydrationReadyStore ||
       activeMode !== "community" ||
       activeTab !== "my-repos" ||
       !selectedCommunityAddress ||
@@ -3103,21 +3094,28 @@
     activeMode === "personal" &&
       activeTab === "bookmarks" &&
       Boolean($pubkey) &&
-      (!repoStarsHydrationSettled || $repoStarsLoading || starredRepoAnnouncementsLoading),
+      (!$repoListHydrationReadyStore ||
+        !repoStarsHydrationSettled ||
+        $repoStarsLoading ||
+        starredRepoAnnouncementsLoading),
   )
   const activeRepoDataLoading = $derived.by(() => {
     if (activeTab === "snippets" || isAccountSearch) return false
 
     if (activeMode === "personal") {
       if (!$pubkey) return false
-      if (activeTab === "my-repos") return !personalRepoAnnouncementsSettled
+      if (activeTab === "my-repos") {
+        return !$repoListHydrationReadyStore || !personalRepoAnnouncementsSettled
+      }
       if (activeTab === "bookmarks") return personalStarredReposLoading
       return false
     }
 
     if (activeMode === "community") {
       if (!selectedCommunityAddress) return false
-      if (activeTab === "my-repos") return !communityRepoAnnouncementsSettled
+      if (activeTab === "my-repos") {
+        return !$repoListHydrationReadyStore || !communityRepoAnnouncementsSettled
+      }
       if (activeTab === "bookmarks") {
         return (
           !communityTargetsSettled ||

@@ -11,13 +11,12 @@ describe("Git list navigation lifecycle", () => {
     expect(source).toMatch(/onDestroy\(\(\) => \{\s*stopGitPageReadWork\(\)/)
   })
 
-  it("stops layout preload only after the committed route id changes", () => {
+  it("starts layout hydration once and stops it on layout teardown", () => {
     const source = read("src/routes/git/+layout.svelte")
 
     expect(source).not.toContain("beforeNavigate")
     expect(source).toContain('const isRepositoryList = $page.route.id === "/git"')
-    expect(source).toMatch(/if \(!isRepositoryList\) \{\s*stopRepoListPreload\(\)/)
-    expect(source).toContain("return () => {")
-    expect(source).toContain("controller.abort()")
+    expect(source).toContain("if (!isRepositoryList || repoListPreloadStarted) return")
+    expect(source).toMatch(/onDestroy\(\(\) => \{\s*stopRepoListPreload\(\)/)
   })
 })

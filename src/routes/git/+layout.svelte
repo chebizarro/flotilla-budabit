@@ -1,11 +1,11 @@
 <script lang="ts">
   import {page} from "$app/stores"
   import type {Snippet} from "svelte"
-  import {setContext} from "svelte"
+  import {onDestroy, setContext} from "svelte"
   import {writable} from "svelte/store"
   import CommunityMenu from "@app/components/CommunityMenu.svelte"
   import {activeExactCommunityPointer} from "@app/core/community-state"
-  import {REPO_LIST_HYDRATION_READY_KEY, repoAnnouncementRelaysStore} from "@app/core/git-state"
+  import {REPO_LIST_HYDRATION_READY_KEY} from "@app/core/git-state"
   import {preloadRepositoryList} from "@app/core/repo-list-preload"
   import SecondaryNav from "@lib/components/SecondaryNav.svelte"
 
@@ -16,6 +16,7 @@
   const {children}: Props = $props()
   const repoListHydrationReady = writable(false)
   let repoListPreloadController: AbortController | null = null
+  let repoListPreloadStarted = false
 
   const stopRepoListPreload = () => {
     repoListPreloadController?.abort()
@@ -26,19 +27,13 @@
 
   $effect(() => {
     const isRepositoryList = $page.route.id === "/git"
-    const relays = $repoAnnouncementRelaysStore
 
-    repoListHydrationReady.set(false)
-    if (!isRepositoryList) {
-      stopRepoListPreload()
-      return
-    }
+    if (!isRepositoryList || repoListPreloadStarted) return
 
-    stopRepoListPreload()
+    repoListPreloadStarted = true
     const controller = new AbortController()
     repoListPreloadController = controller
     void preloadRepositoryList({
-      relays,
       signal: controller.signal,
       onHydrated: () => {
         if (!controller.signal.aborted) repoListHydrationReady.set(true)
@@ -51,12 +46,11 @@
         console.warn("[repo-list] Failed to preload repository announcements", error)
       }
     })
+  })
 
-    return () => {
-      controller.abort()
-      if (repoListPreloadController === controller) repoListPreloadController = null
-      repoListHydrationReady.set(false)
-    }
+  onDestroy(() => {
+    stopRepoListPreload()
+    repoListHydrationReady.set(false)
   })
 </script>
 

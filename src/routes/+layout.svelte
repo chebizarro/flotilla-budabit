@@ -303,14 +303,14 @@
 
   $effect(() => {
     const user = $pubkey || ""
-    const isExploreRoute = $page.route.id === "/explore"
+    const suppressFullCommunityPreferences = ["/explore", "/git"].includes($page.route.id || "")
     const relayHints = $activeExactCommunityRelays
     const relayListKey = $userRelayList?.event?.id || ""
     const key = user ? `${user}:${relayHints.join(",")}:${relayListKey}` : ""
 
     if (
       !browser ||
-      isExploreRoute ||
+      suppressFullCommunityPreferences ||
       !user ||
       !key ||
       loadedCommunityPreferencesKey === key ||

@@ -170,7 +170,7 @@ describe("authoritative repository loading scope", () => {
     expect(list).toContain("gitPageLoadController.abort()")
     expect(list).toContain("loadaswelshmanLoad,typeLoadOptions")
     expect(listLayout).toContain('constisRepositoryList=$page.route.id==="/git"')
-    expect(listLayout).toContain("controller.abort()")
+    expect(listLayout).toContain("repoListPreloadController?.abort()")
     expect(layout).toContain("constlayoutLoadController=newAbortController()")
     expect(layout).toContain("layoutLoadController.abort()")
     expect(layout).toContain("repoRootHistoryController?.abort()")
@@ -185,21 +185,29 @@ describe("authoritative repository loading scope", () => {
     expect(layout).toContain("disposeActiveRepo(routeRepoClass)")
   })
 
-  it("hydrates list cache concurrently with bounded background announcement coverage", () => {
+  it("hydrates list cache without broad announcement coverage", () => {
     const layout = dense(readProjectFile("../../routes/git/+layout.svelte"))
     const preload = dense(readProjectFile("./repo-list-preload.ts"))
     const page = dense(readProjectFile("../../routes/git/+page.svelte"))
+    const rootLayout = dense(readProjectFile("../../routes/+layout.svelte"))
 
-    expect(layout).toContain("preloadRepositoryList({relays,signal:controller.signal")
+    expect(layout).toContain("preloadRepositoryList({signal:controller.signal")
+    expect(layout).toContain("if(!isRepositoryList||repoListPreloadStarted)return")
     expect(layout).toContain("repoListHydrationReady.set(true)")
-    expect(preload).toContain("awaitPromise.all([hydration,coverage])")
     expect(preload).toContain("REPO_LIST_HYDRATION_BUDGET_MS")
     expect(preload).toContain("Promise.race([hydrationAttempt,budget])")
-    expect(preload).toContain("limit:REPO_LIST_ANNOUNCEMENT_LIMIT")
-    expect(preload).toContain("priority:RELAY_REQUEST_PRIORITY.background")
-    expect(preload).toContain("owner:REPO_LIST_PRELOAD_OWNER")
+    expect(preload).not.toContain("GIT_REPO_ANNOUNCEMENT")
+    expect(preload).not.toContain("welshmanRequest")
     expect(preload).toContain("repositoryCache.hydrateEligibleAnnouncements()")
-    expect(page).toContain("if(!$repoListHydrationReadyStore)")
+    expect(page).not.toContain("if(!$repoListHydrationReadyStore){personalRepoLoadRequestId")
+    expect(page).not.toContain("if(!$repoListHydrationReadyStore)returnundefined")
+    expect(page).toContain("return!$repoListHydrationReadyStore||!personalRepoAnnouncementsSettled")
+    expect(page).toContain(
+      "return!$repoListHydrationReadyStore||!communityRepoAnnouncementsSettled",
+    )
+    expect(page).toContain('if(!$pubkey||activeMode!=="personal"||activeTab!=="bookmarks")')
+    expect(page).toContain('getInitialGitCommunityPointer()?"community":getInitialGitMode()')
+    expect(rootLayout).toContain('["/explore","/git"].includes($page.route.id||"")')
   })
 
   it("keeps discovery search membership separate from canonical announcements", () => {
