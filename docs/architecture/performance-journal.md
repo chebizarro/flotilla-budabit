@@ -73,6 +73,33 @@ Future validation should include navigation latency during bootstrap, long
 tasks over 50 ms, request ownership, and events published per task under a
 documented mobile CPU and network profile.
 
+## Obvious-Flaws Batch
+
+Landed 2026-08-23 on `performance-obvious-flaws-fix`. Status: `Landed`, not
+`Validated`.
+
+The first bounded implementation round is represented by these commits:
+
+- `cb7272042`: read-only IndexedDB reads and Git synchronization ownership.
+- `a12559193`: DM cold-start hydration and conditional fallback.
+- `f82aad369`: notification candidate and audio lifecycle cleanup.
+- `e0ff70c4a`: community finite-request terminal cleanup and retry.
+- `31295887d`: responsive secondary-navigation mounting.
+- `f1ddf78be`: committed Git list navigation teardown.
+
+Integrated verification passed 16 focused Vitest files with 121 tests,
+`pnpm check`, `pnpm e2e:check`, affected-file Prettier checks, and
+`git diff --check`. Fifteen targeted Git list, detail, and search Playwright
+tests passed sequentially. Six selected community room Playwright tests failed
+before their expected mock-relay subscriptions or room content appeared. The
+representative recovery failure reproduced unchanged in an isolated worktree at
+pre-batch commit `1073e907f`, so it is recorded as a pre-existing browser-test
+baseline gap rather than validation of or a regression from this batch.
+
+No controlled production/mobile timing, request-count trace, long-task profile,
+or input-latency comparison was captured. These entries therefore use `Landed`
+and must not be promoted to `Validated` from test evidence alone.
+
 ## Finding 001: Persisted State Hydration Blocks The Entire UI
 
 Observed 2026-08-23 at `217e23abb`. Status: `Observed`.
@@ -137,6 +164,9 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `cb7272042`: scoped fix landed. `IDB.getAll()` now uses a
+  `readonly` transaction, covered by focused Vitest. The broader shell and
+  staged-hydration work remains proposed and is not performance-validated.
 
 ## Finding 002: Global DM Startup Duplicates Work And Can Backfill Full History
 
@@ -204,6 +234,12 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `a12559193`: fix landed. Unhydrated `null` messaging-relay state no
+  longer triggers migration backfill when persisted relays arrive; authoritative
+  empty state still supports first-relay full-history recovery. Smart relays now
+  use loader fallback only after negentropy rejection. Focused zero, one,
+  multiple-relay, success, and failure tests passed; production request counts
+  remain unvalidated.
 
 ## Finding 003: Git Account Data Is Loaded Twice On Every Authenticated Route
 
@@ -273,6 +309,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `cb7272042`: duplicate-load contract fix landed. The three setup
+  functions retain initial-load ownership, explicit duplicate loads were
+  removed, and loader functions now return the underlying request promises.
+  Focused request-count and completion tests passed. Deferring Git account data
+  from unrelated routes remains proposed.
 
 ## Finding 004: A Hidden Community Menu Performs Foreground Work
 
@@ -326,6 +367,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `31295887d`: fix landed. `SecondaryNav` now mounts children only
+  while its responsive media query matches, preserving the `lg` default and
+  chat's `md` breakpoint. Community and Git mobile drawers remain
+  interaction-owned. Responsive contract tests and type checks passed; a
+  controlled mobile request trace remains needed before marking this validated.
 
 ## Finding 005: Post-Paint Community Work Is Released In One Burst
 
@@ -450,6 +496,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-23 `f82aad369`: lifecycle fix landed. Budabit notification candidate
+  setup now returns identity-safe cleanup that restores an empty source and
+  unsubscribes active candidate derivations. Stop/restart ownership tests and
+  existing repository-watch/widget notification tests passed. Startup timing
+  and global scheduling remain proposed.
 
 ## Finding 007: The Root JavaScript Graph Dominates Both Nexus Pages
 
@@ -665,6 +716,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: implementation flaw recorded; no fix implemented yet.
+- 2026-08-23 `e0ff70c4a`: fix landed. History, follow-up, and delete terminal
+  paths now handle rejection, keep aborts quiet, guard state mutation by
+  controller identity, and schedule retry after failure. Delete hydration now
+  propagates relay failure instead of reporting a false successful empty result.
+  Focused community lifecycle and route-contract tests passed.
 
 ## Finding 011: Community Home Widget Instances Duplicate Recovery Work
 
@@ -1079,6 +1135,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: correctness finding recorded; no fix implemented yet.
+- 2026-08-23 `f1ddf78be`: fix landed. Speculative `beforeNavigate` teardown was
+  removed from both Git list owners. The page performs irreversible cleanup in
+  `onDestroy`, while the persistent layout stops preload after the committed
+  route id leaves `/git`. Focused lifecycle tests passed, and 15 targeted Git
+  list/detail/search Playwright tests passed sequentially.
 
 ## Finding 019: Full Community Preferences Compete With Git's Fast Path
 
@@ -1188,6 +1249,10 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: grouped startup finding recorded; no fix implemented yet.
+- 2026-08-23 `f82aad369`: notification-audio subset landed. Visibility and
+  notification subscriptions are now mount-owned and removed on teardown,
+  playback rejection is handled, and audio uses `preload="none"` without an
+  eager `load()`. Cashu, update polling, and `beforeunload` work remain proposed.
 
 ## Finding 021: Community Hydration Bookkeeping Retains Unbounded Keys
 
