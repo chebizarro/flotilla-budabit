@@ -210,8 +210,51 @@ describe("notifications", () => {
 
   it("setupBudabitNotifications returns cleanup", async () => {
     const {setupBudabitNotifications} = await import("./notifications")
+    const cleanup = setupBudabitNotifications()
 
-    expect(setupBudabitNotifications()).toEqual(expect.any(Function))
+    expect(cleanup).toEqual(expect.any(Function))
+    cleanup()
+  })
+
+  it("stops and restarts notification candidate ownership without duplicates", async () => {
+    const {notificationCandidates, setupBudabitNotifications} = await import("./notifications")
+    let starts = 0
+    let stops = 0
+    const candidates = readable([], () => {
+      starts += 1
+      return () => {
+        stops += 1
+      }
+    })
+    const unsubscribe = notificationCandidates.subscribe(() => undefined)
+
+    const firstCleanup = setupBudabitNotifications(candidates)
+    expect(starts).toBe(1)
+    firstCleanup()
+    expect(stops).toBe(1)
+
+    const secondCleanup = setupBudabitNotifications(candidates)
+    expect(starts).toBe(2)
+    firstCleanup()
+    expect(stops).toBe(1)
+    secondCleanup()
+    expect(stops).toBe(2)
+
+    unsubscribe()
+  })
+
+  it("owns notification sound listeners and avoids eager audio loading", () => {
+    const source = readFileSync("src/app/components/NewNotificationSound.svelte", "utf8")
+
+    expect(source).toContain('preload="none"')
+    expect(source).not.toContain("audioElement.load()")
+    expect(source).toContain(
+      'document.addEventListener("visibilitychange", handleVisibilityChange)',
+    )
+    expect(source).toContain(
+      'document.removeEventListener("visibilitychange", handleVisibilityChange)',
+    )
+    expect(source).toContain("unsubscribeNotifications()")
   })
 
   it("creates room notification candidates from latest incoming room messages", async () => {

@@ -7,33 +7,34 @@
 
   let enabled = $state(false)
 
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      enabled = true
-    } else {
-      enabled = false
-    }
-  })
-
   let notificationCount = $state($notifications.size)
 
   const playSound = () => {
     if (enabled && $userSettingsValues.play_notification_sound) {
-      audioElement?.play()
+      void audioElement?.play().catch(() => undefined)
     }
   }
 
   onMount(() => {
-    audioElement.load()
+    const handleVisibilityChange = () => {
+      enabled = document.hidden
+    }
+    handleVisibilityChange()
+    document.addEventListener("visibilitychange", handleVisibilityChange)
 
-    notifications.subscribe(notifications => {
+    const unsubscribeNotifications = notifications.subscribe(notifications => {
       if (notifications.size > notificationCount) {
         playSound()
       }
 
       notificationCount = notifications.size
     })
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+      unsubscribeNotifications()
+    }
   })
 </script>
 
-<audio bind:this={audioElement} src="/new-notification-3-398649.mp3"></audio>
+<audio bind:this={audioElement} preload="none" src="/new-notification-3-398649.mp3"></audio>

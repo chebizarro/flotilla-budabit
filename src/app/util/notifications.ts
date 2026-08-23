@@ -113,6 +113,8 @@ export type NotificationsConfig = {
 const notificationCandidatesStore = writable<Readable<NotificationCandidate[]>>(
   readable<NotificationCandidate[]>([]),
 )
+const emptyNotificationCandidates = readable<NotificationCandidate[]>([])
+let notificationCandidateGeneration = 0
 
 export const notificationsConfig = writable<NotificationsConfig>({})
 
@@ -965,11 +967,19 @@ export const clearBadges = async () => {
   }
 }
 
-export const setupBudabitNotifications = () => {
+export const setupBudabitNotifications = (
+  candidates: Readable<NotificationCandidate[]> = budabitNotificationCandidates,
+) => {
+  const generation = ++notificationCandidateGeneration
   setNotificationsConfig({})
-  setNotificationCandidates(budabitNotificationCandidates)
+  setNotificationCandidates(candidates)
 
-  return () => undefined
+  return () => {
+    if (generation !== notificationCandidateGeneration) return
+
+    setNotificationCandidates(emptyNotificationCandidates)
+    setNotificationsConfig({})
+  }
 }
 
 type RepoNotificationKind = "issues" | "prs"
