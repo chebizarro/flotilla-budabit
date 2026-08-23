@@ -64,6 +64,8 @@ const mocks = vi.hoisted(() => {
     applyRemoteExtensionSettings: vi.fn(),
     loadRepoWatch: vi.fn(),
     startGraspServerRecommendationsSync: vi.fn(() => () => {}),
+    gitRelays: [] as string[],
+    routerUrls: [] as string[],
   }
 })
 
@@ -159,7 +161,7 @@ vi.mock("@welshman/app", () => ({
 vi.mock("@welshman/router", () => ({
   Router: {
     get: () => ({
-      FromUser: () => ({getUrls: () => []}),
+      FromUser: () => ({getUrls: () => mocks.routerUrls}),
       ForUser: () => ({getUrls: () => []}),
     }),
   },
@@ -180,7 +182,7 @@ vi.mock("@app/core/dm", () => ({
 }))
 
 vi.mock("@app/core/git-state", () => ({
-  GIT_RELAYS: [],
+  GIT_RELAYS: mocks.gitRelays,
 }))
 
 vi.mock("@app/core/grasp", () => ({
@@ -227,6 +229,27 @@ describe("syncApplicationData", () => {
     mocks.userMessagingRelayList.set(null)
     mocks.repositoryQuery.mockReturnValue([])
     mocks.trackerGetRelays.mockReturnValue(new Set<string>())
+    mocks.gitRelays.splice(0)
+    mocks.routerUrls.splice(0)
+  })
+
+  it("lets Git sync setup own the initial fallback loads", async () => {
+    mocks.gitRelays.push("wss://two.example.com", "wss://one.example.com")
+    mocks.routerUrls.push("wss://one.example.com", "wss://two.example.com")
+    mocks.pubkey.set("a".repeat(64))
+
+    const {syncGitData} = await import("./sync")
+    const cleanup = syncGitData()
+    await flush()
+
+    expect(mocks.setupGraspServersSync).toHaveBeenCalledTimes(1)
+    expect(mocks.setupTokensSync).toHaveBeenCalledTimes(1)
+    expect(mocks.setupExtensionSettingsSync).toHaveBeenCalledTimes(1)
+    expect(mocks.loadGraspServers).not.toHaveBeenCalled()
+    expect(mocks.loadTokens).not.toHaveBeenCalled()
+    expect(mocks.loadExtensionSettings).not.toHaveBeenCalled()
+
+    cleanup()
   })
 
   it("bootstraps older DMs without adding bootstrap filters to live subscriptions", async () => {

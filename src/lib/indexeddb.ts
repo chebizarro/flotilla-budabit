@@ -140,7 +140,7 @@ export class IDB {
 
     try {
       const connection = await this.connect()
-      const tx = connection.transaction(table, "readwrite")
+      const tx = connection.transaction(table, "readonly")
       const store = tx.objectStore(table)
       const result = await store.getAll()
 

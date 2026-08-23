@@ -144,28 +144,25 @@ export function clearSyncedGitAuthTokens() {
 // D-tag for extension settings
 export const EXTENSION_SETTINGS_DTAG = "app/budabit/extensions"
 
-export const loadGraspServers = async (pubkey: string, relays: string[] = []) => {
+export const loadGraspServers = (pubkey: string, relays: string[] = []) =>
   load({
     relays,
     filters: makeGraspServerListFilters(pubkey),
   })
-}
 
-export const loadTokens = async (pk: string, relays: string[] = []) => {
+export const loadTokens = (pk: string, relays: string[] = []) =>
   // Load encrypted git tokens from relays
   load({
     relays,
     filters: [{kinds: [APP_DATA], authors: [pk], "#d": [GIT_AUTH_DTAG]}],
   })
-}
 
-export const loadExtensionSettings = async (pk: string, relays: string[] = []) => {
+export const loadExtensionSettings = (pk: string, relays: string[] = []) =>
   // Load encrypted extension settings from relays
   load({
     relays,
     filters: [{kinds: [APP_DATA], authors: [pk], "#d": [EXTENSION_SETTINGS_DTAG]}],
   })
-}
 
 // --- GRASP servers sync (centralized) ---
 let graspUnsub: (() => void) | undefined

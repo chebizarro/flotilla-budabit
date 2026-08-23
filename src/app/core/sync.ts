@@ -431,10 +431,6 @@ const syncUserGitData = () => {
       if (unsub) unsubscribersByKey.set("extensions", unsub)
       console.log("[syncUserGitData] Extension settings sync setup complete")
     }
-
-    loadGraspServers(pk, mergedRelays)
-    loadTokens(pk, mergedRelays)
-    loadExtensionSettings(pk, mergedRelays)
   }
 
   const ensureNotAborted = (signal: AbortSignal) => {

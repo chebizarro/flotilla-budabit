@@ -33,3 +33,19 @@ describe("IDB.connectWithTimeout", () => {
     await vi.advanceTimersByTimeAsync(100)
   })
 })
+
+describe("IDB.getAll", () => {
+  it("uses a readonly transaction", async () => {
+    const db = new IDB({name: "readonly-test", version: 1})
+    const getAll = vi.fn().mockResolvedValue([{id: "event"}])
+    const transaction = vi.fn(() => ({
+      objectStore: () => ({getAll}),
+      done: Promise.resolve(),
+    }))
+
+    vi.spyOn(db, "connect").mockResolvedValue({transaction} as any)
+
+    await expect(db.getAll("events")).resolves.toEqual([{id: "event"}])
+    expect(transaction).toHaveBeenCalledWith("events", "readonly")
+  })
+})

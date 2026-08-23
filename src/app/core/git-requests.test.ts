@@ -86,6 +86,7 @@ const {DEFAULT_GRASP_SET_ID, GIT_USER_GRASP_LIST, GRASP_SET_KIND} =
 const {
   loadGraspServers,
   loadTokens,
+  loadExtensionSettings,
   persistGitAuthTokens,
   setupGraspServersSync,
   setupTokensSync,
@@ -122,6 +123,23 @@ describe("requests", () => {
           {kinds: [GRASP_SET_KIND], authors: ["pk789"], "#d": [DEFAULT_GRASP_SET_ID]},
         ],
       })
+    })
+
+    it("exposes load completion", async () => {
+      let resolveLoad: () => void = () => undefined
+      const pending = new Promise<void>(resolve => (resolveLoad = resolve))
+      vi.mocked(load).mockReturnValueOnce(pending as any)
+      let settled = false
+
+      const completion = loadGraspServers("pk789", ["wss://relay.com"]).then(() => {
+        settled = true
+      })
+      await Promise.resolve()
+
+      expect(settled).toBe(false)
+      resolveLoad()
+      await completion
+      expect(settled).toBe(true)
     })
   })
 
@@ -199,6 +217,22 @@ describe("requests", () => {
         relays: ["wss://relay.com"],
         filters: [{kinds: expect.any(Array), authors: ["pk999"], "#d": [GIT_AUTH_DTAG]}],
       })
+    })
+
+    it("exposes load completion", async () => {
+      const pending = Promise.resolve(["loaded"])
+      vi.mocked(load).mockReturnValueOnce(pending as any)
+
+      await expect(loadTokens("pk999", ["wss://relay.com"])).resolves.toEqual(["loaded"])
+    })
+  })
+
+  describe("loadExtensionSettings", () => {
+    it("exposes load completion", async () => {
+      const pending = Promise.resolve(["loaded"])
+      vi.mocked(load).mockReturnValueOnce(pending as any)
+
+      await expect(loadExtensionSettings("pk999", ["wss://relay.com"])).resolves.toEqual(["loaded"])
     })
   })
 
