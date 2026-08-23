@@ -409,23 +409,6 @@
           class="flex min-w-0 flex-col gap-4 lg:row-start-1 {showPreferredCommunities
             ? 'lg:col-start-2'
             : ''}">
-          {#if defaultCommunity}
-            <CommunityPreviewCard
-              community={defaultCommunity}
-              definition={defaultDefinition}
-              relayHints={defaultRelayHints}
-              shareRelayHints={defaultRelayHints}
-              publishRelayHints={defaultPublishRelayHints}
-              label="Brand new? Start here:"
-              emptyInfo="Start with the recommended community."
-              onOpen={() => enterCommunity(defaultCommunity)}
-              showActions={defaultHasCommunityDefinition}
-              loading={defaultLoading}
-              opening={defaultOpening}
-              notFound={defaultCommunityNotFound}
-              unavailable={defaultCommunityUnavailable} />
-          {/if}
-
           <CommunityPreviewCard
             community={previewCommunity}
             definition={previewDefinition}
@@ -448,6 +431,23 @@
             inputSuggestionDefinitions={communityDefinitions}
             onInputSelect={selectCommunityInputProfile}
             onSubmit={submitCommunityInput} />
+
+          {#if defaultCommunity}
+            <CommunityPreviewCard
+              community={defaultCommunity}
+              definition={defaultDefinition}
+              relayHints={defaultRelayHints}
+              shareRelayHints={defaultRelayHints}
+              publishRelayHints={defaultPublishRelayHints}
+              label="Brand new? Start here:"
+              emptyInfo="Start with the recommended community."
+              onOpen={() => enterCommunity(defaultCommunity)}
+              showActions={defaultHasCommunityDefinition}
+              loading={defaultLoading}
+              opening={defaultOpening}
+              notFound={defaultCommunityNotFound}
+              unavailable={defaultCommunityUnavailable} />
+          {/if}
 
           <div class="flex min-w-0 flex-col gap-2 sm:flex-row">
             <Button
