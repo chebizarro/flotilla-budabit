@@ -38,23 +38,6 @@ const getUserOutboxRelays = () => {
   }
 }
 
-const withTimeout = async <T>(
-  promise: Promise<T>,
-  timeout: number,
-  fallback: T,
-): Promise<{timedOut: boolean; value: T}> => {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined
-
-  return Promise.race([
-    promise.then(value => ({timedOut: false, value})),
-    new Promise<{timedOut: boolean; value: T}>(resolve => {
-      timeoutId = setTimeout(() => resolve({timedOut: true, value: fallback}), timeout)
-    }),
-  ]).finally(() => {
-    if (timeoutId) clearTimeout(timeoutId)
-  })
-}
-
 export const getRepoStarRelays = (relayHints: string[] = []) =>
   normalizeRelays([...relayHints, ...getUserOutboxRelays(), ...GIT_RELAYS])
 
@@ -108,81 +91,111 @@ export const activeRepoStarByAddress: Readable<Map<string, RepoStarRef>> = deriv
   $activeRepoStars => new Map($activeRepoStars.map(star => [star.address, star])),
 )
 
-let repoStarHydrationKey = ""
-let repoStarHydrationRequestId = 0
-let repoStarHydratedAt = 0
+const repoStarHydrations = new Map<string, Promise<boolean>>()
+const repoStarHydratedAt = new Map<string, number>()
+let activeRepoStarHydrations = 0
 
-export const hydrateRepoStars = async ({
+const loadRepoStarEvents = async ({
+  relays,
+  filters,
+  signal,
+}: {
+  relays: string[]
+  filters: Filter[]
+  signal?: AbortSignal
+}) => {
+  const timeoutController = new AbortController()
+  const requestSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    timeoutController.abort()
+  }, REPO_STAR_LOAD_TIMEOUT + 500)
+
+  try {
+    await load({relays, filters, signal: requestSignal})
+    return !timedOut && !signal?.aborted
+  } catch (error) {
+    if (requestSignal.aborted) return false
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export const hydrateRepoStars = ({
   relayHints = [],
   repoAddress = "",
+  repoAddresses = [],
   force = false,
+  signal,
 }: {
   relayHints?: string[]
   repoAddress?: string
+  repoAddresses?: string[]
   force?: boolean
-} = {}) => {
+  signal?: AbortSignal
+} = {}): Promise<boolean> => {
   const user = pubkey.get()
   const reactionFilter = user ? makeRepoStarReactionFilter(user) : undefined
   const relays = getRepoStarRelays(relayHints)
-  const key = `${user || ""}:${repoAddress || "*"}:${relays.slice().sort().join(",")}`
+  const addresses = Array.from(new Set([repoAddress, ...repoAddresses].filter(Boolean))).sort()
+  const key = `${user || ""}:${addresses.join(",") || "*"}:${relays.slice().sort().join(",")}`
 
   if (!user || !reactionFilter || relays.length === 0) {
-    repoStarsLoading.set(false)
-    repoStarHydrationKey = ""
-    repoStarHydratedAt = 0
-    return
+    return Promise.resolve(false)
   }
 
-  if (!force && repoStarHydrationKey === key && get(repoStarsLoading)) {
-    return
-  }
+  const existing = repoStarHydrations.get(key)
+  if (!force && existing) return existing
 
   if (
     !force &&
-    repoStarHydrationKey === key &&
-    repoStarHydratedAt > 0 &&
-    Date.now() - repoStarHydratedAt < REPO_STAR_HYDRATION_TTL
+    (repoStarHydratedAt.get(key) || 0) > 0 &&
+    Date.now() - (repoStarHydratedAt.get(key) || 0) < REPO_STAR_HYDRATION_TTL
   ) {
-    return
+    return Promise.resolve(true)
   }
 
-  const requestId = ++repoStarHydrationRequestId
-  repoStarHydrationKey = key
+  activeRepoStarHydrations += 1
   repoStarsLoading.set(true)
-  let completedWithoutTimeout = false
+  let hydration = Promise.resolve(false)
+  hydration = (async () => {
+    let completed = false
+    try {
+      const scopedReactionFilter = addresses.length
+        ? {...reactionFilter, "#a": addresses}
+        : reactionFilter
+      completed = await loadRepoStarEvents({
+        relays,
+        filters: [scopedReactionFilter] as Filter[],
+        signal,
+      })
+      if (!completed) return false
 
-  try {
-    const scopedReactionFilter = repoAddress
-      ? {...reactionFilter, "#a": [repoAddress]}
-      : reactionFilter
-
-    const reactionsResult = await withTimeout(
-      load({relays, filters: [scopedReactionFilter] as Filter[]}),
-      REPO_STAR_LOAD_TIMEOUT + 500,
-      [],
-    )
-    completedWithoutTimeout = !reactionsResult.timedOut
-
-    if (requestId !== repoStarHydrationRequestId) return
-
-    const cachedReactions = get(repoStarReactionEvents)
-    const deleteFilters = [
-      makeRepoStarDeleteFilter(user, cachedReactions),
-      makeRecentRepoStarDeleteFilter(user),
-    ].filter(Boolean) as Filter[]
-
-    if (deleteFilters.length > 0) {
-      const deletesResult = await withTimeout(
-        load({relays, filters: deleteFilters}),
-        REPO_STAR_LOAD_TIMEOUT + 500,
-        [],
+      const cachedReactions = get(repoStarReactionEvents).filter(
+        event =>
+          addresses.length === 0 ||
+          event.tags.some(tag => tag[0] === "a" && addresses.includes(tag[1])),
       )
-      completedWithoutTimeout = completedWithoutTimeout && !deletesResult.timedOut
+      const deleteFilters = [
+        makeRepoStarDeleteFilter(user, cachedReactions),
+        ...(addresses.length === 0 ? [makeRecentRepoStarDeleteFilter(user)] : []),
+      ].filter(Boolean) as Filter[]
+
+      if (deleteFilters.length > 0) {
+        completed = await loadRepoStarEvents({relays, filters: deleteFilters, signal})
+      }
+    } finally {
+      repoStarHydratedAt.set(key, completed ? Date.now() : 0)
+      if (repoStarHydrations.get(key) === hydration) repoStarHydrations.delete(key)
+      activeRepoStarHydrations = Math.max(0, activeRepoStarHydrations - 1)
+      repoStarsLoading.set(activeRepoStarHydrations > 0)
     }
-  } finally {
-    if (requestId === repoStarHydrationRequestId) {
-      repoStarHydratedAt = completedWithoutTimeout ? Date.now() : 0
-      repoStarsLoading.set(false)
-    }
-  }
+    return completed
+  })()
+  repoStarHydrations.set(key, hydration)
+  return hydration
 }

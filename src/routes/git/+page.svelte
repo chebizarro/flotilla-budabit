@@ -1016,7 +1016,8 @@
 
     const requestId = ++repoStarsHydrationRequestId
     repoStarsHydrationSettled = false
-    hydrateRepoStars({relayHints: bookmarkListRelays})
+    const controller = new AbortController()
+    hydrateRepoStars({relayHints: bookmarkListRelays, signal: controller.signal})
       .catch(error => {
         console.warn("[git/+page] Failed to hydrate repo stars", error)
       })
@@ -1025,6 +1026,8 @@
           if (requestId === repoStarsHydrationRequestId) repoStarsHydrationSettled = true
         })
       })
+
+    return () => controller.abort()
   })
 
   // Fetch actual repo events for starred addresses
@@ -1886,6 +1889,7 @@
   let repoCollectionFollowupLoadRequestId = 0
   let repoCollectionOriginalHistoryComplete = $state(false)
   let repoCollectionFollowupLoadTimer: ReturnType<typeof setTimeout> | null = null
+  let repoCollectionRenderedScopeKey = $state("")
   const repoCollectionState = $derived.by(
     (): RepoCollectionReadState => ({
       personalStars: $activeRepoStars,
@@ -1908,9 +1912,14 @@
     const relayFilters = repoCollectionTargetFilterPlan.relayFilters
     const localFilters = repoCollectionTargetFilterPlan.localFilters
     const relays = repoCollectionRelays
-    const key = JSON.stringify({relays, relayFilters, localFilters})
+    const key = JSON.stringify({
+      renderedScope: repoCollectionRenderedScopeKey,
+      relays,
+      relayFilters,
+      localFilters,
+    })
 
-    if (!$pubkey) {
+    if (!$pubkey || !repoCollectionRenderedScopeKey) {
       repoCollectionTargetLoadRequestId += 1
       repoCollectionTargetLoadKey = ""
       repoCollectionTargetHistoryComplete = true
@@ -1965,9 +1974,9 @@
   $effect(() => {
     const filters = repoCollectionTargetDeleteFilters
     const relays = repoCollectionRelays
-    const key = JSON.stringify({relays, filters})
+    const key = JSON.stringify({renderedScope: repoCollectionRenderedScopeKey, relays, filters})
 
-    if (!$pubkey) {
+    if (!$pubkey || !repoCollectionRenderedScopeKey) {
       repoCollectionDeleteLoadRequestId += 1
       repoCollectionDeleteLoadKey = ""
       repoCollectionDeleteHistoryComplete = true
@@ -2028,13 +2037,13 @@
       },
       ...repoCollectionReactionRelayHintPlans,
     ].filter(plan => plan.relays.length > 0 && plan.relayFilters.length > 0)
-    const key = JSON.stringify({plans})
+    const key = JSON.stringify({renderedScope: repoCollectionRenderedScopeKey, plans})
 
     if (repoCollectionFollowupLoadTimer) {
       clearTimeout(repoCollectionFollowupLoadTimer)
       repoCollectionFollowupLoadTimer = null
     }
-    if (!$pubkey) {
+    if (!$pubkey || !repoCollectionRenderedScopeKey) {
       repoCollectionFollowupLoadRequestId += 1
       repoCollectionFollowupLoadKey = ""
       repoCollectionOriginalHistoryComplete = true
@@ -2062,6 +2071,8 @@
     repoCollectionFollowupLoadKey = key
     repoCollectionOriginalHistoryComplete = false
     const requestId = ++repoCollectionFollowupLoadRequestId
+    const controller = new AbortController()
+    const signal = AbortSignal.any([controller.signal, gitPageLoadController.signal])
 
     repoCollectionFollowupLoadTimer = setTimeout(() => {
       repoCollectionFollowupLoadTimer = null
@@ -2071,20 +2082,28 @@
           ...plan,
           priority: RELAY_REQUEST_PRIORITY.background,
           owner: "global-git-repository-collection-originals",
-          signal: gitPageLoadController.signal,
+          signal,
         }),
       )
       void Promise.all(originalLoads)
         .then(results => {
-          if (gitPageReadWorkStopped || requestId !== repoCollectionFollowupLoadRequestId) return
+          if (signal.aborted || requestId !== repoCollectionFollowupLoadRequestId) return
           repoCollectionOriginalHistoryComplete = results.every(result => result.complete)
         })
         .catch(error => {
-          if (gitPageReadWorkStopped || requestId !== repoCollectionFollowupLoadRequestId) return
+          if (signal.aborted || requestId !== repoCollectionFollowupLoadRequestId) return
           repoCollectionOriginalHistoryComplete = false
           console.warn("[git/+page] Failed to load repository collection state", error)
         })
     }, REPO_CARD_HYDRATION_DELAY_MS)
+
+    return () => {
+      controller.abort()
+      if (repoCollectionFollowupLoadTimer) {
+        clearTimeout(repoCollectionFollowupLoadTimer)
+        repoCollectionFollowupLoadTimer = null
+      }
+    }
   })
 
   // Detect if search query is a bech32 account/address search
@@ -3242,6 +3261,64 @@
         ? sortedRepoCardModels
         : [],
   )
+  $effect(() => {
+    repoCollectionRenderedScopeKey = repoCardModelsForEnrichment.length
+      ? JSON.stringify(repoCardModelsForEnrichment.map(model => model.address))
+      : ""
+  })
+  let repoCardStarHydrationKey = ""
+  let repoCardStarsHydratedUser = ""
+  const repoCardStarHydratedAddresses = new Set<string>()
+  $effect(() => {
+    const models = repoCardModelsForEnrichment
+    const user = $pubkey || ""
+    if (user !== repoCardStarsHydratedUser) {
+      repoCardStarsHydratedUser = user
+      repoCardStarHydratedAddresses.clear()
+    }
+    const addresses = models
+      .map(model => model.address)
+      .filter(address => address && !repoCardStarHydratedAddresses.has(address))
+    const relays = Array.from(
+      new Set(
+        [...models.flatMap(model => model.declaredRelays), ...bookmarkListRelays]
+          .map(relay => safeNormalizeRelay(relay))
+          .filter(Boolean),
+      ),
+    )
+    const key = JSON.stringify([user, addresses, relays])
+    if (
+      !$pubkey ||
+      addresses.length === 0 ||
+      (activeMode === "personal" && activeTab === "bookmarks")
+    ) {
+      repoCardStarHydrationKey = ""
+      return
+    }
+    if (key === repoCardStarHydrationKey) return
+    repoCardStarHydrationKey = key
+    const controller = new AbortController()
+    void hydrateRepoStars({
+      repoAddresses: addresses,
+      relayHints: relays,
+      signal: controller.signal,
+    })
+      .then(completed => {
+        if (completed && !controller.signal.aborted) {
+          for (const address of addresses) repoCardStarHydratedAddresses.add(address)
+        }
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          console.warn("[git/+page] Failed to hydrate rendered repository stars", error)
+        }
+      })
+
+    return () => {
+      controller.abort()
+      if (repoCardStarHydrationKey === key) repoCardStarHydrationKey = ""
+    }
+  })
   const repoCardVerificationTargets = $derived.by(() =>
     repoCardModelsForEnrichment.map(model => ({
       event: model.event,

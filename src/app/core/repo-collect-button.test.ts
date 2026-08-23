@@ -56,6 +56,8 @@ describe("repository collection button reads", () => {
       "repoCollectionOriginalHistoryComplete = results.every(result => result.complete)",
     )
     expect(globalGitSource).toContain("communityHistoryComplete:")
+    expect(globalGitSource).toContain("repoCollectionRenderedScopeKey")
+    expect(globalGitSource).toContain("renderedScope: repoCollectionRenderedScopeKey")
   })
 
   it("does not truncate authoritative global collection relay coverage", () => {
