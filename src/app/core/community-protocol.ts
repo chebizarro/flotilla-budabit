@@ -453,7 +453,7 @@ const parseSection = (
     }
   }
 
-  if (kinds.length === 0 || profileLists.length === 0) return undefined
+  if (kinds.length === 0) return undefined
   return {name, kinds, profileLists, badges, retention}
 }
 
@@ -723,9 +723,7 @@ const makeSectionTags = (
   communityId: string,
 ): string[][] => {
   const tags: string[][] = [["content", requireText(section.name, 1, 100, "section name")]]
-  if (section.kinds.length === 0 || section.profileLists.length === 0) {
-    throw new Error("Community sections require kinds and profile lists.")
-  }
+  if (section.kinds.length === 0) throw new Error("Community sections require kinds.")
 
   for (const item of section.kinds) {
     if (!Number.isInteger(item.kind) || item.kind < 0 || item.kind > 65535) {

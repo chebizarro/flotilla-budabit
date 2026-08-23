@@ -2062,9 +2062,11 @@
         ? "The community owner could not sign the update. Check the active signer and try again."
         : /accepted but|verified relay|readback|replacement event/i.test(message)
           ? "The update was sent but could not be confirmed on the primary relay. Try again or check that relay."
-          : /invalid|valid normalized|format/i.test(message)
-            ? "One or more settings have an incorrect format. Review the highlighted fields and try again."
-            : "The primary relay did not accept or confirm the update. Check its availability and your access, then try again."
+          : !publishStatus
+            ? "The community settings could not be prepared for publication. Review the settings and try again."
+            : /invalid|valid normalized|format/i.test(message)
+              ? "One or more settings have an incorrect format. Review the highlighted fields and try again."
+              : "The primary relay did not accept or confirm the update. Check its availability and your access, then try again."
       publishStatus = friendlyMessage
       pushToast({
         theme: "error",

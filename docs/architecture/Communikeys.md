@@ -128,17 +128,17 @@ The following tags belong to the current section:
 | Tag         | Rule                                                                   |
 | ----------- | ---------------------------------------------------------------------- |
 | `k`         | Event kind in value 1 and optional subtype in value 2.                 |
-| `a`         | Exact `kind:pubkey:d` profile-list reference with optional relay hint. |
+| `a`         | Optional exact `kind:pubkey:d` profile-list reference with relay hint. |
 | `badge`     | Exact badge-definition address with optional relay hint.               |
 | `retention` | Kind, positive integer value, and `time` or `count`.                   |
 
-Each section MUST have at least one valid `k` and one valid profile-list `a`. Each exact `(kind, subtype)` pair MUST occur in at most one section. Empty subtype is exact, not a wildcard.
+Each section MUST have at least one valid `k` and MAY have zero or more valid profile-list `a` tags. A section without profile lists is owner-only: the definition owner retains its inherent authority, while no other pubkey receives a section grant. Each exact `(kind, subtype)` pair MUST occur in at most one section. Empty subtype is exact, not a wildcard.
 
 `content` contains exactly two values. `k` contains two or three values. Its kind is canonical unsigned decimal with no sign or leading zero except `0`, in the range 0 through 65535; its optional subtype is 1 to 64 UTF-8 bytes. A profile-list `a` contains two or three values, parses as exact kind `30000`, has a real signer pubkey and a section-scoped identifier as defined below, and has an optional normalized relay. A `badge` follows the same arity and address rules with kind `30009`. `retention` contains exactly four values; its kind follows the `k` integer rule, its value is canonical positive decimal within JavaScript's safe-integer range, and its type is exactly `time` or `count`.
 
 A recognized section-local tag before the first `content` tag invalidates the definition. Unknown tags before the first section remain top-level extensions. Unknown tags after a `content` tag belong to that section.
 
-Profile-list tags reference real signer-owned `kind:30000` coordinates. The effective grant set is the union of current valid `p` tags from all referenced lists. Missing evidence contributes no grant.
+Profile-list tags reference real signer-owned `kind:30000` coordinates. The effective non-owner grant set is the union of current valid `p` tags from all referenced lists. Missing evidence contributes no grant. An owner or moderator adds a profile-list reference when the section first needs delegated authority or member grants; an owner-only section does not require a placeholder profile-list event.
 
 ### Unknown Tags And Editing
 

@@ -81,6 +81,7 @@ describe("Communikeys create source contract", () => {
     expect(component).toContain("novalidate")
     expect(component).toContain("aria-invalid={Boolean(errors.primaryRelay)}")
     expect(component).toContain("A trailing slash is optional")
+    expect(component).toContain("The community settings could not be prepared for publication")
     expect(component).not.toContain("A valid normalized community relay is required")
   })
 })

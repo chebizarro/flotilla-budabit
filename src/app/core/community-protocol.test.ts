@@ -157,6 +157,29 @@ describe("Communikeys definitions", () => {
     expect(definition.relays).toEqual(["wss://relay.example"])
   })
 
+  it("round-trips owner-only sections without profile lists", () => {
+    const template = buildCommunityDefinition({
+      communityId,
+      name: "Owner-only community",
+      relays: ["wss://relay.example"],
+      sections: [{name: "General", kinds: [{kind: 1111}], profileLists: []}],
+    })
+    const definition = parseCommunityDefinition(
+      makeEvent({kind: COMMUNITY_DEFINITION_KIND, tags: template.tags}),
+    )
+
+    expect(template.tags).not.toContainEqual(expect.arrayContaining(["a"]))
+    expect(definition?.sections).toEqual([
+      {
+        name: "General",
+        kinds: [{kind: 1111}],
+        profileLists: [],
+        badges: [],
+        retention: [],
+      },
+    ])
+  })
+
   it("accepts community relay inputs with or without a trailing slash", () => {
     const template = buildCommunityDefinition({
       communityId,
@@ -358,6 +381,14 @@ describe("Communikeys definitions", () => {
         sections: [],
       }),
     ).toThrow()
+    expect(() =>
+      buildCommunityDefinition({
+        communityId,
+        name: "Builders",
+        relays: ["wss://relay.example"],
+        sections: [{name: "General", kinds: [], profileLists: []}],
+      }),
+    ).toThrow("Community sections require kinds.")
     expect(() =>
       buildCommunityDefinition({
         communityId,

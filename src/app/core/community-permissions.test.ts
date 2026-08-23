@@ -171,6 +171,48 @@ const makePersonBanState = (pubkey: string): EffectiveCommunityReportState =>
   }) as unknown as EffectiveCommunityReportState
 
 describe("community permissions", () => {
+  it("keeps an owner-only section writable only by its owner", () => {
+    const ownerOnlyDefinition = parseCommunityDefinition(
+      makeEvent({
+        kind: COMMUNITY_DEFINITION_KIND,
+        tags: [
+          ["d", communityPubkey],
+          ["name", "Owner-only community"],
+          ["r", "wss://relay.example"],
+          ["content", "General"],
+          ["k", "1111"],
+        ],
+      }),
+    )!
+
+    expect(ownerOnlyDefinition.sections[0].profileLists).toEqual([])
+    expect(
+      canWriteCommunitySection({
+        definition: ownerOnlyDefinition,
+        profileListEvents: [],
+        userPubkey: communityPubkey,
+        sectionName: "General",
+        kind: 1111,
+      }),
+    ).toBe(true)
+    expect(
+      canWriteCommunitySection({
+        definition: ownerOnlyDefinition,
+        profileListEvents: [],
+        userPubkey: outsiderPubkey,
+        sectionName: "General",
+        kind: 1111,
+      }),
+    ).toBe(false)
+    expect(
+      getGrantCapableSectionModeratorPubkeys({
+        definition: ownerOnlyDefinition,
+        sectionName: "General",
+        profileListEvents: [],
+      }),
+    ).toEqual([communityPubkey])
+  })
+
   it("maps write targets by kind and subtype", () => {
     expect(getCommunityWriteTarget(9, "room-message")).toEqual(COMMUNITY_WRITE_TARGETS.roomMessage)
     expect(getCommunityWriteTarget(11, "threads")).toEqual(COMMUNITY_WRITE_TARGETS.thread)
