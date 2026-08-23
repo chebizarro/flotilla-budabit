@@ -9,7 +9,7 @@ describe("repository list preload", () => {
 
     await preload({signal: new AbortController().signal, onHydrated})
 
-    expect(hydrateEligible).toHaveBeenCalledOnce()
+    expect(hydrateEligible).toHaveBeenCalledWith(expect.any(AbortSignal))
     expect(onHydrated).toHaveBeenCalledOnce()
   })
 

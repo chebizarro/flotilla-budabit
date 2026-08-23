@@ -198,7 +198,7 @@ describe("authoritative repository loading scope", () => {
     expect(preload).toContain("Promise.race([hydrationAttempt,budget])")
     expect(preload).not.toContain("GIT_REPO_ANNOUNCEMENT")
     expect(preload).not.toContain("welshmanRequest")
-    expect(preload).toContain("repositoryCache.hydrateEligibleAnnouncements()")
+    expect(preload).toContain("repositoryCache.hydrateEligibleAnnouncements(signal)")
     expect(page).not.toContain("if(!$repoListHydrationReadyStore){personalRepoLoadRequestId")
     expect(page).not.toContain("if(!$repoListHydrationReadyStore)returnundefined")
     expect(page).toContain("return!$repoListHydrationReadyStore||!personalRepoAnnouncementsSettled")

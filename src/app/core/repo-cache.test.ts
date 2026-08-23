@@ -3,6 +3,7 @@ import {describe, expect, it, vi} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
 import {
   REPO_CACHE_POLICY,
+  REPO_CACHE_LIST_HYDRATION_BATCH_SIZE,
   RepositoryCache,
   canonicalizeRepoCacheAddress,
   verifyPlainRepositoryEvent,
@@ -81,6 +82,7 @@ const makeCache = ({
   getEvent,
   publish,
   addRelay,
+  yieldTask,
 }: {
   storage?: MemoryStorage
   now?: () => number
@@ -89,6 +91,7 @@ const makeCache = ({
   getEvent?: (id: string) => TrustedEvent | undefined
   publish?: (event: TrustedEvent) => void
   addRelay?: (eventId: string, relay: string) => void
+  yieldTask?: () => Promise<void>
 } = {}) => ({
   cache: new RepositoryCache({
     storage,
@@ -98,6 +101,7 @@ const makeCache = ({
     getEvent,
     publish,
     addRelay,
+    yieldTask,
   }),
   storage,
 })
@@ -184,6 +188,77 @@ describe("repository cache", () => {
     await expect(second.cache.hydrateEligibleAnnouncements()).resolves.toBe(1)
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({id: repoAnnouncement.id}))
     expect(publish).not.toHaveBeenCalledWith(expect.objectContaining({id: root.id}))
+  })
+
+  it("publishes newest announcements first and yields between list batches", async () => {
+    const first = makeCache({
+      cachePolicy: policy({maxRecentRepositories: REPO_CACHE_LIST_HYDRATION_BATCH_SIZE + 1}),
+    })
+    const addresses = Array.from(
+      {length: REPO_CACHE_LIST_HYDRATION_BATCH_SIZE + 1},
+      (_, index) => `30617:${owner}:repo-${index}`,
+    )
+    for (const [index, repoAddress] of addresses.entries()) {
+      await first.cache.accessRepository(repoAddress)
+      await first.cache.storeEvent(repoAddress, announcement(repoAddress, index))
+      await first.cache.storeEvent(repoAddress, announcement(repoAddress, index + 1))
+      await first.cache.storeEvent(
+        repoAddress,
+        signEvent(30618, [["d", `repo-${index}`]], "state", index + 2),
+      )
+    }
+    const published: TrustedEvent[] = []
+    const yieldTask = vi.fn().mockResolvedValue(undefined)
+    const second = makeCache({
+      storage: first.storage,
+      cachePolicy: policy({maxRecentRepositories: REPO_CACHE_LIST_HYDRATION_BATCH_SIZE + 1}),
+      publish: event => published.push(event),
+      yieldTask,
+    })
+    const recalculateRepository = vi.spyOn(
+      second.cache as unknown as {recalculateRepository: (address: string) => void},
+      "recalculateRepository",
+    )
+
+    await second.cache.hydrateEligibleAnnouncements()
+
+    expect(published.slice(0, addresses.length * 2).every(event => event.kind === 30617)).toBe(true)
+    const firstAddressAnnouncements = published.filter(
+      event =>
+        event.kind === 30617 && event.tags.some(tag => tag[0] === "d" && tag[1] === "repo-0"),
+    )
+    expect(firstAddressAnnouncements.map(event => event.created_at)).toEqual([1, 0])
+    expect(yieldTask).toHaveBeenCalled()
+    expect(recalculateRepository).toHaveBeenCalledTimes(addresses.length)
+  })
+
+  it("stops incremental list hydration after abort without discarding valid records", async () => {
+    const first = makeCache({
+      cachePolicy: policy({maxRecentRepositories: REPO_CACHE_LIST_HYDRATION_BATCH_SIZE + 1}),
+    })
+    const addresses = Array.from(
+      {length: REPO_CACHE_LIST_HYDRATION_BATCH_SIZE + 1},
+      (_, index) => `30617:${owner}:abort-${index}`,
+    )
+    for (const [index, repoAddress] of addresses.entries()) {
+      await first.cache.accessRepository(repoAddress)
+      await first.cache.storeEvent(repoAddress, announcement(repoAddress, index + 1))
+    }
+    const controller = new AbortController()
+    const publish = vi.fn()
+    const second = makeCache({
+      storage: first.storage,
+      cachePolicy: policy({maxRecentRepositories: REPO_CACHE_LIST_HYDRATION_BATCH_SIZE + 1}),
+      publish,
+      yieldTask: async () => controller.abort(),
+    })
+
+    await expect(second.cache.hydrateEligibleAnnouncements(controller.signal)).resolves.toBe(
+      REPO_CACHE_LIST_HYDRATION_BATCH_SIZE,
+    )
+
+    expect(publish).toHaveBeenCalledTimes(REPO_CACHE_LIST_HYDRATION_BATCH_SIZE)
+    expect(first.storage.state.events).toHaveLength(addresses.length)
   })
 
   it("stores pending event batches in one cache mutation", async () => {

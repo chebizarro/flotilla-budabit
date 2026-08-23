@@ -5,7 +5,7 @@ export const REPO_LIST_MAX_RELAYS = 6
 export const REPO_LIST_HYDRATION_BUDGET_MS = REPO_CACHE_ROUTE_HYDRATION_BUDGET_MS
 
 type RepoListPreloadDependencies = {
-  hydrateEligible: () => Promise<unknown>
+  hydrateEligible: (signal: AbortSignal) => Promise<unknown>
 }
 
 type RepoListPreloadOptions = {
@@ -24,7 +24,7 @@ export const createRepoListPreloader = (dependencies: RepoListPreloadDependencie
 
     const hydrationAttempt = (async () => {
       try {
-        await dependencies.hydrateEligible()
+        await dependencies.hydrateEligible(signal)
       } catch (error) {
         if (!signal.aborted) onHydrationError?.(error)
       }
@@ -46,5 +46,5 @@ export const createRepoListPreloader = (dependencies: RepoListPreloadDependencie
   }
 
 export const preloadRepositoryList = createRepoListPreloader({
-  hydrateEligible: () => repositoryCache.hydrateEligibleAnnouncements(),
+  hydrateEligible: signal => repositoryCache.hydrateEligibleAnnouncements(signal),
 })

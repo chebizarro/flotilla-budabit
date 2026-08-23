@@ -30,6 +30,7 @@ export const REPO_CACHE_DB_VERSION = 1
 export const REPO_CACHE_EVENT_STORE = "repositoryEvents"
 export const REPO_CACHE_REPOSITORY_STORE = "repositories"
 export const REPO_CACHE_ROUTE_HYDRATION_BUDGET_MS = 250
+export const REPO_CACHE_LIST_HYDRATION_BATCH_SIZE = 8
 
 const GIT_COVER_LETTER = 1624
 const MAX_RELAY_PROVENANCE = 6
@@ -109,6 +110,7 @@ type RepositoryCacheDependencies = {
   getRelays?: (eventId: string) => string[]
   publish?: (event: TrustedEvent) => void
   addRelay?: (eventId: string, relay: string) => void
+  yieldTask?: () => Promise<void>
 }
 
 type PendingRepositoryCacheEvent = {
@@ -321,6 +323,7 @@ export class RepositoryCache {
   private readonly getRelays?: (eventId: string) => string[]
   private readonly publish?: (event: TrustedEvent) => void
   private readonly addRelay?: (eventId: string, relay: string) => void
+  private readonly yieldTask: () => Promise<void>
   private readonly repositories = new Map<string, CachedRepository>()
   private readonly events = new Map<string, CachedRepositoryEvent>()
   private operation = Promise.resolve<unknown>(undefined)
@@ -336,6 +339,8 @@ export class RepositoryCache {
     this.getRelays = dependencies.getRelays
     this.publish = dependencies.publish
     this.addRelay = dependencies.addRelay
+    this.yieldTask =
+      dependencies.yieldTask || (() => new Promise(resolve => setTimeout(resolve, 0)))
   }
 
   private run<T>(operation: () => Promise<T>): Promise<T> {
@@ -441,7 +446,14 @@ export class RepositoryCache {
     const record = this.events.get(key)
     if (!record) return
     this.events.delete(key)
-    this.recalculateRepository(record.repositoryAddress)
+    const metadata = this.repositories.get(record.repositoryAddress)
+    if (metadata) {
+      this.repositories.set(record.repositoryAddress, {
+        ...metadata,
+        eventCount: Math.max(0, metadata.eventCount - 1),
+        bytes: Math.max(0, metadata.bytes - record.bytes),
+      })
+    }
   }
 
   private getEvictionCandidates(records: CachedRepositoryEvent[]) {
@@ -460,7 +472,7 @@ export class RepositoryCache {
       )
   }
 
-  private prune(now: number) {
+  private prune(now: number, alreadyRecalculated = new Set<string>()) {
     const eligible = this.getEligibleAddresses(now)
     for (const address of Array.from(this.repositories.keys())) {
       if (eligible.has(address)) continue
@@ -471,7 +483,7 @@ export class RepositoryCache {
     }
 
     for (const address of eligible) {
-      this.recalculateRepository(address)
+      if (!alreadyRecalculated.has(address)) this.recalculateRepository(address)
       while (true) {
         const metadata = this.repositories.get(address)
         if (
@@ -509,12 +521,15 @@ export class RepositoryCache {
     }
   }
 
-  private async persistMutation<T>(mutation: () => T | Promise<T>) {
+  private async persistMutation<T>(
+    mutation: () => T | Promise<T>,
+    alreadyRecalculated = new Set<string>(),
+  ) {
     await this.ensureLoaded()
     const beforeRepositories = new Map(this.repositories)
     const beforeEvents = new Map(this.events)
     const value = await mutation()
-    this.prune(this.now())
+    this.prune(this.now(), alreadyRecalculated)
 
     const changes: RepositoryCacheChanges = {
       putRepositories: Array.from(this.repositories.values()).filter(
@@ -679,41 +694,51 @@ export class RepositoryCache {
   }
 
   hydrateEligible() {
-    return this.run(() =>
-      this.persistMutation(() => {
+    return this.run(() => {
+      const affected = new Set<string>()
+      return this.persistMutation(() => {
         const eligible = this.getEligibleAddresses(this.now())
-        return this.hydrateAddresses(eligible)
-      }),
-    )
+        return this.hydrateAddresses(eligible, undefined, affected)
+      }, affected)
+    })
   }
 
-  hydrateEligibleAnnouncements() {
-    return this.run(() =>
-      this.persistMutation(() => {
+  hydrateEligibleAnnouncements(signal?: AbortSignal) {
+    return this.run(() => {
+      const affected = new Set<string>()
+      return this.persistMutation(async () => {
         const eligible = this.getEligibleAddresses(this.now())
-        return this.hydrateAddresses(
+        return this.hydrateAddressesIncrementally(
           eligible,
           event =>
             event.kind === GIT_REPO_ANNOUNCEMENT ||
             event.kind === GIT_REPO_STATE ||
             event.kind === DELETE,
+          affected,
+          signal,
         )
-      }),
-    )
+      }, affected)
+    })
   }
 
   hydrateRepository(address: string) {
-    return this.run(() =>
-      this.persistMutation(() => {
+    return this.run(() => {
+      const affected = new Set<string>()
+      return this.persistMutation(() => {
         const canonicalAddress = canonicalizeRepoCacheAddress(address)
-        return this.hydrateAddresses(canonicalAddress ? new Set([canonicalAddress]) : new Set())
-      }),
-    )
+        return this.hydrateAddresses(
+          canonicalAddress ? new Set([canonicalAddress]) : new Set(),
+          undefined,
+          affected,
+        )
+      }, affected)
+    })
   }
 
   private hydrateAddresses(
     addresses: Set<string>,
     include: (event: TrustedEvent) => boolean = () => true,
+    affected = new Set<string>(),
   ) {
     const records = Array.from(this.events.values())
       .filter(record => addresses.has(record.repositoryAddress) && include(record.event))
@@ -726,39 +751,97 @@ export class RepositoryCache {
     let hydrated = 0
 
     for (const record of records) {
-      const eventClass = classifyRepositoryEvent(record.event)
-      if (
-        !eventClass ||
-        !this.verify(record.event) ||
-        !this.eventBelongsToRepository(record.event, record.repositoryAddress)
-      ) {
-        this.removeEvent(record.key)
-        continue
-      }
-      const event = toPlainEvent(record.event)
-      const recordWithoutBytes: Omit<CachedRepositoryEvent, "bytes"> = {
-        ...record,
-        event,
-        relays: normalizeProvenance(record.relays, this.policy.maxRelaysPerEvent),
-        eventClass,
-        targetIds: eventClass === "delete" ? getReferenceIds(event) : [],
-      }
-      const bytes = getSerializedRecordBytes(recordWithoutBytes)
-      if (bytes > this.policy.maxRecordBytes) {
-        this.removeEvent(record.key)
-        continue
-      }
-      const sanitizedRecord = {...recordWithoutBytes, bytes}
-      this.events.set(record.key, sanitizedRecord)
-      this.recalculateRepository(record.repositoryAddress)
-
-      this.publish?.(event)
-      for (const relay of sanitizedRecord.relays) {
-        this.addRelay?.(record.event.id, relay)
-      }
-      hydrated += 1
+      hydrated += Number(this.hydrateRecord(record, affected))
     }
+    for (const address of affected) this.recalculateRepository(address)
     return hydrated
+  }
+
+  private async hydrateAddressesIncrementally(
+    addresses: Set<string>,
+    include: (event: TrustedEvent) => boolean,
+    affected: Set<string>,
+    signal?: AbortSignal,
+  ) {
+    if (signal?.aborted) return 0
+
+    const records = Array.from(this.events.values()).filter(
+      record => addresses.has(record.repositoryAddress) && include(record.event),
+    )
+    const announcementRecords = records
+      .filter(record => record.event.kind === GIT_REPO_ANNOUNCEMENT)
+      .sort(
+        (left, right) =>
+          left.repositoryAddress.localeCompare(right.repositoryAddress) ||
+          right.event.created_at - left.event.created_at ||
+          left.key.localeCompare(right.key),
+      )
+    const remainingRecords = records
+      .filter(record => record.event.kind !== GIT_REPO_ANNOUNCEMENT)
+      .sort(
+        (left, right) =>
+          Number(left.eventClass === "delete") - Number(right.eventClass === "delete") ||
+          right.event.created_at - left.event.created_at ||
+          left.key.localeCompare(right.key),
+      )
+    const plannedRecords = [...announcementRecords, ...remainingRecords]
+    let hydrated = 0
+
+    for (
+      let offset = 0;
+      offset < plannedRecords.length;
+      offset += REPO_CACHE_LIST_HYDRATION_BATCH_SIZE
+    ) {
+      if (signal?.aborted) break
+      const batch = plannedRecords.slice(offset, offset + REPO_CACHE_LIST_HYDRATION_BATCH_SIZE)
+      for (const record of batch) {
+        if (signal?.aborted) break
+        hydrated += Number(this.hydrateRecord(record, affected))
+      }
+      if (
+        offset + REPO_CACHE_LIST_HYDRATION_BATCH_SIZE < plannedRecords.length &&
+        !signal?.aborted
+      ) {
+        await this.yieldTask()
+      }
+    }
+
+    for (const address of affected) this.recalculateRepository(address)
+    return hydrated
+  }
+
+  private hydrateRecord(record: CachedRepositoryEvent, affected: Set<string>) {
+    affected.add(record.repositoryAddress)
+    const eventClass = classifyRepositoryEvent(record.event)
+    if (
+      !eventClass ||
+      !this.verify(record.event) ||
+      !this.eventBelongsToRepository(record.event, record.repositoryAddress)
+    ) {
+      this.removeEvent(record.key)
+      return false
+    }
+    const event = toPlainEvent(record.event)
+    const recordWithoutBytes: Omit<CachedRepositoryEvent, "bytes"> = {
+      ...record,
+      event,
+      relays: normalizeProvenance(record.relays, this.policy.maxRelaysPerEvent),
+      eventClass,
+      targetIds: eventClass === "delete" ? getReferenceIds(event) : [],
+    }
+    const bytes = getSerializedRecordBytes(recordWithoutBytes)
+    if (bytes > this.policy.maxRecordBytes) {
+      this.removeEvent(record.key)
+      return false
+    }
+    const sanitizedRecord = {...recordWithoutBytes, bytes}
+    this.events.set(record.key, sanitizedRecord)
+
+    this.publish?.(event)
+    for (const relay of sanitizedRecord.relays) {
+      this.addRelay?.(record.event.id, relay)
+    }
+    return true
   }
 
   getState() {
