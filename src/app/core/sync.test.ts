@@ -229,6 +229,7 @@ describe("syncApplicationData", () => {
     mocks.userMessagingRelayList.set(null)
     mocks.repositoryQuery.mockReturnValue([])
     mocks.trackerGetRelays.mockReturnValue(new Set<string>())
+    mocks.hasNegentropy.mockReturnValue(false)
     mocks.gitRelays.splice(0)
     mocks.routerUrls.splice(0)
   })
@@ -315,7 +316,7 @@ describe("syncApplicationData", () => {
     cleanup()
   })
 
-  it("fully backfills DMs when the first messaging relay is configured after startup", async () => {
+  it("does not fully backfill DMs when persisted messaging relays hydrate", async () => {
     const userPubkey = "a".repeat(64)
 
     mocks.pubkey.set(userPubkey)
@@ -340,14 +341,7 @@ describe("syncApplicationData", () => {
       call.filters.every((filter: any) => filter.limit === 200),
     )
 
-    expect(fullHistoryCall).toBeTruthy()
-    expect(fullHistoryCall!.relays).toEqual(["wss://first-dm.relay.example.com/"])
-    expect(fullHistoryCall!.filters).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({kinds: [4444], "#p": [userPubkey]}),
-        expect.objectContaining({kinds: [4444], authors: [userPubkey]}),
-      ]),
-    )
+    expect(fullHistoryCall).toBeFalsy()
     expect(bootstrapCall).toBeTruthy()
 
     const liveCall = mocks.request.mock.calls.at(-1)?.[0]
@@ -359,6 +353,106 @@ describe("syncApplicationData", () => {
         expect.objectContaining({kinds: [4444], authors: [userPubkey], limit: 0}),
       ]),
     )
+
+    cleanup()
+  })
+
+  it("does not fully backfill multiple persisted messaging relays", async () => {
+    mocks.pubkey.set("a".repeat(64))
+
+    const {syncApplicationData} = await import("./sync")
+    const cleanup = syncApplicationData()
+    await flush()
+    mocks.dmLoad.mockClear()
+
+    mocks.userMessagingRelayList.set({
+      tags: [
+        ["r", "wss://one.example.com"],
+        ["r", "wss://two.example.com"],
+      ],
+    })
+    await flush()
+
+    expect(
+      mocks.dmLoad.mock.calls.some(call =>
+        call[0].filters.every(
+          (filter: any) => filter.limit === undefined && filter.since === undefined,
+        ),
+      ),
+    ).toBe(false)
+    expect(mocks.request).toHaveBeenCalledTimes(2)
+
+    cleanup()
+  })
+
+  it("fully backfills DMs when the first relay is added after hydrated empty state", async () => {
+    const userPubkey = "a".repeat(64)
+
+    mocks.pubkey.set(userPubkey)
+    mocks.userMessagingRelayList.set({tags: []})
+
+    const {syncApplicationData} = await import("./sync")
+    const cleanup = syncApplicationData()
+    await flush()
+    mocks.dmLoad.mockClear()
+
+    mocks.userMessagingRelayList.set({
+      tags: [["relay", "wss://first-dm.relay.example.com"]],
+    })
+    await flush()
+
+    const fullHistoryCall = mocks.dmLoad.mock.calls
+      .map(call => call[0])
+      .find(call =>
+        call.filters.every(
+          (filter: any) => filter.limit === undefined && filter.since === undefined,
+        ),
+      )
+
+    expect(fullHistoryCall?.relays).toEqual(["wss://first-dm.relay.example.com/"])
+
+    cleanup()
+  })
+
+  it("uses negentropy without concurrent loader fallback", async () => {
+    mocks.hasNegentropy.mockReturnValue(true)
+    mocks.pubkey.set("a".repeat(64))
+    mocks.userMessagingRelayList.set({tags: [["r", "wss://smart.example.com"]]})
+
+    const {syncApplicationData} = await import("./sync")
+    const cleanup = syncApplicationData()
+    await flush()
+
+    expect(mocks.pull).toHaveBeenCalledTimes(1)
+    expect(
+      mocks.dmLoad.mock.calls.some(call =>
+        call[0].filters.every((filter: any) => filter.limit === 100),
+      ),
+    ).toBe(false)
+    expect(
+      mocks.dmLoad.mock.calls.some(call =>
+        call[0].filters.every((filter: any) => filter.limit === 200),
+      ),
+    ).toBe(true)
+
+    cleanup()
+  })
+
+  it("falls back to the loader when negentropy rejects", async () => {
+    mocks.hasNegentropy.mockReturnValue(true)
+    mocks.pull.mockRejectedValueOnce(new Error("negentropy failed"))
+    mocks.pubkey.set("a".repeat(64))
+    mocks.userMessagingRelayList.set({tags: [["r", "wss://smart.example.com"]]})
+
+    const {syncApplicationData} = await import("./sync")
+    const cleanup = syncApplicationData()
+    await flush()
+
+    expect(
+      mocks.dmLoad.mock.calls.some(call =>
+        call[0].filters.every((filter: any) => filter.limit === 100),
+      ),
+    ).toBe(true)
 
     cleanup()
   })

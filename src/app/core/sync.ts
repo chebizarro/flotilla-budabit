@@ -10,7 +10,7 @@ import {
   isRelayUrl,
   normalizeRelayUrl,
 } from "@welshman/util"
-import type {Filter, TrustedEvent} from "@welshman/util"
+import type {Filter} from "@welshman/util"
 import {request, pull, makeLoader} from "@welshman/net"
 import {Router} from "@welshman/router"
 import {
@@ -65,15 +65,7 @@ const DM_BOOTSTRAP_BACKFILL_LIMIT = 200
 const pullWithFallbackDm = ({relays, filters, signal, fullHistory = false}: DmPullOpts) => {
   const [smart, dumb] = partition(hasNegentropy, relays)
   const events = repository.query(filters, {shouldSort: false}).filter(isSignedEvent)
-  const promises: Promise<TrustedEvent[]>[] = []
-
-  if (smart.length > 0) {
-    promises.push(pull({relays: smart, filters, signal, events}))
-  }
-
-  // For DMs, always run loader-based backfill. Even when relays support negentropy,
-  // this protects us from false capability detection or partial negentropy failures.
-  for (const url of [...smart, ...dumb]) {
+  const loadRelay = (url: string) => {
     let relayFilters = filters
     const urlEvents = events.filter(e => tracker.getRelays(e.id).has(url))
 
@@ -83,7 +75,14 @@ const pullWithFallbackDm = ({relays, filters, signal, fullHistory = false}: DmPu
       )
     }
 
-    promises.push(dmLoad({relays: [url], filters: relayFilters, signal}))
+    return dmLoad({relays: [url], filters: relayFilters, signal})
+  }
+  const promises: Promise<unknown>[] = dumb.map(loadRelay)
+
+  if (smart.length > 0) {
+    promises.push(
+      pull({relays: smart, filters, signal, events}).catch(() => Promise.all(smart.map(loadRelay))),
+    )
   }
 
   return Promise.all(promises)
@@ -352,6 +351,8 @@ const syncDMs = () => {
           loadUserRelayList()
           forceLoadUserMessagingRelayList(relayHints)
         }
+
+        if (!$userMessagingRelayList) return
 
         const rawRelays = getRelayTagValues(getListTags($userMessagingRelayList))
         // Filter out any non-string values before sanitizing
