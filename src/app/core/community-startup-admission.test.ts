@@ -27,21 +27,31 @@ describe("community maintenance admission", () => {
     const {admission, states, tasks, runNext} = makeHarness()
 
     admission.start("community-a")
-    expect(states.at(-1)).toEqual({history: false, "follow-up": false, deletes: false})
+    expect(states.at(-1)).toEqual({
+      history: false,
+      "follow-up": false,
+      deletes: false,
+      menu: false,
+    })
     expect(tasks).toHaveLength(1)
 
     runNext()
-    expect(states.at(-1)).toEqual({history: true, "follow-up": false, deletes: false})
+    expect(states.at(-1)).toEqual({history: true, "follow-up": false, deletes: false, menu: false})
 
     admission.settle("community-a", "history")
     expect(states.at(-1)?.["follow-up"]).toBe(false)
     runNext()
-    expect(states.at(-1)).toEqual({history: true, "follow-up": true, deletes: false})
+    expect(states.at(-1)).toEqual({history: true, "follow-up": true, deletes: false, menu: false})
 
     admission.settle("community-a", "follow-up")
     expect(states.at(-1)?.deletes).toBe(false)
     runNext()
-    expect(states.at(-1)).toEqual({history: true, "follow-up": true, deletes: true})
+    expect(states.at(-1)).toEqual({history: true, "follow-up": true, deletes: true, menu: false})
+
+    admission.settle("community-a", "deletes")
+    expect(states.at(-1)?.menu).toBe(false)
+    runNext()
+    expect(states.at(-1)).toEqual({history: true, "follow-up": true, deletes: true, menu: true})
   })
 
   it("cancels queued work when the semantic generation changes", () => {
@@ -53,7 +63,7 @@ describe("community maintenance admission", () => {
     runNext()
 
     expect(admission.getKey()).toBe("community-b")
-    expect(states.at(-1)).toEqual({history: true, "follow-up": false, deletes: false})
+    expect(states.at(-1)).toEqual({history: true, "follow-up": false, deletes: false, menu: false})
     admission.settle("community-a", "history")
     expect(tasks).toHaveLength(0)
   })
@@ -86,6 +96,7 @@ describe("community maintenance admission", () => {
       history: false,
       "follow-up": false,
       deletes: false,
+      menu: false,
     })
   })
 })

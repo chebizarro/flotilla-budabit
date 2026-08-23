@@ -1,4 +1,4 @@
-export type CommunityMaintenanceLane = "history" | "follow-up" | "deletes"
+export type CommunityMaintenanceLane = "history" | "follow-up" | "deletes" | "menu"
 
 export type CommunityMaintenanceAdmissionState = Record<CommunityMaintenanceLane, boolean>
 
@@ -13,11 +13,13 @@ const emptyState = (): CommunityMaintenanceAdmissionState => ({
   history: false,
   "follow-up": false,
   deletes: false,
+  menu: false,
 })
 
 const nextLane: Partial<Record<CommunityMaintenanceLane, CommunityMaintenanceLane>> = {
   history: "follow-up",
   "follow-up": "deletes",
+  deletes: "menu",
 }
 
 export const createCommunityMaintenanceAdmission = ({

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import {onMount, tick} from "svelte"
+  import {onMount} from "svelte"
   import {goto} from "$app/navigation"
   import {request} from "@welshman/net"
   import {pubkey, repository} from "@welshman/app"
@@ -85,9 +85,10 @@
 
   type Props = {
     community: CommunityPointer
+    evidenceReady?: boolean
   }
 
-  const {community}: Props = $props()
+  const {community, evidenceReady = true}: Props = $props()
 
   const MENU_EVIDENCE_LOAD_TIMEOUT = 5_000
   let admissionEvidenceKey = ""
@@ -96,6 +97,9 @@
   let reportEvidenceKey = ""
   let reportEvidenceLoading = $state(false)
   let reportEvidenceLoaded = $state(false)
+  let replaceState = $state(false)
+  let element: Element | undefined = $state()
+  const remoteEvidenceReady = $derived(evidenceReady || replaceState)
 
   const exactDefinition = $derived(
     $activeExactCommunityDefinition?.pointer.address === community.address
@@ -372,6 +376,7 @@
   })
   const moderationEvidenceLoading = $derived(
     Boolean(
+      (canModerate && !remoteEvidenceReady) ||
       communityAdmissionFormReadiness === "loading" ||
       admissionReviewEvidenceLoading ||
       reportReviewEvidenceLoading,
@@ -402,35 +407,19 @@
     if (canCreateRoom) pushModal(CommunityRoomCreate, {community}, {replaceState})
   }
 
-  let replaceState = $state(false)
-  let menuBackgroundHydrationReady = $state(false)
-  let element: Element | undefined = $state()
-
-  const waitForPostPaintHydration = async () => {
-    await tick()
-    if (typeof requestAnimationFrame !== "function") return
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-  }
-
   onMount(() => {
-    let cancelled = false
     replaceState = Boolean(element?.closest(".drawer"))
-
-    void waitForPostPaintHydration().then(() => {
-      if (!cancelled) menuBackgroundHydrationReady = true
-    })
-
-    return () => {
-      cancelled = true
-      menuBackgroundHydrationReady = false
-    }
   })
 
   $effect(() => {
     const filters = admissionEvidenceFilters
 
-    if (!menuBackgroundHydrationReady) return
+    if (!remoteEvidenceReady || !canModerate) {
+      admissionEvidenceKey = ""
+      admissionEvidenceLoading = false
+      admissionEvidenceLoaded = false
+      return
+    }
 
     if (
       !community ||
@@ -481,7 +470,12 @@
   $effect(() => {
     const filters = reportEvidenceFilters
 
-    if (!menuBackgroundHydrationReady) return
+    if (!remoteEvidenceReady || !canModerate) {
+      reportEvidenceKey = ""
+      reportEvidenceLoading = false
+      reportEvidenceLoaded = false
+      return
+    }
 
     if (
       !community ||
@@ -530,7 +524,7 @@
   })
 
   $effect(() => {
-    if (!menuBackgroundHydrationReady) return
+    if (!remoteEvidenceReady || !$pubkey) return
     if (!community || $activeExactCommunityRelays.length === 0) return
 
     const filters = [
@@ -538,7 +532,7 @@
       ...badgeAwardFilters,
       ...badgeAwardDeleteFilters,
       ...profileBadgeFilters,
-      ...admissionResponseFilters,
+      ...(canModerate ? admissionResponseFilters : []),
     ]
     if (filters.length === 0) return
 
@@ -548,6 +542,10 @@
       autoClose: true,
       filters,
       signal: controller.signal,
+    }).catch(error => {
+      if (!controller.signal.aborted) {
+        console.warn("[community-menu] Failed to load badge and admission evidence", error)
+      }
     })
 
     return () => controller.abort()

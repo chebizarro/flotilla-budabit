@@ -162,6 +162,7 @@
     history: false,
     "follow-up": false,
     deletes: false,
+    menu: false,
   })
   const maintenanceAdmission = createCommunityMaintenanceAdmission({
     onChange: state => (communityMaintenanceAdmission = state),
@@ -667,6 +668,7 @@
     communityDeleteLoadKey = key
     const controller = new AbortController()
     communityDeleteLoadController = controller
+    const admissionKey = maintenanceAdmission.getKey()
 
     void hydrateCommunityDeleteEvents({
       relays,
@@ -678,6 +680,7 @@
       latest => {
         if (communityDeleteLoadController !== controller) return
         communityDeleteLoadController = null
+        maintenanceAdmission.settle(admissionKey, "deletes")
         if (latest > (latestCommunityDeleteSeenByKey[deleteSeenKey] || 0)) {
           latestCommunityDeleteSeenByKey[deleteSeenKey] = latest
         }
@@ -687,6 +690,7 @@
 
         communityDeleteLoadController = null
         communityDeleteLoadKey = ""
+        maintenanceAdmission.settle(admissionKey, "deletes")
         console.warn("[community-deletes] Failed to load community delete events", error)
         if (communityDeleteRetryTimer) clearTimeout(communityDeleteRetryTimer)
         communityDeleteRetryTimer = setTimeout(() => {
@@ -816,7 +820,7 @@
 
 {#if exactCommunity}
   <SecondaryNav>
-    <CommunityMenu community={exactCommunity} />
+    <CommunityMenu community={exactCommunity} evidenceReady={communityMaintenanceAdmission.menu} />
   </SecondaryNav>
   {#if !hasInlineCommunityMenu}
     <button
