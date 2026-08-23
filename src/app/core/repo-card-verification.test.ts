@@ -8,6 +8,7 @@ import {
 import type {TrustedEvent} from "@welshman/util"
 import {
   REPO_CARD_VERIFICATION_MAX_REPOS,
+  REPO_CARD_VERIFICATION_CONCURRENCY,
   buildRepoCardVerificationPlan,
   loadRepoCardVerification,
 } from "./repo-card-verification"
@@ -33,7 +34,7 @@ const makePr = (repo: RepoAnnouncementEvent) =>
     pubkey: maintainer,
     created_at: 2,
     kind: GIT_PULL_REQUEST,
-    tags: [["a", `${repo.kind}:${repo.pubkey}:demo`]],
+    tags: [["a", `${repo.kind}:${repo.pubkey}:${repo.tags.find(tag => tag[0] === "d")?.[1]}`]],
     content: "",
     sig: "e".repeat(128),
   }) as TrustedEvent
@@ -54,13 +55,18 @@ describe("repository card verification", () => {
     const repo = makeRepo()
     const plan = buildRepoCardVerificationPlan([{event: repo, relays: [relay, relay]}])
 
-    expect(plan.relays).toEqual([`${relay}/`])
-    expect(plan.pullRequestFilters).toEqual([
+    expect(plan.groups).toEqual([
       {
-        kinds: [GIT_PULL_REQUEST],
-        authors: [maintainer],
-        "#a": [`${repo.kind}:${repo.pubkey}:demo`],
-        limit: 24,
+        relays: [`${relay}/`],
+        plans: plan.plans,
+        pullRequestFilters: [
+          {
+            kinds: [GIT_PULL_REQUEST],
+            authors: [maintainer],
+            "#a": [`${repo.kind}:${repo.pubkey}:demo`],
+            limit: 24,
+          },
+        ],
       },
     ])
   })
@@ -74,6 +80,55 @@ describe("repository card verification", () => {
     expect(buildRepoCardVerificationPlan(targets).plans).toHaveLength(
       REPO_CARD_VERIFICATION_MAX_REPOS,
     )
+  })
+
+  it("keeps each repository on its own relay evidence scope", () => {
+    const targets = Array.from({length: REPO_CARD_VERIFICATION_MAX_REPOS}, (_, index) => ({
+      event: makeRepo(`repo-${index}`),
+      relays: [`wss://relay-${index}.example`],
+    }))
+    const plan = buildRepoCardVerificationPlan(targets)
+
+    expect(plan.groups).toHaveLength(REPO_CARD_VERIFICATION_MAX_REPOS)
+    expect(plan.groups.at(-1)?.relays).toEqual([
+      `wss://relay-${REPO_CARD_VERIFICATION_MAX_REPOS - 1}.example/`,
+    ])
+    for (const group of plan.groups) {
+      expect(group.pullRequestFilters[0]["#a"]).toEqual([group.plans[0].address])
+    }
+  })
+
+  it("bounds concurrent repository evidence relay groups", async () => {
+    let active = 0
+    let maxActive = 0
+    const fetchEvents = vi.fn(async options => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await Promise.resolve()
+      options.onOutcome?.({timedOut: false, sawEose: true, capped: false})
+      active -= 1
+      return []
+    })
+    const targets = Array.from({length: REPO_CARD_VERIFICATION_CONCURRENCY + 2}, (_, index) => ({
+      event: makeRepo(`concurrent-${index}`),
+      relays: [`wss://concurrent-${index}.example`],
+    }))
+
+    await loadRepoCardVerification(targets, undefined, {
+      getCachedEvents: () => [],
+      fetchEvents: fetchEvents as any,
+    })
+
+    expect(maxActive).toBeLessThanOrEqual(REPO_CARD_VERIFICATION_CONCURRENCY)
+  })
+
+  it("skips repositories without declared co-maintainers", () => {
+    const plan = buildRepoCardVerificationPlan([
+      {event: makeRepo("owner-only", []), relays: [relay]},
+    ])
+
+    expect(plan.plans).toEqual([])
+    expect(plan.groups).toEqual([])
   })
 
   it("verifies maintainers from isolated PR and owner-status batches", async () => {
@@ -102,7 +157,7 @@ describe("repository card verification", () => {
     ).toEqual([maintainer])
     expect(fetchEvents).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({isolated: true, maxEvents: 432}),
+      expect.objectContaining({isolated: true, maxEvents: 24}),
     )
     expect(fetchEvents).toHaveBeenNthCalledWith(
       2,
@@ -132,6 +187,23 @@ describe("repository card verification", () => {
     })
 
     expect(result.completion).toBe("partial")
+  })
+
+  it("retains cached positive evidence when no repository relay is available", async () => {
+    const repo = makeRepo()
+    const pr = makePr(repo)
+    const status = makeStatus(pr)
+    const getCachedEvents = vi.fn().mockReturnValueOnce([pr]).mockReturnValueOnce([status])
+    const fetchEvents = vi.fn()
+
+    const result = await loadRepoCardVerification([{event: repo, relays: []}], undefined, {
+      getCachedEvents,
+      fetchEvents: fetchEvents as any,
+    })
+
+    expect(result.completion).toBe("partial")
+    expect(Array.from(result.verifiedByAddress.values())[0]).toEqual(new Set([maintainer]))
+    expect(fetchEvents).not.toHaveBeenCalled()
   })
 
   it("propagates caller cancellation", async () => {

@@ -1,6 +1,12 @@
-import {forceLoadProfile, loadProfile, profilesByPubkey} from "@welshman/app"
+import {forceLoadProfile, loadProfile, profilesByPubkey, repository, tracker} from "@welshman/app"
+import {request as welshmanRequest} from "@welshman/net"
 import {LRUCache} from "@welshman/lib"
-import {displayProfile, displayPubkey, type PublishedProfile} from "@welshman/util"
+import {
+  displayProfile,
+  displayPubkey,
+  type PublishedProfile,
+  type TrustedEvent,
+} from "@welshman/util"
 import {derived, get, readable, type Readable} from "svelte/store"
 import {normalizePubkey, normalizeRelays} from "@app/core/community"
 import {INDEXER_RELAYS} from "@app/core/state"
@@ -24,9 +30,98 @@ const attemptedRelaysByPubkey = new LRUCache<string, Set<string>>(2000)
 const profileLoadPromisesByKey = new Map<string, Promise<PublishedProfile | undefined>>()
 const completedProfileLoadTimesByKey = new LRUCache<string, number>(2000)
 const PROFILE_LOAD_RETRY_MS = 60_000
+export const PROFILE_BATCH_CONCURRENCY = 3
+
+export type ProfileBatchTarget = {
+  pubkey: string
+  relays: string[]
+}
+
+export type ProfileBatchGroup = {
+  pubkeys: string[]
+  relays: string[]
+}
+
+type ProfileBatchDependencies = {
+  hasProfile?: (pubkey: string) => boolean
+  requestGroup?: (group: ProfileBatchGroup, signal?: AbortSignal) => Promise<unknown>
+}
 
 const hasProfileDisplayData = (profile: PublishedProfile | undefined) =>
   Boolean(profile?.display_name || profile?.name || profile?.picture)
+
+export const buildBudabitProfileBatchPlan = (targets: ProfileBatchTarget[]) => {
+  const relaysByPubkey = new Map<string, Set<string>>()
+  for (const target of targets) {
+    const pubkey = normalizePubkey(target.pubkey)
+    if (!pubkey) continue
+    const relays = relaysByPubkey.get(pubkey) || new Set<string>()
+    for (const relay of normalizeRelays(target.relays)) relays.add(relay)
+    relaysByPubkey.set(pubkey, relays)
+  }
+
+  const groups = new Map<string, ProfileBatchGroup>()
+  for (const [pubkey, relaySet] of relaysByPubkey) {
+    const relays = Array.from(relaySet).sort()
+    if (relays.length === 0) continue
+    const key = relays.join("\n")
+    const group = groups.get(key) || {pubkeys: [], relays}
+    group.pubkeys.push(pubkey)
+    groups.set(key, group)
+  }
+
+  return Array.from(groups.values()).map(group => ({
+    ...group,
+    pubkeys: group.pubkeys.sort(),
+  }))
+}
+
+const requestProfileGroup = async (group: ProfileBatchGroup, signal?: AbortSignal) => {
+  const admit = (event: TrustedEvent, relay: string) => {
+    if (signal?.aborted) return
+    if (relay && !tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
+    if (!repository.hasEvent(event)) repository.publish(event)
+  }
+  await welshmanRequest({
+    relays: group.relays,
+    filters: [{kinds: [0], authors: group.pubkeys, limit: group.pubkeys.length}],
+    signal,
+    autoClose: true,
+    lifetime: "finite",
+    owner: "git-list:profiles",
+    tracker,
+    onEvent: admit,
+    onDuplicate: admit,
+  })
+}
+
+export const loadBudabitProfileBatch = async (
+  targets: ProfileBatchTarget[],
+  signal?: AbortSignal,
+  dependencies: ProfileBatchDependencies = {},
+) => {
+  const hasProfile =
+    dependencies.hasProfile ||
+    ((pubkey: string) => hasProfileDisplayData(get(profilesByPubkey).get(pubkey)))
+  const requestGroup = dependencies.requestGroup || requestProfileGroup
+  const groups = buildBudabitProfileBatchPlan(targets)
+    .map(group => ({...group, pubkeys: group.pubkeys.filter(pubkey => !hasProfile(pubkey))}))
+    .filter(group => group.pubkeys.length > 0)
+  let nextGroup = 0
+
+  const worker = async () => {
+    while (!signal?.aborted) {
+      const group = groups[nextGroup++]
+      if (!group) return
+      await requestGroup(group, signal)
+    }
+  }
+
+  await Promise.all(
+    Array.from({length: Math.min(PROFILE_BATCH_CONCURRENCY, groups.length)}, () => worker()),
+  )
+  if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError")
+}
 
 export const getBudabitProfileRelays = (
   options: ProfileResolutionOptions = {},

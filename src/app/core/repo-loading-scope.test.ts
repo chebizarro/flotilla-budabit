@@ -230,6 +230,15 @@ describe("authoritative repository loading scope", () => {
     expect(page).toContain("accountSearchVisibleRepos.slice(0,repoResultsVisibleLimit)")
     expect(page).toContain("JSON.stringify([repoCardsSourceContext,repoResultsVisibleLimit])")
     expect(page).toContain("hasRenderedRepoCardsForCurrentContext?sortedRepoCardModels:[]")
+    expect(page).toContain(".filter(model=>model.maintainers.length>0)")
+    expect(page).toContain("loadBudabitProfileBatch(owners,controller.signal)")
+    expect(page).toContain("loadBudabitProfileBatch(secondary,controller.signal)")
+    const verificationTargets = page.slice(
+      page.indexOf("constrepoCardVerificationTargets"),
+      page.indexOf("letrepoCardVerifiedMaintainersByAddress"),
+    )
+    expect(verificationTargets).not.toContain("GIT_RELAYS")
+    expect(verificationTargets).not.toContain("REPO_LIST_MAX_RELAYS")
     expect(page).toContain("!repoCardStarHydratedAddresses.has(address)")
     expect(page).toContain("repoAddresses:addresses")
     expect(page).toContain("renderedScope:repoCollectionRenderedScopeKey")

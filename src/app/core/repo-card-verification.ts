@@ -20,6 +20,7 @@ export const REPO_CARD_VERIFICATION_MAX_RELAYS = 6
 export const REPO_CARD_VERIFICATION_MAX_PRS_PER_REPO = 24
 export const REPO_CARD_VERIFICATION_MAX_EVENTS = 432
 export const REPO_CARD_VERIFICATION_TIMEOUT_MS = 2_500
+export const REPO_CARD_VERIFICATION_CONCURRENCY = 3
 const FILTER_CHUNK_SIZE = 80
 
 export type RepoCardVerificationTarget = {
@@ -35,6 +36,12 @@ export type RepoCardVerificationResult = {
 type VerificationTargetPlan = RepoCardVerificationTarget & {
   address: string
   maintainers: string[]
+}
+
+type VerificationRelayGroup = {
+  relays: string[]
+  plans: VerificationTargetPlan[]
+  pullRequestFilters: Filter[]
 }
 
 type VerificationDependencies = {
@@ -81,23 +88,73 @@ export const buildRepoCardVerificationPlan = (targets: RepoCardVerificationTarge
     seenAddresses.add(address)
 
     const maintainers = getRepoDeclaredMaintainers(target.event)
-    plans.push({...target, address, maintainers})
+    if (maintainers.length === 0) continue
+    plans.push({...target, relays: normalizeRelays(target.relays), address, maintainers})
   }
 
-  const relays = normalizeRelays(plans.flatMap(plan => plan.relays))
-  const pullRequestFilters = plans
-    .filter(plan => plan.maintainers.length > 0)
-    .map(
-      plan =>
-        ({
-          kinds: [GIT_PULL_REQUEST],
-          authors: plan.maintainers,
-          "#a": [plan.address],
-          limit: REPO_CARD_VERIFICATION_MAX_PRS_PER_REPO,
-        }) satisfies Filter,
-    )
+  const groupsByRelayKey = new Map<string, VerificationRelayGroup>()
+  for (const plan of plans) {
+    const key = plan.relays.join("\n")
+    const group = groupsByRelayKey.get(key) || {
+      relays: plan.relays,
+      plans: [],
+      pullRequestFilters: [],
+    }
+    group.plans.push(plan)
+    group.pullRequestFilters.push({
+      kinds: [GIT_PULL_REQUEST],
+      authors: plan.maintainers,
+      "#a": [plan.address],
+      limit: REPO_CARD_VERIFICATION_MAX_PRS_PER_REPO,
+    } satisfies Filter)
+    groupsByRelayKey.set(key, group)
+  }
 
-  return {plans, relays, pullRequestFilters}
+  return {plans, groups: Array.from(groupsByRelayKey.values())}
+}
+
+const makeStatusFilters = (
+  plans: VerificationTargetPlan[],
+  pullRequestsByAddress: Map<string, PullRequestEvent[]>,
+) =>
+  plans.flatMap(plan =>
+    chunk((pullRequestsByAddress.get(plan.address) || []).map(event => event.id)).map(
+      rootIds =>
+        ({
+          kinds: [GIT_STATUS_APPLIED],
+          authors: [plan.event.pubkey],
+          "#e": rootIds,
+          limit: rootIds.length,
+        }) satisfies Filter,
+    ),
+  )
+
+const getGroupEventLimit = (group: VerificationRelayGroup) =>
+  Math.min(
+    REPO_CARD_VERIFICATION_MAX_EVENTS,
+    group.plans.length * REPO_CARD_VERIFICATION_MAX_PRS_PER_REPO,
+  )
+
+const mapGroups = async <T>(
+  groups: VerificationRelayGroup[],
+  loadGroup: (group: VerificationRelayGroup) => Promise<T[]>,
+) => {
+  const results: T[][] = []
+  let nextGroup = 0
+  const worker = async () => {
+    while (true) {
+      const index = nextGroup++
+      const group = groups[index]
+      if (!group) return
+      results[index] = await loadGroup(group)
+    }
+  }
+  await Promise.all(
+    Array.from({length: Math.min(REPO_CARD_VERIFICATION_CONCURRENCY, groups.length)}, () =>
+      worker(),
+    ),
+  )
+  return results.flat()
 }
 
 export const loadRepoCardVerification = async (
@@ -105,29 +162,27 @@ export const loadRepoCardVerification = async (
   signal?: AbortSignal,
   dependencies: VerificationDependencies = {},
 ): Promise<RepoCardVerificationResult> => {
-  const {plans, relays, pullRequestFilters} = buildRepoCardVerificationPlan(targets)
+  const {plans, groups} = buildRepoCardVerificationPlan(targets)
   const verifiedByAddress = new Map(plans.map(plan => [plan.address, new Set<string>()]))
-  if (plans.length === 0 || pullRequestFilters.length === 0) {
-    return {verifiedByAddress, completion: "complete"}
-  }
+  if (plans.length === 0) return {verifiedByAddress, completion: "complete"}
 
   const getCachedEvents =
     dependencies.getCachedEvents ||
     ((filters: Filter[]) => repository.query(filters as any, {shouldSort: false}) as TrustedEvent[])
   const fetchEvents = dependencies.fetchEvents || fetchRelayEventsWithTimeout
-  let partial = relays.length === 0
+  const pullRequestFilters = groups.flatMap(group => group.pullRequestFilters)
   const cachedPullRequests = getCachedEvents(pullRequestFilters) as PullRequestEvent[]
-  let fetchedPullRequests: PullRequestEvent[] = []
-
-  if (relays.length > 0 && !signal?.aborted) {
+  let partial = groups.some(group => group.relays.length === 0)
+  const fetchedPullRequests = await mapGroups<PullRequestEvent>(groups, async group => {
+    if (group.relays.length === 0 || signal?.aborted) return []
     try {
-      fetchedPullRequests = await fetchEvents<PullRequestEvent>({
-        relays,
-        filters: pullRequestFilters,
+      return await fetchEvents<PullRequestEvent>({
+        relays: group.relays,
+        filters: group.pullRequestFilters,
         timeoutMs: REPO_CARD_VERIFICATION_TIMEOUT_MS,
         signal,
         isolated: true,
-        maxEvents: REPO_CARD_VERIFICATION_MAX_EVENTS,
+        maxEvents: getGroupEventLimit(group),
         onOutcome: outcome => {
           partial ||= outcome.timedOut || outcome.capped || !outcome.sawEose
         },
@@ -135,8 +190,9 @@ export const loadRepoCardVerification = async (
     } catch {
       if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError")
       partial = true
+      return []
     }
-  }
+  })
 
   if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError")
 
@@ -158,31 +214,21 @@ export const loadRepoCardVerification = async (
     )
   }
 
-  const statusFilters = plans.flatMap(plan =>
-    chunk((pullRequestsByAddress.get(plan.address) || []).map(event => event.id)).map(
-      rootIds =>
-        ({
-          kinds: [GIT_STATUS_APPLIED],
-          authors: [plan.event.pubkey],
-          "#e": rootIds,
-          limit: rootIds.length,
-        }) satisfies Filter,
-    ),
-  )
+  const statusFilters = makeStatusFilters(plans, pullRequestsByAddress)
   const cachedStatuses = statusFilters.length
     ? (getCachedEvents(statusFilters) as StatusEvent[])
     : []
-  let fetchedStatuses: StatusEvent[] = []
-
-  if (statusFilters.length > 0 && relays.length > 0 && !signal?.aborted) {
+  const fetchedStatuses = await mapGroups<StatusEvent>(groups, async group => {
+    const filters = makeStatusFilters(group.plans, pullRequestsByAddress)
+    if (filters.length === 0 || group.relays.length === 0 || signal?.aborted) return []
     try {
-      fetchedStatuses = await fetchEvents<StatusEvent>({
-        relays,
-        filters: statusFilters,
+      return await fetchEvents<StatusEvent>({
+        relays: group.relays,
+        filters,
         timeoutMs: REPO_CARD_VERIFICATION_TIMEOUT_MS,
         signal,
         isolated: true,
-        maxEvents: REPO_CARD_VERIFICATION_MAX_EVENTS,
+        maxEvents: getGroupEventLimit(group),
         onOutcome: outcome => {
           partial ||= outcome.timedOut || outcome.capped || !outcome.sawEose
         },
@@ -190,8 +236,9 @@ export const loadRepoCardVerification = async (
     } catch {
       if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError")
       partial = true
+      return []
     }
-  }
+  })
 
   if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError")
 

@@ -223,6 +223,77 @@ describe("Budabit profile resolver", () => {
     unsubscribe()
   })
 
+  it("deduplicates batch pubkeys and groups equal relay scopes", async () => {
+    const {buildBudabitProfileBatchPlan} = await import("./profile-resolver")
+    const otherPubkey = "b".repeat(64)
+
+    expect(
+      buildBudabitProfileBatchPlan([
+        {pubkey, relays: ["wss://one.example", "wss://two.example"]},
+        {pubkey, relays: ["wss://two.example", "wss://one.example"]},
+        {pubkey: otherPubkey, relays: ["wss://one.example", "wss://two.example"]},
+      ]),
+    ).toEqual([
+      {
+        pubkeys: [pubkey, otherPubkey],
+        relays: ["wss://one.example/", "wss://two.example/"],
+      },
+    ])
+  })
+
+  it("bounds concurrent profile relay groups", async () => {
+    const {loadBudabitProfileBatch, PROFILE_BATCH_CONCURRENCY} = await import("./profile-resolver")
+    let active = 0
+    let maxActive = 0
+    const finishes: Array<() => void> = []
+    const requestGroup = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          active += 1
+          maxActive = Math.max(maxActive, active)
+          finishes.push(() => {
+            active -= 1
+            resolve()
+          })
+        }),
+    )
+    const pending = loadBudabitProfileBatch(
+      Array.from({length: PROFILE_BATCH_CONCURRENCY + 2}, (_, index) => ({
+        pubkey: index.toString(16).padStart(64, "0"),
+        relays: [`wss://relay-${index}.example`],
+      })),
+      undefined,
+      {hasProfile: () => false, requestGroup},
+    )
+
+    await vi.waitFor(() => expect(requestGroup).toHaveBeenCalledTimes(PROFILE_BATCH_CONCURRENCY))
+    while (finishes.length > 0) {
+      finishes.shift()?.()
+      await Promise.resolve()
+    }
+    await pending
+
+    expect(maxActive).toBe(PROFILE_BATCH_CONCURRENCY)
+  })
+
+  it("stops profile batch scheduling after caller cancellation", async () => {
+    const {loadBudabitProfileBatch} = await import("./profile-resolver")
+    const controller = new AbortController()
+    const requestGroup = vi.fn(async () => controller.abort())
+
+    await expect(
+      loadBudabitProfileBatch(
+        Array.from({length: 5}, (_, index) => ({
+          pubkey: (index + 10).toString(16).padStart(64, "0"),
+          relays: [`wss://cancel-${index}.example`],
+        })),
+        controller.signal,
+        {hasProfile: () => false, requestGroup},
+      ),
+    ).rejects.toMatchObject({name: "AbortError"})
+    expect(requestGroup.mock.calls.length).toBeLessThanOrEqual(3)
+  })
+
   it("updates display stores when a slow profile load arrives", async () => {
     const {deriveBudabitProfileDisplay} = await import("./profile-resolver")
     const values: string[] = []

@@ -177,7 +177,7 @@
     type RepoDiscoveryPrioritySetting,
     type RepoOwnerProfile,
   } from "@app/util/repo-discovery-search"
-  import {loadBudabitProfile} from "@app/core/profile-resolver"
+  import {loadBudabitProfile, loadBudabitProfileBatch} from "@app/core/profile-resolver"
   import {peopleDiscoverySearch} from "@app/core/people-discovery-search"
   import {REPO_LIST_ANNOUNCEMENT_LIMIT, REPO_LIST_MAX_RELAYS} from "@app/core/repo-list-preload"
   import {
@@ -3320,34 +3320,37 @@
     }
   })
   const repoCardVerificationTargets = $derived.by(() =>
-    repoCardModelsForEnrichment.map(model => ({
-      event: model.event,
-      relays: Array.from(
-        new Set(
-          [
-            ...model.declaredRelays,
-            ...Array.from(tracker.getRelays(model.event.id) || []),
-            getRepoCardRelayHint(model.event, model.address),
-            ...GIT_RELAYS,
-          ]
-            .map(relay => safeNormalizeRelay(relay))
-            .filter(Boolean),
+    repoCardModelsForEnrichment
+      .filter(model => model.maintainers.length > 0)
+      .map(model => ({
+        event: model.event,
+        relays: Array.from(
+          new Set(
+            [
+              ...model.declaredRelays,
+              ...Array.from(tracker.getRelays(model.event.id) || []),
+              getRepoCardRelayHint(model.event, model.address),
+            ]
+              .map(relay => safeNormalizeRelay(relay))
+              .filter(Boolean),
+          ),
         ),
-      ).slice(0, REPO_LIST_MAX_RELAYS),
-    })),
+      })),
   )
   let repoCardVerifiedMaintainersByAddress = $state(new Map<string, Set<string>>())
   const getRepoCardVerifiedMaintainers = (model: RepoListCardModel) => {
-    return model.address
-      ? repoCardVerifiedMaintainersByAddress.get(model.address) || EMPTY_VERIFIED_REPO_MAINTAINERS
-      : EMPTY_VERIFIED_REPO_MAINTAINERS
+    const verified = model.address
+      ? repoCardVerifiedMaintainersByAddress.get(model.address)
+      : undefined
+    if (!verified) return EMPTY_VERIFIED_REPO_MAINTAINERS
+    return new Set(model.maintainers.filter(pubkey => verified.has(pubkey)))
   }
   let repoCardProfileLoadKey = ""
   let repoCardEvidenceLoadKey = ""
   let repoCardEvidenceLoadTimer: ReturnType<typeof setTimeout> | null = null
   let repoCardEvidenceLoadController: AbortController | null = null
   let repoCardProfileLoadTimer: ReturnType<typeof setTimeout> | null = null
-  let repoCardProfileLoadRequestId = 0
+  let repoCardProfileLoadController: AbortController | null = null
 
   const cancelRepoCardEvidenceLoad = () => {
     if (repoCardEvidenceLoadTimer) {
@@ -3359,11 +3362,12 @@
   }
 
   const cancelRepoCardProfileLoad = () => {
-    repoCardProfileLoadRequestId += 1
     if (repoCardProfileLoadTimer) {
       clearTimeout(repoCardProfileLoadTimer)
       repoCardProfileLoadTimer = null
     }
+    repoCardProfileLoadController?.abort()
+    repoCardProfileLoadController = null
   }
 
   $effect(() => {
@@ -3393,7 +3397,14 @@
       loadRepoCardVerification(targets, controller.signal)
         .then(result => {
           if (!controller.signal.aborted && repoCardEvidenceLoadKey === key) {
-            repoCardVerifiedMaintainersByAddress = result.verifiedByAddress
+            const next = new Map<string, Set<string>>()
+            for (const target of targets) {
+              const address = getRepoAddressFromEvent(target.event)
+              const verified = result.verifiedByAddress.get(address)
+              const previous = repoCardVerifiedMaintainersByAddress.get(address)
+              next.set(address, verified?.size ? verified : previous || new Set())
+            }
+            repoCardVerifiedMaintainersByAddress = next
           }
         })
         .catch(error => {
@@ -3414,30 +3425,39 @@
       return
     }
 
-    const relaysByPubkey = new Map<string, Set<string>>()
+    const ownerTargets = new Map<string, Set<string>>()
+    const secondaryTargets = new Map<string, Set<string>>()
+    const addTarget = (targets: Map<string, Set<string>>, pubkey: string, relays: string[]) => {
+      if (!pubkey) return
+      const mergedRelays = targets.get(pubkey) || new Set<string>()
+      for (const relay of relays) {
+        if (mergedRelays.size >= REPO_LIST_MAX_RELAYS) break
+        mergedRelays.add(relay)
+      }
+      targets.set(pubkey, mergedRelays)
+    }
     for (const model of repoCardModelsForEnrichment) {
-      const owner = model.owner
       const relays = getRepoCardProfileRelays(model)
+      addTarget(ownerTargets, model.owner, relays)
       const communityPubkey = repoViewCommunityOptions.find(
         option => option.address === model.communityAddress,
       )?.ownerPubkey
-      const pubkeys = [owner, communityPubkey, ...model.maintainers.slice(0, 3)].filter(
-        (pubkey): pubkey is string => Boolean(pubkey),
-      )
-
-      for (const pubkey of pubkeys) {
-        const mergedRelays = relaysByPubkey.get(pubkey) || new Set<string>()
-        for (const relay of relays) {
-          if (mergedRelays.size >= REPO_LIST_MAX_RELAYS) break
-          mergedRelays.add(relay)
-        }
-        relaysByPubkey.set(pubkey, mergedRelays)
+      if (communityPubkey && !ownerTargets.has(communityPubkey)) {
+        addTarget(secondaryTargets, communityPubkey, relays)
+      }
+      for (const pubkey of model.maintainers.slice(0, 3)) {
+        if (!ownerTargets.has(pubkey)) addTarget(secondaryTargets, pubkey, relays)
       }
     }
-    const requests = Array.from(relaysByPubkey, ([pubkey, relays]) => ({
+    const owners = Array.from(ownerTargets, ([pubkey, relays]) => ({
       pubkey,
       relays: Array.from(relays),
     }))
+    const secondary = Array.from(secondaryTargets, ([pubkey, relays]) => ({
+      pubkey,
+      relays: Array.from(relays),
+    })).filter(({pubkey}) => !ownerTargets.has(pubkey))
+    const requests = [...owners, ...secondary]
 
     const key = requests
       .map(({pubkey, relays}) => `${pubkey}:${relays.join(",")}`)
@@ -3453,19 +3473,20 @@
     if (key === repoCardProfileLoadKey) return
     repoCardProfileLoadKey = key
     cancelRepoCardProfileLoad()
-    const requestId = ++repoCardProfileLoadRequestId
+    const controller = new AbortController()
+    repoCardProfileLoadController = controller
 
     repoCardProfileLoadTimer = setTimeout(() => {
       repoCardProfileLoadTimer = null
-      if (gitPageReadWorkStopped || requestId !== repoCardProfileLoadRequestId) return
+      if (gitPageReadWorkStopped || controller.signal.aborted) return
 
-      for (const {pubkey, relays} of requests) {
-        loadBudabitProfile(pubkey, {relays}).catch(error => {
-          if (!gitPageReadWorkStopped && requestId === repoCardProfileLoadRequestId) {
-            console.warn("[git/+page] Failed to load repo card profile", error)
+      void loadBudabitProfileBatch(owners, controller.signal)
+        .then(() => loadBudabitProfileBatch(secondary, controller.signal))
+        .catch(error => {
+          if (!controller.signal.aborted) {
+            console.warn("[git/+page] Failed to load repo card profiles", error)
           }
         })
-      }
     }, REPO_CARD_HYDRATION_DELAY_MS)
   })
 

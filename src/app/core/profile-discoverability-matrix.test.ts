@@ -81,7 +81,7 @@ describe("profile discoverability test matrix", () => {
 
     expect(gitItem).toContain('profileRole="Owner"')
     expect(gitPage.match(/label="Co-maintainers"/g)).toHaveLength(2)
-    expect(gitPage).toContain("getRepoDeclaredMaintainers(event)")
+    expect(gitPage).toContain("constrepoCardMaintainers=model.maintainers")
     expect(maintainerList).toContain('label = "Maintainers"')
   })
 
