@@ -73,6 +73,10 @@
   } from "@app/core/community-live"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {activeCommunityRoomLoad} from "@app/core/community-foreground"
+  import {
+    createCommunityMaintenanceAdmission,
+    type CommunityMaintenanceAdmissionState,
+  } from "@app/core/community-startup-admission"
 
   type Props = {
     children?: Snippet
@@ -154,6 +158,14 @@
   let communityFollowUpRetryVersion = $state(0)
   let communityFollowUpRetryTimer: ReturnType<typeof setTimeout> | null = null
   let communityBackgroundHydrationReady = $state(false)
+  let communityMaintenanceAdmission = $state<CommunityMaintenanceAdmissionState>({
+    history: false,
+    "follow-up": false,
+    deletes: false,
+  })
+  const maintenanceAdmission = createCommunityMaintenanceAdmission({
+    onChange: state => (communityMaintenanceAdmission = state),
+  })
   const COMMUNITY_HISTORY_LOAD_TIMEOUT_MS = 5_000
   const communityDeleteKinds = Array.from(
     new Set(
@@ -411,9 +423,38 @@
   })
 
   $effect(() => {
+    const definition = $activeExactCommunityDefinition
+    const relays = normalizeCommunityLiveValues($activeExactCommunityRelays)
+    const authorityReady = Boolean(
+      definition &&
+      definition.pointer.address === exactCommunity?.address &&
+      $activeCommunityBootstrapStatus.key === exactCommunityBootstrapKey &&
+      $activeCommunityBootstrapStatus.loaded &&
+      !$activeCommunityBootstrapStatus.loading &&
+      $activeCommunityAuthorityReadiness.communityPubkey === definition.ownerPubkey &&
+      $activeCommunityAuthorityReadiness.state === "ready",
+    )
+
+    if (
+      !communityBackgroundHydrationReady ||
+      activeRoomLoadPending ||
+      !definition ||
+      !authorityReady ||
+      relays.length === 0
+    ) {
+      maintenanceAdmission.reset()
+      return
+    }
+
+    maintenanceAdmission.start(
+      JSON.stringify([definition.pointer.address, definition.event.id, relays]),
+    )
+  })
+
+  $effect(() => {
     void communityHistoryRetryVersion
 
-    if (!communityBackgroundHydrationReady || activeRoomLoadPending) {
+    if (!communityMaintenanceAdmission.history) {
       stopCommunityHistoryLoad()
       return
     }
@@ -442,6 +483,7 @@
     communityHistoryLoadKey = key
     const controller = new AbortController()
     communityHistoryLoadController = controller
+    const admissionKey = maintenanceAdmission.getKey()
 
     void hydrateCommunityEventsWithStatus({
       key: `community-discovery:${key}`,
@@ -458,6 +500,7 @@
       result => {
         if (communityHistoryLoadController !== controller) return
         communityHistoryLoadController = null
+        maintenanceAdmission.settle(admissionKey, "history")
 
         if (result.complete || controller.signal.aborted) return
 
@@ -474,6 +517,7 @@
 
         communityHistoryLoadController = null
         communityHistoryLoadKey = ""
+        maintenanceAdmission.settle(admissionKey, "history")
         console.warn("[community-history] Failed to load community history", error)
         if (communityHistoryRetryTimer) clearTimeout(communityHistoryRetryTimer)
         communityHistoryRetryTimer = setTimeout(() => {
@@ -487,7 +531,7 @@
   $effect(() => {
     void communityFollowUpRetryVersion
 
-    if (!communityBackgroundHydrationReady || activeRoomLoadPending) {
+    if (!communityMaintenanceAdmission["follow-up"]) {
       stopCommunityFollowUpLoad()
       return
     }
@@ -517,6 +561,7 @@
 
     if (plans.length === 0) {
       stopCommunityFollowUpLoad()
+      maintenanceAdmission.settle(maintenanceAdmission.getKey(), "follow-up")
       return
     }
 
@@ -535,6 +580,7 @@
     communityFollowUpLoadKey = key
     const controller = new AbortController()
     communityFollowUpLoadController = controller
+    const admissionKey = maintenanceAdmission.getKey()
 
     void Promise.all(
       plans.map(plan =>
@@ -552,6 +598,7 @@
       results => {
         if (communityFollowUpLoadController !== controller) return
         communityFollowUpLoadController = null
+        maintenanceAdmission.settle(admissionKey, "follow-up")
         if (results.every(result => result.complete)) return
 
         communityFollowUpLoadKey = ""
@@ -566,6 +613,7 @@
 
         communityFollowUpLoadController = null
         communityFollowUpLoadKey = ""
+        maintenanceAdmission.settle(admissionKey, "follow-up")
         console.warn("[community-follow-up] Failed to load community follow-up events", error)
         if (communityFollowUpRetryTimer) clearTimeout(communityFollowUpRetryTimer)
         communityFollowUpRetryTimer = setTimeout(() => {
@@ -579,7 +627,7 @@
   $effect(() => {
     void communityDeleteRetryVersion
 
-    if (!communityBackgroundHydrationReady || activeRoomLoadPending) {
+    if (!communityMaintenanceAdmission.deletes) {
       stopCommunityDeleteLoad()
       return
     }
@@ -749,6 +797,7 @@
   })
 
   onDestroy(() => {
+    maintenanceAdmission.reset()
     stopCommunityHistoryLoad()
     stopCommunityDeleteLoad()
     stopCommunityFollowUpLoad()
