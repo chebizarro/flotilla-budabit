@@ -3,7 +3,6 @@
   import {
     normalizeRelayUrl,
     Address,
-    getTagValue,
     DELETE,
     REACTION,
     type Filter,
@@ -22,7 +21,7 @@
   } from "@welshman/app"
   import {deriveEventsById, deriveEventsDesc} from "@welshman/store"
   import {Router} from "@welshman/router"
-  import {load as welshmanLoad, type LoadOptions} from "@welshman/net"
+  import {load as welshmanLoad, request as welshmanRequest, type LoadOptions} from "@welshman/net"
   import {fade} from "svelte/transition"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
@@ -85,7 +84,6 @@
   import {
     loadRepoAnnouncements,
     GIT_RELAYS,
-    getRepoDeclaredMaintainers,
     getRepoAnnouncementPublishRelays,
     repoAnnouncementRelaysStore,
     repoAnnouncements,
@@ -152,7 +150,6 @@
   import {
     buildBookmarkRepoFilters,
     buildBookmarkRepoLoadKey,
-    getCanonicalRepoKeyFromEvent,
     getRepoAddressFromEvent,
     isAnyBookmarked,
     matchBookmarkedRepoEvents,
@@ -188,6 +185,7 @@
     type RepoCollectionReadState,
   } from "@app/core/repo-collection-read-model"
   import {loadRepoCardVerification} from "@app/core/repo-card-verification"
+  import {createRepoListCardProjector, type RepoListCardModel} from "@app/core/repo-list-card-model"
   import {getRepoAddress, isAuthorizedDirectCommunityRepo} from "@app/core/repo-community-context"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {loadBoundedCommunityHistory, makeSameAuthorDeleteFilters} from "@app/core/requests"
@@ -218,6 +216,7 @@
   }
 
   const normalizeSearchValue = (value: unknown) => String(value ?? "").toLocaleLowerCase()
+  const projectRepoListCard = createRepoListCardProjector()
 
   // Connect the nostr-git toast store to the app toast component
   $effect(() => {
@@ -293,24 +292,6 @@
   const isDeletedRepoAnnouncement = (event?: {tags?: string[][]} | null) =>
     (event?.tags || []).some(tag => tag[0] === "deleted")
 
-  const getRepoCardStableKey = (card: any) => {
-    const event = card?.first
-    const euc = card?.euc || ""
-    const eventId = event?.id || ""
-
-    if (event?.kind && event?.pubkey && Array.isArray(event?.tags)) {
-      const d = getTagValue("d", event.tags)
-      if (d) return `${event.kind}:${event.pubkey}:${d}:${euc}`
-
-      const eucTag = event.tags.find((t: string[]) => t[0] === "r" && t[2] === "euc")?.[1] || ""
-      if (eucTag) return `${event.kind}:${event.pubkey}:euc:${eucTag}:${euc}`
-
-      if (event.id) return `${event.kind}:${event.pubkey}:id:${event.id}:${euc}`
-    }
-
-    return `${euc}:${card?.title || ""}:${eventId}`
-  }
-
   type RepoDiscoveryStatus = {
     phase:
       | "idle"
@@ -374,6 +355,7 @@
   const REPO_LOAD_SETTLE_DELAY_MS = 75
   const REPO_LIST_LOAD_TIMEOUT_MS = 8_000
   const REPO_CARD_HYDRATION_DELAY_MS = 250
+  const REPO_CARDS_CONTEXT_CACHE_LIMIT = 4
 
   const repoLoadSettleTimers = new Set<ReturnType<typeof setTimeout>>()
   const repoLoadTimeoutTimers = new Set<ReturnType<typeof setTimeout>>()
@@ -388,6 +370,39 @@
             : gitPageLoadController.signal,
         })
   let gitPageReadWorkStopped = false
+  const requestRepoAnnouncements = ({
+    relays,
+    filters,
+    signal,
+    owner,
+  }: {
+    relays: string[]
+    filters: Filter[]
+    signal?: AbortSignal
+    owner: string
+  }) => {
+    if (gitPageReadWorkStopped) return Promise.resolve([])
+    const requestSignal = signal
+      ? AbortSignal.any([signal, gitPageLoadController.signal])
+      : gitPageLoadController.signal
+    const admit = (event: TrustedEvent, relay: string) => {
+      if (requestSignal.aborted) return
+      if (relay && !tracker.hasRelay(event.id, relay)) tracker.addRelay(event.id, relay)
+      if (!repository.hasEvent(event)) repository.publish(event)
+    }
+    return welshmanRequest({
+      relays,
+      filters,
+      signal: requestSignal,
+      autoClose: true,
+      lifetime: "finite",
+      priority: RELAY_REQUEST_PRIORITY.interactive,
+      owner,
+      tracker,
+      onEvent: admit,
+      onDuplicate: admit,
+    })
+  }
 
   const afterRepoLoadSettle = (callback: () => void) => {
     const timer = setTimeout(() => {
@@ -538,7 +553,7 @@
 
     // Prevent duplicate loads with same relay set
     const relayKey = repoListReadRelays.slice().sort().join(",")
-    const loadKey = `${$pubkey}:${relayKey}`
+    const loadKey = `${$pubkey}:${relayKey}:${repoResultsVisibleLimit}`
     if (loadKey === lastLoadedPersonalRepoKey) return
     lastLoadedPersonalRepoKey = loadKey
     personalRepoAnnouncementsSettled = false
@@ -547,16 +562,24 @@
     const filter = {
       kinds: [GIT_REPO_ANNOUNCEMENT],
       authors: [$pubkey],
-      limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+      limit: repoResultsVisibleLimit,
     }
+    const controller = new AbortController()
     settleRepoLoad({
-      promise: load({relays: repoListReadRelays, filters: [filter]}).catch(error => {
+      promise: requestRepoAnnouncements({
+        relays: repoListReadRelays,
+        filters: [filter],
+        signal: controller.signal,
+        owner: "git-list:personal",
+      }).catch(error => {
         console.warn("[git/+page] Failed to load personal repos", error)
       }),
       onSettled: () => {
         if (requestId === personalRepoLoadRequestId) personalRepoAnnouncementsSettled = true
       },
     })
+
+    return () => controller.abort()
   })
 
   $effect(() => {
@@ -802,30 +825,20 @@
     selectedCommunityRelays.slice(0, REPO_LIST_MAX_RELAYS),
   )
 
-  const getRepoCardProfileRelays = (event?: RepoAnnouncementEvent | null) => {
-    if (!event) return []
-
-    const community = event ? parseRepoCommunityBinding(event) : undefined
-    const address = getRepoAddressFromEvent(event)
+  const getRepoCardProfileRelays = (model: RepoListCardModel) => {
+    const event = model.event
     const trackedRelays = Array.from(tracker.getRelays(event.id) || [])
     const pubkeyRelays = Router.get().getRelaysForPubkey(event.pubkey) || []
-    const repoRelays = (() => {
-      try {
-        return parseRepoAnnouncementEvent(event)?.relays || []
-      } catch {
-        return []
-      }
-    })()
 
     return Array.from(
       new Set(
         [
           ...(activeMode === "community" ? selectedCommunityProfileRelays : []),
-          community?.relay || "",
-          getRepoCardRelayHint(event, address),
+          model.communityRelay,
+          getRepoCardRelayHint(event, model.address),
           ...trackedRelays,
           ...pubkeyRelays,
-          ...repoRelays,
+          ...model.declaredRelays,
           ...repoAnnouncementRelays,
         ]
           .map(relay => safeNormalizeRelay(relay))
@@ -840,19 +853,6 @@
       url: profileRelays[0],
       relays: profileRelays,
     })
-  }
-
-  const getRepoCardMaintainers = (event?: RepoAnnouncementEvent | null) =>
-    getRepoDeclaredMaintainers(event)
-
-  const getRepoCardAddress = (event?: RepoAnnouncementEvent | null) => {
-    if (!event) return ""
-
-    try {
-      return getRepoAddressFromEvent(event)
-    } catch {
-      return ""
-    }
   }
 
   const EMPTY_VERIFIED_REPO_MAINTAINERS = new Set<string>()
@@ -992,12 +992,15 @@
   const repoStarAddresses = $derived.by((): BookmarkAddress[] =>
     $activeRepoStars.map(repoStarToBookmarkAddress),
   )
+  const renderedRepoStarAddresses = $derived(repoStarAddresses.slice(0, repoResultsVisibleLimit))
 
-  const hasRepoStarAddresses = $derived(repoStarAddresses.length > 0)
-  const starredRepoRelaysToQuery = $derived.by(() => getStarredRepoLoadRelays(repoStarAddresses))
+  const hasRepoStarAddresses = $derived(renderedRepoStarAddresses.length > 0)
+  const starredRepoRelaysToQuery = $derived.by(() =>
+    getStarredRepoLoadRelays(renderedRepoStarAddresses),
+  )
   const starredRepoLoadKey = $derived.by(() =>
     hasRepoStarAddresses
-      ? `${buildBookmarkRepoLoadKey(repoStarAddresses)}:${starredRepoRelaysToQuery.slice().sort().join(",")}`
+      ? `${buildBookmarkRepoLoadKey(renderedRepoStarAddresses)}:${starredRepoRelaysToQuery.slice().sort().join(",")}`
       : "",
   )
 
@@ -1032,7 +1035,7 @@
     if (activeMode !== "personal" || activeTab !== "bookmarks") return undefined
     if (!hasRepoStarAddresses) return undefined
 
-    const addresses = repoStarAddresses
+    const addresses = renderedRepoStarAddresses
     const filters = buildBookmarkRepoFilters(addresses)
     if (filters.length === 0) {
       if (starredRepoLoadKey) settledStarredRepoLoadKey = starredRepoLoadKey
@@ -1075,7 +1078,7 @@
   const loadedStarredRepos = $derived.by(() => {
     if (!hasRepoStarAddresses) return []
 
-    const addresses = repoStarAddresses
+    const addresses = renderedRepoStarAddresses
     if (addresses.length === 0) return []
 
     return matchBookmarkedRepoEvents({
@@ -1088,7 +1091,7 @@
   })
   const starredRepoAnnouncementsLoading = $derived(
     Boolean(starredRepoLoadKey) &&
-      loadedStarredRepos.length < repoStarAddresses.length &&
+      loadedStarredRepos.length < renderedRepoStarAddresses.length &&
       settledStarredRepoLoadKey !== starredRepoLoadKey,
   )
 
@@ -1117,7 +1120,7 @@
       ? makeCommunityContentFilterPlan(
           [
             makeCommunityRepositoryFilter(selectedCommunityDefinition.communityId, {
-              limit: REPO_LIST_ANNOUNCEMENT_LIMIT,
+              limit: repoResultsVisibleLimit,
             }),
           ],
           selectedCommunityRepoWriterPubkeys,
@@ -1176,6 +1179,8 @@
       localFilters,
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `global-git-community:${selectedCommunityAddress}`,
+      pageSize: repoResultsVisibleLimit,
+      maxPages: 1,
       signal,
     })
       .then(result => {
@@ -2351,22 +2356,38 @@
     const {pubkey, relayHints} = accountSearch
     if (!pubkey) return
 
-    const filter = {kinds: [GIT_REPO_ANNOUNCEMENT], authors: [pubkey]} as any
+    const filter = {
+      kinds: [GIT_REPO_ANNOUNCEMENT],
+      authors: [pubkey],
+      limit: repoResultsVisibleLimit,
+    } as any
     const initialRelays = getAccountSearchRelays(pubkey, relayHints)
-    const loadKey = `${pubkey}|${initialRelays.slice().sort().join(",")}`
+    const loadKey = `${pubkey}|${initialRelays.slice().sort().join(",")}|${repoResultsVisibleLimit}`
 
     if (attemptedAccountSearchLoads.has(loadKey)) return
 
     attemptedAccountSearchLoads.add(loadKey)
+    const controller = new AbortController()
 
     void refreshPubkeyOutboxRelays(pubkey, initialRelays)
       .then(outboxRelays => {
+        if (controller.signal.aborted) return
         const relaysToQuery = getAccountSearchRelays(pubkey, [...relayHints, ...outboxRelays])
         if (relaysToQuery.length > 0) {
-          return load({relays: relaysToQuery, filters: [filter]})
+          return requestRepoAnnouncements({
+            relays: relaysToQuery,
+            filters: [filter],
+            signal: controller.signal,
+            owner: "git-list:account-search",
+          })
         }
       })
       .catch(() => undefined)
+
+    return () => {
+      controller.abort()
+      attemptedAccountSearchLoads.delete(loadKey)
+    }
   })
 
   const accountSearchReposStore = $derived.by(() => {
@@ -2443,8 +2464,11 @@
       accountSearchContext,
     ]),
   )
-  const repoCardsContext = $derived.by(() =>
+  const repoCardsSourceContext = $derived.by(() =>
     JSON.stringify([repoCardsScopeContext, trimmedActiveRepoSearchQuery]),
+  )
+  const repoCardsContext = $derived.by(() =>
+    JSON.stringify([repoCardsSourceContext, repoResultsVisibleLimit]),
   )
 
   const hasRawRepoSearchInput = $derived.by(
@@ -2717,6 +2741,7 @@
     let foundRepos = Math.max(snapshot.foundRepos, initialSync.foundRepos)
     let matchedRepos = Math.max(snapshot.matchedRepos, initialSync.matchedRepos)
     let timedOut = false
+    let pageFilled = discoveryInputs.runMode === "smart" && matchedRepos >= repoResultsVisibleLimit
     let finalBucketKey: RepoDiscoveryPriorityKey | null =
       snapshot.buckets[snapshot.nextBucketIndex]?.key || null
     let finalBucketLabel = snapshot.buckets[snapshot.nextBucketIndex]?.label || ""
@@ -2765,6 +2790,7 @@
           bucketIndex < buckets.length;
           bucketIndex += 1
         ) {
+          if (pageFilled) break
           const bucket = buckets[bucketIndex]
           finalBucketKey = bucket.key
           finalBucketLabel = bucket.label
@@ -2862,7 +2888,13 @@
             if (relays.length > 0) {
               const repoEvents = await fetchRelayEventsWithTimeout<RepoAnnouncementEvent>({
                 relays,
-                filters: [{kinds: [GIT_REPO_ANNOUNCEMENT], authors}],
+                filters: [
+                  {
+                    kinds: [GIT_REPO_ANNOUNCEMENT],
+                    authors,
+                    limit: Math.max(1, repoResultsVisibleLimit - matchedRepos),
+                  },
+                ],
                 timeoutMs: Math.min(5000, remainingMs),
                 signal: controller.signal,
                 isolated: true,
@@ -2919,12 +2951,17 @@
               foundRepos,
               matchedRepos,
             }
+
+            if (discoveryInputs.runMode === "smart" && matchedRepos >= repoResultsVisibleLimit) {
+              pageFilled = true
+              break outer
+            }
           }
         }
 
         if (controller.signal.aborted) return
 
-        if (!timedOut) {
+        if (!timedOut && !pageFilled) {
           snapshot = {
             ...snapshot,
             nextBucketIndex: buckets.length,
@@ -2999,7 +3036,7 @@
     })
   })
 
-  const repoResultsVisibleContext = $derived(repoCardsContext)
+  const repoResultsVisibleContext = $derived(repoCardsSourceContext)
   let lastRepoResultsVisibleContext = ""
   $effect(() => {
     if (repoResultsVisibleContext === lastRepoResultsVisibleContext) return
@@ -3011,10 +3048,23 @@
     searchFilteredRepos.slice(0, repoResultsVisibleLimit),
   )
   const hasMoreRepoResults = $derived(
-    searchFilteredRepos.length > visibleSearchFilteredRepos.length,
+    searchFilteredRepos.length > visibleSearchFilteredRepos.length ||
+      (activeMode === "personal" &&
+        activeTab === "bookmarks" &&
+        repoStarAddresses.length > repoResultsVisibleLimit) ||
+      (!trimmedActiveRepoSearchQuery && searchFilteredRepos.length >= repoResultsVisibleLimit) ||
+      (trimmedActiveRepoSearchQuery && canContinueRepoDiscovery),
   )
   const loadMoreRepoResults = () => {
     repoResultsVisibleLimit += REPO_SEARCH_PAGE_SIZE
+    if (
+      trimmedActiveRepoSearchQuery &&
+      repoDiscoverySnapshot?.query === activeTextSearchQuery &&
+      repoDiscoverySnapshot.nextBucketIndex < repoDiscoverySnapshot.buckets.length
+    ) {
+      repoDiscoveryRunMode = "smart"
+      repoDiscoveryRunNonce += 1
+    }
   }
 
   // Store for account search (naddr/npub) repo cards
@@ -3022,13 +3072,19 @@
   let accountSearchCardsComputeTimer: ReturnType<typeof setTimeout> | null = null
   let accountSearchCardsComputeRequestId = 0
   let renderedAccountSearchContext = $state("")
+  const accountSearchRenderedContext = $derived.by(() =>
+    JSON.stringify([accountSearchContext, repoResultsVisibleLimit]),
+  )
   const sortedAccountSearchRepoCards = $derived.by(() =>
     prioritizeFreshRepoCards(accountSearchRepoCards),
+  )
+  const hasMoreAccountSearchRepos = $derived(
+    accountSearchVisibleRepos.length >= repoResultsVisibleLimit,
   )
 
   // Update account search repo cards
   $effect(() => {
-    const context = accountSearchContext
+    const context = accountSearchRenderedContext
     if (!isAccountSearch) {
       if (accountSearchCardsComputeTimer) {
         clearTimeout(accountSearchCardsComputeTimer)
@@ -3042,7 +3098,7 @@
 
     if (renderedAccountSearchContext !== context) accountSearchRepoCards = []
 
-    const repos = accountSearchVisibleRepos
+    const repos = accountSearchVisibleRepos.slice(0, repoResultsVisibleLimit)
     if (repos.length > 0) {
       if (accountSearchCardsComputeTimer) {
         clearTimeout(accountSearchCardsComputeTimer)
@@ -3052,7 +3108,7 @@
         if (
           requestId !== accountSearchCardsComputeRequestId ||
           !isAccountSearch ||
-          accountSearchContext !== context
+          accountSearchRenderedContext !== context
         ) {
           return
         }
@@ -3078,6 +3134,18 @@
   // Memoize card computation to prevent jitter
   type RepoCardsCacheEntry = {cardsKey: string; cards: any[]}
   const repoCardsByContext = new Map<string, RepoCardsCacheEntry>()
+  const cacheRepoCardsForContext = (context: string, entry: RepoCardsCacheEntry) => {
+    repoCardsByContext.delete(context)
+    repoCardsByContext.set(context, entry)
+    while (repoCardsByContext.size > REPO_CARDS_CONTEXT_CACHE_LIMIT) {
+      repoCardsByContext.delete(repoCardsByContext.keys().next().value as string)
+    }
+  }
+  const getCachedRepoCardsForContext = (context: string) => {
+    const entry = repoCardsByContext.get(context)
+    if (entry) cacheRepoCardsForContext(context, entry)
+    return entry
+  }
   let cachedCards: any[] = []
   let cachedCardsKey = ""
   let cardsComputeTimer: ReturnType<typeof setTimeout> | null = null
@@ -3090,6 +3158,16 @@
     const cards = $repositoriesStore as any[]
     return trimmedActiveRepoSearchQuery ? cards : prioritizeFreshRepoCards(cards)
   })
+  const sortedRepoCardModels = $derived.by(() =>
+    sortedRepoCards
+      .map(card => projectRepoListCard(card))
+      .filter((model): model is RepoListCardModel => Boolean(model)),
+  )
+  const sortedAccountSearchRepoCardModels = $derived.by(() =>
+    sortedAccountSearchRepoCards
+      .map(card => projectRepoListCard(card))
+      .filter((model): model is RepoListCardModel => Boolean(model)),
+  )
   const personalStarredReposLoading = $derived(
     activeMode === "personal" &&
       activeTab === "bookmarks" &&
@@ -3155,27 +3233,24 @@
       searchFilteredRepos.length === 0,
   )
 
-  const repoCardsForProfileHydration = $derived.by(() =>
+  const repoCardModelsForEnrichment = $derived.by(() =>
     isAccountSearch
-      ? sortedAccountSearchRepoCards
-      : hasRenderedRepoCardsForCurrentScope
-        ? sortedRepoCards
+      ? renderedAccountSearchContext === accountSearchRenderedContext
+        ? sortedAccountSearchRepoCardModels
+        : []
+      : hasRenderedRepoCardsForCurrentContext
+        ? sortedRepoCardModels
         : [],
   )
-  const repoCardEvidenceRepoEvents = $derived.by(() =>
-    repoCardsForProfileHydration
-      .map(card => card?.first as RepoAnnouncementEvent | undefined)
-      .filter((event): event is RepoAnnouncementEvent => Boolean(event)),
-  )
   const repoCardVerificationTargets = $derived.by(() =>
-    repoCardEvidenceRepoEvents.map(event => ({
-      event,
+    repoCardModelsForEnrichment.map(model => ({
+      event: model.event,
       relays: Array.from(
         new Set(
           [
-            ...getDeclaredRepoRelays(event),
-            ...Array.from(tracker.getRelays(event.id) || []),
-            getRepoCardRelayHint(event),
+            ...model.declaredRelays,
+            ...Array.from(tracker.getRelays(model.event.id) || []),
+            getRepoCardRelayHint(model.event, model.address),
             ...GIT_RELAYS,
           ]
             .map(relay => safeNormalizeRelay(relay))
@@ -3185,10 +3260,9 @@
     })),
   )
   let repoCardVerifiedMaintainersByAddress = $state(new Map<string, Set<string>>())
-  const getRepoCardVerifiedMaintainers = (event?: RepoAnnouncementEvent | null) => {
-    const address = getRepoCardAddress(event)
-    return address
-      ? repoCardVerifiedMaintainersByAddress.get(address) || EMPTY_VERIFIED_REPO_MAINTAINERS
+  const getRepoCardVerifiedMaintainers = (model: RepoListCardModel) => {
+    return model.address
+      ? repoCardVerifiedMaintainersByAddress.get(model.address) || EMPTY_VERIFIED_REPO_MAINTAINERS
       : EMPTY_VERIFIED_REPO_MAINTAINERS
   }
   let repoCardProfileLoadKey = ""
@@ -3264,15 +3338,13 @@
     }
 
     const relaysByPubkey = new Map<string, Set<string>>()
-    for (const card of repoCardsForProfileHydration) {
-      const event = card?.first as RepoAnnouncementEvent | undefined
-      const owner = String(card?.owner || event?.pubkey || "")
-      const relays = event ? getRepoCardProfileRelays(event) : []
-      const communityAddress = event ? parseRepoCommunityBinding(event)?.address || "" : ""
+    for (const model of repoCardModelsForEnrichment) {
+      const owner = model.owner
+      const relays = getRepoCardProfileRelays(model)
       const communityPubkey = repoViewCommunityOptions.find(
-        option => option.address === communityAddress,
+        option => option.address === model.communityAddress,
       )?.ownerPubkey
-      const pubkeys = [owner, communityPubkey, ...getRepoCardMaintainers(event).slice(0, 3)].filter(
+      const pubkeys = [owner, communityPubkey, ...model.maintainers.slice(0, 3)].filter(
         (pubkey): pubkey is string => Boolean(pubkey),
       )
 
@@ -3361,7 +3433,7 @@
 
     const reposToShow = visibleSearchFilteredRepos
     const context = repoCardsContext
-    const cachedEntry = repoCardsByContext.get(context)
+    const cachedEntry = getCachedRepoCardsForContext(context)
     const searchResultsPending = hasRepoSearchInput && repoDiscoveryStatus.loading
 
     if ((activeRepoDataLoading || searchResultsPending) && reposToShow.length === 0) {
@@ -3416,7 +3488,7 @@
             })
             cachedCards = cards
             cachedCardsKey = cardsKey
-            repoCardsByContext.set(context, {cardsKey, cards})
+            cacheRepoCardsForContext(context, {cardsKey, cards})
             repositoriesStore.set(cachedCards)
             renderedRepoCardsContext = context
             renderedRepoCardsScopeContext = scopeContext
@@ -3506,32 +3578,12 @@
     return fromLoadedStars || fromTracker || fromPubkey || relayTag || ""
   }
 
-  const getRepoCardCanonicalKeys = (event?: RepoAnnouncementEvent | null) => {
-    const canonicalKey = getCanonicalRepoKeyFromEvent(event)
-    return canonicalKey ? [canonicalKey] : []
-  }
-
-  const getRepoCardCandidateAddresses = (event?: RepoAnnouncementEvent | null) => {
-    if (!event) return new Set<string>()
-
-    const address = getRepoAddressFromEvent(event)
-    if (!address) return new Set<string>()
-
-    return new Set([address])
-  }
-
-  const getCommunityRepoStargazerPubkeys = (event?: RepoAnnouncementEvent | null) => {
-    if (
-      activeMode !== "community" ||
-      activeTab !== "bookmarks" ||
-      !event ||
-      !$communityStarReactionEvents
-    ) {
+  const getCommunityRepoStargazerPubkeys = (model: RepoListCardModel) => {
+    if (activeMode !== "community" || activeTab !== "bookmarks" || !$communityStarReactionEvents) {
       return []
     }
 
-    const candidateAddresses = getRepoCardCandidateAddresses(event)
-    const candidateRepoKeys = getRepoCardCanonicalKeys(event)
+    const candidateAddresses = new Set([model.address])
     const latestByPubkey = new Map<string, {pubkey: string; createdAt: number}>()
 
     for (const reaction of $communityStarReactionEvents as TrustedEvent[]) {
@@ -3539,7 +3591,7 @@
       if (!star || !reaction.pubkey) continue
       if (
         !isAnyBookmarked([repoStarToBookmarkAddress(star)], candidateAddresses, {
-          candidateRepoKeys,
+          candidateRepoKeys: model.canonicalKeys,
           getCachedEvent: address =>
             repository.getEvent(address) as RepoAnnouncementEvent | undefined,
         })
@@ -4441,16 +4493,11 @@
 
       {#if sortedAccountSearchRepoCards.length > 0}
         <div class="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {#each sortedAccountSearchRepoCards as g (getRepoCardStableKey(g))}
-            {@const cardProfileRelays = g.first
-              ? getRepoCardProfileRelays(g.first as RepoAnnouncementEvent)
-              : []}
-            {@const repoCardMaintainers = g.first
-              ? getRepoCardMaintainers(g.first as RepoAnnouncementEvent)
-              : []}
-            {@const repoCardVerifiedMaintainers = g.first
-              ? getRepoCardVerifiedMaintainers(g.first as RepoAnnouncementEvent)
-              : EMPTY_VERIFIED_REPO_MAINTAINERS}
+          {#each sortedAccountSearchRepoCardModels as model (model.stableKey)}
+            {@const g = model.card}
+            {@const cardProfileRelays = getRepoCardProfileRelays(model)}
+            {@const repoCardMaintainers = model.maintainers}
+            {@const repoCardVerifiedMaintainers = getRepoCardVerifiedMaintainers(model)}
             {@const repoCardNavigationKey = g.first
               ? getRepoCardNavigationKey(g.first as RepoAnnouncementEvent)
               : ""}
@@ -4506,6 +4553,16 @@
             </div>
           {/each}
         </div>
+        {#if hasMoreAccountSearchRepos}
+          <div class="mt-4 flex flex-col items-center gap-2">
+            <button type="button" class="btn btn-outline btn-sm" onclick={loadMoreRepoResults}>
+              Show more repositories
+            </button>
+            <p class="text-xs text-muted-foreground">
+              Showing {sortedAccountSearchRepoCardModels.length} repositories
+            </p>
+          </div>
+        {/if}
       {/if}
     </div>
   {:else}
@@ -4580,19 +4637,12 @@
           data-testid="repo-card-grid"
           class="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3"
           aria-busy={repoSearchUpdating}>
-          {#each sortedRepoCards as g (getRepoCardStableKey(g))}
-            {@const cardProfileRelays = g.first
-              ? getRepoCardProfileRelays(g.first as RepoAnnouncementEvent)
-              : []}
-            {@const communityStargazers = g.first
-              ? getCommunityRepoStargazerPubkeys(g.first as RepoAnnouncementEvent)
-              : []}
-            {@const repoCardMaintainers = g.first
-              ? getRepoCardMaintainers(g.first as RepoAnnouncementEvent)
-              : []}
-            {@const repoCardVerifiedMaintainers = g.first
-              ? getRepoCardVerifiedMaintainers(g.first as RepoAnnouncementEvent)
-              : EMPTY_VERIFIED_REPO_MAINTAINERS}
+          {#each sortedRepoCardModels as model (model.stableKey)}
+            {@const g = model.card}
+            {@const cardProfileRelays = getRepoCardProfileRelays(model)}
+            {@const communityStargazers = getCommunityRepoStargazerPubkeys(model)}
+            {@const repoCardMaintainers = model.maintainers}
+            {@const repoCardVerifiedMaintainers = getRepoCardVerifiedMaintainers(model)}
             {@const repoCardNavigationKey = g.first
               ? getRepoCardNavigationKey(g.first as RepoAnnouncementEvent)
               : ""}
@@ -4601,7 +4651,7 @@
             )}
             <div
               data-testid="repo-card"
-              data-repo-key={getRepoCardStableKey(g)}
+              data-repo-key={model.stableKey}
               class="relative flex min-w-0 flex-col rounded-md border border-border bg-card p-2 text-sm transition {repoCardNavigating
                 ? 'cursor-wait opacity-70 ring-2 ring-primary/40'
                 : 'cursor-pointer'}"
@@ -4691,7 +4741,11 @@
               Show more repositories
             </button>
             <p class="text-xs text-muted-foreground">
-              Showing {visibleSearchFilteredRepos.length} of {searchFilteredRepos.length}
+              {#if searchFilteredRepos.length > visibleSearchFilteredRepos.length}
+                Showing {visibleSearchFilteredRepos.length} of {searchFilteredRepos.length}
+              {:else}
+                Showing {visibleSearchFilteredRepos.length} repositories
+              {/if}
             </p>
           </div>
         {/if}

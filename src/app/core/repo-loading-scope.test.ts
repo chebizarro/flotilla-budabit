@@ -168,7 +168,7 @@ describe("authoritative repository loading scope", () => {
 
     expect(list).toContain("constgitPageLoadController=newAbortController()")
     expect(list).toContain("gitPageLoadController.abort()")
-    expect(list).toContain("loadaswelshmanLoad,typeLoadOptions")
+    expect(list).toContain("loadaswelshmanLoad,requestaswelshmanRequest,typeLoadOptions")
     expect(listLayout).toContain('constisRepositoryList=$page.route.id==="/git"')
     expect(listLayout).toContain("repoListPreloadController?.abort()")
     expect(layout).toContain("constlayoutLoadController=newAbortController()")
@@ -219,6 +219,22 @@ describe("authoritative repository loading scope", () => {
 
     expect(discovered).toContain("discoveredSearchRepoPool.filter")
     expect(discovered).not.toContain("$repoAnnouncements")
+  })
+
+  it("uses explicit rendered-page scope for repository sources and enrichment", () => {
+    const page = dense(readProjectFile("../../routes/git/+page.svelte"))
+    const model = dense(readProjectFile("./repo-list-card-model.ts"))
+
+    expect(page).toContain("limit:repoResultsVisibleLimit")
+    expect(page).toContain("repoStarAddresses.slice(0,repoResultsVisibleLimit)")
+    expect(page).toContain("accountSearchVisibleRepos.slice(0,repoResultsVisibleLimit)")
+    expect(page).toContain("JSON.stringify([repoCardsSourceContext,repoResultsVisibleLimit])")
+    expect(page).toContain("hasRenderedRepoCardsForCurrentContext?sortedRepoCardModels:[]")
+    expect(page).toContain("repoCardsByContext.size>REPO_CARDS_CONTEXT_CACHE_LIMIT")
+    expect(page).toContain("repoResultsVisibleLimit+=REPO_SEARCH_PAGE_SIZE")
+    expect(page).not.toContain("IntersectionObserver")
+    expect(model).toContain("createRepoListCardProjector")
+    expect(model).toContain("while(cache.size>Math.max(1,maxEntries))")
   })
 
   it("keeps repository cards mounted while an ordinary search result is recomputed", () => {

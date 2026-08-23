@@ -91,3 +91,58 @@ test("keeps the repository grid and surviving card mounted while search updates"
     )
     .toBe(true)
 })
+
+test("expands personal repository scope only through show more", async ({page}) => {
+  const announcements = Array.from({length: 40}, (_, index) =>
+    signTestEvent(
+      createRepoAnnouncement({
+        identifier: `rendered-page-${index + 1}`,
+        name: `Rendered page repository ${index + 1}`,
+        relays: [relayUrl],
+        pubkey: TEST_PUBKEYS.devUser,
+        created_at: BASE_TIMESTAMP + index + 1,
+      }),
+    ),
+  )
+  const announcementRequests: Array<{authors?: string[]; limit?: number}> = []
+  const mockRelay = new MockRelay({
+    seedEvents: announcements,
+    onSubscribe: (_subscriptionId, filters) => {
+      for (const filter of filters) {
+        if (filter.kinds?.includes(30617)) {
+          announcementRequests.push({authors: filter.authors, limit: filter.limit})
+        }
+      }
+    },
+  })
+
+  await page.addInitScript(
+    ({pubkey, secret}) => {
+      localStorage.clear()
+      localStorage.setItem("pubkey", JSON.stringify(pubkey))
+      localStorage.setItem(
+        "sessions",
+        JSON.stringify({[pubkey]: {method: "nip01", secret, pubkey}}),
+      )
+      localStorage.setItem("git:selected-mode", JSON.stringify("personal"))
+      localStorage.setItem("git:selected-tab", JSON.stringify("my-repos"))
+    },
+    {pubkey: TEST_PUBKEYS.devUser, secret: DEV_SECRET},
+  )
+  await mockRelay.setup(page)
+  await page.goto("/git")
+
+  await expect(page.locator('[data-testid="repo-card"]')).toHaveCount(18, {timeout: 10_000})
+  expect(announcementRequests).toContainEqual({
+    authors: [TEST_PUBKEYS.devUser],
+    limit: 18,
+  })
+  expect(
+    announcementRequests.every(request => request.authors?.includes(TEST_PUBKEYS.devUser)),
+  ).toBe(true)
+
+  await page.getByRole("button", {name: "Show more repositories"}).click()
+
+  await expect(page.locator('[data-testid="repo-card"]')).toHaveCount(36, {timeout: 10_000})
+  await expect.poll(() => announcementRequests.some(request => request.limit === 36)).toBe(true)
+})
