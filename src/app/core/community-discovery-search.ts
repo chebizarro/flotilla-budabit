@@ -69,11 +69,17 @@ export const classifyCommunitySearchQuery = (value: string): CommunitySearchQuer
   const pubkey = normalizePubkey(decodePeopleSearchPubkey(query) || "")
   if (pubkey) return {type: "owner", pubkey}
 
-  if (/^[^\s@]+@[^\s@]+$/.test(query)) {
+  if (nip05.isNip05(query)) {
     return {type: "nip05", identifier: query.toLowerCase()}
   }
 
   return {type: "name", text: query}
+}
+
+export const getCommunitySearchAutoSubmitDelay = (value: string) => {
+  const query = classifyCommunitySearchQuery(value)
+  if (query.type === "empty") return 0
+  return ["exact", "owner", "nip05"].includes(query.type) ? 250 : 400
 }
 
 const getTextScore = (definition: CommunityDefinition, query: string) => {
@@ -99,16 +105,13 @@ export const rankCommunitySearchDefinitions = ({
   candidateOwnerPubkeys?: string[]
 }) => {
   const preferred = new Set(preferredAddresses)
-  const controllerRank = new Map(
-    candidateOwnerPubkeys.map((owner, index) => [owner, index]),
-  )
+  const controllerRank = new Map(candidateOwnerPubkeys.map((owner, index) => [owner, index]))
   return definitions
     .map(definition => ({
       definition,
       preferred: preferred.has(definition.pointer.address),
       score: query ? getTextScore(definition, query) : 0,
-      trustRank:
-        controllerRank.get(definition.ownerPubkey) ?? candidateOwnerPubkeys.length,
+      trustRank: controllerRank.get(definition.ownerPubkey) ?? candidateOwnerPubkeys.length,
     }))
     .filter(result => Number.isFinite(result.score))
     .sort(
@@ -251,10 +254,7 @@ export const searchCommunities = async (
     ownerPubkeys.map(async owner => {
       const relays = normalizeRelays([
         ...getPubkeyOutboxRelays([owner]),
-        ...(await hydrateOutbox(
-          owner,
-          normalizeRelays([...bootstrapRelays, ...controllerHints]),
-        )),
+        ...(await hydrateOutbox(owner, normalizeRelays([...bootstrapRelays, ...controllerHints]))),
       ])
         .filter(relay => !discoveryRelays.includes(relay))
         .slice(0, COMMUNITY_SEARCH_RELAYS_PER_CONTROLLER)
@@ -283,9 +283,7 @@ export const searchCommunities = async (
       definition => definition.pointer.address === query.value.address,
     )
   } else if (query.type === "owner" || query.type === "nip05") {
-    definitions = definitions.filter(definition =>
-      ownerPubkeys.includes(definition.ownerPubkey),
-    )
+    definitions = definitions.filter(definition => ownerPubkeys.includes(definition.ownerPubkey))
   }
   const ranked = rankCommunitySearchDefinitions({
     definitions,

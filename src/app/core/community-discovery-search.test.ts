@@ -1,7 +1,9 @@
 import {describe, expect, it, vi} from "vitest"
 import {finalizeEvent, getPublicKey} from "nostr-tools/pure"
+import * as nip19 from "nostr-tools/nip19"
 import {
   classifyCommunitySearchQuery,
+  getCommunitySearchAutoSubmitDelay,
   rankCommunitySearchDefinitions,
   searchCommunities,
 } from "./community-discovery-search"
@@ -59,10 +61,19 @@ describe("community discovery search", () => {
       type: "nip05",
       identifier: "alice@example.com",
     })
+    expect(classifyCommunitySearchQuery("alice@example")).toEqual({
+      type: "name",
+      text: "alice@example",
+    })
     expect(classifyCommunitySearchQuery("Buda Builders")).toEqual({
       type: "name",
       text: "Buda Builders",
     })
+    expect(getCommunitySearchAutoSubmitDelay(definition.pointer.naddr)).toBe(250)
+    expect(getCommunitySearchAutoSubmitDelay(nip19.npubEncode(owner))).toBe(250)
+    expect(getCommunitySearchAutoSubmitDelay("alice@example.com")).toBe(250)
+    expect(getCommunitySearchAutoSubmitDelay("Buda Builders")).toBe(400)
+    expect(getCommunitySearchAutoSubmitDelay("   ")).toBe(0)
   })
 
   it("ranks preferred exact-name matches before weaker matches", () => {

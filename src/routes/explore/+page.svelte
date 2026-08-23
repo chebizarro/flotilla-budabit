@@ -33,7 +33,10 @@
     setActiveExactCommunityDefinition,
     setActiveExactCommunityPointer,
   } from "@app/core/community-state"
-  import {searchCommunities} from "@app/core/community-discovery-search"
+  import {
+    getCommunitySearchAutoSubmitDelay,
+    searchCommunities,
+  } from "@app/core/community-discovery-search"
   import CommunityPreviewCard from "@app/components/community/CommunityPreviewCard.svelte"
   import CommunitySelectorCard from "@app/components/community/CommunitySelectorCard.svelte"
   import {makeExactCommunityPath} from "@app/util/routes"
@@ -66,6 +69,8 @@
   let preferredFullHydrationTimer: ReturnType<typeof setTimeout> | undefined
   let exploreBackgroundHydrationReady = $state(false)
   let searchRequestId = 0
+  let activeSearchInput = ""
+  let automaticallySubmittedInput = ""
 
   const login = () => pushModal(LogIn)
   const createCommunity = () => ($pubkey ? goto("/explore/create-community") : login())
@@ -147,10 +152,12 @@
     }
   }
 
-  const submitCommunityInput = async () => {
-    const input = communitySearchInput.trim()
-    if (!input || previewLookupState === "loading") return
+  const submitCommunityInput = async (value = communitySearchInput) => {
+    const input = value.trim()
+    if (!input || (previewLookupState === "loading" && activeSearchInput === input)) return
     communityInput = input
+    automaticallySubmittedInput = input
+    activeSearchInput = input
     previewLookupState = "loading"
     previewDefinition = undefined
     const requestId = ++searchRequestId
@@ -167,6 +174,8 @@
       previewLookupState = previewDefinition ? "found" : "not-found"
     } catch {
       if (requestId === searchRequestId) previewLookupState = "unavailable"
+    } finally {
+      if (requestId === searchRequestId) activeSearchInput = ""
     }
   }
 
@@ -185,6 +194,7 @@
   const selectCommunityInputProfile = (value: string) => {
     communitySearchInput = value
     communityInput = value
+    void submitCommunityInput(value)
   }
   const editOwnCommunity = () => {
     if (ownCommunityDefinition) {
@@ -271,6 +281,25 @@
       exploreBackgroundHydrationReady = false
       if (preferredFullHydrationTimer) clearTimeout(preferredFullHydrationTimer)
     }
+  })
+
+  $effect(() => {
+    const input = communitySearchInput.trim()
+    const delay = getCommunitySearchAutoSubmitDelay(input)
+
+    if (!delay) {
+      automaticallySubmittedInput = ""
+      return
+    }
+    if (automaticallySubmittedInput === input) return
+
+    const timer = setTimeout(() => {
+      if (communitySearchInput.trim() !== input) return
+      automaticallySubmittedInput = input
+      void submitCommunityInput(input)
+    }, delay)
+
+    return () => clearTimeout(timer)
   })
 
   $effect(() => {

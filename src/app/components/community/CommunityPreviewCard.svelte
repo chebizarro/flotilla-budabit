@@ -29,7 +29,6 @@
     inputValue?: string
     showInput?: boolean
     inputLabel?: string
-    inputInfo?: string
     inputPlaceholder?: string
     showActions?: boolean
     loading?: boolean
@@ -54,7 +53,6 @@
     inputValue = $bindable(""),
     showInput = false,
     inputLabel = "Community naddr, owner, NIP-05, or name",
-    inputInfo = "Entering a community makes it your current community on this device.",
     inputPlaceholder = "naddr1..., npub1..., name, or NIP-05",
     showActions = true,
     loading = false,
@@ -236,9 +234,6 @@
               getReferenceClientRect: () => inputElement!.getBoundingClientRect(),
             }} />
         {/if}
-      {/snippet}
-      {#snippet info()}
-        {inputInfo}
       {/snippet}
     </Field>
     {@render preview()}
