@@ -269,6 +269,7 @@
   const SUBTYPE_RE = /^[a-z-]{0,20}$/
   const SUBTYPE_HELP =
     "Optional third value in a k tag. Use it when one event kind supports multiple sections, like 11/room, 11/threads, or 9/room-message."
+  const COMMENTS_KIND_HELP = "Used for messages in Threads, Calendar events, and fundraiser Goals"
   const normalizeDefinitionRelay = (value?: string) => normalizeCommunityRelay(value?.trim()) || ""
   const normalizeDefinitionRelays = (relays: string[]) =>
     Array.from(new Set(relays.map(normalizeDefinitionRelay).filter(Boolean)))
@@ -3102,14 +3103,16 @@
                       {section.kinds.length} kind{section.kinds.length === 1 ? "" : "s"}
                     </p>
                   </div>
-                  <span class="btn btn-ghost btn-sm shrink-0" aria-hidden="true">
+                  <span
+                    class="btn btn-outline btn-sm shrink-0 bg-base-100 shadow-sm"
+                    aria-hidden="true">
                     {isExpanded ? "Collapse" : "Expand"}
                   </span>
                 </button>
 
                 {#if isExpanded}
                   <div class="space-y-5 border-t border-base-300 p-4">
-                    <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                    <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                       <Field
                         class="flex-1"
                         for={controlId(sectionNameField(sectionIndex))}
@@ -3139,7 +3142,7 @@
                           must be unique.{/snippet}
                       </Field>
                       <Button
-                        class="btn btn-outline btn-error btn-sm w-full sm:w-auto"
+                        class="btn btn-outline btn-error btn-sm w-full sm:mt-8 sm:w-auto"
                         disabled={disabled || sectionDrafts.length === 1}
                         onclick={() => removeSection(sectionIndex)}>
                         Remove section
@@ -3150,7 +3153,7 @@
                       id={controlId(sectionKindsField(sectionIndex))}
                       tabindex="-1"
                       class="space-y-3">
-                      <div class="flex items-center justify-between gap-3">
+                      <div class="flex items-center justify-between gap-3 sm:justify-start">
                         <strong class="text-sm">Event kinds</strong>
                         <Button
                           class="btn btn-outline btn-sm shadow-sm"
@@ -3163,29 +3166,45 @@
                       {#each section.kinds as kindDraft, kindIndex}
                         <div
                           data-section-kind-row={`${sectionIndex}-${kindIndex}`}
-                          class="grid gap-2 rounded-2xl border border-base-300 bg-base-100/75 p-3 text-sm shadow-sm sm:grid-cols-2 sm:gap-3 sm:p-4 sm:text-base lg:grid-cols-[minmax(220px,2fr)_minmax(100px,1fr)_minmax(170px,1fr)_auto] lg:items-end">
+                          class="grid gap-2 rounded-2xl border border-base-300 bg-base-100/75 p-3 text-sm shadow-sm sm:grid-cols-2 sm:gap-3 sm:p-4 sm:text-base lg:grid-cols-[minmax(220px,2fr)_minmax(100px,1fr)_minmax(170px,1fr)_auto] lg:items-start">
                           <Field
                             class="sm:col-span-2 lg:col-span-1"
                             for={`known-kind-${sectionIndex}-${kindIndex}`}>
                             {#snippet label()}<p>Known kind</p>{/snippet}
-                            {#snippet input()}<select
-                                id={`known-kind-${sectionIndex}-${kindIndex}`}
-                                class="select select-bordered select-sm w-full text-sm sm:select-md sm:text-base"
-                                value={kindDraftOptionValue(kindDraft)}
-                                onchange={event =>
-                                  setKnownKind(
-                                    sectionIndex,
-                                    kindIndex,
-                                    (event.currentTarget as HTMLSelectElement).value,
-                                  )}>
-                                <option value={CUSTOM_KIND_VALUE}>Custom kind</option>
-                                {#each KNOWN_SECTION_KIND_OPTIONS as option}
-                                  <option value={kindOptionValue(option.kind, option.subtype || "")}
-                                    >{option.label} ({option.kind}{option.subtype
-                                      ? ` / ${option.subtype}`
-                                      : ""})</option>
-                                {/each}
-                              </select>{/snippet}
+                            {#snippet input()}<div class="flex items-center gap-2">
+                                <select
+                                  id={`known-kind-${sectionIndex}-${kindIndex}`}
+                                  class="select select-bordered select-sm min-w-0 flex-1 text-sm sm:select-md sm:text-base"
+                                  value={kindDraftOptionValue(kindDraft)}
+                                  onchange={event =>
+                                    setKnownKind(
+                                      sectionIndex,
+                                      kindIndex,
+                                      (event.currentTarget as HTMLSelectElement).value,
+                                    )}>
+                                  <option value={CUSTOM_KIND_VALUE}>Custom kind</option>
+                                  {#each KNOWN_SECTION_KIND_OPTIONS as option}
+                                    <option
+                                      value={kindOptionValue(option.kind, option.subtype || "")}
+                                      >{option.label} ({option.kind}{option.subtype
+                                        ? ` / ${option.subtype}`
+                                        : ""})</option>
+                                  {/each}
+                                </select>
+                                {#if kindDraftOptionValue(kindDraft) === kindOptionValue(1111)}
+                                  <Tooltip
+                                    content={COMMENTS_KIND_HELP}
+                                    trigger="click"
+                                    class="inline-flex shrink-0">
+                                    <button
+                                      type="button"
+                                      class="badge badge-ghost badge-sm"
+                                      aria-label={COMMENTS_KIND_HELP}>
+                                      ?
+                                    </button>
+                                  </Tooltip>
+                                {/if}
+                              </div>{/snippet}
                             {#snippet info()}Choose a known type or select Custom kind to enter one
                               manually.{/snippet}
                           </Field>
@@ -3221,7 +3240,7 @@
                             error={errors[sectionSubtypeField(sectionIndex, kindIndex)]}>
                             {#snippet label()}
                               <p>Subtype</p>
-                              <Tooltip content={SUBTYPE_HELP} class="inline-flex">
+                              <Tooltip content={SUBTYPE_HELP} trigger="click" class="inline-flex">
                                 <button
                                   type="button"
                                   class="badge badge-ghost badge-sm"
@@ -3254,7 +3273,7 @@
                             {#snippet info()}Optional lowercase qualifier using letters and dashes,
                               up to 20 characters.{/snippet}
                           </Field>
-                          <div class="flex sm:col-span-2 lg:col-span-1">
+                          <div class="flex sm:col-span-2 lg:col-span-1 lg:mt-8">
                             <Button
                               class="btn btn-outline btn-error btn-sm w-full lg:w-auto"
                               disabled={disabled || section.kinds.length === 1}

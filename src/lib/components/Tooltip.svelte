@@ -38,6 +38,7 @@
     content,
     arrow = true,
     interactive = false,
+    trigger = undefined,
     children = undefined,
     instance = $bindable(),
     ...restProps
@@ -53,7 +54,7 @@
       animation: "shift-away",
       theme: "tooltip",
       appendTo: document.querySelector(".tippy-target")!,
-      trigger: isMobile ? "click" : "mouseenter focus",
+      trigger: trigger || (isMobile ? "click" : "mouseenter focus"),
     })
 
     return () => {
