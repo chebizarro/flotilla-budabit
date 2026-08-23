@@ -133,6 +133,48 @@ or input-latency comparison was captured. The batch therefore records bounded
 ownership and correctness evidence only and must not be promoted to `Validated`
 without a documented workload and measurements.
 
+## Community Home Startup Batch
+
+Landed 2026-08-24 on `performance-community-home-startup`. Status: `Landed`,
+not `Validated`.
+
+The community-home startup implementation is represented by these commits:
+
+- `6e0305672`: generation-owned history, finite follow-up, and delete admission.
+- `700bbe5c1`: relevance-owned inline community-menu evidence.
+- `a5f21404e`: one page-owned curated-widget and shared-config recovery lifecycle.
+
+Core live coverage remains independent from finite maintenance. After the
+matching foreground room attempt settles, history, finite follow-up, deletes,
+and inline-menu evidence are admitted through separate cancellable tasks. A
+failed or incomplete first attempt still admits the next lane while retaining
+its own bounded retry. Inline navigation remains immediately available; remote
+personal evidence requires a viewer, moderation evidence requires capability,
+and an explicitly opened drawer remains immediate demand.
+
+Community home now has one exact-community-keyed widget recovery owner for both
+home slots. It owns curated discovery, shared-config recovery, retries, stale
+result rejection, and browser lifecycle listeners. Slots retain selection,
+runtime context, initial resize handling, and rendering. This does not defer
+iframes by viewport and does not consolidate the separate extension prompt.
+
+Integrated verification passed 18 focused Vitest files with 98 tests,
+`pnpm check`, `pnpm e2e:check`, affected-file Prettier checks, and
+`git diff --check`. Eleven community home and exact-community deep-link reload
+Playwright cases passed sequentially. All three selected room-recovery cases
+failed before the mock relay observed their expected room subscriptions or the
+room rendered, matching the pre-existing positive community-fixture gap
+recorded for the Obvious-Flaws Batch. The fixture also does not seed the full
+authenticated moderation, badge, and curated-widget evidence needed for a
+reliable browser trace across every new lane. Request order and ownership are
+therefore established by focused state and source-contract tests, not a
+complete browser request timeline.
+
+No controlled production/mobile request trace, long-task profile, or
+navigation input-latency measurement was captured. The batch records bounded
+ownership and correctness evidence only and must not be promoted to
+`Validated` without a documented workload and measurements.
+
 ## Finding 001: Persisted State Hydration Blocks The Entire UI
 
 Observed 2026-08-23 at `217e23abb`. Status: `Observed`.
@@ -405,6 +447,11 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
   chat's `md` breakpoint. Community and Git mobile drawers remain
   interaction-owned. Responsive contract tests and type checks passed; a
   controlled mobile request trace remains needed before marking this validated.
+- 2026-08-24 `700bbe5c1`: residual desktop fix landed. Inline navigation no
+  longer starts remote evidence after a two-frame delay. Community-home inline
+  evidence waits for its admitted lane and viewer relevance, while an opened
+  drawer remains immediate demand. Focused ownership and responsive tests
+  passed; no controlled desktop or mobile request trace was captured.
 
 ## Finding 005: Post-Paint Community Work Is Released In One Burst
 
@@ -467,6 +514,18 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-24 `6e0305672`: scoped fix landed. Core live remains independent,
+  while history, finite follow-up, and deletes advance through generation-owned
+  terminal handoffs in separate cancellable tasks. Failure and incomplete
+  results admit later lanes without taking retry ownership away from the failed
+  lane.
+- 2026-08-24 `700bbe5c1`: inline-menu evidence became a later admitted lane
+  rather than another frame-delayed startup owner.
+- 2026-08-24 `a5f21404e`: both community-home widget slots now consume one
+  page-owned recovery lifecycle after community-home extension readiness. No
+  controlled request timeline, long-task profile, or navigation-latency
+  measurement was captured, so this finding remains landed rather than
+  validated. Global notification startup remains outside this batch.
 
 ## Finding 006: Notification Startup Is Global And Cannot Be Fully Stopped
 
@@ -803,6 +862,14 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 ### History
 
 - 2026-08-23 `217e23abb`: finding recorded; no fix implemented yet.
+- 2026-08-24 `a5f21404e`: scoped fix landed. One exact-community-keyed page
+  owner now performs curated-widget refresh and shared-config recovery for both
+  slots, including retries and focus, online, pageshow, and visibility
+  listeners. Slot-specific selection, frame context, resize state, and
+  rendering remain local. The extension prompt remains separately cached, and
+  viewport-based iframe activation remains future work. Focused tests establish
+  ownership and trust behavior; no below-fold runtime or request-count trace was
+  captured.
 
 ## Finding 012: Git List Bootstrap Loads Broad Discovery Before Visible Scope
 
