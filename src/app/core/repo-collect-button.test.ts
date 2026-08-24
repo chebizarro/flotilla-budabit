@@ -58,6 +58,10 @@ describe("repository collection button reads", () => {
     expect(globalGitSource).toContain("communityHistoryComplete:")
     expect(globalGitSource).toContain("repoCollectionRenderedScopeKey")
     expect(globalGitSource).toContain("renderedScope: repoCollectionRenderedScopeKey")
+    expect(globalGitSource).toContain("scheduleRepoCollectionRetry()")
+    expect(globalGitSource).toContain('repoCollectionTargetLoadKey = ""')
+    expect(globalGitSource).toContain('repoCollectionDeleteLoadKey = ""')
+    expect(globalGitSource).toContain('repoCollectionFollowupLoadKey = ""')
   })
 
   it("does not truncate authoritative global collection relay coverage", () => {

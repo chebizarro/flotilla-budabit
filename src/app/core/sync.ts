@@ -61,6 +61,7 @@ type DmPullOpts = PullOpts & {
 const dmLoad = makeLoader({delay: 200, timeout: 3000, threshold: 0.5})
 const DM_RECENT_BACKFILL_LIMIT = 100
 const DM_BOOTSTRAP_BACKFILL_LIMIT = 200
+const DM_NEGENTROPY_TIMEOUT_MS = 3000
 
 const pullWithFallbackDm = ({relays, filters, signal, fullHistory = false}: DmPullOpts) => {
   const [smart, dumb] = partition(hasNegentropy, relays)
@@ -81,7 +82,35 @@ const pullWithFallbackDm = ({relays, filters, signal, fullHistory = false}: DmPu
 
   if (smart.length > 0) {
     promises.push(
-      pull({relays: smart, filters, signal, events}).catch(() => Promise.all(smart.map(loadRelay))),
+      (async () => {
+        const timeoutController = new AbortController()
+        const pullSignal = AbortSignal.any([signal, timeoutController.signal])
+        let timedOut = false
+        let failed = false
+        let timeout: ReturnType<typeof setTimeout> | undefined
+        const timeoutPromise = new Promise<void>(resolve => {
+          timeout = setTimeout(() => {
+            timedOut = true
+            timeoutController.abort()
+            resolve()
+          }, DM_NEGENTROPY_TIMEOUT_MS)
+        })
+
+        try {
+          await Promise.race([
+            pull({relays: smart, filters, signal: pullSignal, events}),
+            timeoutPromise,
+          ])
+        } catch {
+          failed = true
+        } finally {
+          if (timeout) clearTimeout(timeout)
+        }
+
+        if (!signal.aborted && (fullHistory || failed || timedOut)) {
+          await Promise.all(smart.map(loadRelay))
+        }
+      })(),
     )
   }
 
@@ -107,18 +136,22 @@ const pullAndListenDm = ({relays, filters, signal, fullHistory = false}: DmPullO
     : filters.map(f => ({limit: DM_RECENT_BACKFILL_LIMIT, ...f}))
   const liveFilters = unionFilters(filters).map(assoc("limit", 0))
 
-  pullWithFallbackDm({
+  void pullWithFallbackDm({
     relays,
     signal,
     filters: backfillFilters,
     fullHistory,
+  }).catch(error => {
+    if (!signal.aborted) console.warn("[sync] Failed to synchronize DMs", error)
   })
 
   if (!fullHistory) {
-    loadDmBootstrap({
+    void loadDmBootstrap({
       relays,
       signal,
       filters: buildDmBootstrapFilters(filters),
+    }).catch(error => {
+      if (!signal.aborted) console.warn("[sync] Failed to bootstrap DMs", error)
     })
   }
 

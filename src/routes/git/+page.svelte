@@ -5,6 +5,7 @@
     Address,
     DELETE,
     REACTION,
+    getRelaysFromList,
     type Filter,
     type TrustedEvent,
   } from "@welshman/util"
@@ -18,6 +19,7 @@
     pubkey,
     session,
     deriveProfile,
+    userRelayList,
   } from "@welshman/app"
   import {deriveEventsById, deriveEventsDesc} from "@welshman/store"
   import {Router} from "@welshman/router"
@@ -1889,7 +1891,21 @@
   let repoCollectionFollowupLoadRequestId = 0
   let repoCollectionOriginalHistoryComplete = $state(false)
   let repoCollectionFollowupLoadTimer: ReturnType<typeof setTimeout> | null = null
+  let repoCollectionRetryTimer: ReturnType<typeof setTimeout> | null = null
+  let repoCollectionRetryCount = 0
+  let repoCollectionRetryVersion = $state(0)
   let repoCollectionRenderedScopeKey = $state("")
+  let repoCollectionRetryScopeKey = ""
+  const scheduleRepoCollectionRetry = () => {
+    if (repoCollectionRetryTimer || gitPageReadWorkStopped) return
+
+    const delay = Math.min(60_000, 5000 * 2 ** Math.min(repoCollectionRetryCount, 4))
+    repoCollectionRetryCount += 1
+    repoCollectionRetryTimer = setTimeout(() => {
+      repoCollectionRetryTimer = null
+      repoCollectionRetryVersion += 1
+    }, delay)
+  }
   const repoCollectionState = $derived.by(
     (): RepoCollectionReadState => ({
       personalStars: $activeRepoStars,
@@ -1907,8 +1923,24 @@
         repoCollectionOriginalHistoryComplete,
     }),
   )
+  $effect(() => {
+    if (
+      !repoCollectionTargetHistoryComplete ||
+      !repoCollectionDeleteHistoryComplete ||
+      !repoCollectionOriginalHistoryComplete
+    ) {
+      return
+    }
+
+    repoCollectionRetryCount = 0
+    if (repoCollectionRetryTimer) {
+      clearTimeout(repoCollectionRetryTimer)
+      repoCollectionRetryTimer = null
+    }
+  })
 
   $effect(() => {
+    void repoCollectionRetryVersion
     const relayFilters = repoCollectionTargetFilterPlan.relayFilters
     const localFilters = repoCollectionTargetFilterPlan.localFilters
     const relays = repoCollectionRelays
@@ -1961,10 +1993,16 @@
       .then(result => {
         if (signal.aborted || requestId !== repoCollectionTargetLoadRequestId) return
         repoCollectionTargetHistoryComplete = result.complete
+        if (!result.complete) {
+          repoCollectionTargetLoadKey = ""
+          scheduleRepoCollectionRetry()
+        }
       })
       .catch(error => {
         if (signal.aborted || requestId !== repoCollectionTargetLoadRequestId) return
         repoCollectionTargetHistoryComplete = false
+        repoCollectionTargetLoadKey = ""
+        scheduleRepoCollectionRetry()
         console.warn("[git/+page] Failed to load repository collection targets", error)
       })
 
@@ -1972,6 +2010,7 @@
   })
 
   $effect(() => {
+    void repoCollectionRetryVersion
     const filters = repoCollectionTargetDeleteFilters
     const relays = repoCollectionRelays
     const key = JSON.stringify({renderedScope: repoCollectionRenderedScopeKey, relays, filters})
@@ -2018,10 +2057,16 @@
       .then(result => {
         if (signal.aborted || requestId !== repoCollectionDeleteLoadRequestId) return
         repoCollectionDeleteHistoryComplete = result.complete
+        if (!result.complete) {
+          repoCollectionDeleteLoadKey = ""
+          scheduleRepoCollectionRetry()
+        }
       })
       .catch(error => {
         if (signal.aborted || requestId !== repoCollectionDeleteLoadRequestId) return
         repoCollectionDeleteHistoryComplete = false
+        repoCollectionDeleteLoadKey = ""
+        scheduleRepoCollectionRetry()
         console.warn("[git/+page] Failed to load repository collection target deletes", error)
       })
 
@@ -2029,6 +2074,7 @@
   })
 
   $effect(() => {
+    void repoCollectionRetryVersion
     const plans = [
       {
         relays: repoCollectionRelays,
@@ -2089,10 +2135,16 @@
         .then(results => {
           if (signal.aborted || requestId !== repoCollectionFollowupLoadRequestId) return
           repoCollectionOriginalHistoryComplete = results.every(result => result.complete)
+          if (!repoCollectionOriginalHistoryComplete) {
+            repoCollectionFollowupLoadKey = ""
+            scheduleRepoCollectionRetry()
+          }
         })
         .catch(error => {
           if (signal.aborted || requestId !== repoCollectionFollowupLoadRequestId) return
           repoCollectionOriginalHistoryComplete = false
+          repoCollectionFollowupLoadKey = ""
+          scheduleRepoCollectionRetry()
           console.warn("[git/+page] Failed to load repository collection state", error)
         })
     }, REPO_CARD_HYDRATION_DELAY_MS)
@@ -3262,30 +3314,44 @@
         : [],
   )
   $effect(() => {
-    repoCollectionRenderedScopeKey = repoCardModelsForEnrichment.length
+    const nextScopeKey = repoCardModelsForEnrichment.length
       ? JSON.stringify(repoCardModelsForEnrichment.map(model => model.address))
       : ""
+    if (nextScopeKey !== repoCollectionRetryScopeKey) {
+      repoCollectionRetryScopeKey = nextScopeKey
+      repoCollectionRetryCount = 0
+      if (repoCollectionRetryTimer) {
+        clearTimeout(repoCollectionRetryTimer)
+        repoCollectionRetryTimer = null
+      }
+    }
+    repoCollectionRenderedScopeKey = nextScopeKey
   })
   let repoCardStarHydrationKey = ""
   let repoCardStarsHydratedUser = ""
-  const repoCardStarHydratedAddresses = new Set<string>()
+  const repoCardStarHydratedScopes = new Map<string, string>()
   $effect(() => {
     const models = repoCardModelsForEnrichment
     const user = $pubkey || ""
     if (user !== repoCardStarsHydratedUser) {
       repoCardStarsHydratedUser = user
-      repoCardStarHydratedAddresses.clear()
+      repoCardStarHydratedScopes.clear()
     }
-    const addresses = models
-      .map(model => model.address)
-      .filter(address => address && !repoCardStarHydratedAddresses.has(address))
     const relays = Array.from(
       new Set(
-        [...models.flatMap(model => model.declaredRelays), ...bookmarkListRelays]
+        [
+          ...models.flatMap(model => model.declaredRelays),
+          ...bookmarkListRelays,
+          ...getRelaysFromList($userRelayList),
+        ]
           .map(relay => safeNormalizeRelay(relay))
           .filter(Boolean),
       ),
     )
+    const relayScope = relays.slice().sort().join(",")
+    const addresses = models
+      .map(model => model.address)
+      .filter(address => address && repoCardStarHydratedScopes.get(address) !== relayScope)
     const key = JSON.stringify([user, addresses, relays])
     if (
       !$pubkey ||
@@ -3305,7 +3371,7 @@
     })
       .then(completed => {
         if (completed && !controller.signal.aborted) {
-          for (const address of addresses) repoCardStarHydratedAddresses.add(address)
+          for (const address of addresses) repoCardStarHydratedScopes.set(address, relayScope)
         }
       })
       .catch(error => {
@@ -3347,6 +3413,9 @@
   }
   let repoCardProfileLoadKey = ""
   let repoCardEvidenceLoadKey = ""
+  let repoCardEvidenceRetryKey = ""
+  let repoCardEvidenceRetryCount = 0
+  let repoCardEvidenceRetryVersion = $state(0)
   let repoCardEvidenceLoadTimer: ReturnType<typeof setTimeout> | null = null
   let repoCardEvidenceLoadController: AbortController | null = null
   let repoCardProfileLoadTimer: ReturnType<typeof setTimeout> | null = null
@@ -3370,7 +3439,19 @@
     repoCardProfileLoadController = null
   }
 
+  const scheduleRepoCardEvidenceRetry = (key: string) => {
+    if (repoCardEvidenceRetryCount >= 2 || gitPageReadWorkStopped) return
+
+    repoCardEvidenceRetryCount += 1
+    repoCardEvidenceLoadTimer = setTimeout(() => {
+      repoCardEvidenceLoadTimer = null
+      if (repoCardEvidenceRetryKey !== key) return
+      repoCardEvidenceRetryVersion += 1
+    }, 5000 * repoCardEvidenceRetryCount)
+  }
+
   $effect(() => {
+    void repoCardEvidenceRetryVersion
     const targets = repoCardVerificationTargets
     const key = targets
       .map(target => `${target.event.id}:${target.relays.slice().sort().join(",")}`)
@@ -3379,9 +3460,16 @@
 
     if (!key || targets.length === 0) {
       repoCardEvidenceLoadKey = ""
+      repoCardEvidenceRetryKey = ""
+      repoCardEvidenceRetryCount = 0
       cancelRepoCardEvidenceLoad()
       repoCardVerifiedMaintainersByAddress = new Map()
       return
+    }
+
+    if (repoCardEvidenceRetryKey !== key) {
+      repoCardEvidenceRetryKey = key
+      repoCardEvidenceRetryCount = 0
     }
 
     if (key === repoCardEvidenceLoadKey) return
@@ -3405,10 +3493,20 @@
               next.set(address, verified?.size ? verified : previous || new Set())
             }
             repoCardVerifiedMaintainersByAddress = next
+            repoCardEvidenceLoadController = null
+            if (result.completion === "partial") {
+              repoCardEvidenceLoadKey = ""
+              scheduleRepoCardEvidenceRetry(key)
+            } else {
+              repoCardEvidenceRetryCount = 0
+            }
           }
         })
         .catch(error => {
           if (!controller.signal.aborted) {
+            repoCardEvidenceLoadController = null
+            repoCardEvidenceLoadKey = ""
+            scheduleRepoCardEvidenceRetry(key)
             console.warn(
               "[git/+page] Failed to load repo card maintainer verification evidence",
               error,
@@ -3639,6 +3737,10 @@
     if (repoCollectionFollowupLoadTimer) {
       clearTimeout(repoCollectionFollowupLoadTimer)
       repoCollectionFollowupLoadTimer = null
+    }
+    if (repoCollectionRetryTimer) {
+      clearTimeout(repoCollectionRetryTimer)
+      repoCollectionRetryTimer = null
     }
     cancelRepoCardEvidenceLoad()
     cancelRepoCardProfileLoad()

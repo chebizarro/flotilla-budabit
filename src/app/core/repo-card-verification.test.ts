@@ -189,6 +189,32 @@ describe("repository card verification", () => {
     expect(result.completion).toBe("partial")
   })
 
+  it("isolates status limits per pull request root", async () => {
+    const repo = makeRepo()
+    const firstPr = makePr(repo)
+    const secondPr = {...makePr(repo), id: "2".repeat(64)} as TrustedEvent
+    const fetchEvents = vi
+      .fn()
+      .mockImplementationOnce(async options => {
+        options.onOutcome?.({timedOut: false, sawEose: true, capped: false})
+        return [firstPr, secondPr]
+      })
+      .mockImplementationOnce(async options => {
+        options.onOutcome?.({timedOut: false, sawEose: true, capped: false})
+        return []
+      })
+
+    await loadRepoCardVerification([{event: repo, relays: [relay]}], undefined, {
+      getCachedEvents: () => [],
+      fetchEvents: fetchEvents as any,
+    })
+
+    expect(fetchEvents.mock.calls[1][0].filters).toEqual([
+      expect.objectContaining({"#e": [firstPr.id], limit: 1}),
+      expect.objectContaining({"#e": [secondPr.id], limit: 1}),
+    ])
+  })
+
   it("retains cached positive evidence when no repository relay is available", async () => {
     const repo = makeRepo()
     const pr = makePr(repo)

@@ -124,8 +124,12 @@
   const activeRoomLoadPending = $derived(
     Boolean(
       exactCommunity &&
-      $activeCommunityRoomLoad.pending &&
-      $activeCommunityRoomLoad.communityAddress === exactCommunity.address,
+      ($page.route.id === "/c/[community]"
+        ? $activeCommunityRoomLoad.communityAddress !== exactCommunity.address ||
+          $activeCommunityRoomLoad.roomId !== "" ||
+          $activeCommunityRoomLoad.pending
+        : $activeCommunityRoomLoad.pending &&
+          $activeCommunityRoomLoad.communityAddress === exactCommunity.address),
     ),
   )
 
@@ -168,6 +172,7 @@
     onChange: state => (communityMaintenanceAdmission = state),
   })
   const COMMUNITY_HISTORY_LOAD_TIMEOUT_MS = 5_000
+  const COMMUNITY_DELETE_LOAD_TIMEOUT_MS = 5_000
   const communityDeleteKinds = Array.from(
     new Set(
       [...COMMUNITY_EXCLUSIVE_KINDS, ...COMMUNITY_TARGETABLE_KINDS].filter(kind => kind !== DELETE),
@@ -670,6 +675,23 @@
     communityDeleteLoadController = controller
     const admissionKey = maintenanceAdmission.getKey()
 
+    const scheduleRetry = () => {
+      if (communityDeleteRetryTimer) clearTimeout(communityDeleteRetryTimer)
+      communityDeleteRetryTimer = setTimeout(() => {
+        communityDeleteRetryTimer = null
+        communityDeleteLoadKey = ""
+        communityDeleteRetryVersion += 1
+      }, 5000)
+    }
+    const timeout = setTimeout(() => {
+      if (communityDeleteLoadController !== controller) return
+
+      controller.abort()
+      communityDeleteLoadController = null
+      maintenanceAdmission.settle(admissionKey, "deletes")
+      scheduleRetry()
+    }, COMMUNITY_DELETE_LOAD_TIMEOUT_MS)
+
     void hydrateCommunityDeleteEvents({
       relays,
       community: exactCommunity,
@@ -679,6 +701,7 @@
     }).then(
       latest => {
         if (communityDeleteLoadController !== controller) return
+        clearTimeout(timeout)
         communityDeleteLoadController = null
         maintenanceAdmission.settle(admissionKey, "deletes")
         if (latest > (latestCommunityDeleteSeenByKey[deleteSeenKey] || 0)) {
@@ -688,19 +711,18 @@
       error => {
         if (controller.signal.aborted || communityDeleteLoadController !== controller) return
 
+        clearTimeout(timeout)
         communityDeleteLoadController = null
-        communityDeleteLoadKey = ""
         maintenanceAdmission.settle(admissionKey, "deletes")
         console.warn("[community-deletes] Failed to load community delete events", error)
-        if (communityDeleteRetryTimer) clearTimeout(communityDeleteRetryTimer)
-        communityDeleteRetryTimer = setTimeout(() => {
-          communityDeleteRetryTimer = null
-          communityDeleteRetryVersion += 1
-        }, 5000)
+        scheduleRetry()
       },
     )
 
-    return () => controller.abort()
+    return () => {
+      clearTimeout(timeout)
+      controller.abort()
+    }
   })
 
   $effect(() => {

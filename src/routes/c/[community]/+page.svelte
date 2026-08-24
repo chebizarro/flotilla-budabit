@@ -63,6 +63,10 @@
   } from "@app/core/community-permissions"
   import {isCommunityPersonBanned} from "@app/core/community-reports"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
+  import {
+    activeCommunityRoomLoad,
+    clearActiveCommunityRoomLoad,
+  } from "@app/core/community-foreground"
   import {loadBoundedCommunityHistory, type BoundedCommunityHistoryResult} from "@app/core/requests"
   import {publicationOperations, startPublication} from "@app/core/publication-operations"
   import {assertReplaceablePublicationIsCurrent} from "@app/core/replaceable-publication"
@@ -329,6 +333,22 @@
           roomRootsFirstAttemptTerminal)),
     ),
   )
+  $effect(() => {
+    const communityAddress = communityPointer?.address || ""
+    if (!communityAddress) return
+
+    activeCommunityRoomLoad.set({
+      communityAddress,
+      roomId: "",
+      pending: !(
+        roomCatalogReadinessKey &&
+        roomRootsFirstAttemptKey === roomCatalogReadinessKey &&
+        roomRootsFirstAttemptTerminal
+      ),
+    })
+
+    return () => clearActiveCommunityRoomLoad(communityAddress, "")
+  })
   const roomsWaitingForDefinition = $derived(
     Boolean(
       communityPointer &&

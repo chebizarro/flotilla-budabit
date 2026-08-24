@@ -530,7 +530,7 @@
       title: "Edit collections",
       description: communityHistoryCompleteAtOpen
         ? "Choose where this repository should be starred or curated."
-        : "Choose where this repository should be starred or curated. Existing community selections cannot be removed right now.",
+        : "Community collection history is still loading. Community selections cannot be changed right now.",
       submitLabel: "Update",
       submittingLabel: "editing collections...",
       communityOptions,
@@ -540,7 +540,7 @@
       defaultCommunityAddresses: Array.from(existingCommunityByAddress.keys()).filter(Boolean),
       lockedCommunityAddresses: communityHistoryCompleteAtOpen
         ? []
-        : Array.from(existingCommunityByAddress.keys()).filter(Boolean),
+        : communityOptions.map(option => option.address).filter(Boolean),
       onCancel: clearModals,
       onCollect: async ({
         personal,

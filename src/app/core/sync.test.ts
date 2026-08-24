@@ -414,6 +414,33 @@ describe("syncApplicationData", () => {
     cleanup()
   })
 
+  it("uses loader recovery for smart-relay full-history backfill", async () => {
+    const userPubkey = "a".repeat(64)
+    mocks.hasNegentropy.mockReturnValue(true)
+    mocks.pubkey.set(userPubkey)
+    mocks.userMessagingRelayList.set({tags: []})
+
+    const {syncApplicationData} = await import("./sync")
+    const cleanup = syncApplicationData()
+    await flush()
+    mocks.dmLoad.mockClear()
+
+    mocks.userMessagingRelayList.set({
+      tags: [["relay", "wss://first-smart-dm.relay.example.com"]],
+    })
+    await flush()
+
+    expect(
+      mocks.dmLoad.mock.calls.some(call =>
+        call[0].filters.every(
+          (filter: any) => filter.limit === undefined && filter.since === undefined,
+        ),
+      ),
+    ).toBe(true)
+
+    cleanup()
+  })
+
   it("uses negentropy without concurrent loader fallback", async () => {
     mocks.hasNegentropy.mockReturnValue(true)
     mocks.pubkey.set("a".repeat(64))
@@ -455,6 +482,31 @@ describe("syncApplicationData", () => {
     ).toBe(true)
 
     cleanup()
+  })
+
+  it("falls back when negentropy does not settle", async () => {
+    vi.useFakeTimers()
+    mocks.hasNegentropy.mockReturnValue(true)
+    mocks.pull.mockReturnValueOnce(new Promise(() => {}))
+    mocks.pubkey.set("a".repeat(64))
+    mocks.userMessagingRelayList.set({tags: [["r", "wss://smart.example.com"]]})
+
+    try {
+      const {syncApplicationData} = await import("./sync")
+      const cleanup = syncApplicationData()
+
+      await vi.advanceTimersByTimeAsync(3_000)
+
+      expect(
+        mocks.dmLoad.mock.calls.some(call =>
+          call[0].filters.every((filter: any) => filter.limit === 100),
+        ),
+      ).toBe(true)
+
+      cleanup()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("loads current-user metadata when the user relay list is available", async () => {

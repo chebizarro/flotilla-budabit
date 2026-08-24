@@ -21,7 +21,6 @@ export const REPO_CARD_VERIFICATION_MAX_PRS_PER_REPO = 24
 export const REPO_CARD_VERIFICATION_MAX_EVENTS = 432
 export const REPO_CARD_VERIFICATION_TIMEOUT_MS = 2_500
 export const REPO_CARD_VERIFICATION_CONCURRENCY = 3
-const FILTER_CHUNK_SIZE = 80
 
 export type RepoCardVerificationTarget = {
   event: RepoAnnouncementEvent
@@ -62,14 +61,6 @@ const normalizeRelays = (relays: string[]) => {
   }
 
   return Array.from(normalized).slice(0, REPO_CARD_VERIFICATION_MAX_RELAYS)
-}
-
-const chunk = <T>(items: T[], size = FILTER_CHUNK_SIZE) => {
-  const chunks: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size))
-  }
-  return chunks
 }
 
 const dedupeEvents = <T extends TrustedEvent>(events: T[]) =>
@@ -118,13 +109,13 @@ const makeStatusFilters = (
   pullRequestsByAddress: Map<string, PullRequestEvent[]>,
 ) =>
   plans.flatMap(plan =>
-    chunk((pullRequestsByAddress.get(plan.address) || []).map(event => event.id)).map(
-      rootIds =>
+    (pullRequestsByAddress.get(plan.address) || []).map(
+      event =>
         ({
           kinds: [GIT_STATUS_APPLIED],
           authors: [plan.event.pubkey],
-          "#e": rootIds,
-          limit: rootIds.length,
+          "#e": [event.id],
+          limit: 1,
         }) satisfies Filter,
     ),
   )
