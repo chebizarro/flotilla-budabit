@@ -123,6 +123,7 @@ describe("performance diagnostics", () => {
       build: snapshot.build,
       generatedAt: snapshot.generatedAt,
       schemaVersion: snapshot.schemaVersion,
+      schema: snapshot.schema,
     }
 
     expect(serializePerformanceDiagnostics(reordered)).toBe(first)

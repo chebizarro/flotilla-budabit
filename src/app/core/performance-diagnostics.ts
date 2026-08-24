@@ -3,6 +3,7 @@ import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 import {readRelayDiagnostics} from "@app/core/relay-diagnostics"
 
 export const PERFORMANCE_DIAGNOSTICS_SCHEMA_VERSION = 1
+export const PERFORMANCE_DIAGNOSTICS_SCHEMA = "budabit-performance-run-v1"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_RELAY = "wss://blossom.budabit.club"
 
@@ -67,6 +68,7 @@ export type PerformanceDiagnosticRun = {
 }
 
 export type PerformanceDiagnosticsSnapshot = {
+  schema: "budabit-performance-run-v1"
   schemaVersion: 1
   generatedAt: number
   build: {id: string; hash: string}
@@ -337,6 +339,7 @@ const getEnvironment = (): PerformanceDiagnosticsSnapshot["environment"] => {
 
 export const getPerformanceDiagnosticsSnapshot = (): PerformanceDiagnosticsSnapshot =>
   structuredClone({
+    schema: PERFORMANCE_DIAGNOSTICS_SCHEMA,
     schemaVersion: PERFORMANCE_DIAGNOSTICS_SCHEMA_VERSION,
     generatedAt: Date.now(),
     build: {id: APP_BUILD_ID, hash: APP_BUILD_HASH},

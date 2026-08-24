@@ -1,6 +1,7 @@
 import {expect, test, type Page} from "@playwright/test"
-import {mkdir, writeFile} from "node:fs/promises"
+import {mkdir, readFile, writeFile} from "node:fs/promises"
 import path from "node:path"
+import {gunzipSync} from "node:zlib"
 import {finalizeEvent, getPublicKey, nip19} from "nostr-tools"
 import {hexToBytes} from "@noble/hashes/utils.js"
 import {MockRelay} from "../e2e/helpers/mock-relay"
@@ -212,6 +213,37 @@ const measure = async (
   }
 }
 
+const captureDiagnosticArtifact = async (page: Page, profile: string) => {
+  await page.locator('[data-perf="diagnostics-control"] button', {hasText: "Perf"}).click()
+  const panel = page.getByRole("region", {name: "Performance diagnostics"})
+  await panel.getByRole("button", {name: "Start capture"}).click()
+  await expect(panel.getByText(/Milestones/)).toBeVisible()
+  await panel.getByRole("button", {name: "Stop capture"}).click()
+  const downloadPromise = page.waitForEvent("download")
+  await panel.getByRole("button", {name: "Download"}).click()
+  const download = await downloadPromise
+  const downloadedPath = await download.path()
+  if (!downloadedPath) throw new Error("Diagnostics download did not produce a local file")
+  const bytes = await readFile(downloadedPath)
+  const decoded = download.suggestedFilename().endsWith(".gz") ? gunzipSync(bytes) : bytes
+  const artifact = JSON.parse(decoded.toString("utf8")) as {
+    schema?: string
+    schemaVersion?: number
+    runs?: Array<{route?: string; milestones?: Array<{name?: string}>}>
+  }
+
+  expect(artifact.schema).toBe("budabit-performance-run-v1")
+  expect(artifact.schemaVersion).toBe(1)
+  expect(
+    artifact.runs?.some(
+      run => run.route?.startsWith("/c/") && run.milestones?.some(item => item.name === "settled"),
+    ),
+  ).toBe(true)
+  const output = path.resolve("test-results/performance-roots")
+  await mkdir(output, {recursive: true})
+  await writeFile(path.join(output, `${profile}-diagnostic.json.gz`), bytes)
+}
+
 test("measures Community Home and git with cold data and warm atomic assets", async ({
   page,
 }, testInfo) => {
@@ -268,7 +300,10 @@ test("measures Community Home and git with cold data and warm atomic assets", as
   const routes = [`/c/${communityNaddr}`, "/git"]
   const measurements: Measurement[] = []
 
-  for (const route of routes) measurements.push(await measure(page, mockRelay, route, "cold-data"))
+  for (const route of routes) {
+    measurements.push(await measure(page, mockRelay, route, "cold-data"))
+    if (route !== "/git") await captureDiagnosticArtifact(page, testInfo.project.name)
+  }
   await waitForCacheComplete(page)
   for (const route of routes)
     measurements.push(await measure(page, mockRelay, route, "warm-assets"))
