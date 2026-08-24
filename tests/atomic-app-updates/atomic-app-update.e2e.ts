@@ -61,6 +61,7 @@ test("moves every tab between complete app builds", async ({browser, request}) =
 
   await request.post("/__atomic/fail-b-asset")
   await request.post("/__atomic/publish-b")
+  await request.post("/__atomic/reset-request-counts")
   await first.evaluate(() => window.dispatchEvent(new Event("focus")))
   await expect
     .poll(async () => {
@@ -75,6 +76,8 @@ test("moves every tab between complete app builds", async ({browser, request}) =
   await request.post("/__atomic/allow-b-asset")
   await first.evaluate(() => window.dispatchEvent(new Event("focus")))
   await expect(first.getByText("App update ready", {exact: true})).toBeVisible()
+  const updateState = await (await request.get("/__atomic/state")).json()
+  expect(updateState.requestCounts[updateState.reusableAsset || ""]).toBeUndefined()
 
   const second = await context.newPage()
   second.on("pageerror", error => pageErrors.push(error.message))

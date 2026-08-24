@@ -66,6 +66,16 @@ describe("storage hydration", () => {
     expect(repository.getEvent(cached.id)).toBeUndefined()
   })
 
+  it("notifies repository subscribers once for a persisted batch", () => {
+    const first = makeEvent({id: "3".repeat(64), createdAt: 10, content: "first"})
+    const second = makeEvent({id: "4".repeat(64), createdAt: 10, content: "second", kind: 1})
+    const emit = vi.spyOn(repository, "emit")
+
+    mergePersistedEvents([first, second])
+
+    expect(emit.mock.calls.filter(call => call[0] === "update")).toHaveLength(1)
+  })
+
   it("merges persisted provenance with relays learned after startup", () => {
     tracker.addRelay("event", "wss://live.example")
 
@@ -77,6 +87,17 @@ describe("storage hydration", () => {
       "wss://cached.example",
       "wss://live.example",
     ])
+  })
+
+  it("loads persisted provenance as one tracker update", () => {
+    const load = vi.spyOn(tracker, "load")
+
+    mergePersistedRelayProvenance([
+      {id: "first", relays: ["wss://one.example"]},
+      {id: "second", relays: ["wss://two.example"]},
+    ])
+
+    expect(load).toHaveBeenCalledTimes(1)
   })
 
   it("persists provenance after the eligible event becomes observable", async () => {

@@ -11,6 +11,7 @@ let failedAsset = ""
 let failedAssetRequests = 0
 let workerMarkerReads = {}
 let clientMarkerReads = {}
+let requestCounts = {}
 let activationDelayMs = 0
 
 const contentTypes = {
@@ -59,8 +60,10 @@ const handleControl = async (request, response, pathname) => {
       failedAsset,
       failedAssetRequests,
       failingAsset: fixture.failingAsset,
+      reusableAsset: fixture.reusableAsset,
       workerMarkerReads,
       clientMarkerReads,
+      requestCounts,
       activationDelayMs,
     })
     return true
@@ -76,7 +79,10 @@ const handleControl = async (request, response, pathname) => {
     failedAssetRequests = 0
     workerMarkerReads = {}
     clientMarkerReads = {}
+    requestCounts = {}
     activationDelayMs = 0
+  } else if (pathname === "/__atomic/reset-request-counts") {
+    requestCounts = {}
   } else if (pathname === "/__atomic/stage-b") {
     await copyBuildWithoutMarker()
   } else if (pathname === "/__atomic/start-b-deploy") {
@@ -115,6 +121,7 @@ const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", "http://localhost")
     if (await handleControl(request, response, url.pathname)) return
+    requestCounts[url.pathname] = (requestCounts[url.pathname] || 0) + 1
 
     if (url.pathname === failedAsset) {
       failedAssetRequests += 1

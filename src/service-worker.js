@@ -41,6 +41,7 @@ const APP_SHELL_PATHS = Array.from(
   .filter(shouldPrecachePath)
   .sort()
 const APP_SHELL_PATH_SET = new Set(APP_SHELL_PATHS)
+const IMMUTABLE_PATH_PREFIX = toAppPath("/_app/immutable/")
 let activationRequested = false
 
 self.__SW_VERSION__ = version
@@ -97,11 +98,22 @@ const cacheAppShell = async () => {
   try {
     await assertPublishedVersion()
     const cache = await caches.open(APP_CACHE_NAME)
+    const reusableCaches = await getCompletedAppCaches()
 
     for (let index = 0; index < APP_SHELL_PATHS.length; index += CACHE_BATCH_SIZE) {
       const batch = APP_SHELL_PATHS.slice(index, index + CACHE_BATCH_SIZE)
       await Promise.all(
         batch.map(async pathname => {
+          if (pathname.startsWith(IMMUTABLE_PATH_PREFIX)) {
+            for (const reusableCache of reusableCaches) {
+              const response = await reusableCache.match(toAbsoluteUrl(pathname))
+              if (response) {
+                await cache.put(toAbsoluteUrl(pathname), response)
+                return
+              }
+            }
+          }
+
           const response = await fetch(new Request(toAbsoluteUrl(pathname), {cache: "reload"}))
 
           if (!response.ok) {
@@ -125,6 +137,19 @@ const cacheAppShell = async () => {
     await caches.delete(APP_CACHE_NAME)
     throw error
   }
+}
+
+const getCompletedAppCaches = async () => {
+  const keys = await caches.keys()
+  const completed = []
+
+  for (const cacheName of keys) {
+    if (!cacheName.startsWith(APP_CACHE_PREFIX) || cacheName === APP_CACHE_NAME) continue
+    const cache = await caches.open(cacheName)
+    if (await cache.match(toAbsoluteUrl(CACHE_COMPLETE_PATH))) completed.push(cache)
+  }
+
+  return completed.reverse()
 }
 
 const getAppCacheNamesToKeep = async () => {

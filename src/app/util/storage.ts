@@ -104,18 +104,34 @@ const rankEvent = (event: TrustedEvent) => {
 }
 
 export const mergePersistedEvents = (events: TrustedEvent[]) => {
+  const cachedEvents: TrustedEvent[] = []
+
   for (const event of events) {
     // Persisted events were verified before storage. Keep newer in-memory
     // replaceable events when IndexedDB finishes opening after network startup.
     event[verifiedSymbol] = true
-    if (!repository.hasEvent(event)) repository.publish(event)
+    if (!repository.hasEvent(event)) cachedEvents.push(event)
   }
+
+  if (cachedEvents.length > 0) repository.load([...repository.dump(), ...cachedEvents])
 }
 
 export const mergePersistedRelayProvenance = (items: TrackerItem[]) => {
+  const relaysById = new Map(
+    Array.from(tracker.relaysById, ([id, relays]) => [id, new Set(relays)] as const),
+  )
+  let changed = false
+
   for (const {id, relays} of items) {
-    for (const relay of relays) tracker.addRelay(id, relay)
+    const merged = relaysById.get(id) || new Set<string>()
+    for (const relay of relays) {
+      if (!merged.has(relay)) changed = true
+      merged.add(relay)
+    }
+    relaysById.set(id, merged)
   }
+
+  if (changed) tracker.load(relaysById)
 }
 
 const pendingEventPersistence = new Map<string, Promise<boolean>>()

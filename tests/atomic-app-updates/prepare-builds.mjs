@@ -46,7 +46,9 @@ await cp(buildA, remote, {recursive: true})
 const filesA = new Set(await listFiles(path.join(buildA, "_app/immutable")))
 const filesB = await listFiles(path.join(buildB, "_app/immutable"))
 const failingAsset = filesB.find(file => !filesA.has(file))
+const reusableAsset = filesB.find(file => filesA.has(file))
 if (!failingAsset) throw new Error("Atomic test builds did not produce a B-only immutable asset")
+if (!reusableAsset) throw new Error("Atomic test builds did not produce a reusable immutable asset")
 
 const versionA = JSON.parse(await readFile(path.join(buildA, "_app/version.json"), "utf8"))
 const versionB = JSON.parse(await readFile(path.join(buildB, "_app/version.json"), "utf8"))
@@ -56,5 +58,15 @@ if (versionA.version !== "atomic-a" || versionB.version !== "atomic-b") {
 
 await writeFile(
   path.join(outputRoot, "state.json"),
-  `${JSON.stringify({buildA, buildB, remote, failingAsset: `/_app/immutable/${failingAsset}`}, null, 2)}\n`,
+  `${JSON.stringify(
+    {
+      buildA,
+      buildB,
+      remote,
+      failingAsset: `/_app/immutable/${failingAsset}`,
+      reusableAsset: `/_app/immutable/${reusableAsset}`,
+    },
+    null,
+    2,
+  )}\n`,
 )
