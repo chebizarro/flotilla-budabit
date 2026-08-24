@@ -1500,6 +1500,107 @@ Proposed 2026-08-23 at `217e23abb`. Status: `Proposed`.
 
 - 2026-08-23 `217e23abb`: lower-priority findings grouped; no fix implemented yet.
 
+## Finding 023: Foreground Navigation Can Lose To Background Ownership And False Absence
+
+Observed 2026-08-24 at `9291099f8`. Status: `Observed`.
+
+### Symptom
+
+Manual smoke testing after the community-home and Git loading batches found that
+entering Threads during community bootstrap could show a temporary empty or
+not-found result, then populate tens of seconds later. Cold switches among Home,
+Explore, Git, and DMs could take ten seconds or more despite immediate button
+feedback, and Explore community clicks remained slow while showing legitimate
+loading indicators. Repeated navigation warmed these paths substantially. The
+Git repository page itself no longer exposed an obvious interaction bottleneck.
+
+Notifications commonly arrived before destination content. This is useful
+correctness evidence, but it also indicates that global background transport can
+occupy relay and publication capacity before the selected route establishes its
+visible result.
+
+### Confirmed Mechanisms
+
+The Threads list starts its visible feed without an explicit request owner or
+priority at `src/routes/c/[community]/threads/+page.svelte:319-338`. Its
+three-second soft timeout can resolve as incomplete while the underlying relay
+request continues, and incomplete state falls through to `No threads found` at
+`src/routes/c/[community]/threads/+page.svelte:446-451`. Community-layout
+history and finite follow-up can meanwhile run at community priority after the
+home foreground marker clears.
+
+The pattern is broader than Threads. Goals has an unowned default-priority main
+feed, while Calendar records incomplete acquisition but can still render an
+authoritative empty state. Thread, Goal, Calendar, and Room detail pages can
+render not-found or empty replies from incomplete evidence. Git community,
+Permalinks, and Widgets record incomplete history that their empty rendering
+does not consistently honor. Badges, Membership, Moderation, and menu evidence
+also contain raw requests without uniform owner, admission-aware timeout, and
+completeness semantics.
+
+Explore deliberately awaits definition and outbox lookup before calling
+`goto()`: `src/routes/explore/+page.svelte:131-145`. The old route therefore
+remains mounted during relay admission, and active community state is mutated
+before navigation commits.
+
+Notification sources start globally from the root. Some finite global history
+requests use default rather than background priority, and request priority only
+orders queued work; it does not preempt subscriptions that already occupy relay
+capacity. This batch records notification staging as a related but separate
+follow-up rather than expanding the community correctness scope.
+
+### Deeper Lesson
+
+A request ceasing to look busy is not evidence that its query completed.
+Foreground ownership, scheduler admission, transport completion, and
+authoritative absence are distinct states. Persistent layouts must yield to the
+selected child route, and late work must be both cancellable and unable to
+publish stale owner state. Shared repositories may retain valid events, but an
+obsolete generation must not complete the current page, permission gate,
+checkpoint, or empty state.
+
+### Potential Fixes
+
+Proposed 2026-08-24 at `9291099f8`. Status: `Proposed`.
+
+- Introduce a compact foreground acquisition contract with explicit owner,
+  generation, queued/loading/complete/incomplete/failed state, and physical
+  request-start timing.
+- Let visible community child routes hold a foreground lease that defers or
+  aborts persistent-layout maintenance until the first critical acquisition is
+  terminal.
+- Permit empty and not-found presentation only from complete, exact-community,
+  current-viewer evidence.
+- Migrate critical moderation, badge, membership, and menu requests to bounded,
+  owned acquisition before applying the contract to Threads, Goals, Calendar,
+  Rooms, community Git, Permalinks, and Widgets.
+- Key permission-sensitive readiness by exact community, definition, relay
+  scope, and viewer.
+- Navigate from Explore immediately using the exact card pointer; let the
+  destination route own bootstrap and error recovery.
+- In a separate notification batch, render persisted indicators immediately,
+  then stage a narrow live/tail window before resumable background catch-up that
+  pauses on navigation.
+
+### Validation Needed
+
+- Saturate a relay's finite-request capacity, navigate into each community
+  destination, and prove its foreground owner starts before maintenance.
+- Delay or fail every acquisition branch independently and prove incomplete
+  evidence never renders empty, not-found, zero moderation counts, or an
+  enabled permission gate.
+- Switch viewer, community, and definition while requests are queued and prove
+  stale generations cannot mutate current owner state.
+- Record click, `goto`, committed navigation, destination mount, physical relay
+  start, first terminal result, and long-task timing.
+- Prove an Explore card changes pathname promptly even when definition relays do
+  not answer.
+
+### History
+
+- 2026-08-24 `9291099f8`: manual smoke finding recorded and mechanisms audited;
+  no fix implemented yet.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.
