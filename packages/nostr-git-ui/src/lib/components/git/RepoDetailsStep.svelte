@@ -149,14 +149,16 @@
 
 <div class="space-y-6">
   <div class="space-y-4">
-    <h2 class="text-xl font-semibold text-gray-100">Repository Details</h2>
-    <p class="text-sm text-gray-300">Set up the basic information for your new repository.</p>
+    <h2 class="text-xl font-semibold text-foreground">Repository Details</h2>
+    <p class="text-sm text-muted-foreground">
+      Set up the basic information for your new repository.
+    </p>
   </div>
 
   <div class="space-y-4">
     <!-- Repository Name -->
     <div>
-      <label for="repo-name" class="block text-sm font-medium text-gray-300 mb-2">
+      <label for="repo-name" class="mb-2 block text-sm font-medium text-foreground">
         Repository name *
       </label>
       <div class="relative">
@@ -167,7 +169,7 @@
           oninput={handleNameInput}
           onblur={handleNameBlur}
           placeholder="my-awesome-project"
-          class="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+          class="w-full rounded-md border border-input bg-background px-3 py-2 pr-10 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
           class:border-red-500={validationErrors.name}
           class:border-green-500={nameAvailabilityResults &&
             nameAvailabilityResults.availableProviders.length > 0}
@@ -196,15 +198,11 @@
 
       <!-- Repository Name Availability Status -->
       {#if repoName.trim() && tokens.length > 0}
-        <div
-          class="mt-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
-        >
-          <h4 class="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-            Repository Name Availability
-          </h4>
+        <div class="mt-2 rounded-lg border border-border bg-muted/30 p-3">
+          <h4 class="mb-2 text-sm font-medium text-foreground">Repository Name Availability</h4>
 
           {#if isCheckingAvailability}
-            <div class="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+            <div class="flex items-center space-x-2 text-sm text-muted-foreground">
               <div
                 class="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"
               ></div>
@@ -217,9 +215,7 @@
                   <div class="flex items-center space-x-2 min-w-0">
                     <span class="font-medium capitalize shrink-0">{result.provider}</span>
                     {#if result.username}
-                      <span
-                        class="text-gray-500 dark:text-gray-400 min-w-0 truncate"
-                        title={result.username}
+                      <span class="min-w-0 truncate text-muted-foreground" title={result.username}
                         >({formatAvailabilityUsername(result.username)})</span
                       >
                     {/if}
@@ -271,7 +267,7 @@
 
     <!-- Description -->
     <div>
-      <label for="repo-description" class="block text-sm font-medium text-gray-300 mb-2">
+      <label for="repo-description" class="mb-2 block text-sm font-medium text-foreground">
         Description (optional)
       </label>
       <textarea
@@ -280,7 +276,7 @@
         oninput={handleDescriptionInput}
         placeholder="A brief description of your repository"
         rows="3"
-        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100 resize-vertical"
+        class="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
         class:border-red-500={validationErrors.description}
         class:focus:ring-red-500={validationErrors.description}
         class:focus:border-red-500={validationErrors.description}
@@ -291,7 +287,7 @@
             {validationErrors.description}
           </p>
         {:else}
-          <p class="text-sm text-gray-400">
+          <p class="text-sm text-muted-foreground">
             {description.length}/350 characters
           </p>
         {/if}
@@ -299,28 +295,28 @@
     </div>
 
     <!-- Initialize with README -->
-    <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+    <div class="border-t border-border pt-4">
       <div class="space-y-3">
-        <h3 class="text-sm font-medium text-gray-300">Initialize repository</h3>
+        <h3 class="text-sm font-medium text-foreground">Initialize repository</h3>
         <label class="flex items-center space-x-3 cursor-pointer">
           <input
             type="checkbox"
             checked={initializeWithReadme}
             onchange={handleReadmeChange}
-            class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            class="h-4 w-4 rounded border-input text-primary focus:ring-ring"
           />
           <div>
-            <div class="text-sm font-medium text-gray-100">Add a README file</div>
-            <div class="text-sm text-gray-400">
+            <div class="text-sm font-medium text-foreground">Add a README file</div>
+            <div class="text-sm text-muted-foreground">
               This is where you can write a long description for your project
             </div>
           </div>
         </label>
 
-        <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+        <div class="mt-4 border-t border-border pt-4">
           <div class="space-y-4">
             <div>
-              <label for="default-branch" class="block text-sm font-medium text-gray-300 mb-2">
+              <label for="default-branch" class="mb-2 block text-sm font-medium text-foreground">
                 Default branch name
               </label>
               <input
@@ -329,20 +325,23 @@
                 value={defaultBranch}
                 oninput={handleBranchInput}
                 placeholder="master"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                class="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
             <!-- .gitignore Template -->
             <div>
-              <label for="gitignore-template" class="block text-sm font-medium text-gray-300 mb-2">
+              <label
+                for="gitignore-template"
+                class="mb-2 block text-sm font-medium text-foreground"
+              >
                 .gitignore template
               </label>
               <select
                 id="gitignore-template"
                 value={gitignoreTemplate}
                 onchange={handleGitignoreChange}
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                class="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 {#each gitignoreOptions as option}
                   <option value={option.value}>{option.label}</option>
@@ -352,14 +351,14 @@
 
             <!-- License Template -->
             <div>
-              <label for="license-template" class="block text-sm font-medium text-gray-300 mb-2">
+              <label for="license-template" class="mb-2 block text-sm font-medium text-foreground">
                 License
               </label>
               <select
                 id="license-template"
                 value={licenseTemplate}
                 onchange={handleLicenseChange}
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                class="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 {#each licenseOptions as option}
                   <option value={option.value}>{option.label}</option>

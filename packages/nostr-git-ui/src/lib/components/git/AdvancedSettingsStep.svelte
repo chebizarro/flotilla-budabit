@@ -316,18 +316,18 @@
 
 <div class="min-w-0 max-w-full space-y-6 [overflow-wrap:anywhere]">
   <div class="space-y-4">
-    <h2 class="text-xl font-semibold text-gray-100">Advanced Settings</h2>
-    <p class="text-sm text-gray-300">Configure additional options for your repository.</p>
+    <h2 class="text-xl font-semibold text-foreground">Advanced Settings</h2>
+    <p class="text-sm text-muted-foreground">Configure additional options for your repository.</p>
   </div>
 
   <div class="space-y-6">
     <!-- Author Information -->
-    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-      <h3 class="text-lg font-medium text-gray-100 mb-4">Author Information</h3>
+    <div class="border-t border-border pt-6">
+      <h3 class="mb-4 text-lg font-medium text-foreground">Author Information</h3>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label for="author-name" class="block text-sm font-medium text-gray-300 mb-2">
+          <label for="author-name" class="mb-2 block text-sm font-medium text-foreground">
             Author Name *
           </label>
           <input
@@ -336,13 +336,13 @@
             value={authorName}
             oninput={(e) => onAuthorNameChange((e.target as HTMLInputElement).value)}
             placeholder="Your full name"
-            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+            class="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
             required
           />
         </div>
 
         <div>
-          <label for="author-email" class="block text-sm font-medium text-gray-300 mb-2">
+          <label for="author-email" class="mb-2 block text-sm font-medium text-foreground">
             Author Email *
           </label>
           <input
@@ -351,7 +351,7 @@
             value={authorEmail}
             oninput={(e) => onAuthorEmailChange((e.target as HTMLInputElement).value)}
             placeholder="your.email@example.com"
-            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+            class="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
             required
           />
         </div>
@@ -359,13 +359,13 @@
     </div>
 
     <!-- NIP-34 Repository Metadata -->
-    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-      <h3 class="text-lg font-medium text-gray-100 mb-4">Repository Metadata (NIP-34)</h3>
+    <div class="border-t border-border pt-6">
+      <h3 class="mb-4 text-lg font-medium text-foreground">Repository Metadata (NIP-34)</h3>
 
       <div class="space-y-4">
         <!-- Web URLs -->
         <fieldset>
-          <legend class="block text-sm font-medium text-gray-300 mb-2"> Web URLs </legend>
+          <legend class="mb-2 block text-sm font-medium text-foreground"> Web URLs </legend>
           <div class="space-y-2">
             {#each webUrls as url, index}
               <div class="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
@@ -380,11 +380,11 @@
                       onWebUrlsChange
                     )}
                   placeholder="https://github.com/user/repo"
-                  class="min-w-0 w-full flex-1 rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                  class="min-w-0 w-full flex-1 rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <button
                   type="button"
-                  class="min-h-10 w-full px-3 py-2 text-red-400 hover:text-red-300 sm:w-auto"
+                  class="min-h-10 w-full px-3 py-2 text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 sm:w-auto"
                   aria-label="Remove web URL"
                   onclick={() => removeItem(webUrls, index, onWebUrlsChange)}
                 >
@@ -394,21 +394,23 @@
             {/each}
             <button
               type="button"
-              class="px-3 py-2 text-blue-400 hover:text-blue-300"
+              class="px-3 py-2 text-blue-700 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
               onclick={() => addItem(webUrls, onWebUrlsChange)}
             >
               Add web URL
             </button>
           </div>
-          <p class="mt-1 text-sm text-gray-400">URL(s) for browsing the repository online</p>
+          <p class="mt-1 text-sm text-muted-foreground">
+            URL(s) for browsing the repository online
+          </p>
         </fieldset>
 
         <!-- Clone URLs -->
         <fieldset>
-          <legend class="block text-sm font-medium text-gray-300 mb-2"> Clone URLs </legend>
+          <legend class="mb-2 block text-sm font-medium text-foreground"> Clone URLs </legend>
           <div class="space-y-2">
             {#if cloneUrls.length === 0}
-              <p class="text-sm text-gray-400">
+              <p class="text-sm text-muted-foreground">
                 No clone URLs available for the selected providers yet.
               </p>
             {/if}
@@ -416,7 +418,7 @@
               <div class="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
                 <button
                   type="button"
-                  class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-gray-400 hover:text-gray-200 disabled:opacity-40"
+                  class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-40"
                   aria-label="Move clone URL up"
                   disabled={index === 0}
                   onclick={() => moveCloneUrl(index, -1)}
@@ -425,7 +427,7 @@
                 </button>
                 <button
                   type="button"
-                  class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-gray-400 hover:text-gray-200 disabled:opacity-40"
+                  class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-40"
                   aria-label="Move clone URL down"
                   disabled={index === cloneUrls.length - 1}
                   onclick={() => moveCloneUrl(index, 1)}
@@ -436,25 +438,25 @@
                   type="text"
                   value={cloneUrls[index]}
                   readonly
-                  class="min-w-0 flex-1 basis-[calc(100%_-_6rem)] rounded-md border border-gray-300 bg-gray-800/60 px-3 py-2 text-gray-100 shadow-sm dark:border-gray-600 sm:basis-auto"
+                  class="min-w-0 flex-1 basis-[calc(100%_-_6rem)] rounded-md border border-input bg-muted/60 px-3 py-2 text-foreground shadow-sm sm:basis-auto"
                 />
                 {#if index === 0}
                   <span
-                    class="px-2 py-1 text-xs rounded bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                    class="rounded border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary"
                     >Primary</span
                   >
                 {/if}
               </div>
             {/each}
           </div>
-          <p class="mt-1 text-sm text-gray-400">
+          <p class="mt-1 text-sm text-muted-foreground">
             Reorder to choose priority. The first URL is the primary clone URL.
           </p>
         </fieldset>
 
         <!-- Tags -->
         <fieldset>
-          <legend class="block text-sm font-medium text-gray-300 mb-2">
+          <legend class="mb-2 block text-sm font-medium text-foreground">
             <Hash class="w-4 h-4 inline mr-1" />
             Tags/Topics
           </legend>
@@ -464,13 +466,13 @@
             <div class="flex flex-wrap gap-2 mb-2">
               {#each tags as tag}
                 <div
-                  class="flex min-w-0 max-w-full items-center gap-2 rounded-lg bg-gray-700 py-2 pl-3 text-sm"
+                  class="flex min-w-0 max-w-full items-center gap-2 rounded-lg bg-muted py-2 pl-3 text-sm"
                 >
-                  <Hash class="w-3 h-3 text-gray-400" />
-                  <span class="min-w-0 break-all text-sm text-white">{tag}</span>
+                  <Hash class="h-3 w-3 text-muted-foreground" />
+                  <span class="min-w-0 break-all text-sm text-foreground">{tag}</span>
                   <button
                     onclick={() => onTagsChange(tags.filter((t) => t !== tag))}
-                    class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-gray-400 transition-colors hover:text-gray-200"
+                    class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
                     aria-label="Remove tag"
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -507,7 +509,7 @@
               }}
               onkeydown={handleHashtagKeydown}
               autocomplete="off"
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+              class="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
               placeholder="Search or type to add tags (press Enter)"
             />
             {#if showHashtagAutocomplete}
@@ -515,7 +517,7 @@
                 id="hashtag-suggestions-listbox"
                 role="listbox"
                 aria-label="Hashtag suggestions"
-                class="absolute z-[50] mt-1 max-h-[min(15rem,50dvh)] w-full max-w-full overflow-x-hidden overflow-y-auto rounded-lg border border-gray-600 bg-gray-800 shadow-lg"
+                class="absolute z-[50] mt-1 max-h-[min(15rem,50dvh)] w-full max-w-full overflow-x-hidden overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
               >
                 {#each hashtagSearchResults as tag, index}
                   {@const isAlreadyAdded = tagExists(tag)}
@@ -536,13 +538,13 @@
                       }
                     }}
                     class="w-full text-left px-3 py-2 text-sm flex items-center gap-2
-                           {index === highlightedHashtagIndex ? 'bg-gray-700' : 'hover:bg-gray-700'}
+                           {index === highlightedHashtagIndex ? 'bg-muted' : 'hover:bg-muted'}
                            {isAlreadyAdded ? 'opacity-50 cursor-not-allowed' : ''}"
                   >
-                    <Hash class="w-3 h-3 text-gray-400" />
+                    <Hash class="h-3 w-3 text-muted-foreground" />
                     <span class="min-w-0 flex-1 break-all">{tag}</span>
                     {#if isAlreadyAdded}
-                      <span class="text-xs text-gray-400">(already added)</span>
+                      <span class="text-xs text-muted-foreground">(already added)</span>
                     {/if}
                   </button>
                 {/each}
@@ -560,13 +562,13 @@
                       e.stopPropagation();
                       addHashtag(hashtagSearchQuery);
                     }}
-                    class="w-full text-left px-3 py-2 text-sm flex items-center gap-2 border-t border-gray-700
+                    class="w-full text-left px-3 py-2 text-sm flex items-center gap-2 border-t border-border
                            {highlightedHashtagIndex === hashtagSearchResults.length
-                      ? 'bg-gray-700'
-                      : 'hover:bg-gray-700'}"
+                      ? 'bg-muted'
+                      : 'hover:bg-muted'}"
                   >
-                    <Plus class="w-3 h-3 text-blue-400" />
-                    <span class="min-w-0 break-words font-medium text-blue-400"
+                    <Plus class="h-3 w-3 text-primary" />
+                    <span class="min-w-0 break-words font-medium text-primary"
                       >Create tag: {getNormalizedQuery()}</span
                     >
                   </button>
@@ -574,12 +576,12 @@
               </div>
             {/if}
           </div>
-          <p class="mt-1 text-sm text-gray-400">Add tags or topics for this repository</p>
+          <p class="mt-1 text-sm text-muted-foreground">Add tags or topics for this repository</p>
         </fieldset>
 
         <!-- Maintainers -->
         <fieldset>
-          <legend class="block text-sm font-medium text-gray-300 mb-2">
+          <legend class="mb-2 block text-sm font-medium text-foreground">
             <Users class="w-4 h-4 inline mr-1" />
             Additional Maintainers
           </legend>
@@ -603,12 +605,12 @@
               onMaintainersChange(maintainers.filter((p) => p !== pubkey));
             }}
           />
-          <p class="mt-1 text-sm text-gray-400">Maintainer public keys (npub or hex)</p>
+          <p class="mt-1 text-sm text-muted-foreground">Maintainer public keys (npub or hex)</p>
         </fieldset>
 
         <!-- Relays -->
         <fieldset>
-          <legend class="block text-sm font-medium text-gray-300 mb-2">
+          <legend class="mb-2 block text-sm font-medium text-foreground">
             <Globe class="w-4 h-4 inline mr-1" />
             Preferred Relays
           </legend>
@@ -620,10 +622,10 @@
                   value={relayUrl}
                   readonly
                   aria-label="GRASP target relay"
-                  class="min-w-0 w-full flex-1 rounded-md border border-blue-500/40 bg-gray-800/60 px-3 py-2 text-gray-100 shadow-sm focus:outline-none"
+                  class="min-w-0 w-full flex-1 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-foreground shadow-sm focus:outline-none"
                 />
                 <span
-                  class="self-start whitespace-nowrap rounded border border-blue-500/30 bg-blue-500/20 px-2 py-1 text-xs text-blue-300 sm:self-auto"
+                  class="self-start whitespace-nowrap rounded border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary sm:self-auto"
                 >
                   GRASP target
                 </span>
@@ -638,11 +640,11 @@
                   oninput={(e) =>
                     updateItem(relays, index, (e.target as HTMLInputElement).value, onRelaysChange)}
                   placeholder="wss://relay.example.com"
-                  class="min-w-0 flex-1 rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                  class="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <button
                   type="button"
-                  class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-red-400 hover:text-red-300"
+                  class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
                   aria-label="Remove relay"
                   onclick={() => removeItem(relays, index, onRelaysChange)}
                 >
@@ -671,13 +673,13 @@
                     }, 200);
                   }}
                   autocomplete="off"
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                  class="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground shadow-sm focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring"
                   placeholder="Search for relays..."
                 />
                 {#if showRelayAutocomplete && relaySearchResults.length > 0}
                   <div
                     id="relay-suggestions-listbox"
-                    class="fixed z-50 max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto rounded-lg border border-gray-600 bg-gray-800 shadow-lg"
+                    class="fixed z-50 max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
                     style={getRelayDropdownStyle()}
                   >
                     {#each relaySearchResults as relayUrl}
@@ -694,7 +696,7 @@
                           relaySearchQuery = "";
                           showRelayAutocomplete = false;
                         }}
-                        class="w-full break-all px-3 py-2 text-left font-mono text-sm hover:bg-gray-700"
+                        class="w-full break-all px-3 py-2 text-left font-mono text-sm hover:bg-muted"
                       >
                         {relayUrl}
                       </button>
@@ -705,7 +707,7 @@
             {:else}
               <button
                 type="button"
-                class="min-h-10 px-3 py-2 text-blue-400 hover:text-blue-300"
+                class="min-h-10 px-3 py-2 text-blue-700 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                 onclick={() => addItem(relays, onRelaysChange)}
               >
                 <Plus class="w-4 h-4 inline mr-1" />
@@ -713,7 +715,7 @@
               </button>
             {/if}
           </div>
-          <p class="mt-1 text-sm text-gray-400">
+          <p class="mt-1 text-sm text-muted-foreground">
             Preferred relay URLs (wss://). Selected GRASP target relays are included automatically.
           </p>
           {#if relayError}

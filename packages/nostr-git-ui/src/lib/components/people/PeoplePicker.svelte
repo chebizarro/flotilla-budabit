@@ -304,15 +304,15 @@
       {#each selected as evt}
         {@const pubkey = getEventPubkey(evt)}
         <div
-          class="flex min-w-0 max-w-full items-center gap-2 rounded-lg bg-gray-700 py-2 pl-3 text-sm"
+          class="flex min-w-0 max-w-full items-center gap-2 rounded-lg bg-muted py-2 pl-3 text-sm text-foreground"
         >
           {#if showAvatars}
             <UserAvatar pubkey={pubkey} profile={profileCache.get(pubkey || "")} size="sm" />
           {:else}
-            <span class="text-gray-300">{pubkey?.slice(0, 8)}...</span>
+            <span class="text-muted-foreground">{pubkey?.slice(0, 8)}...</span>
           {/if}
           <div class="flex-1 min-w-0">
-            <div class="break-words text-sm text-white">
+            <div class="break-words text-sm text-foreground">
               {(() => {
                 const profile = pubkey ? profileCache.get(pubkey) : undefined;
                 return (
@@ -328,7 +328,7 @@
             <button
               type="button"
               onclick={() => removeSelection(evt)}
-              class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-gray-400 transition-colors hover:text-gray-200"
+              class="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
               aria-label="Remove"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -368,7 +368,7 @@
         }}
         placeholder={placeholder}
         disabled={disabled}
-        class="min-w-0 w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 pr-14 text-white placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+        class="min-w-0 w-full rounded-lg border border-input bg-background px-3 py-2 pr-14 text-foreground placeholder:text-muted-foreground focus:border-transparent focus:outline-none focus:ring-2 focus:ring-ring"
         aria-expanded={open}
         aria-controls="suggestions-listbox"
         aria-haspopup="listbox"
@@ -379,12 +379,12 @@
       {#if loading || resolving || showMobileAdd}
         <div class="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center gap-1">
           {#if loading || resolving}
-            <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
+            <div class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary"></div>
           {/if}
           {#if showMobileAdd}
             <button
               type="button"
-              class="inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-gray-600 bg-gray-800 text-gray-200 hover:bg-gray-700 disabled:opacity-50 sm:hidden"
+              class="inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-input bg-background text-foreground hover:bg-muted disabled:opacity-50 sm:hidden"
               aria-label="Add person"
               onclick={() => void addFromInput()}
               disabled={isAddDisabled}
@@ -398,15 +398,15 @@
       <!-- Suggestions dropdown -->
       {#if open && suggestions.length > 0}
         <div
-          class="absolute z-[50] mt-1 max-h-[min(15rem,50dvh)] w-full max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto rounded-lg border border-gray-600 bg-gray-800 shadow-lg"
+          class="absolute z-[50] mt-1 max-h-[min(15rem,50dvh)] w-full max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
         >
           <ul id="suggestions-listbox" role="listbox" aria-label="Search suggestions">
             {#each suggestions as suggestion, index}
               <li role="option" aria-selected={index === highlighted}>
                 <button
                   type="button"
-                  class="w-full px-3 py-2 cursor-pointer hover:bg-gray-700 {index === highlighted
-                    ? 'bg-gray-700'
+                  class="w-full px-3 py-2 cursor-pointer hover:bg-muted {index === highlighted
+                    ? 'bg-muted'
                     : ''} text-left"
                   onmousedown={(e) => {
                     // Prevent input blur from firing before click
@@ -427,17 +427,19 @@
                         size="sm"
                       />
                     {:else}
-                      <span class="text-gray-300">{suggestion.pubkey.slice(0, 8)}...</span>
+                      <span class="text-muted-foreground">{suggestion.pubkey.slice(0, 8)}...</span>
                     {/if}
                     <div class="flex-1 min-w-0">
-                      <div class="break-words text-sm text-white">
+                      <div class="break-words text-sm text-popover-foreground">
                         {suggestion.display_name ||
                           suggestion.name ||
                           suggestion.nip05 ||
                           suggestion.pubkey.slice(0, 16) + "..."}
                       </div>
                       {#if suggestion.nip05 && suggestion.nip05 !== suggestion.display_name && suggestion.nip05 !== suggestion.name}
-                        <div class="break-all text-xs text-gray-400">{suggestion.nip05}</div>
+                        <div class="break-all text-xs text-muted-foreground">
+                          {suggestion.nip05}
+                        </div>
                       {/if}
                     </div>
                   </div>

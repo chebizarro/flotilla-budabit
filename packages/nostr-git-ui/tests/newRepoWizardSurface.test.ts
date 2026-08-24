@@ -203,6 +203,21 @@ describe("NewRepoWizard modal surface", () => {
     }
   });
 
+  it("uses theme tokens for people picking and repository setup surfaces", async () => {
+    const peoplePicker = await readPackageSource("src/lib/components/people/PeoplePicker.svelte");
+    const repoDetails = await readPackageSource("src/lib/components/git/RepoDetailsStep.svelte");
+    const advanced = await readPackageSource("src/lib/components/git/AdvancedSettingsStep.svelte");
+
+    expect(peoplePicker).toContain("border-input bg-background");
+    expect(peoplePicker).toContain("bg-popover text-popover-foreground");
+
+    for (const source of [peoplePicker, repoDetails, advanced]) {
+      expect(source).toContain("text-foreground");
+      expect(source).toContain("text-muted-foreground");
+      expect(source).not.toMatch(/(?:bg-gray-(?:700|800)|text-(?:white|gray-(?:100|300)))/);
+    }
+  });
+
   it("keeps progress detail text readable without hover-only truncation", async () => {
     const importDialog = await readPackageSource("src/lib/components/git/ImportRepoDialog.svelte");
     const forkDialog = await readPackageSource("src/lib/components/git/ForkRepoDialog.svelte");
