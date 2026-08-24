@@ -50,7 +50,8 @@
   import {installBuiltinExtensions} from "@app/extensions/builtin"
   import {setupWidgetUpdateNotifications} from "@app/extensions/widget-update-notifications"
   import {setNotificationBackgroundEnabled} from "@app/util/notification-background"
-  import {CASHU_WALLET_ENABLED} from "@app/core/feature-flags"
+  import {CASHU_WALLET_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {consumeArmedPerformanceDiagnosticsCapture} from "@app/core/performance-diagnostics"
   import {initializeCashuWallet} from "@app/core/cashu"
   import {registerCashuBridgeHandlers} from "@app/core/cashu-bridge"
   import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
@@ -80,6 +81,9 @@
   import {getProfileCommunityRelaysFromRefs} from "@app/core/community-relays"
 
   const {children} = $props()
+  if (browser && PERFORMANCE_DIAGNOSTICS_ENABLED) {
+    consumeArmedPerformanceDiagnosticsCapture(window.location.pathname)
+  }
   const nostrGitProviderProps = /** @type {any} */ ({
     components: {
       AvatarImage,

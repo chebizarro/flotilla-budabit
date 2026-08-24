@@ -213,12 +213,31 @@ const measure = async (
   }
 }
 
+const armDiagnosticCapture = async (page: Page, route: string) => {
+  await page.addInitScript(
+    ({storageKey, route}) => {
+      const sessionKey = `${storageKey}:installed`
+      if (location.pathname !== route || sessionStorage.getItem(sessionKey)) return
+      sessionStorage.setItem(sessionKey, "1")
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          version: 1,
+          route,
+          preset: "community-home",
+          armedAt: Date.now(),
+        }),
+      )
+    },
+    {storageKey: "budabit/performance-diagnostics/armed:v1", route},
+  )
+}
+
 const captureDiagnosticArtifact = async (page: Page, profile: string) => {
-  await page.locator('[data-perf="diagnostics-control"] button', {hasText: "Perf"}).click()
-  const panel = page.getByRole("region", {name: "Performance diagnostics"})
-  await panel.getByRole("button", {name: "Start capture"}).click()
-  await expect(panel.getByText(/Milestones/)).toBeVisible()
-  await panel.getByRole("button", {name: "Stop capture"}).click()
+  await page.locator('[data-perf="diagnostics-status"]').click()
+  await expect(page).toHaveURL(/\/settings\/performance$/)
+  const panel = page.getByRole("region", {name: "Captured diagnostics"})
+  await expect(panel.getByText("complete", {exact: true})).toBeVisible()
   const downloadPromise = page.waitForEvent("download")
   await panel.getByRole("button", {name: "Download"}).click()
   const download = await downloadPromise
@@ -301,6 +320,7 @@ test("measures Community Home and git with cold data and warm atomic assets", as
   const measurements: Measurement[] = []
 
   for (const route of routes) {
+    if (route !== "/git") await armDiagnosticCapture(page, route)
     measurements.push(await measure(page, mockRelay, route, "cold-data"))
     if (route !== "/git") await captureDiagnosticArtifact(page, testInfo.project.name)
   }

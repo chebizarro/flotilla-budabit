@@ -1,4 +1,4 @@
-import {writable} from "svelte/store"
+import {get, writable} from "svelte/store"
 import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 import {readRelayDiagnostics} from "@app/core/relay-diagnostics"
 
@@ -6,6 +6,8 @@ export const PERFORMANCE_DIAGNOSTICS_SCHEMA_VERSION = 1
 export const PERFORMANCE_DIAGNOSTICS_SCHEMA = "budabit-performance-run-v1"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_RELAY = "wss://blossom.budabit.club"
+export const PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY = "budabit/performance-diagnostics/armed:v1"
+export const PERFORMANCE_DIAGNOSTICS_AUTO_TIMEOUT_MS = 30_000
 
 const MAX_RUNS = 20
 const MAX_MILESTONES = 100
@@ -94,6 +96,14 @@ export type PreparedPerformanceDiagnosticsArtifact = {
   uncompressedBytes: number
 }
 
+export type ArmedPerformanceDiagnosticsCapture = {
+  version: 1
+  route: string
+  preset: PerformanceDiagnosticRun["preset"]
+  context?: PerformanceDiagnosticValue
+  armedAt: number
+}
+
 type Clock = {
   now: () => number
   wallTime: () => number
@@ -118,9 +128,13 @@ export const activePerformanceDiagnosticsRun = writable<{
   id: string
   route: string
   preset: PerformanceDiagnosticRun["preset"]
+  automatic: boolean
 } | null>(null)
+export const armedPerformanceDiagnosticsCapture =
+  writable<ArmedPerformanceDiagnosticsCapture | null>(null)
 
 let stopActiveObservers: (() => void) | undefined
+let automaticCaptureTimer: ReturnType<typeof setTimeout> | undefined
 
 const notify = () => performanceDiagnosticsRevision.update(value => value + 1)
 
@@ -203,14 +217,17 @@ export const beginPerformanceDiagnosticsRun = ({
   context,
   clock = defaultClock,
   id,
+  startedAt = clock.now(),
+  startedWallTime = clock.wallTime(),
 }: {
   route: string
   preset?: PerformanceDiagnosticRun["preset"]
   context?: unknown
   clock?: Clock
   id?: string
+  startedAt?: number
+  startedWallTime?: number
 }) => {
-  const startedAt = clock.now()
   const runId = id || `${clock.wallTime().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
   const run: PerformanceDiagnosticRun = {
     id: runId,
@@ -218,7 +235,7 @@ export const beginPerformanceDiagnosticsRun = ({
     preset,
     context: context === undefined ? undefined : sanitizePerformanceDiagnosticValue(context),
     startedAt,
-    startedWallTime: clock.wallTime(),
+    startedWallTime,
     status: "running",
     milestones: [],
     records: [],
@@ -350,37 +367,148 @@ export const getPerformanceDiagnosticsSnapshot = (): PerformanceDiagnosticsSnaps
 export const clearPerformanceDiagnostics = () => {
   stopActiveObservers?.()
   stopActiveObservers = undefined
+  if (automaticCaptureTimer) clearTimeout(automaticCaptureTimer)
+  automaticCaptureTimer = undefined
   activePerformanceDiagnosticsRun.set(null)
   runs = []
   clockByRun.clear()
   notify()
 }
 
+const readArmedPerformanceDiagnosticsCapture = () => {
+  if (typeof localStorage === "undefined") return null
+  try {
+    const value = JSON.parse(
+      localStorage.getItem(PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY) || "null",
+    ) as Partial<ArmedPerformanceDiagnosticsCapture> | null
+    if (
+      value?.version !== 1 ||
+      typeof value.route !== "string" ||
+      !value.route.startsWith("/") ||
+      !["community-home", "git-root", "custom"].includes(value.preset || "") ||
+      typeof value.armedAt !== "number"
+    ) {
+      localStorage.removeItem(PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY)
+      return null
+    }
+    return value as ArmedPerformanceDiagnosticsCapture
+  } catch {
+    return null
+  }
+}
+
+export const refreshArmedPerformanceDiagnosticsCapture = () => {
+  const armed = readArmedPerformanceDiagnosticsCapture()
+  armedPerformanceDiagnosticsCapture.set(armed)
+  return armed
+}
+
+export const armPerformanceDiagnosticsCapture = ({
+  route,
+  preset,
+  context,
+}: {
+  route: string
+  preset: PerformanceDiagnosticRun["preset"]
+  context?: unknown
+}) => {
+  if (typeof localStorage === "undefined") return null
+  const armed: ArmedPerformanceDiagnosticsCapture = {
+    version: 1,
+    route,
+    preset,
+    context: context === undefined ? undefined : sanitizePerformanceDiagnosticValue(context),
+    armedAt: Date.now(),
+  }
+  localStorage.setItem(PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY, JSON.stringify(armed))
+  armedPerformanceDiagnosticsCapture.set(armed)
+  return armed
+}
+
+export const disarmPerformanceDiagnosticsCapture = () => {
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem(PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY)
+  }
+  armedPerformanceDiagnosticsCapture.set(null)
+}
+
 export const startPerformanceDiagnosticsCapture = (options: {
   route: string
   preset: PerformanceDiagnosticRun["preset"]
   context?: unknown
+  automatic?: boolean
+  startedAt?: number
+  startedWallTime?: number
 }) => {
   stopPerformanceDiagnosticsCapture("cancelled")
   const id = beginPerformanceDiagnosticsRun(options)
 
   stopActiveObservers = startPerformanceDiagnosticsObservers(id)
-  activePerformanceDiagnosticsRun.set({id, route: options.route, preset: options.preset})
+  activePerformanceDiagnosticsRun.set({
+    id,
+    route: options.route,
+    preset: options.preset,
+    automatic: options.automatic || false,
+  })
   return id
+}
+
+export const consumeArmedPerformanceDiagnosticsCapture = (pathname: string) => {
+  const armed = readArmedPerformanceDiagnosticsCapture()
+  armedPerformanceDiagnosticsCapture.set(armed)
+  if (!armed || armed.route !== pathname) return
+
+  disarmPerformanceDiagnosticsCapture()
+  const hasNavigationClock = typeof performance !== "undefined" && performance.timeOrigin > 0
+  const id = startPerformanceDiagnosticsCapture({
+    ...armed,
+    automatic: true,
+    ...(hasNavigationClock ? {startedAt: 0, startedWallTime: performance.timeOrigin} : {}),
+  })
+  const navigation =
+    typeof performance === "undefined"
+      ? undefined
+      : (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)
+  markPerformanceDiagnosticsMilestone(id, "client-bootstrap", {
+    navigationStart: typeof performance === "undefined" ? 0 : performance.timeOrigin,
+    armedAt: armed.armedAt,
+    navigationType: navigation?.type || "unknown",
+    documentTransferSize: navigation?.transferSize || 0,
+    documentEncodedBodySize: navigation?.encodedBodySize || 0,
+    serviceWorkerControlled:
+      typeof navigator === "undefined" ? false : Boolean(navigator.serviceWorker?.controller),
+    localStorageKeys: typeof localStorage === "undefined" ? 0 : localStorage.length,
+  })
+  automaticCaptureTimer = setTimeout(() => {
+    recordPerformanceDiagnostics(
+      id,
+      "automatic-timeout",
+      {timeoutMs: PERFORMANCE_DIAGNOSTICS_AUTO_TIMEOUT_MS},
+      "warnings",
+    )
+    stopPerformanceDiagnosticsCapture("failed")
+  }, PERFORMANCE_DIAGNOSTICS_AUTO_TIMEOUT_MS)
+  return id
+}
+
+export const completeAutomaticPerformanceDiagnosticsCapture = (runId: string) => {
+  const active = get(activePerformanceDiagnosticsRun)
+  if (!active || active.id !== runId || !active.automatic) return false
+  return stopPerformanceDiagnosticsCapture("complete")
 }
 
 export const stopPerformanceDiagnosticsCapture = (
   status: Exclude<PerformanceDiagnosticRun["status"], "running"> = "complete",
 ) => {
-  let active: {id: string} | null = null
-  const unsubscribe = activePerformanceDiagnosticsRun.subscribe(value => (active = value))
-  unsubscribe()
+  const active = get(activePerformanceDiagnosticsRun)
   if (!active) return false
 
   stopActiveObservers?.()
   stopActiveObservers = undefined
+  if (automaticCaptureTimer) clearTimeout(automaticCaptureTimer)
+  automaticCaptureTimer = undefined
   activePerformanceDiagnosticsRun.set(null)
-  return finishPerformanceDiagnosticsRun((active as {id: string}).id, status)
+  return finishPerformanceDiagnosticsRun(active.id, status)
 }
 
 export const startPerformanceDiagnosticsObservers = (

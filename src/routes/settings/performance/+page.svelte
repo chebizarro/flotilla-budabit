@@ -1,0 +1,243 @@
+<script lang="ts">
+  import {onMount} from "svelte"
+  import Button from "@lib/components/Button.svelte"
+  import {PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {
+    activePerformanceDiagnosticsRun,
+    armPerformanceDiagnosticsCapture,
+    armedPerformanceDiagnosticsCapture,
+    clearPerformanceDiagnostics,
+    disarmPerformanceDiagnosticsCapture,
+    getPerformanceDiagnosticsSnapshot,
+    performanceDiagnosticsRevision,
+    preparePerformanceDiagnosticsArtifact,
+    refreshArmedPerformanceDiagnosticsCapture,
+  } from "@app/core/performance-diagnostics"
+  import {
+    publishPerformanceDiagnosticsArtifact,
+    type PerformanceDiagnosticsPublishStage,
+  } from "@app/core/performance-diagnostics-publish"
+
+  let target = $state("/git")
+  let error = $state("")
+  let preparing = $state(false)
+  let publishStage = $state<PerformanceDiagnosticsPublishStage | "idle" | "failed">("idle")
+  let preparedArtifact = $state<Awaited<ReturnType<typeof preparePerformanceDiagnosticsArtifact>>>()
+  const snapshot = $derived.by(() => {
+    void $performanceDiagnosticsRevision
+    return getPerformanceDiagnosticsSnapshot()
+  })
+  const latest = $derived(snapshot.runs.at(-1))
+
+  onMount(() => {
+    const armed = refreshArmedPerformanceDiagnosticsCapture()
+    if (armed) target = armed.route
+  })
+
+  const normalizeTarget = () => {
+    const value = target.trim()
+    if (!value) throw new Error("Enter /git or an exact /c/... Community Home path")
+    const pathname = value.startsWith("http") ? new URL(value).pathname : value
+    const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname
+    if (normalized !== "/git" && !/^\/c\/[^/]+$/.test(normalized)) {
+      throw new Error("Target must be /git or an exact /c/... Community Home path")
+    }
+    return normalized
+  }
+
+  const arm = () => {
+    error = ""
+    try {
+      target = normalizeTarget()
+      armPerformanceDiagnosticsCapture({
+        route: target,
+        preset: target === "/git" ? "git-root" : "community-home",
+      })
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  const disarm = () => {
+    disarmPerformanceDiagnosticsCapture()
+    error = ""
+  }
+
+  const openTarget = () => {
+    arm()
+    if ($armedPerformanceDiagnosticsCapture) window.location.assign(target)
+  }
+
+  const clear = () => {
+    preparedArtifact = undefined
+    publishStage = "idle"
+    error = ""
+    clearPerformanceDiagnostics()
+  }
+
+  const download = async () => {
+    preparing = true
+    error = ""
+    try {
+      if (!latest) throw new Error("Complete a capture before downloading")
+      const artifact = await preparePerformanceDiagnosticsArtifact(snapshot, {runId: latest.id})
+      const url = URL.createObjectURL(
+        new Blob([artifact.bytes as BlobPart], {type: artifact.contentType}),
+      )
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = artifact.filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      preparing = false
+    }
+  }
+
+  const publish = async () => {
+    preparing = true
+    error = ""
+    publishStage = "preparing"
+    try {
+      const current = getPerformanceDiagnosticsSnapshot()
+      const currentLatest = current.runs.at(-1)
+      if (!currentLatest || currentLatest.status === "running") {
+        throw new Error("Complete a capture before publishing")
+      }
+      preparedArtifact ||= await preparePerformanceDiagnosticsArtifact(current, {
+        runId: currentLatest.id,
+      })
+      await publishPerformanceDiagnosticsArtifact({
+        artifact: preparedArtifact,
+        runId: currentLatest.id,
+        routes: Array.from(new Set(current.runs.map(run => run.route))),
+        onStage: stage => (publishStage = stage),
+      })
+    } catch (cause) {
+      publishStage = "failed"
+      error = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      preparing = false
+    }
+  }
+</script>
+
+<svelte:head><title>Performance Diagnostics</title></svelte:head>
+
+<div class="content column mx-auto max-w-3xl gap-6 py-8" data-perf="diagnostics-settings">
+  <header class="column gap-2">
+    <p class="font-mono text-xs uppercase tracking-widest opacity-60">Settings / Diagnostics</p>
+    <h1 class="text-3xl font-bold">Performance Diagnostics</h1>
+    <p class="max-w-2xl opacity-75">
+      Arm one exact route before loading it. Capture starts during client bootstrap and stops when
+      the route settles, or fails after 30 seconds.
+    </p>
+  </header>
+
+  {#if !PERFORMANCE_DIAGNOSTICS_ENABLED}
+    <section class="card2 border border-warning p-5">
+      This build does not include performance diagnostics. Build with
+      <code>VITE_PERFORMANCE_DIAGNOSTICS=1</code>.
+    </section>
+  {:else}
+    <section class="card2 column gap-4 border border-base-300 p-5" aria-label="Arm capture">
+      <div>
+        <h2 class="text-lg font-semibold">Next cold-start capture</h2>
+        <p class="text-sm opacity-70">
+          Use <code>/git</code>, a full test-site URL, or an exact <code>/c/naddr...</code> path.
+        </p>
+      </div>
+      <label class="form-control gap-2">
+        <span class="text-sm font-medium">Target route</span>
+        <input
+          class="input input-bordered w-full font-mono"
+          bind:value={target}
+          placeholder="/c/naddr1..." />
+      </label>
+      <div class="flex flex-wrap gap-2">
+        <Button class="btn btn-primary btn-sm" onclick={arm}>Arm next launch</Button>
+        <Button class="btn btn-secondary btn-sm" onclick={openTarget}>Arm and open now</Button>
+        <Button
+          class="btn btn-ghost btn-sm"
+          disabled={!$armedPerformanceDiagnosticsCapture}
+          onclick={disarm}>
+          Disarm
+        </Button>
+      </div>
+      {#if $armedPerformanceDiagnosticsCapture}
+        <p class="rounded bg-base-200 p-3 font-mono text-xs" data-perf="armed-route">
+          Armed: {$armedPerformanceDiagnosticsCapture.route}
+        </p>
+      {/if}
+      <p class="text-xs opacity-60">
+        For cold assets, arm the route, then clear the browser HTTP cache without clearing local
+        storage before reopening the target. “Open now” measures a warm browser session.
+      </p>
+    </section>
+
+    <section
+      class="card2 column gap-4 border border-base-300 p-5"
+      aria-label="Captured diagnostics">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold">Captured diagnostics</h2>
+          <p class="text-sm opacity-70">
+            Runs remain in this tab until cleared or the app is closed.
+          </p>
+        </div>
+        {#if $activePerformanceDiagnosticsRun}
+          <span class="badge badge-warning font-mono">recording</span>
+        {/if}
+      </div>
+
+      {#if latest}
+        <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <div>
+            <dt class="opacity-60">Route</dt>
+            <dd class="break-all font-mono text-xs">{latest.route}</dd>
+          </div>
+          <div>
+            <dt class="opacity-60">Status</dt>
+            <dd>{latest.status}</dd>
+          </div>
+          <div>
+            <dt class="opacity-60">Duration</dt>
+            <dd>{latest.durationMs === undefined ? "-" : `${Math.round(latest.durationMs)} ms`}</dd>
+          </div>
+          <div>
+            <dt class="opacity-60">Milestones</dt>
+            <dd>{latest.milestones.length}</dd>
+          </div>
+        </dl>
+        <details class="rounded bg-base-200 p-3">
+          <summary class="cursor-pointer text-sm font-medium">Latest milestones</summary>
+          <ol class="mt-3 space-y-1 font-mono text-xs">
+            {#each latest.milestones as milestone}
+              <li>{Math.round(milestone.elapsedMs)} ms · {milestone.name}</li>
+            {/each}
+          </ol>
+        </details>
+      {:else}
+        <p class="rounded bg-base-200 p-4 text-sm opacity-70">
+          No capture is available in this tab.
+        </p>
+      {/if}
+
+      <div class="flex flex-wrap gap-2">
+        <Button class="btn btn-neutral btn-sm" disabled={!latest || preparing} onclick={download}>
+          {preparing ? "Preparing..." : "Download"}
+        </Button>
+        <Button class="btn btn-secondary btn-sm" disabled={!latest || preparing} onclick={publish}>
+          {publishStage === "failed" ? "Retry publish" : "Upload & publish"}
+        </Button>
+        <Button class="btn btn-ghost btn-sm" disabled={snapshot.runs.length === 0} onclick={clear}>
+          Clear
+        </Button>
+      </div>
+      {#if publishStage !== "idle"}<p class="text-xs">Publication: {publishStage}</p>{/if}
+      {#if error}<p class="text-sm text-error">{error}</p>{/if}
+    </section>
+  {/if}
+</div>

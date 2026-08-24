@@ -1,9 +1,14 @@
 import {get} from "svelte/store"
-import {beforeEach, describe, expect, it} from "vitest"
+import {beforeEach, describe, expect, it, vi} from "vitest"
 import {
   activePerformanceDiagnosticsRun,
+  armPerformanceDiagnosticsCapture,
+  armedPerformanceDiagnosticsCapture,
   beginPerformanceDiagnosticsRun,
   clearPerformanceDiagnostics,
+  completeAutomaticPerformanceDiagnosticsCapture,
+  consumeArmedPerformanceDiagnosticsCapture,
+  disarmPerformanceDiagnosticsCapture,
   finishPerformanceDiagnosticsRun,
   getPerformanceDiagnosticsSnapshot,
   markPerformanceDiagnosticsMilestone,
@@ -29,7 +34,21 @@ const makeClock = () => {
 }
 
 describe("performance diagnostics", () => {
-  beforeEach(() => clearPerformanceDiagnostics())
+  beforeEach(() => {
+    const storage = new Map<string, string>()
+    vi.stubGlobal("localStorage", {
+      get length() {
+        return storage.size
+      },
+      clear: () => storage.clear(),
+      getItem: (key: string) => storage.get(key) ?? null,
+      key: (index: number) => Array.from(storage.keys())[index] ?? null,
+      removeItem: (key: string) => storage.delete(key),
+      setItem: (key: string, value: string) => storage.set(key, value),
+    })
+    clearPerformanceDiagnostics()
+    disarmPerformanceDiagnosticsCapture()
+  })
 
   it("records monotonic run milestones and rejects stale mutations", () => {
     const {clock, advance} = makeClock()
@@ -75,6 +94,25 @@ describe("performance diagnostics", () => {
     expect(stopPerformanceDiagnosticsCapture()).toBe(true)
     expect(get(activePerformanceDiagnosticsRun)).toBeNull()
     expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.status).toBe("complete")
+  })
+
+  it("consumes an exact one-shot route arm and completes only automatic captures", () => {
+    armPerformanceDiagnosticsCapture({route: "/git", preset: "git-root"})
+
+    expect(consumeArmedPerformanceDiagnosticsCapture("/c/example")).toBeUndefined()
+    expect(get(armedPerformanceDiagnosticsCapture)?.route).toBe("/git")
+    const runId = consumeArmedPerformanceDiagnosticsCapture("/git")
+
+    expect(runId).toBeTypeOf("string")
+    expect(get(armedPerformanceDiagnosticsCapture)).toBeNull()
+    expect(get(activePerformanceDiagnosticsRun)).toMatchObject({id: runId, automatic: true})
+    expect(completeAutomaticPerformanceDiagnosticsCapture(runId!)).toBe(true)
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)).toMatchObject({
+      route: "/git",
+      status: "complete",
+      startedAt: 0,
+      milestones: [{name: "client-bootstrap"}],
+    })
   })
 
   it("bounds retained runs and run details", () => {

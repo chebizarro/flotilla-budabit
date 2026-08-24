@@ -11,6 +11,7 @@
   import Wallet from "@assets/icons/wallet.svg?dataurl"
   import Plugins from "@assets/icons/plug-circle.svg?dataurl"
   import Flower from "@assets/icons/flower.svg?dataurl"
+  import Chart from "@assets/icons/chart.svg?dataurl"
   import {goto} from "$app/navigation"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
@@ -22,7 +23,7 @@
   import {makeProfilePath} from "@app/util/routes"
   import {theme} from "@app/util/theme"
   import {pushToast} from "@app/util/toast"
-  import {CASHU_WALLET_ENABLED} from "@app/core/feature-flags"
+  import {CASHU_WALLET_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
 
   const login = () => pushModal(LogIn)
 
@@ -219,6 +220,26 @@
         {/snippet}
         {#snippet info()}
           <div>Install and manage extensions</div>
+        {/snippet}
+      </CardButton>
+    </a>
+  {/if}
+  {#if PERFORMANCE_DIAGNOSTICS_ENABLED}
+    <a
+      href="/settings/performance"
+      data-sveltekit-replacestate
+      aria-busy={pendingHref === "/settings/performance"}
+      aria-disabled={navigationPending}
+      onclick={event => navigate(event, "/settings/performance")}>
+      <CardButton class="btn-neutral" pending={pendingHref === "/settings/performance"}>
+        {#snippet icon()}
+          <div><Icon icon={Chart} size={7} /></div>
+        {/snippet}
+        {#snippet title()}
+          <div>Performance Diagnostics</div>
+        {/snippet}
+        {#snippet info()}
+          <div>Arm, inspect, download, and publish cold-start captures</div>
         {/snippet}
       </CardButton>
     </a>

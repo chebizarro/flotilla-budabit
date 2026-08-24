@@ -26,10 +26,11 @@
   import CommunityMenuButton from "@app/components/CommunityMenuButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
-  import PerformanceDiagnosticsControl from "@app/components/PerformanceDiagnosticsControl.svelte"
+  import PerformanceDiagnosticsStatus from "@app/components/PerformanceDiagnosticsStatus.svelte"
   import {PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
   import {
     activePerformanceDiagnosticsRun,
+    completeAutomaticPerformanceDiagnosticsCapture,
     markPerformanceDiagnosticsMilestone,
     recordPerformanceDiagnostics,
   } from "@app/core/performance-diagnostics"
@@ -461,6 +462,7 @@
         rooms: rooms.length,
         widgets: $homeWidgetRecovery.curatedWidgets.length,
       })
+      completeAutomaticPerformanceDiagnosticsCapture(active.id)
     }
   })
 
@@ -787,10 +789,7 @@
     <strong>Home</strong>
   {/snippet}
   {#snippet action()}
-    <PerformanceDiagnosticsControl
-      route={$page.url.pathname}
-      preset="community-home"
-      context={{communityAddress: communityPointer?.address || ""}} />
+    <PerformanceDiagnosticsStatus route={$page.url.pathname} />
     <CommunityMenuButton />
   {/snippet}
 </PageBar>

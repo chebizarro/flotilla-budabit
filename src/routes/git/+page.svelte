@@ -31,10 +31,11 @@
   import Spinner from "@lib/components/Spinner.svelte"
   import PageContent from "@lib/components/PageContent.svelte"
   import RepoSearchSettingsModal from "@app/components/RepoSearchSettingsModal.svelte"
-  import PerformanceDiagnosticsControl from "@app/components/PerformanceDiagnosticsControl.svelte"
+  import PerformanceDiagnosticsStatus from "@app/components/PerformanceDiagnosticsStatus.svelte"
   import {PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
   import {
     activePerformanceDiagnosticsRun,
+    completeAutomaticPerformanceDiagnosticsCapture,
     markPerformanceDiagnosticsMilestone,
     recordPerformanceDiagnostics,
   } from "@app/core/performance-diagnostics"
@@ -3354,6 +3355,7 @@
         tab: activeTab,
         cards: repoCardModelsForEnrichment.length,
       })
+      completeAutomaticPerformanceDiagnosticsCapture(active.id)
     }
   })
 
@@ -4501,10 +4503,7 @@
     </div>
   {/snippet}
   {#snippet action()}
-    <PerformanceDiagnosticsControl
-      route={$page.url.pathname}
-      preset="git-root"
-      context={{mode: activeMode, tab: activeTab, community: selectedCommunityAddress}} />
+    <PerformanceDiagnosticsStatus route={$page.url.pathname} />
     <div class="hidden items-center gap-2 sm:flex">
       <Button class="btn btn-primary btn-sm" onclick={() => onNewRepo()}>
         <Icon icon={AddCircle} />
