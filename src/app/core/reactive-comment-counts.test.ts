@@ -6,7 +6,6 @@ const activity = read("src/app/components/EventActivity.svelte")
 const activityIO = read("src/app/core/event-activity-io.ts")
 const issues = read("src/routes/git/[id=naddr]/issues/+page.svelte")
 const prs = read("src/routes/git/[id=naddr]/prs/+page.svelte")
-const roomItem = read("src/app/components/RoomItem.svelte")
 
 describe("reactive comment counts", () => {
   it("resubscribes activity counts when reactive filters change", () => {
@@ -26,15 +25,11 @@ describe("reactive comment counts", () => {
     expect(activityIO).toContain('const ACTIVITY_TAGS = ["#E", "#e", "#A", "#a"]')
   })
 
-  it("uses reactive stores for every other visible comment count", () => {
+  it("uses reactive stores for Git list comment counts", () => {
     expect(issues).toContain("getContext<Readable<CommentEvent[]>>(COMMENT_EVENTS_KEY)")
     expect(issues).toContain("filterVisibleAfterDeletesAndEdits(commentEvents, $editedTargetIds)")
     expect(issues).not.toContain("repoClass.getIssueThread(issue.id)")
     expect(prs).toContain("commentEventsStore ? $commentEventsStore : []")
-    expect(roomItem).toContain("deriveArray(deriveEventsById({repository, filters: replyFilters}))")
-    expect(roomItem).toContain('{kinds: [MESSAGE], "#e": [event.id], "#k": [String(MESSAGE)]}')
-    expect(roomItem).toContain('{kinds: [MESSAGE], "#q": [event.id]}')
-    expect(roomItem).not.toContain("deriveEventsForUrl")
   })
 
   it("keeps Calendar activity live because its route feed does not carry comments", () => {

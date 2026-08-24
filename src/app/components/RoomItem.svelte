@@ -2,9 +2,8 @@
   import cx from "classnames"
   import {hash, now, displayList, formatTimestampAsTime, formatTimestampAsDate} from "@welshman/lib"
   import type {TrustedEvent, EventContent} from "@welshman/util"
-  import {MESSAGE, getTag, type Filter} from "@welshman/util"
-  import {pubkey, displayProfileByPubkey, repository} from "@welshman/app"
-  import {deriveArray, deriveEventsById} from "@welshman/store"
+  import {MESSAGE, COMMENT, getTag} from "@welshman/util"
+  import {pubkey, displayProfileByPubkey} from "@welshman/app"
   import MenuDots from "@assets/icons/menu-dots.svg?dataurl"
   import Pen from "@assets/icons/pen.svg?dataurl"
   import Reply from "@assets/icons/reply-2.svg?dataurl"
@@ -23,7 +22,7 @@
   import RoomItemMenuButton from "@app/components/RoomItemMenuButton.svelte"
   import RoomItemMenuMobile from "@app/components/RoomItemMenuMobile.svelte"
   import RoomItemContent from "@app/components/RoomItemContent.svelte"
-  import {colors, ENABLE_ZAPS} from "@app/core/state"
+  import {colors, ENABLE_ZAPS, deriveEventsForUrl} from "@app/core/state"
   import {activeCommunityReportState} from "@app/core/community-state"
   import {
     getCommunityCensorReason,
@@ -35,7 +34,6 @@
   import {getExactCommunityEventPath} from "@app/util/routes"
   import {pushModal} from "@app/util/modal"
   import CommunityWidgetSlotLaunchers from "@app/components/community/CommunityWidgetSlotLaunchers.svelte"
-  import {makeCommunityScopedFilterPlan} from "@app/core/community-feeds"
 
   interface Props {
     url: string
@@ -94,21 +92,7 @@
     deriveBudabitProfileDisplay(event.pubkey, {relays: profileRelayHints}),
   )
   const [_, colorValue] = colors[Math.abs(hash(event.pubkey)) % colors.length]
-  const replyFilters = $derived.by(() => {
-    const structuralFilters: Filter[] = [
-      {kinds: [MESSAGE], "#e": [event.id], "#k": [String(MESSAGE)]},
-      {kinds: [MESSAGE], "#q": [event.id]},
-    ]
-
-    return makeCommunityScopedFilterPlan(structuralFilters, scopeH, allowedAuthors).localFilters
-  })
-  let comments = $state<TrustedEvent[]>([])
-
-  $effect(() => {
-    const replyStore = deriveArray(deriveEventsById({repository, filters: replyFilters}))
-
-    return replyStore.subscribe(events => (comments = events))
-  })
+  const comments = deriveEventsForUrl(url, [{kinds: [COMMENT], "#e": [event.id]}])
   const relayTargets = $derived.by(() =>
     (interactionRelays.length > 0 ? interactionRelays : [url]).filter(Boolean),
   )
@@ -275,8 +259,8 @@
         {deleteReaction}
         {createReaction}
         reactionClass="tooltip-right" />
-      {#if path && comments.length > 0}
-        {@const pubkeys = comments.map((e: TrustedEvent) => e.pubkey)}
+      {#if path && $comments.length > 0}
+        {@const pubkeys = $comments.map((e: TrustedEvent) => e.pubkey)}
         {@const isOwn = $pubkey && pubkeys.includes($pubkey)}
         {@const info = displayList(pubkeys.map((pubkey: string) => displayProfileByPubkey(pubkey)))}
         {@const tooltip = `${info} commented`}
@@ -288,7 +272,7 @@
               "btn-primary": isOwn,
             })}>
             <Icon icon={ReplyAlt} />
-            <span>{comments.length} comment{comments.length === 1 ? "" : "s"}</span>
+            <span>{$comments.length} comment{$comments.length === 1 ? "" : "s"}</span>
           </Link>
         </div>
       {/if}
