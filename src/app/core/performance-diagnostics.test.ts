@@ -1,5 +1,7 @@
+import {get} from "svelte/store"
 import {beforeEach, describe, expect, it} from "vitest"
 import {
+  activePerformanceDiagnosticsRun,
   beginPerformanceDiagnosticsRun,
   clearPerformanceDiagnostics,
   finishPerformanceDiagnosticsRun,
@@ -9,6 +11,8 @@ import {
   recordPerformanceDiagnostics,
   sanitizePerformanceDiagnosticValue,
   serializePerformanceDiagnostics,
+  startPerformanceDiagnosticsCapture,
+  stopPerformanceDiagnosticsCapture,
 } from "./performance-diagnostics"
 
 const makeClock = () => {
@@ -50,6 +54,27 @@ describe("performance diagnostics", () => {
       milestones: [{name: "shell", elapsedMs: 25, detail: {cards: 0}}],
       records: [{type: "cards", elapsedMs: 55, detail: {count: 18}}],
     })
+  })
+
+  it("owns one explicit active capture at a time", () => {
+    const first = startPerformanceDiagnosticsCapture({route: "/git", preset: "git-root"})
+    const second = startPerformanceDiagnosticsCapture({
+      route: "/c/example",
+      preset: "community-home",
+    })
+
+    expect(first).not.toBe(second)
+    expect(get(activePerformanceDiagnosticsRun)).toMatchObject({
+      id: second,
+      route: "/c/example",
+    })
+    expect(getPerformanceDiagnosticsSnapshot().runs.map(run => run.status)).toEqual([
+      "cancelled",
+      "running",
+    ])
+    expect(stopPerformanceDiagnosticsCapture()).toBe(true)
+    expect(get(activePerformanceDiagnosticsRun)).toBeNull()
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.status).toBe("complete")
   })
 
   it("bounds retained runs and run details", () => {

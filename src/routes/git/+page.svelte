@@ -31,6 +31,13 @@
   import Spinner from "@lib/components/Spinner.svelte"
   import PageContent from "@lib/components/PageContent.svelte"
   import RepoSearchSettingsModal from "@app/components/RepoSearchSettingsModal.svelte"
+  import PerformanceDiagnosticsControl from "@app/components/PerformanceDiagnosticsControl.svelte"
+  import {PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {
+    activePerformanceDiagnosticsRun,
+    markPerformanceDiagnosticsMilestone,
+    recordPerformanceDiagnostics,
+  } from "@app/core/performance-diagnostics"
   import LogIn from "@app/components/LogIn.svelte"
   import {getInteractiveCardTarget, preventDefault, stopPropagation} from "@lib/html"
   import GitItem from "@app/components/GitItem.svelte"
@@ -3303,6 +3310,52 @@
       !repoSearchUpdating &&
       searchFilteredRepos.length === 0,
   )
+  let performanceRunId = ""
+  const performanceMilestones = new Set<string>()
+  const markPerformanceMilestone = (name: string, detail?: unknown) => {
+    const active = $activePerformanceDiagnosticsRun
+    if (!PERFORMANCE_DIAGNOSTICS_ENABLED || !active || active.route !== $page.url.pathname) return
+    if (active.id !== performanceRunId) {
+      performanceRunId = active.id
+      performanceMilestones.clear()
+    }
+    if (performanceMilestones.has(name)) return
+    performanceMilestones.add(name)
+    markPerformanceDiagnosticsMilestone(active.id, name, detail)
+  }
+  $effect(() => {
+    const active = $activePerformanceDiagnosticsRun
+    if (!active || active.route !== $page.url.pathname) return
+
+    markPerformanceMilestone("route-mounted", {mode: activeMode, tab: activeTab})
+    recordPerformanceDiagnostics(active.id, "git-state", {
+      mode: activeMode,
+      tab: activeTab,
+      scopeContext: repoCardsScopeContext,
+      sourceCount: sortedRepoCards.length,
+      renderedCount: repoCardModelsForEnrichment.length,
+      loading,
+      dataLoading: activeRepoDataLoading,
+      cardsComputing: repoCardsComputing,
+      listLoading: repoListLoading,
+      searchUpdating: repoSearchUpdating,
+    })
+    if (!loading) markPerformanceMilestone("cache-released")
+    if (sortedRepoCards.length > 0) {
+      markPerformanceMilestone("repositories-available", {count: sortedRepoCards.length})
+    }
+    if (hasRenderedRepoCardsForCurrentContext) {
+      markPerformanceMilestone("cards-rendered", {count: repoCardModelsForEnrichment.length})
+    }
+    if (!repoListLoading && !repoSearchUpdating && !activeRepoDataLoading) {
+      markPerformanceMilestone("loading-settled")
+      markPerformanceMilestone("settled", {
+        mode: activeMode,
+        tab: activeTab,
+        cards: repoCardModelsForEnrichment.length,
+      })
+    }
+  })
 
   const repoCardModelsForEnrichment = $derived.by(() =>
     isAccountSearch
@@ -4448,6 +4501,10 @@
     </div>
   {/snippet}
   {#snippet action()}
+    <PerformanceDiagnosticsControl
+      route={$page.url.pathname}
+      preset="git-root"
+      context={{mode: activeMode, tab: activeTab, community: selectedCommunityAddress}} />
     <div class="hidden items-center gap-2 sm:flex">
       <Button class="btn btn-primary btn-sm" onclick={() => onNewRepo()}>
         <Icon icon={AddCircle} />
@@ -4462,7 +4519,13 @@
   {/snippet}
 </PageBar>
 
-<PageContent class={`${gitPageWidthClass} mt-4 flex flex-grow flex-col gap-4 overflow-auto p-2`}>
+<PageContent
+  class={`${gitPageWidthClass} mt-4 flex flex-grow flex-col gap-4 overflow-auto p-2`}
+  data-perf="git-root"
+  data-perf-mode={activeMode}
+  data-perf-tab={activeTab}
+  data-perf-loading={repoListLoading || repoSearchUpdating ? "true" : "false"}
+  data-perf-cards={repoCardModelsForEnrichment.length}>
   <div class="flex flex-col gap-2 sm:hidden">
     <Button class="btn btn-primary btn-sm w-full" onclick={() => onNewRepo()}>
       <Icon icon={AddCircle} />

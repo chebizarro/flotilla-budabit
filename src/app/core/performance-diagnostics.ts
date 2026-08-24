@@ -112,6 +112,13 @@ let runs: PerformanceDiagnosticRun[] = []
 const clockByRun = new Map<string, Clock>()
 
 export const performanceDiagnosticsRevision = writable(0)
+export const activePerformanceDiagnosticsRun = writable<{
+  id: string
+  route: string
+  preset: PerformanceDiagnosticRun["preset"]
+} | null>(null)
+
+let stopActiveObservers: (() => void) | undefined
 
 const notify = () => performanceDiagnosticsRevision.update(value => value + 1)
 
@@ -338,9 +345,39 @@ export const getPerformanceDiagnosticsSnapshot = (): PerformanceDiagnosticsSnaps
   })
 
 export const clearPerformanceDiagnostics = () => {
+  stopActiveObservers?.()
+  stopActiveObservers = undefined
+  activePerformanceDiagnosticsRun.set(null)
   runs = []
   clockByRun.clear()
   notify()
+}
+
+export const startPerformanceDiagnosticsCapture = (options: {
+  route: string
+  preset: PerformanceDiagnosticRun["preset"]
+  context?: unknown
+}) => {
+  stopPerformanceDiagnosticsCapture("cancelled")
+  const id = beginPerformanceDiagnosticsRun(options)
+
+  stopActiveObservers = startPerformanceDiagnosticsObservers(id)
+  activePerformanceDiagnosticsRun.set({id, route: options.route, preset: options.preset})
+  return id
+}
+
+export const stopPerformanceDiagnosticsCapture = (
+  status: Exclude<PerformanceDiagnosticRun["status"], "running"> = "complete",
+) => {
+  let active: {id: string} | null = null
+  const unsubscribe = activePerformanceDiagnosticsRun.subscribe(value => (active = value))
+  unsubscribe()
+  if (!active) return false
+
+  stopActiveObservers?.()
+  stopActiveObservers = undefined
+  activePerformanceDiagnosticsRun.set(null)
+  return finishPerformanceDiagnosticsRun((active as {id: string}).id, status)
 }
 
 export const startPerformanceDiagnosticsObservers = (

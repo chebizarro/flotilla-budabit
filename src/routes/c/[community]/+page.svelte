@@ -26,6 +26,13 @@
   import CommunityMenuButton from "@app/components/CommunityMenuButton.svelte"
   import CommunityStarButton from "@app/components/community/CommunityStarButton.svelte"
   import CommunityShareButton from "@app/components/community/CommunityShareButton.svelte"
+  import PerformanceDiagnosticsControl from "@app/components/PerformanceDiagnosticsControl.svelte"
+  import {PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {
+    activePerformanceDiagnosticsRun,
+    markPerformanceDiagnosticsMilestone,
+    recordPerformanceDiagnostics,
+  } from "@app/core/performance-diagnostics"
   import PublicationStatus from "@app/components/PublicationStatus.svelte"
   import {fade} from "@lib/transition"
   import {normalizeRelays, parseAddressRef} from "@app/core/community"
@@ -402,6 +409,60 @@
       !roomsUnavailable,
     ),
   )
+  let performanceRunId = ""
+  const performanceMilestones = new Set<string>()
+  const markPerformanceMilestone = (name: string, detail?: unknown) => {
+    const active = $activePerformanceDiagnosticsRun
+    if (!PERFORMANCE_DIAGNOSTICS_ENABLED || !active || active.route !== $page.url.pathname) return
+    if (active.id !== performanceRunId) {
+      performanceRunId = active.id
+      performanceMilestones.clear()
+    }
+    if (performanceMilestones.has(name)) return
+    performanceMilestones.add(name)
+    markPerformanceDiagnosticsMilestone(active.id, name, detail)
+  }
+  $effect(() => {
+    const active = $activePerformanceDiagnosticsRun
+    const communityAddress = communityPointer?.address || ""
+    if (!active || active.route !== $page.url.pathname || !communityAddress) return
+
+    markPerformanceMilestone("route-mounted", {communityAddress})
+    recordPerformanceDiagnostics(active.id, "community-state", {
+      communityAddress,
+      definitionReady: communityDefinitionReady,
+      authorityReadiness: communityAuthorityReadiness,
+      roomRootsLoading,
+      roomRootsLoaded,
+      roomRootsComplete,
+      roomRootsIncomplete,
+      rooms: rooms.length,
+      widgets: $homeWidgetRecovery.curatedWidgets.length,
+    })
+    if (communityDefinitionReady) markPerformanceMilestone("definition-ready")
+    if (communityAuthorityReady) markPerformanceMilestone("authority-ready")
+    if (roomRootsLoading) markPerformanceMilestone("rooms-requested")
+    if (rooms.length > 0) markPerformanceMilestone("rooms-present", {count: rooms.length})
+    if (roomRootsFirstAttemptTerminal) {
+      markPerformanceMilestone("rooms-terminal", {
+        complete: roomRootsComplete,
+        incomplete: roomRootsIncomplete,
+        count: rooms.length,
+      })
+    }
+    if (communityHomeExtensionsReady) markPerformanceMilestone("extensions-ready")
+    if ($homeWidgetRecovery.curatedWidgets.length > 0) {
+      markPerformanceMilestone("widgets-present", {
+        count: $homeWidgetRecovery.curatedWidgets.length,
+      })
+    }
+    if (communityHomeExtensionsReady && (rooms.length > 0 || roomRootsFirstAttemptTerminal)) {
+      markPerformanceMilestone("settled", {
+        rooms: rooms.length,
+        widgets: $homeWidgetRecovery.curatedWidgets.length,
+      })
+    }
+  })
 
   const clearRoomLoadRetry = () => {
     if (!roomLoadRetryTimer) return
@@ -726,11 +787,21 @@
     <strong>Home</strong>
   {/snippet}
   {#snippet action()}
+    <PerformanceDiagnosticsControl
+      route={$page.url.pathname}
+      preset="community-home"
+      context={{communityAddress: communityPointer?.address || ""}} />
     <CommunityMenuButton />
   {/snippet}
 </PageBar>
 
-<PageContent class="flex flex-col gap-2 p-2 pt-4">
+<PageContent
+  class="flex flex-col gap-2 p-2 pt-4"
+  data-perf="community-home"
+  data-perf-community={communityPointer?.address || ""}
+  data-perf-core-ready={communityHomeCoreReady ? "true" : "false"}
+  data-perf-extensions-ready={communityHomeExtensionsReady ? "true" : "false"}
+  data-perf-rooms={rooms.length}>
   {#if communityPointer}
     {#key communityPointer.address}
       <CommunityHomeWidgetRecovery
