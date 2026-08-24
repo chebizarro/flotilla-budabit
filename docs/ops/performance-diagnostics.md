@@ -27,7 +27,7 @@ Community Home records core readiness, widget discovery, frame loading, and init
 Upload defaults:
 
 - Blossom: `https://blossom.budabit.club`
-- Manifest relay: `wss://blossom.budabit.club`
+- Manifest relay: `wss://relay.budabit.club`
 - Manifest kind: `30078`
 - Immutable d-tag: `budabit-performance-run:<run-id>`
 - Latest d-tag: `budabit-performance-latest`

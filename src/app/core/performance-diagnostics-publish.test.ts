@@ -82,7 +82,7 @@ describe("performance diagnostics publication", () => {
   it("signs and publishes both manifests with relay acknowledgement", async () => {
     const account = {pubkey: "b".repeat(64)}
     const signer = {sign: vi.fn(async template => signedEvent(template, account.pubkey))}
-    const publish = vi.fn(async () => 1)
+    const publish = vi.fn(async (_event: TrustedEvent, _relays: string[]) => 1)
     const upload = vi.fn(
       async (
         _artifact: PreparedPerformanceDiagnosticsArtifact,
@@ -109,6 +109,10 @@ describe("performance diagnostics publication", () => {
     expect(signer.sign).toHaveBeenCalledTimes(3)
     expect(upload.mock.calls[0][2]).toMatch(/^Nostr /)
     expect(publish).toHaveBeenCalledTimes(2)
+    expect(publish.mock.calls.map(call => call[1])).toEqual([
+      ["wss://relay.budabit.club"],
+      ["wss://relay.budabit.club"],
+    ])
     expect(result.pubkey).toBe(account.pubkey)
     expect(signer.sign.mock.calls.map(call => call[0].tags?.[0])).toEqual([
       ["t", "upload"],

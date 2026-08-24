@@ -5,7 +5,7 @@ import {readRelayDiagnostics} from "@app/core/relay-diagnostics"
 export const PERFORMANCE_DIAGNOSTICS_SCHEMA_VERSION = 1
 export const PERFORMANCE_DIAGNOSTICS_SCHEMA = "budabit-performance-run-v1"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
-export const PERFORMANCE_DIAGNOSTICS_DEFAULT_RELAY = "wss://blossom.budabit.club"
+export const PERFORMANCE_DIAGNOSTICS_DEFAULT_RELAY = "wss://relay.budabit.club"
 export const PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY = "budabit/performance-diagnostics/armed:v1"
 export const PERFORMANCE_DIAGNOSTICS_AUTO_TIMEOUT_MS = 60_000
 
