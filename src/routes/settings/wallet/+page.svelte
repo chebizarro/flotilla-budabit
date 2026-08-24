@@ -17,6 +17,7 @@
   import AddCircle from "@assets/icons/add-circle.svg?dataurl"
   import CloseCircle from "@assets/icons/close-circle.svg?dataurl"
   import InfoCircle from "@assets/icons/info-circle.svg?dataurl"
+  import {CASHU_WALLET_ENABLED} from "@app/core/feature-flags"
   import {
     cashuTotalBalance,
     cashuBackupConfirmed,
@@ -38,10 +39,12 @@
   type WalletTab = "cashu" | "lightning"
   type CashuTab = "wallet" | "settings"
 
-  const tabs: {id: WalletTab; label: string}[] = [
-    {id: "cashu", label: "Cashu"},
-    {id: "lightning", label: "Lightning"},
-  ]
+  const tabs: {id: WalletTab; label: string}[] = CASHU_WALLET_ENABLED
+    ? [
+        {id: "cashu", label: "Cashu"},
+        {id: "lightning", label: "Lightning"},
+      ]
+    : [{id: "lightning", label: "Lightning"}]
   const cashuTabs: {id: CashuTab; label: string}[] = [
     {id: "wallet", label: "Wallet"},
     {id: "settings", label: "Settings"},
@@ -84,7 +87,7 @@
   }
 
   let recovering = $state(false)
-  let activeTab = $state<WalletTab>("cashu")
+  let activeTab = $state<WalletTab>(CASHU_WALLET_ENABLED ? "cashu" : "lightning")
   let activeCashuTab = $state<CashuTab>("wallet")
   let showCashuSetup = $state(false)
   let recoverResult = $state<
@@ -119,7 +122,7 @@
     {/each}
   </div>
 
-  {#if activeTab === "cashu"}
+  {#if CASHU_WALLET_ENABLED && activeTab === "cashu"}
     <div class="card2 bg-alt flex min-w-0 flex-col gap-6 shadow-md">
       <div class="flex flex-col items-center gap-2 text-center">
         <strong class="flex flex-wrap items-center justify-center gap-3 text-xl">

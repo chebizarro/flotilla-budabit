@@ -22,6 +22,7 @@
   import {makeProfilePath} from "@app/util/routes"
   import {theme} from "@app/util/theme"
   import {pushToast} from "@app/util/toast"
+  import {CASHU_WALLET_ENABLED} from "@app/core/feature-flags"
 
   const login = () => pushModal(LogIn)
 
@@ -145,7 +146,7 @@
           <div>Wallet</div>
         {/snippet}
         {#snippet info()}
-          <div>Lightning and Cashu</div>
+          <div>{CASHU_WALLET_ENABLED ? "Lightning and Cashu" : "Lightning"}</div>
         {/snippet}
       </CardButton>
     </a>

@@ -17,6 +17,7 @@ declare global {
     readonly DEV: boolean
     readonly PROD: boolean
     readonly SSR: boolean
+    readonly VITE_CASHU_WALLET_ENABLED?: string
     // Additional Vite env vars can be declared here as needed
     readonly [key: string]: any
   }

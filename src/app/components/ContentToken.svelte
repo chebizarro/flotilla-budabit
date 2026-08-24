@@ -11,6 +11,7 @@
   } from "@app/util/cashu-token"
   import {pushModal} from "@app/util/modal"
   import {clip} from "@app/util/toast"
+  import {CASHU_WALLET_ENABLED} from "@app/core/feature-flags"
 
   interface Props {
     value: string
@@ -68,12 +69,14 @@
       </span>
       <span class="flex w-full flex-col gap-1 sm:w-auto sm:flex-row sm:justify-end">
         <Button class="btn btn-ghost btn-xs inline-flex justify-center" onclick={copy}>Copy</Button>
-        <Button
-          class="btn btn-primary btn-xs inline-flex justify-center"
-          onclick={redeem}
-          disabled={received !== null}>
-          {received === null ? "Redeem" : "Received"}
-        </Button>
+        {#if CASHU_WALLET_ENABLED}
+          <Button
+            class="btn btn-primary btn-xs inline-flex justify-center"
+            onclick={redeem}
+            disabled={received !== null}>
+            {received === null ? "Redeem" : "Received"}
+          </Button>
+        {/if}
       </span>
     </span>
 
