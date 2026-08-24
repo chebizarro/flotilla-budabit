@@ -214,6 +214,25 @@ describe("Communikeys community creation", () => {
     expect(context.published.some(event => event.kind === 0)).toBe(false)
   })
 
+  it("publishes a definition-only community with no prerequisites", async () => {
+    const context = setup()
+
+    const result = await createCommunity({
+      ownerPubkey,
+      buildArtifacts: communityId => ({
+        prerequisites: [],
+        definition: context.buildArtifacts(communityId).definition,
+      }),
+      ...context.dependencies,
+    })
+
+    expect(context.published.map(event => event.kind)).toEqual([COMMUNITY_DEFINITION_KIND])
+    expect(result.definition).toBe(context.published[0])
+    expect(
+      context.storage.values.has(getCommunityCreationIntentKey(ownerPubkey, operationId)),
+    ).toBe(false)
+  })
+
   it("does not sign activation before prerequisite exact readback", async () => {
     const context = setup()
     let releasePrerequisite!: () => void

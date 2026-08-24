@@ -342,12 +342,10 @@ export const applyCommunityBootstrapGrants = ({
 
       const profileListEvent = findCommunityProfileListEvent(profileList, profileListEvents)
       const existingPubkeys = getProfileListPubkeys(profileListEvent)
-      const basePubkeys =
-        existingPubkeys.length > 0 ? existingPubkeys : [normalizedProfileListPubkey]
 
       profileListUpdates.set(profileList.address, {
         profileList,
-        pubkeys: uniquePubkeys([...basePubkeys, ...memberPubkeys]),
+        pubkeys: uniquePubkeys([...existingPubkeys, ...memberPubkeys]),
       })
     }
 

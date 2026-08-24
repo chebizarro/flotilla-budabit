@@ -165,6 +165,49 @@ describe("community and event parsing", () => {
     })
   })
 
+  it("keeps definitions with sections that have no profile lists", () => {
+    const community = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+    const definitionEvent = event({
+      kind: 32222,
+      author: community,
+      id: "1".repeat(64),
+      tags: [
+        ["d", communityId],
+        ["name", "Owner and moderators"],
+        ["r", "wss://community.example"],
+        ["content", "General"],
+        ["k", "1111"],
+      ],
+    })
+
+    expect(parseCommunityDefinition(definitionEvent)?.sections[0].profileLists).toEqual([])
+    expect(selectCurrentCommunityDefinitions([definitionEvent])).toHaveLength(1)
+  })
+
+  it("rejects malformed profile-list tags in owner-only definitions", () => {
+    const community = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+    const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+
+    expect(
+      parseCommunityDefinition(
+        event({
+          kind: 32222,
+          author: community,
+          id: "1".repeat(64),
+          tags: [
+            ["d", communityId],
+            ["name", "Malformed"],
+            ["r", "wss://community.example"],
+            ["content", "General"],
+            ["k", "1111"],
+            ["a", `30009:${pubkey("d")}:not-a-profile-list`],
+          ],
+        }),
+      ),
+    ).toBeUndefined()
+  })
+
   it("keeps same-controller sibling definitions distinct", () => {
     const controller = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const firstId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"

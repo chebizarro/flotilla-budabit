@@ -641,16 +641,15 @@ export const parseCommunityDefinition = event => {
       const [kind, owner, ...identifierParts] = String(tag[1] || "").split(":")
       const normalizedOwner = normalizePubkey(owner)
       const identifier = identifierParts.join(":")
-      if (kind === String(PROFILE_LIST_KIND) && normalizedOwner && identifier) {
-        currentSection.profileLists.push({
-          address: `${PROFILE_LIST_KIND}:${normalizedOwner}:${identifier}`,
-          pubkey: normalizedOwner,
-          identifier,
-          relay: tag[2] ? normalizeRelayUrl(tag[2]) : "",
-        })
-        if (tag[2] && (!String(tag[2]).startsWith("wss://") || !normalizeRelayUrl(tag[2])))
-          return undefined
-      }
+      if (kind !== String(PROFILE_LIST_KIND) || !normalizedOwner || !identifier) return undefined
+      currentSection.profileLists.push({
+        address: `${PROFILE_LIST_KIND}:${normalizedOwner}:${identifier}`,
+        pubkey: normalizedOwner,
+        identifier,
+        relay: tag[2] ? normalizeRelayUrl(tag[2]) : "",
+      })
+      if (tag[2] && (!String(tag[2]).startsWith("wss://") || !normalizeRelayUrl(tag[2])))
+        return undefined
     } else if (tag[0] === "badge" && currentSection) {
       if (![2, 3].includes(tag.length)) return undefined
       const [kind, owner, ...identifierParts] = String(tag[1] || "").split(":")
@@ -686,9 +685,7 @@ export const parseCommunityDefinition = event => {
   if (
     definition.relays.length === 0 ||
     definition.sections.length === 0 ||
-    definition.sections.some(
-      section => section.kinds.length === 0 || section.profileLists.length === 0,
-    )
+    definition.sections.some(section => section.kinds.length === 0)
   ) {
     return undefined
   }

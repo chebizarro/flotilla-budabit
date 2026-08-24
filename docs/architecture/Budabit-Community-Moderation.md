@@ -76,13 +76,15 @@ A moderator can create and review forms for a section only when the moderator ca
 
 Admission review reactions are published to the scoped community relays and to normalized applicant/app discovery relays. They carry the community relay set as `relay` tags so an applicant who is denied or finally revoked can discover the addressed review first. The client bounds those untrusted hints and uses them only to bootstrap the exact signed definition, refreshes that definition on its own declared relays, and then partitions form, response, review-history, profile-list, report, and delete queries by community relay scope. Explicit profile-list relay coordinates are prioritized within the bounded authority set.
 
-Grant capability requires profile-list management:
+The definition owner can always create and review forms and can create the first owner-managed profile list when granting access to a section that has none. For non-owner moderators, grant capability requires profile-list management:
 
 | Capability              | Source                                                                                                             |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Profile-list management | The moderator pubkey owns the referenced coordinate and has published its current non-declined `kind:30000` event. |
 
 This keeps the access-control model simple and prevents users from applying through forms whose authors cannot approve them.
+
+An admin-issued moderator invitation is also a structural community membership decision. While a non-owner profile-list coordinate remains referenced anywhere in the definition, its owner can publish as a regular member in every section, even if the invitation is still pending or was declined. Publishing a current non-declined list activates section-specific moderator, grant, form-review, report-review, and privileged widget authority; it is not required for the community-wide member/write role.
 
 Badges are community endorsements and engagement primitives. They do not grant write access and do not make a pubkey a moderator.
 

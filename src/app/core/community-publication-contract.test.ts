@@ -26,9 +26,7 @@ describe("strict community publication source contracts", () => {
     ]) {
       const source = readProjectFile(route)
 
-      expect(source, route).toContain(
-        "const relays = normalizeRelays($activeExactCommunityRelays)",
-      )
+      expect(source, route).toContain("const relays = normalizeRelays($activeExactCommunityRelays)")
     }
 
     expect(readProjectFile("../../routes/c/[community]/+page.svelte")).toContain(
@@ -204,6 +202,30 @@ describe("strict community publication source contracts", () => {
     expect(reportCard).not.toContain("repository.removeEvent")
     expect(reportCard).not.toContain("repository.publish(")
     expect(reportCard).not.toContain("publishThunk({")
+  })
+
+  it("awaits non-optimistic application decisions in authorization order", () => {
+    const moderation = readProjectFile("../../routes/c/[community]/moderation/+page.svelte")
+    const review = moderation.slice(
+      moderation.indexOf("const publishAcknowledgedGovernanceEvent"),
+      moderation.indexOf("$effect(() =>", moderation.indexOf("const confirmReviewApplication")),
+    )
+
+    expect(review).toContain("startPublication({")
+    expect(review).toContain('preview: "none"')
+    expect(review).toContain("confirmRelays: requiredRelay ? [requiredRelay] : relays")
+    expect(review).toContain("const result = await operation.settled")
+    expect(review).toContain('result.phase !== "confirmed"')
+    expect(review).toContain("if (await reviewApplication(application, status, publishStatus))")
+    expect(review.indexOf('label: "membership grant"')).toBeLessThan(
+      review.indexOf('label: "community definition update"'),
+    )
+    expect(review.indexOf('label: "community definition update"')).toBeLessThan(
+      review.indexOf('label: "application decision"'),
+    )
+    const publishLoop = review.indexOf("for (const item of events)")
+    expect(publishLoop).toBeGreaterThan(-1)
+    expect(review.indexOf("pushToast({", publishLoop)).toBeGreaterThan(publishLoop)
   })
 
   it("hands direct compose goal and calendar events off to canonical community feeds", () => {

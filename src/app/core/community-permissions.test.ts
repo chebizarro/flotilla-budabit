@@ -213,6 +213,35 @@ describe("community permissions", () => {
     ).toEqual([communityPubkey])
   })
 
+  it("keeps invited moderators as community-wide writers in sections without lists", () => {
+    const mixedDefinition = parseCommunityDefinition(
+      makeEvent({
+        kind: COMMUNITY_DEFINITION_KIND,
+        tags: [
+          ["d", communityPubkey],
+          ["name", "Mixed community"],
+          ["r", "wss://relay.example"],
+          ["content", "General"],
+          ["k", "1111"],
+          ["content", "Code-curator"],
+          ["k", "30617"],
+          ["a", `${PROFILE_LIST_KIND}:${managerPubkey}:${repositoryIdentifier}`],
+        ],
+      }),
+    )!
+
+    expect(mixedDefinition.sections[0].profileLists).toEqual([])
+    expect(
+      canWriteCommunitySection({
+        definition: mixedDefinition,
+        profileListEvents: [],
+        userPubkey: managerPubkey,
+        sectionName: "General",
+        kind: 1111,
+      }),
+    ).toBe(true)
+  })
+
   it("maps write targets by kind and subtype", () => {
     expect(getCommunityWriteTarget(9, "room-message")).toEqual(COMMUNITY_WRITE_TARGETS.roomMessage)
     expect(getCommunityWriteTarget(11, "threads")).toEqual(COMMUNITY_WRITE_TARGETS.thread)

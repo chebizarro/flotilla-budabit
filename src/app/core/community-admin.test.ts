@@ -147,6 +147,22 @@ describe("community admin helpers", () => {
     ])
   })
 
+  it("does not add the owner as a member when creating the first section list", () => {
+    const definition = makeDefinition([])
+    const result = applyCommunityBootstrapGrants({
+      sections: definition.sections,
+      communityId: definition.communityId,
+      ownerPubkey: managerPubkey,
+      relays: definition.relays,
+      grants: [{pubkey: memberPubkey, role: "member", sectionNames: ["General"]}],
+    })
+
+    expect(result.sections[0].profileLists).toHaveLength(1)
+    expect(result.profileListUpdates).toEqual([
+      {profileList: result.sections[0].profileLists[0], pubkeys: [memberPubkey]},
+    ])
+  })
+
   it("preserves the exact definition envelope and opaque tags when adding an owner grant list", () => {
     const template = buildCommunityDefinition({
       communityId: v2CommunityId,
@@ -157,9 +173,7 @@ describe("community admin helpers", () => {
         {
           name: "Threads",
           kinds: [{kind: 11, subtype: "threads"}],
-          profileLists: [
-            {address: `${PROFILE_LIST_KIND}:${v2ListController}:${v2CommunityId}-threads`},
-          ],
+          profileLists: [],
         },
       ],
     })

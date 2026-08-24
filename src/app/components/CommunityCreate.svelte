@@ -1532,33 +1532,21 @@
           relays: validated.relays,
         }),
       )
-      const existingDestinationPubkeys = uniqueNormalizedPubkeys(
-        section.profileLists.flatMap(ref =>
-          getProfileListPubkeys(
-            findCommunityProfileListEvent(ref, $activeCommunityProfileListEvents),
-          ),
-        ),
-      )
       const migratedPubkeys = uniqueNormalizedPubkeys(
         sourceNames.flatMap(getActiveSectionMemberPubkeys),
-      )
+      ).filter(pubkey => pubkey !== owner)
 
       sections[sectionIndex] = {
         ...section,
         profileLists: dedupeProfileListRefs([
           ...section.profileLists.filter(ref => !sourceProfileListAddresses.has(ref.address)),
-          setupProfileList,
+          ...(migratedPubkeys.length > 0 ? [setupProfileList] : []),
           ...moderatorRefs,
         ]),
       }
-      profileListUpdates.push({
-        profileList: setupProfileList,
-        pubkeys: uniqueNormalizedPubkeys([
-          owner,
-          ...existingDestinationPubkeys,
-          ...migratedPubkeys,
-        ]),
-      })
+      if (migratedPubkeys.length > 0) {
+        profileListUpdates.push({profileList: setupProfileList, pubkeys: migratedPubkeys})
+      }
     }
 
     const copiedFormDestinations = new Set<string>()

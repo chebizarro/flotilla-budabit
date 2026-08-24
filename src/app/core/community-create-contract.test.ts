@@ -62,6 +62,20 @@ describe("Communikeys create source contract", () => {
     expect(component).not.toContain("clearCommunityBootstrapCache(exactDefinition.communityId)")
   })
 
+  it("creates migration member lists only when non-owner grants need moving", () => {
+    const component = readProjectFile("../components/CommunityCreate.svelte")
+    const migration = component.slice(
+      component.indexOf("const applySectionMigration"),
+      component.indexOf("const makeChangeSummaryItems"),
+    )
+
+    expect(migration).toContain(".filter(pubkey => pubkey !== owner)")
+    expect(migration).toContain("...(migratedPubkeys.length > 0 ? [setupProfileList] : [])")
+    expect(migration).toContain("if (migratedPubkeys.length > 0)")
+    expect(migration).toContain("pubkeys: migratedPubkeys")
+    expect(migration).not.toContain("pubkeys: uniqueNormalizedPubkeys([\n          owner")
+  })
+
   it("does not gate creation on another community owned by the owner", () => {
     const component = readProjectFile("../components/CommunityCreate.svelte")
     const page = readProjectFile("../../routes/explore/create-community/+page.svelte")

@@ -113,6 +113,7 @@ import {
   loadCommunityEvents,
   loadCommunityEventsWithStatus,
   loadCommunityDefinitionFromRelays,
+  makeCommunityProfileListFilters,
   recoverCommunityRelayAuth,
   recoverCommunityBootstrap,
   RelayAuthenticationTimeoutError,
@@ -180,6 +181,17 @@ const definitionEvent = makeEvent({
         ],
       },
     ],
+  }).tags,
+})
+
+const ownerOnlyDefinitionEvent = makeEvent({
+  id: "owner-only-definition",
+  kind: COMMUNITY_DEFINITION_KIND,
+  tags: buildCommunityDefinition({
+    communityId,
+    name: "Owner and moderators",
+    relays: [relayA.slice(0, -1)],
+    sections: [{name: "General", kinds: [{kind: 1111}], profileLists: []}],
   }).tags,
 })
 
@@ -397,6 +409,7 @@ const acceptAuth = (socket: Socket) => {
 const removeTestEvents = () => {
   for (const event of [
     definitionEvent,
+    ownerOnlyDefinitionEvent,
     twoListDefinitionEvent,
     singleRelayDefinitionEvent,
     requiredRelayDefinitionEvent,
@@ -1246,6 +1259,29 @@ describe("community relay loading", () => {
       loaded: false,
       complete: false,
       hasCachedEvents: false,
+    })
+  })
+
+  it("settles owner-only authority without requesting profile lists", async () => {
+    let profileListLoads = 0
+    loadMock.mockImplementation(({filters}: {filters: Filter[]}) => {
+      if (hasKind(filters, COMMUNITY_DEFINITION_KIND)) {
+        return Promise.resolve([ownerOnlyDefinitionEvent])
+      }
+      if (hasKind(filters, PROFILE_LIST_KIND)) profileListLoads += 1
+      return Promise.resolve([])
+    })
+
+    const bootstrap = await loadCommunityBootstrap(makeSession([relayA]))
+    await flushPromises()
+
+    expect(makeCommunityProfileListFilters(bootstrap.definition!)).toEqual([])
+    expect(profileListLoads).toBe(0)
+    expect(get(activeCommunityPermissionStatus)).toMatchObject({
+      loading: false,
+      loaded: true,
+      complete: true,
+      hasCachedEvents: true,
     })
   })
 

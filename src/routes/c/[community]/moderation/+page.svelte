@@ -80,6 +80,13 @@
     getCommunityRootPublishRelays,
     getCommunityScopedPublishRelays,
   } from "@app/core/community-relays"
+  import {startPublication} from "@app/core/publication-operations"
+  import {assertReplaceablePublicationIsCurrent} from "@app/core/replaceable-publication"
+  import {
+    getCommunityAdmissionReviewSemanticKey,
+    getCommunityDefinitionUpdateSemanticKey,
+    getCommunityMembershipChangeSemanticKey,
+  } from "@app/core/governance-publication-operations"
   import {setChecked} from "@app/util/notifications"
   import {getAuthorRelayHints, normalizeRelayHints} from "@app/util/event-links"
   import {makeExactCommunityPath, parseExactCommunityRouteParam} from "@app/util/routes"
@@ -824,7 +831,44 @@
     })
   }
 
-  const reviewApplication = (application: ReviewApplication, status: "granted" | "rejected") => {
+  const publishAcknowledgedGovernanceEvent = async ({
+    relays,
+    event,
+    label,
+    semanticKey,
+    validateRetry,
+    status,
+  }: {
+    relays: string[]
+    event: ReturnType<typeof makeEvent>
+    label: string
+    semanticKey: string
+    validateRetry?: typeof assertReplaceablePublicationIsCurrent
+    status: ReturnType<typeof writable<string>>
+  }) => {
+    status.set(`Publishing ${label}...`)
+    const requiredRelay = communityPublishRelays[0]
+    const operation = startPublication({
+      relays,
+      confirmRelays: requiredRelay ? [requiredRelay] : relays,
+      event,
+      label,
+      semanticKey,
+      preview: "none",
+      validateRetry,
+    })
+    const result = await operation.settled
+
+    if (result.phase !== "confirmed") {
+      throw new Error(result.error || `${label} was not confirmed by the primary community relay.`)
+    }
+  }
+
+  const reviewApplication = async (
+    application: ReviewApplication,
+    decision: "granted" | "rejected",
+    publishStatus: ReturnType<typeof writable<string>>,
+  ) => {
     if (!communityBootstrapReady || !$activeExactCommunityDefinition) return false
 
     const capability = getGrantCapability({
@@ -855,7 +899,7 @@
     let definitionUpdate: ReturnType<typeof getOwnerMembershipGrantProfileList>["definitionUpdate"]
 
     if (
-      status === "granted" &&
+      decision === "granted" &&
       !profileList &&
       $activeExactCommunityDefinition &&
       isCommunityAdmin($activeExactCommunityDefinition, $pubkey || "")
@@ -870,17 +914,18 @@
       definitionUpdate = ownerGrantProfileList.definitionUpdate
     }
 
-    if (status === "granted") {
+    const events: Array<{
+      relays: string[]
+      event: ReturnType<typeof makeEvent>
+      label: string
+      semanticKey: string
+      validateRetry?: typeof assertReplaceablePublicationIsCurrent
+    }> = []
+
+    if (decision === "granted") {
       if (!profileList) {
         pushToast({theme: "error", message: "No membership list is available for this section."})
         return false
-      }
-
-      if (definitionUpdate) {
-        publishThunk({
-          relays: communityRootPublishRelays,
-          event: makeEvent(definitionUpdate.kind, definitionUpdate),
-        })
       }
 
       const profileListEvent = findProfileListEvent(profileList, $activeCommunityProfileListEvents)
@@ -890,10 +935,25 @@
         pubkey: applicant,
       })
 
-      publishThunk({
+      events.push({
         relays: communityPublishRelays,
         event: makeEvent(grant.kind, grant),
+        label: "membership grant",
+        semanticKey: getCommunityMembershipChangeSemanticKey(profileList.address, applicant),
+        validateRetry: assertReplaceablePublicationIsCurrent,
       })
+
+      if (definitionUpdate) {
+        events.push({
+          relays: communityRootPublishRelays,
+          event: makeEvent(definitionUpdate.kind, definitionUpdate),
+          label: "community definition update",
+          semanticKey: getCommunityDefinitionUpdateSemanticKey(
+            $activeExactCommunityDefinition.pointer.address,
+          ),
+          validateRetry: assertReplaceablePublicationIsCurrent,
+        })
+      }
     } else if (profileList) {
       const profileListEvent = findProfileListEvent(profileList, $activeCommunityProfileListEvents)
       if (profileListEvent && getProfileListPubkeys(profileListEvent).includes(applicant)) {
@@ -903,9 +963,12 @@
           pubkey: applicant,
         })
 
-        publishThunk({
+        events.push({
           relays: communityPublishRelays,
           event: makeEvent(revoke.kind, revoke),
+          label: "membership revocation",
+          semanticKey: getCommunityMembershipChangeSemanticKey(profileList.address, applicant),
+          validateRetry: assertReplaceablePublicationIsCurrent,
         })
       }
     }
@@ -917,26 +980,42 @@
       community: $activeExactCommunityPointer!,
       sectionName: application.sectionName,
       relays: communityPublishRelays,
-      status,
+      status: decision,
     })
 
-    publishThunk({
+    events.push({
       relays: normalizeRelayHints(
         communityPublishRelays,
         getAuthorRelayHints(applicant),
         APP_RELAYS,
       ),
       event: makeEvent(review.kind, review),
+      label: "application decision",
+      semanticKey: getCommunityAdmissionReviewSemanticKey(application.response.event.id),
     })
-    pushToast({
-      message:
-        status === "granted"
-          ? "Application granted."
-          : application.state.status === "granted"
-            ? "Access revoked."
-            : "Application rejected.",
-    })
-    return true
+
+    try {
+      for (const item of events)
+        await publishAcknowledgedGovernanceEvent({...item, status: publishStatus})
+
+      publishStatus.set("")
+      pushToast({
+        message:
+          decision === "granted"
+            ? "Application granted."
+            : application.state.status === "granted"
+              ? "Access revoked."
+              : "Application rejected.",
+      })
+      return true
+    } catch (error) {
+      publishStatus.set("")
+      pushToast({
+        theme: "error",
+        message: `Application decision failed: ${error instanceof Error ? error.message : String(error)}`,
+      })
+      return false
+    }
   }
 
   const confirmReviewApplication = (
@@ -945,13 +1024,15 @@
   ) => {
     const label = getReviewActionLabel(application, status)
     const confirmLabel = getReviewActionConfirmLabel(application, status)
+    const publishStatus = writable("")
 
     pushModal(Confirm, {
       title: label === "Revoke" ? "Revoke access" : `${label} application`,
       message: getReviewActionMessage(application, status),
       confirmLabel,
+      status: publishStatus,
       confirm: async () => {
-        if (reviewApplication(application, status)) history.back()
+        if (await reviewApplication(application, status, publishStatus)) history.back()
       },
     })
   }
