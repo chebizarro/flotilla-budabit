@@ -12,7 +12,8 @@
   import Plugins from "@assets/icons/plug-circle.svg?dataurl"
   import Flower from "@assets/icons/flower.svg?dataurl"
   import Chart from "@assets/icons/chart.svg?dataurl"
-  import {goto} from "$app/navigation"
+  import {goto, preloadCode} from "$app/navigation"
+  import {onMount} from "svelte"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
   import CardButton from "@lib/components/CardButton.svelte"
@@ -34,6 +35,12 @@
   const profilePath = $derived($pubkey ? makeProfilePath($pubkey) : "")
   let pendingHref = $state("")
   const navigationPending = $derived(Boolean(pendingHref))
+
+  onMount(() => {
+    if (!PERFORMANCE_DIAGNOSTICS_ENABLED) return
+    const timer = window.setTimeout(() => void preloadCode("/settings/performance"), 0)
+    return () => window.clearTimeout(timer)
+  })
 
   const navigate = (event: MouseEvent, href: string) => {
     if (event.defaultPrevented) return
