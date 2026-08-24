@@ -7,7 +7,9 @@
   "include": [
     "tests/e2e/**/*.ts",
     "tests/atomic-app-updates/**/*.ts",
+    "tests/performance-roots/**/*.ts",
     "playwright.config.ts",
-    "playwright.atomic.config.ts"
+    "playwright.atomic.config.ts",
+    "playwright.performance.config.ts"
   ]
 }

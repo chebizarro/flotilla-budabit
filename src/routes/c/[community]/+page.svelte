@@ -801,7 +801,8 @@
   data-perf-community={communityPointer?.address || ""}
   data-perf-core-ready={communityHomeCoreReady ? "true" : "false"}
   data-perf-extensions-ready={communityHomeExtensionsReady ? "true" : "false"}
-  data-perf-rooms={rooms.length}>
+  data-perf-rooms={rooms.length}
+  data-perf-widgets={$homeWidgetRecovery.curatedWidgets.length}>
   {#if communityPointer}
     {#key communityPointer.address}
       <CommunityHomeWidgetRecovery

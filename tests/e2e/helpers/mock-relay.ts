@@ -83,6 +83,15 @@ export interface MockRelayPublishResponse {
   retain?: boolean
 }
 
+export interface MockRelayTelemetryEntry {
+  type: "connect" | "open" | "req" | "event" | "eose" | "close" | "external"
+  at: number
+  relayUrl: string
+  subId?: string
+  filters?: NostrFilter[]
+  eventId?: string
+}
+
 /**
  * Options for configuring the mock relay
  */
@@ -172,6 +181,19 @@ export class MockRelay {
       this.subscriptionOutcomesByRelay = {...options.subscriptionOutcomesByRelay}
     }
     this.getSubscriptionOutcomeCallback = options?.getSubscriptionOutcome
+  }
+
+  async getTelemetry(): Promise<MockRelayTelemetryEntry[]> {
+    if (!this.page) return []
+    return this.page.evaluate(() =>
+      structuredClone(
+        (
+          window as unknown as {
+            __mockRelayTelemetry?: MockRelayTelemetryEntry[]
+          }
+        ).__mockRelayTelemetry || [],
+      ),
+    )
   }
 
   /**
@@ -267,6 +289,11 @@ export class MockRelay {
       }) => {
         // Store original WebSocket
         const OriginalWebSocket = window.WebSocket
+        const telemetry: MockRelayTelemetryEntry[] = []
+        const recordTelemetry = (entry: Omit<MockRelayTelemetryEntry, "at">) => {
+          telemetry.push({...entry, at: performance.now()})
+          if (telemetry.length > 2000) telemetry.splice(0, telemetry.length - 2000)
+        }
 
         // Track active mock connections for debugging
         const mockConnections: Map<string, MockWebSocket> = new Map()
@@ -304,6 +331,7 @@ export class MockRelay {
             super()
             this.url = url.toString()
             this.connectionId = `mock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+            recordTelemetry({type: "connect", relayUrl: this.url})
 
             if (debug) {
               console.log(`[MockRelay] New connection: ${this.url}`)
@@ -314,6 +342,7 @@ export class MockRelay {
             // Simulate connection opening after a short delay
             setTimeout(() => {
               this.readyState = MockWebSocket.OPEN
+              recordTelemetry({type: "open", relayUrl: this.url})
               const openEvent = new Event("open")
               this.dispatchEvent(openEvent)
               this.onopen?.call(this as unknown as WebSocket, openEvent)
@@ -344,6 +373,7 @@ export class MockRelay {
 
             setTimeout(() => {
               this.readyState = MockWebSocket.CLOSED
+              recordTelemetry({type: "close", relayUrl: this.url})
               mockConnections.delete(this.connectionId)
 
               const closeEvent = new CloseEvent("close", {
@@ -391,6 +421,7 @@ export class MockRelay {
             }
 
             this.subscriptions.set(subId, filters)
+            recordTelemetry({type: "req", relayUrl: this.url, subId, filters})
 
             // Notify the test about the subscription
             ;(
@@ -447,6 +478,7 @@ export class MockRelay {
               }
 
               // Send EOSE (End of Stored Events)
+              recordTelemetry({type: "eose", relayUrl: this.url, subId})
               this.sendMessage(["EOSE", subId])
             }, responseLatency)
           }
@@ -489,6 +521,7 @@ export class MockRelay {
           private handleClose(params: unknown[]): void {
             const [subId] = params as [string]
             this.subscriptions.delete(subId)
+            recordTelemetry({type: "close", relayUrl: this.url, subId})
 
             if (debug) {
               console.log(`[MockRelay] CLOSE ${subId}`)
@@ -562,6 +595,7 @@ export class MockRelay {
           }
 
           private sendEvent(subId: string, event: NostrEvent): void {
+            recordTelemetry({type: "event", relayUrl: this.url, subId, eventId: event.id})
             this.sendMessage(["EVENT", subId, event])
           }
 
@@ -606,6 +640,7 @@ export class MockRelay {
               if (debug) {
                 console.log(`[MockRelay] Passing through: ${urlStr}`)
               }
+              recordTelemetry({type: "external", relayUrl: urlStr})
               super(url, protocols)
             }
           }
@@ -617,6 +652,9 @@ export class MockRelay {
         ;(
           window as unknown as {__mockRelayOriginalWebSocket: typeof OriginalWebSocket}
         ).__mockRelayOriginalWebSocket = OriginalWebSocket
+        ;(
+          window as unknown as {__mockRelayTelemetry: MockRelayTelemetryEntry[]}
+        ).__mockRelayTelemetry = telemetry
 
         if (debug) {
           console.log("[MockRelay] Mock WebSocket installed")
