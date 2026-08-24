@@ -19,7 +19,7 @@ const ACTIVITY_LIVE_RETRY_MS = 5_500
 const ACTIVITY_LIVE_OVERLAP_SECONDS = 5
 const ACTIVITY_TAG_CHUNK_SIZE = 100
 const ACTIVITY_PRIORITY = -100
-const ACTIVITY_TAGS = ["#E", "#A", "#a"] as const
+const ACTIVITY_TAGS = ["#E", "#e", "#A", "#a"] as const
 
 type ActivityTag = (typeof ACTIVITY_TAGS)[number]
 type Timer = ReturnType<typeof setTimeout>

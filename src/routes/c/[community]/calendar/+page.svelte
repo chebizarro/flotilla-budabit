@@ -685,7 +685,6 @@
         publishRelays={calendarEditPublishRelays}
         reactionRelays={$activeExactCommunityRelays}
         scopeH={communityId}
-        activityLiveCovered
         communitySectionName={getCalendarEventSectionName(event.kind)}
         allowedAuthors={commentAuthorPubkeys}
         reactionAllowedAuthors={reactionAuthorPubkeys}

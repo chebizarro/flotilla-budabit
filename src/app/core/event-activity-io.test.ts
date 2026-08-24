@@ -11,9 +11,13 @@ const BATCH_MS = 75
 const RELAYS = ["wss://one.example", "wss://two.example"]
 const BASE_FILTER = {kinds: [1111], "#K": ["1"]}
 
-const ordinaryFilters = (id: string): Filter[] => [{...BASE_FILTER, "#E": [id]}]
+const ordinaryFilters = (id: string): Filter[] => [
+  {...BASE_FILTER, "#E": [id]},
+  {...BASE_FILTER, "#e": [id]},
+]
 const replaceableFilters = (id: string): Filter[] => [
   {...BASE_FILTER, "#E": [id]},
+  {...BASE_FILTER, "#e": [id]},
   {...BASE_FILTER, "#A": [`30023:author:${id}`]},
   {...BASE_FILTER, "#a": [`30023:author:${id}`]},
 ]
@@ -87,7 +91,7 @@ afterEach(() => {
 })
 
 describe("event activity coordinator", () => {
-  it("groups 100 ordinary registrations into one live #E filter", async () => {
+  it("groups 100 ordinary registrations into root and direct-reply live filters", async () => {
     vi.useFakeTimers()
     const {calls, io} = makeHarness()
 
@@ -98,13 +102,14 @@ describe("event activity coordinator", () => {
 
     const liveCalls = getLiveCalls(calls)
     expect(liveCalls).toHaveLength(1)
-    expect(liveCalls[0].filters).toHaveLength(1)
+    expect(liveCalls[0].filters).toHaveLength(2)
     expect(liveCalls[0].filters[0]["#E"]).toHaveLength(100)
+    expect(liveCalls[0].filters[1]["#e"]).toHaveLength(100)
     expect(liveCalls[0]).toMatchObject({lifetime: "live", priority: -100})
     io.close()
   })
 
-  it("packs replaceable references into at most three live filters", async () => {
+  it("packs replaceable references into at most four live filters", async () => {
     vi.useFakeTimers()
     const {calls, io} = makeHarness()
 
@@ -114,10 +119,10 @@ describe("event activity coordinator", () => {
     await flushBatch()
 
     const [live] = getLiveCalls(calls)
-    expect(live.filters).toHaveLength(3)
+    expect(live.filters).toHaveLength(4)
     expect(
-      live.filters.map(filter => Object.keys(filter).find(key => /^#[EAa]$/.test(key))),
-    ).toEqual(["#E", "#A", "#a"])
+      live.filters.map(filter => Object.keys(filter).find(key => /^#[EeAa]$/.test(key))),
+    ).toEqual(["#E", "#e", "#A", "#a"])
     io.close()
   })
 

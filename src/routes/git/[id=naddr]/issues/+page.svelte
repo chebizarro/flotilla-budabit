@@ -50,6 +50,7 @@
     STATUS_EVENTS_BY_ROOT_KEY,
     RESOLVED_STATUS_BY_ROOT_KEY,
     HIDDEN_ROOT_IDS_KEY,
+    COMMENT_EVENTS_KEY,
     REPO_ROOT_HISTORY_KEY,
     type RepoRootHistoryContext,
     getRepoMaintainers,
@@ -488,6 +489,7 @@
     RESOLVED_STATUS_BY_ROOT_KEY,
   )
   const hiddenRootIdsStore = getContext<Readable<Set<string>>>(HIDDEN_ROOT_IDS_KEY)
+  const commentEventsStore = getContext<Readable<CommentEvent[]>>(COMMENT_EVENTS_KEY)
 
   if (!repoClass) {
     throw new Error("Repo context not available")
@@ -505,18 +507,32 @@
   )
   const allIssues = $derived.by(() => repoClass.issues || [])
   const issues = $derived.by(() => allIssues.filter(issue => !hiddenRootIds.has(issue.id)))
+  const commentEvents = $derived.by(() => (commentEventsStore ? $commentEventsStore : []))
+
+  const getCommentRootId = (comment: CommentEvent) => {
+    const rootTag = (comment.tags || []).find(
+      (tag: string[]) => tag[0] === "E" || (tag[0] === "e" && tag[3] === "root"),
+    )
+
+    return rootTag?.[1] || getTagValue("E", comment.tags) || getTagValue("e", comment.tags) || ""
+  }
 
   const commentsOrdered = $derived.by(() => {
-    const ret: Record<string, CommentEvent[]> = {}
+    const commentsByIssue: Record<string, CommentEvent[]> = Object.fromEntries(
+      issues.filter(issue => issue?.id).map(issue => [issue.id, []]),
+    )
+    const visibleComments = filterVisibleAfterDeletesAndEdits(commentEvents, $editedTargetIds)
+
+    for (const comment of visibleComments) {
+      const rootId = getCommentRootId(comment)
+      if (commentsByIssue[rootId]) commentsByIssue[rootId].push(comment)
+    }
+
     for (const issue of issues) {
       if (!issue?.id) continue
-      const thread = repoClass.getIssueThread(issue.id)
-      ret[issue.id] = sortBy(
-        e => -e.created_at,
-        filterVisibleAfterDeletesAndEdits(thread.comments || [], $editedTargetIds),
-      )
+      commentsByIssue[issue.id] = sortBy(e => -e.created_at, commentsByIssue[issue.id])
     }
-    return ret
+    return commentsByIssue
   })
 
   // Filter and sort options

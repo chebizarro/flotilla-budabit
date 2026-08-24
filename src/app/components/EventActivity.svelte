@@ -32,46 +32,68 @@
   const loadRelays = $derived.by(() =>
     (relays.length > 0 ? relays : url ? [url] : []).filter(Boolean),
   )
-  const filterPlan = $derived.by(() => {
-    const baseFilter = {
+  const rootFilterPlan = $derived.by(() => {
+    const rootFilter = {
       kinds: [COMMENT],
       "#K": [String(event.kind)],
     } satisfies Filter
-    const structuralFilters: Filter[] = [{...baseFilter, "#E": [event.id]}]
+    const structuralFilters: Filter[] = [{...rootFilter, "#E": [event.id]}]
 
     if (isReplaceable(event)) {
       const address = getAddress(event)
 
-      structuralFilters.push({...baseFilter, "#A": [address]}, {...baseFilter, "#a": [address]})
+      structuralFilters.push({...rootFilter, "#A": [address]})
     }
 
     return makeCommunityScopedFilterPlan(structuralFilters, scopeH, allowedAuthors)
   })
-  const filters = $derived(filterPlan.localFilters)
-  const relayFilters = $derived(filterPlan.relayFilters)
-  const replies = $derived(deriveArray(deriveEventsById({repository, filters})))
-  const lastActive = $derived(max([...$replies, event].map(e => e.created_at)))
+  const directReplyFilterPlan = $derived.by(() => {
+    const directReplyFilter = {
+      kinds: [COMMENT],
+      "#k": [String(event.kind)],
+    } satisfies Filter
+    const structuralFilters: Filter[] = [{...directReplyFilter, "#e": [event.id]}]
+
+    if (isReplaceable(event)) {
+      structuralFilters.push({...directReplyFilter, "#a": [getAddress(event)]})
+    }
+
+    return makeCommunityScopedFilterPlan(structuralFilters, scopeH, allowedAuthors)
+  })
+  const filters = $derived([...rootFilterPlan.localFilters, ...directReplyFilterPlan.localFilters])
+  let replies = $state<TrustedEvent[]>([])
+  const lastActive = $derived(max([...replies, event].map(e => e.created_at)))
   const routeScope = $derived(`${$page.route.id || "unknown"}:${$page.url.pathname}`)
 
   $effect(() => {
-    if (loadRelays.length === 0 || filters.length === 0) return
+    const replyStore = deriveArray(deriveEventsById({repository, filters}))
 
-    return registerEventActivity({
-      routeScope,
-      relays: loadRelays,
-      scopeH,
-      filters,
-      ...(scopeH ? {relayFilters} : {}),
-      coreCommunityLiveCovered,
-    })
+    return replyStore.subscribe(events => (replies = events))
+  })
+
+  $effect(() => {
+    if (loadRelays.length === 0) return
+
+    const releases = [rootFilterPlan, directReplyFilterPlan].map(plan =>
+      registerEventActivity({
+        routeScope,
+        relays: loadRelays,
+        scopeH,
+        filters: plan.localFilters,
+        ...(scopeH ? {relayFilters: plan.relayFilters} : {}),
+        coreCommunityLiveCovered,
+      }),
+    )
+
+    return () => releases.forEach(release => release())
   })
 </script>
 
 <div class="flex-inline btn btn-neutral btn-xs gap-1 rounded-full">
   <Icon icon={Reply} />
   <span>
-    {$replies.length}
-    {$replies.length === 1 ? "reply" : "replies"}
+    {replies.length}
+    {replies.length === 1 ? "reply" : "replies"}
   </span>
 </div>
 <div class="btn btn-neutral btn-xs relative hidden rounded-full sm:flex">
