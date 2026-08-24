@@ -12,6 +12,10 @@
     stopPerformanceDiagnosticsCapture,
     type PerformanceDiagnosticRun,
   } from "@app/core/performance-diagnostics"
+  import {
+    publishPerformanceDiagnosticsArtifact,
+    type PerformanceDiagnosticsPublishStage,
+  } from "@app/core/performance-diagnostics-publish"
 
   type Props = {
     route: string
@@ -23,6 +27,8 @@
   let open = $state(false)
   let preparing = $state(false)
   let error = $state("")
+  let publishStage = $state<PerformanceDiagnosticsPublishStage | "idle" | "failed">("idle")
+  let preparedArtifact = $state<Awaited<ReturnType<typeof preparePerformanceDiagnosticsArtifact>>>()
   const activeHere = $derived($activePerformanceDiagnosticsRun?.route === route)
   const snapshot = $derived.by(() => {
     void $performanceDiagnosticsRevision
@@ -33,10 +39,19 @@
 
   const start = () => {
     error = ""
+    publishStage = "idle"
+    preparedArtifact = undefined
     startPerformanceDiagnosticsCapture({route, preset, context})
   }
 
   const stop = () => stopPerformanceDiagnosticsCapture()
+
+  const clear = () => {
+    preparedArtifact = undefined
+    publishStage = "idle"
+    error = ""
+    clearPerformanceDiagnostics()
+  }
 
   const download = async () => {
     preparing = true
@@ -52,6 +67,32 @@
       anchor.click()
       URL.revokeObjectURL(url)
     } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      preparing = false
+    }
+  }
+
+  const publish = async () => {
+    preparing = true
+    error = ""
+    publishStage = "preparing"
+    try {
+      if (activeHere) stopPerformanceDiagnosticsCapture()
+      const current = getPerformanceDiagnosticsSnapshot()
+      const currentLatest = current.runs.filter(run => run.route === route).at(-1)
+      if (!currentLatest) throw new Error("Capture a run before publishing")
+      preparedArtifact ||= await preparePerformanceDiagnosticsArtifact(current, {
+        runId: currentLatest.id,
+      })
+      await publishPerformanceDiagnosticsArtifact({
+        artifact: preparedArtifact,
+        runId: currentLatest.id,
+        routes: Array.from(new Set(current.runs.map(run => run.route))),
+        onStage: stage => (publishStage = stage),
+      })
+    } catch (cause) {
+      publishStage = "failed"
       error = cause instanceof Error ? cause.message : String(cause)
     } finally {
       preparing = false
@@ -106,12 +147,19 @@
             {preparing ? "Preparing..." : "Download"}
           </Button>
           <Button
+            class="btn btn-secondary btn-sm"
+            disabled={!latest || preparing}
+            onclick={publish}>
+            {publishStage === "failed" ? "Retry publish" : "Upload & publish"}
+          </Button>
+          <Button
             class="btn btn-ghost btn-sm"
             disabled={snapshot.runs.length === 0}
-            onclick={clearPerformanceDiagnostics}>
+            onclick={clear}>
             Clear
           </Button>
         </div>
+        {#if publishStage !== "idle"}<p class="text-xs">Publication: {publishStage}</p>{/if}
         {#if error}<p class="text-xs text-error">{error}</p>{/if}
       </section>
     {/if}
