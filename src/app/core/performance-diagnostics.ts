@@ -7,7 +7,7 @@ export const PERFORMANCE_DIAGNOSTICS_SCHEMA = "budabit-performance-run-v1"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_RELAY = "wss://blossom.budabit.club"
 export const PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY = "budabit/performance-diagnostics/armed:v1"
-export const PERFORMANCE_DIAGNOSTICS_AUTO_TIMEOUT_MS = 30_000
+export const PERFORMANCE_DIAGNOSTICS_AUTO_TIMEOUT_MS = 60_000
 
 const MAX_RUNS = 20
 const MAX_MILESTONES = 100
@@ -102,6 +102,17 @@ export type ArmedPerformanceDiagnosticsCapture = {
   preset: PerformanceDiagnosticRun["preset"]
   context?: PerformanceDiagnosticValue
   armedAt: number
+}
+
+export type PerformanceDiagnosticsOverview = {
+  runCount: number
+  latest?: {
+    id: string
+    route: string
+    status: PerformanceDiagnosticRun["status"]
+    durationMs?: number
+    milestones: Array<{name: string; elapsedMs: number}>
+  }
 }
 
 type Clock = {
@@ -364,6 +375,26 @@ export const getPerformanceDiagnosticsSnapshot = (): PerformanceDiagnosticsSnaps
     runs,
   })
 
+export const hasPerformanceDiagnosticsRun = (route: string) => runs.some(run => run.route === route)
+
+export const getPerformanceDiagnosticsOverview = (): PerformanceDiagnosticsOverview => {
+  const latest = runs.at(-1)
+  return {
+    runCount: runs.length,
+    ...(latest
+      ? {
+          latest: {
+            id: latest.id,
+            route: latest.route,
+            status: latest.status,
+            durationMs: latest.durationMs,
+            milestones: latest.milestones.map(({name, elapsedMs}) => ({name, elapsedMs})),
+          },
+        }
+      : {}),
+  }
+}
+
 export const clearPerformanceDiagnostics = () => {
   stopActiveObservers?.()
   stopActiveObservers = undefined
@@ -513,7 +544,7 @@ export const stopPerformanceDiagnosticsCapture = (
 
 export const startPerformanceDiagnosticsObservers = (
   runId: string,
-  {schedulerIntervalMs = 250}: {schedulerIntervalMs?: number} = {},
+  {schedulerIntervalMs = 1_000}: {schedulerIntervalMs?: number} = {},
 ) => {
   if (typeof window === "undefined" || !getRun(runId)) return () => {}
   const observers: PerformanceObserver[] = []

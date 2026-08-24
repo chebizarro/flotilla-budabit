@@ -15,12 +15,14 @@ Open **Settings → Performance Diagnostics**:
 1. Enter `/git`, a full site URL, or an exact `/c/naddr...` Community Home path.
 2. Choose **Arm next launch**.
 3. Close and reopen the app on that route. For cold assets, clear the browser HTTP cache without clearing local storage, which holds the one-shot arm.
-4. Capture starts during client bootstrap and stops at the route's settled milestone, with a 30-second failure timeout.
+4. Capture starts during client bootstrap and stops at the route's settled milestone, with a 60-second failure timeout.
 5. Return to Settings to inspect and download the result, or choose **Upload & publish** while logged in.
 
 **Arm and open now** is convenient for warm-session diagnostics but does not produce a genuinely cold browser load. A small status control on the target page links back to the diagnostics settings while a capture is running or available.
 
 The artifact schema is `budabit-performance-run-v1`. Captures include route milestones, bounded state samples, long tasks, resources, relay scheduler snapshots, warnings, build metadata, and browser environment data. Known secret fields and secret-shaped values are redacted before serialization.
+
+Community Home records core readiness, widget discovery, frame loading, and initial layout as separate milestones. Final settlement waits for the first widget catalog attempt and each selected frame's initial resize or 15-second layout deadline; later background recovery and manual retries do not keep the bounded capture open.
 
 Upload defaults:
 
@@ -30,7 +32,7 @@ Upload defaults:
 - Immutable d-tag: `budabit-performance-run:<run-id>`
 - Latest d-tag: `budabit-performance-latest`
 
-The artifact is gzip-compressed when supported and hashed before upload. The active account signs both manifests, and publication requires at least one relay acknowledgement for each event.
+The artifact is gzip-compressed when supported and hashed before upload. The active account signs a hash-scoped Blossom upload authorization and both manifests, and publication requires at least one relay acknowledgement for each manifest.
 
 ## Deterministic Harness
 

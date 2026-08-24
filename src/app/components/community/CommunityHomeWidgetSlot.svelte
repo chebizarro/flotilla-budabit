@@ -20,7 +20,11 @@
   } from "@app/extensions/community-widget-slots"
   import {effectiveExtensionSettings} from "@app/extensions/settings"
   import {getWidgetLineId} from "@app/extensions/widget-identity"
-  import type {CommunityHomeWidgetRecoveryState} from "@app/extensions/community-home-widget-recovery"
+  import {isSecureEmbeddableUrl} from "@app/extensions/url-policy"
+  import type {
+    CommunityHomeWidgetRecoveryState,
+    CommunityHomeWidgetSlotInitialState,
+  } from "@app/extensions/community-home-widget-recovery"
   import type {
     SmartWidgetEvent,
     WidgetHomeSlotType,
@@ -33,9 +37,17 @@
     relayHints?: string[]
     recovery: CommunityHomeWidgetRecoveryState
     slotType: WidgetHomeSlotType
+    onInitialState?: (state: CommunityHomeWidgetSlotInitialState) => void
   }
 
-  const {communityPubkey, communityAddress, relayHints = [], recovery, slotType}: Props = $props()
+  const {
+    communityPubkey,
+    communityAddress,
+    relayHints = [],
+    recovery,
+    slotType,
+    onInitialState,
+  }: Props = $props()
   const exactCommunity = $derived(
     $activeExactCommunityPointer?.address === communityAddress
       ? $activeExactCommunityPointer
@@ -108,6 +120,7 @@
   })
 
   let initiallyResolvedWidgetLoads = $state<Record<string, true>>({})
+  let initiallyLoadedWidgetLoads = $state<Record<string, true>>({})
   const initialWidgetResizeTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const INITIAL_WIDGET_RESIZE_TIMEOUT_MS = 15_000
 
@@ -124,6 +137,10 @@
       getWidgetLineId(widget),
       widget.appUrls?.join("|") || widget.appUrl || "",
     ].join(":")
+  const hasLoadableWidgetUrl = (widget: SmartWidgetEvent) =>
+    (widget.appUrls?.length ? widget.appUrls : widget.appUrl ? [widget.appUrl] : []).some(url =>
+      isSecureEmbeddableUrl(url),
+    )
   const makeWidgetContext = (widget: SmartWidgetEvent) => {
     if (!exactCommunity) return {}
     return {
@@ -146,18 +163,29 @@
     initialWidgetResizeTimers.delete(loadKey)
     initiallyResolvedWidgetLoads[loadKey] = true
   }
+  const markInitialWidgetLoaded = (loadKey: string) => {
+    initiallyLoadedWidgetLoads[loadKey] = true
+  }
 
   $effect(() => {
     const activeLoadKeys = new Set(frameWidgets.map(getWidgetLoadKey))
     for (const loadKey of Object.keys(initiallyResolvedWidgetLoads)) {
       if (!activeLoadKeys.has(loadKey)) delete initiallyResolvedWidgetLoads[loadKey]
     }
+    for (const loadKey of Object.keys(initiallyLoadedWidgetLoads)) {
+      if (!activeLoadKeys.has(loadKey)) delete initiallyLoadedWidgetLoads[loadKey]
+    }
     for (const [loadKey, timer] of initialWidgetResizeTimers) {
       if (activeLoadKeys.has(loadKey) && !initiallyResolvedWidgetLoads[loadKey]) continue
       clearTimeout(timer)
       initialWidgetResizeTimers.delete(loadKey)
     }
-    for (const loadKey of activeLoadKeys) {
+    for (const widget of frameWidgets) {
+      const loadKey = getWidgetLoadKey(widget)
+      if (!hasLoadableWidgetUrl(widget)) {
+        initiallyResolvedWidgetLoads[loadKey] = true
+        continue
+      }
       if (initiallyResolvedWidgetLoads[loadKey] || initialWidgetResizeTimers.has(loadKey)) continue
       const timer = setTimeout(() => {
         initialWidgetResizeTimers.delete(loadKey)
@@ -165,6 +193,21 @@
       }, INITIAL_WIDGET_RESIZE_TIMEOUT_MS)
       initialWidgetResizeTimers.set(loadKey, timer)
     }
+  })
+
+  $effect(() => {
+    if (!onInitialState) return
+    const loadKeys = frameWidgets.map(getWidgetLoadKey)
+    const catalogTerminal =
+      recovery.curatedFirstAttemptTerminal && recovery.sharedConfigFirstAttemptTerminal
+    const resolvedCount = loadKeys.filter(key => initiallyResolvedWidgetLoads[key]).length
+    onInitialState({
+      slotType,
+      frameCount: loadKeys.length,
+      loadedCount: loadKeys.filter(key => initiallyLoadedWidgetLoads[key]).length,
+      resolvedCount,
+      terminal: catalogTerminal && resolvedCount === loadKeys.length,
+    })
   })
 
   onDestroy(() => {
@@ -194,6 +237,7 @@
               class="w-full"
               minHeight={1}
               resizeMinHeight={1}
+              onLoad={() => markInitialWidgetLoaded(widgetLoadKey)}
               onResizeRequest={request => resolveInitialWidgetHeight(widgetLoadKey, request)} />
           </div>
           {#if !initialHeightResolved}

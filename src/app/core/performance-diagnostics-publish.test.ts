@@ -51,6 +51,8 @@ describe("performance diagnostics publication", () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("PUT")
       expect(init?.body).toBe(artifact.bytes)
+      expect(new Headers(init?.headers).get("x-sha-256")).toBe(artifact.sha256)
+      expect(new Headers(init?.headers).get("authorization")).toBe("Nostr signed-upload")
       return new Response(
         JSON.stringify({url: "https://blossom.example/blob", sha256: "e".repeat(64)}),
         {status: 200},
@@ -58,7 +60,12 @@ describe("performance diagnostics publication", () => {
     })
 
     await expect(
-      uploadPerformanceDiagnosticsArtifact(artifact, "https://blossom.example/", fetcher),
+      uploadPerformanceDiagnosticsArtifact(
+        artifact,
+        "https://blossom.example/",
+        fetcher,
+        "Nostr signed-upload",
+      ),
     ).rejects.toThrow("hash mismatch")
   })
 
@@ -76,6 +83,16 @@ describe("performance diagnostics publication", () => {
     const account = {pubkey: "b".repeat(64)}
     const signer = {sign: vi.fn(async template => signedEvent(template, account.pubkey))}
     const publish = vi.fn(async () => 1)
+    const upload = vi.fn(
+      async (
+        _artifact: PreparedPerformanceDiagnosticsArtifact,
+        _server: string,
+        _authorization: string,
+      ) => ({
+        url: "https://blossom.example/blob",
+        sha256: artifact.sha256,
+      }),
+    )
     const stages: string[] = []
     const result = await publishPerformanceDiagnosticsArtifact({
       artifact,
@@ -84,19 +101,22 @@ describe("performance diagnostics publication", () => {
       onStage: stage => stages.push(stage),
       dependencies: {
         getIdentity: () => ({...account, signer}),
-        upload: async () => ({url: "https://blossom.example/blob", sha256: artifact.sha256}),
+        upload,
         publish,
       },
     })
 
-    expect(signer.sign).toHaveBeenCalledTimes(2)
+    expect(signer.sign).toHaveBeenCalledTimes(3)
+    expect(upload.mock.calls[0][2]).toMatch(/^Nostr /)
     expect(publish).toHaveBeenCalledTimes(2)
     expect(result.pubkey).toBe(account.pubkey)
     expect(signer.sign.mock.calls.map(call => call[0].tags?.[0])).toEqual([
+      ["t", "upload"],
       ["d", "budabit-performance-run:run-1"],
       ["d", PERFORMANCE_DIAGNOSTICS_LATEST_D_TAG],
     ])
     expect(stages).toEqual([
+      "signing-upload",
       "uploading",
       "signing-run",
       "publishing-run",

@@ -27,6 +27,7 @@
     minHeight?: number
     resizeMinHeight?: number
     onResizeRequest?: (request: WidgetResizeRequest) => void
+    onLoad?: () => void
     communityRuntimeContextProvider?: () => CommunityWidgetRuntimeContext | undefined
   }
 
@@ -38,6 +39,7 @@
     minHeight = 280,
     resizeMinHeight = minHeight,
     onResizeRequest,
+    onLoad,
     communityRuntimeContextProvider,
   }: Props = $props()
 
@@ -469,6 +471,7 @@
     clearLoadWatchdog()
     clearContextPostTimer()
     loaded = true
+    onLoad?.()
     loadFailed = false
     autoRetryCount = 0
     requestedHeight = undefined

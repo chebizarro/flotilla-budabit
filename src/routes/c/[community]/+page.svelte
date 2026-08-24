@@ -83,7 +83,10 @@
     isCompleteCommunityModeratorEvidence,
     type CommunityModeratorEvidenceStatus,
   } from "@app/extensions/community-home-readiness"
-  import {emptyCommunityHomeWidgetRecoveryState} from "@app/extensions/community-home-widget-recovery"
+  import {
+    emptyCommunityHomeWidgetRecoveryState,
+    type CommunityHomeWidgetSlotInitialState,
+  } from "@app/extensions/community-home-widget-recovery"
   import {notifications} from "@app/util/notifications"
   import {hasGitNotification} from "@app/util/repo-watch-notifications"
   import {pushModal} from "@app/util/modal"
@@ -98,6 +101,14 @@
 
   const communityPointer = $derived($activeExactCommunityPointer)
   const homeWidgetRecovery = writable(emptyCommunityHomeWidgetRecoveryState())
+  let widgetSlotInitialStates = $state<Record<string, CommunityHomeWidgetSlotInitialState>>({})
+  const setWidgetSlotInitialState = (state: CommunityHomeWidgetSlotInitialState) => {
+    widgetSlotInitialStates[state.slotType] = state
+  }
+  $effect(() => {
+    void communityPointer?.address
+    widgetSlotInitialStates = {}
+  })
   const routeCommunityDefinition = $derived(
     $activeExactCommunityDefinition?.pointer.address === communityPointer?.address
       ? $activeExactCommunityDefinition
@@ -341,6 +352,26 @@
           roomRootsFirstAttemptTerminal)),
     ),
   )
+  const widgetCatalogInitialTerminal = $derived(
+    $homeWidgetRecovery.curatedFirstAttemptTerminal &&
+      $homeWidgetRecovery.sharedConfigFirstAttemptTerminal,
+  )
+  const widgetSlotStates = $derived([
+    widgetSlotInitialStates["community-home-before-quicklinks"],
+    widgetSlotInitialStates["community-home-after-quicklinks"],
+  ])
+  const widgetInitialFrameCount = $derived(
+    widgetSlotStates.reduce((total, state) => total + (state?.frameCount || 0), 0),
+  )
+  const widgetInitialLoadedCount = $derived(
+    widgetSlotStates.reduce((total, state) => total + (state?.loadedCount || 0), 0),
+  )
+  const widgetInitialResolvedCount = $derived(
+    widgetSlotStates.reduce((total, state) => total + (state?.resolvedCount || 0), 0),
+  )
+  const widgetInitialTerminal = $derived(
+    widgetCatalogInitialTerminal && widgetSlotStates.every(state => Boolean(state?.terminal)),
+  )
   $effect(() => {
     const communityAddress = communityPointer?.address || ""
     if (!communityAddress) return
@@ -411,6 +442,7 @@
     ),
   )
   let performanceRunId = ""
+  let performanceSettlementScheduledRunId = ""
   const performanceMilestones = new Set<string>()
   const markPerformanceMilestone = (name: string, detail?: unknown) => {
     const active = $activePerformanceDiagnosticsRun
@@ -418,10 +450,34 @@
     if (active.id !== performanceRunId) {
       performanceRunId = active.id
       performanceMilestones.clear()
+      performanceSettlementScheduledRunId = ""
     }
     if (performanceMilestones.has(name)) return
     performanceMilestones.add(name)
     markPerformanceDiagnosticsMilestone(active.id, name, detail)
+  }
+  const schedulePerformanceSettlement = (runId: string) => {
+    if (performanceSettlementScheduledRunId === runId) return
+    performanceSettlementScheduledRunId = runId
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const active = $activePerformanceDiagnosticsRun
+        if (!active || active.id !== runId || !widgetInitialTerminal) {
+          if (performanceSettlementScheduledRunId === runId) {
+            performanceSettlementScheduledRunId = ""
+          }
+          return
+        }
+        markPerformanceMilestone("home-initial-painted")
+        markPerformanceMilestone("settled", {
+          rooms: rooms.length,
+          widgetFrames: widgetInitialFrameCount,
+          widgetFramesLoaded: widgetInitialLoadedCount,
+          widgetFramesResolved: widgetInitialResolvedCount,
+        })
+        completeAutomaticPerformanceDiagnosticsCapture(runId)
+      })
+    })
   }
   $effect(() => {
     const active = $activePerformanceDiagnosticsRun
@@ -438,7 +494,11 @@
       roomRootsComplete,
       roomRootsIncomplete,
       rooms: rooms.length,
-      widgets: $homeWidgetRecovery.curatedWidgets.length,
+      curatedWidgetCandidates: $homeWidgetRecovery.curatedWidgets.length,
+      widgetCatalogInitialTerminal,
+      widgetInitialFrameCount,
+      widgetInitialLoadedCount,
+      widgetInitialResolvedCount,
     })
     if (communityDefinitionReady) markPerformanceMilestone("definition-ready")
     if (communityAuthorityReady) markPerformanceMilestone("authority-ready")
@@ -451,18 +511,46 @@
         count: rooms.length,
       })
     }
-    if (communityHomeExtensionsReady) markPerformanceMilestone("extensions-ready")
+    if (communityHomeExtensionsReady) markPerformanceMilestone("home-core-ready")
+    if ($homeWidgetRecovery.curatedFirstAttemptTerminal) {
+      markPerformanceMilestone("widget-curation-first-terminal", {
+        complete: $homeWidgetRecovery.curatedFirstAttemptComplete,
+        candidates: $homeWidgetRecovery.curatedWidgets.length,
+      })
+    }
+    if ($homeWidgetRecovery.sharedConfigFirstAttemptTerminal) {
+      markPerformanceMilestone("widget-shared-config-first-terminal", {
+        complete: $homeWidgetRecovery.sharedConfigFirstAttemptComplete,
+        events: $homeWidgetRecovery.sharedConfigEvents.length,
+      })
+    }
+    if (widgetCatalogInitialTerminal) {
+      markPerformanceMilestone("widget-catalog-initial-terminal", {
+        curatedCandidates: $homeWidgetRecovery.curatedWidgets.length,
+        sharedConfigEvents: $homeWidgetRecovery.sharedConfigEvents.length,
+      })
+    }
     if ($homeWidgetRecovery.curatedWidgets.length > 0) {
-      markPerformanceMilestone("widgets-present", {
+      markPerformanceMilestone("widget-candidates-present", {
         count: $homeWidgetRecovery.curatedWidgets.length,
       })
     }
-    if (communityHomeExtensionsReady && (rooms.length > 0 || roomRootsFirstAttemptTerminal)) {
-      markPerformanceMilestone("settled", {
-        rooms: rooms.length,
-        widgets: $homeWidgetRecovery.curatedWidgets.length,
+    if (widgetInitialFrameCount > 0) {
+      markPerformanceMilestone("widget-frames-selected", {count: widgetInitialFrameCount})
+    }
+    if (widgetInitialLoadedCount > 0) {
+      markPerformanceMilestone("widget-first-frame-loaded", {count: widgetInitialLoadedCount})
+    }
+    if (widgetInitialFrameCount > 0 && widgetInitialLoadedCount === widgetInitialFrameCount) {
+      markPerformanceMilestone("widget-all-frames-loaded", {count: widgetInitialLoadedCount})
+    }
+    if (widgetInitialTerminal) {
+      markPerformanceMilestone("widget-initial-layout-terminal", {
+        frames: widgetInitialFrameCount,
+        loaded: widgetInitialLoadedCount,
+        resolved: widgetInitialResolvedCount,
       })
-      completeAutomaticPerformanceDiagnosticsCapture(active.id)
+      schedulePerformanceSettlement(active.id)
     }
   })
 
@@ -800,6 +888,7 @@
   data-perf-community={communityPointer?.address || ""}
   data-perf-core-ready={communityHomeCoreReady ? "true" : "false"}
   data-perf-extensions-ready={communityHomeExtensionsReady ? "true" : "false"}
+  data-perf-widgets-terminal={widgetInitialTerminal ? "true" : "false"}
   data-perf-rooms={rooms.length}
   data-perf-widgets={$homeWidgetRecovery.curatedWidgets.length}>
   {#if communityPointer}
@@ -933,6 +1022,7 @@
         communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
         recovery={$homeWidgetRecovery}
+        onInitialState={setWidgetSlotInitialState}
         slotType="community-home-before-quicklinks" />
     {/key}
   {/if}
@@ -1056,6 +1146,7 @@
         communityAddress={communityPointer.address}
         relayHints={homeWidgetRelayHints}
         recovery={$homeWidgetRecovery}
+        onInitialState={setWidgetSlotInitialState}
         slotType="community-home-after-quicklinks" />
     {/key}
   {/if}

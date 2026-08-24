@@ -8,6 +8,7 @@
     armedPerformanceDiagnosticsCapture,
     clearPerformanceDiagnostics,
     disarmPerformanceDiagnosticsCapture,
+    getPerformanceDiagnosticsOverview,
     getPerformanceDiagnosticsSnapshot,
     performanceDiagnosticsRevision,
     preparePerformanceDiagnosticsArtifact,
@@ -23,11 +24,11 @@
   let preparing = $state(false)
   let publishStage = $state<PerformanceDiagnosticsPublishStage | "idle" | "failed">("idle")
   let preparedArtifact = $state<Awaited<ReturnType<typeof preparePerformanceDiagnosticsArtifact>>>()
-  const snapshot = $derived.by(() => {
+  const overview = $derived.by(() => {
     void $performanceDiagnosticsRevision
-    return getPerformanceDiagnosticsSnapshot()
+    return getPerformanceDiagnosticsOverview()
   })
-  const latest = $derived(snapshot.runs.at(-1))
+  const latest = $derived(overview.latest)
 
   onMount(() => {
     const armed = refreshArmedPerformanceDiagnosticsCapture()
@@ -80,7 +81,8 @@
     error = ""
     try {
       if (!latest) throw new Error("Complete a capture before downloading")
-      const artifact = await preparePerformanceDiagnosticsArtifact(snapshot, {runId: latest.id})
+      const current = getPerformanceDiagnosticsSnapshot()
+      const artifact = await preparePerformanceDiagnosticsArtifact(current, {runId: latest.id})
       const url = URL.createObjectURL(
         new Blob([artifact.bytes as BlobPart], {type: artifact.contentType}),
       )
@@ -132,7 +134,7 @@
     <h1 class="text-3xl font-bold">Performance Diagnostics</h1>
     <p class="max-w-2xl opacity-75">
       Arm one exact route before loading it. Capture starts during client bootstrap and stops when
-      the route settles, or fails after 30 seconds.
+      the route settles, or fails after 60 seconds.
     </p>
   </header>
 
@@ -232,7 +234,7 @@
         <Button class="btn btn-secondary btn-sm" disabled={!latest || preparing} onclick={publish}>
           {publishStage === "failed" ? "Retry publish" : "Upload & publish"}
         </Button>
-        <Button class="btn btn-ghost btn-sm" disabled={snapshot.runs.length === 0} onclick={clear}>
+        <Button class="btn btn-ghost btn-sm" disabled={overview.runCount === 0} onclick={clear}>
           Clear
         </Button>
       </div>

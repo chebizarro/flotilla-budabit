@@ -1,6 +1,7 @@
 import {pubkey, publishThunk, signer} from "@welshman/app"
 import type {TrustedEvent} from "@welshman/util"
 import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
+import {makeBudabitBlossomAuthEvent, makeBudabitBlossomAuthHeader} from "@app/util/blossom-auth"
 import {
   PERFORMANCE_DIAGNOSTICS_DEFAULT_BLOSSOM,
   PERFORMANCE_DIAGNOSTICS_DEFAULT_RELAY,
@@ -14,6 +15,7 @@ export const PERFORMANCE_DIAGNOSTICS_RUN_D_TAG_PREFIX = "budabit-performance-run
 
 export type PerformanceDiagnosticsPublishStage =
   | "preparing"
+  | "signing-upload"
   | "uploading"
   | "signing-run"
   | "publishing-run"
@@ -44,6 +46,7 @@ type PublishDependencies = {
   upload: (
     artifact: PreparedPerformanceDiagnosticsArtifact,
     server: string,
+    authorization: string,
   ) => Promise<{url: string; sha256: string; size?: number}>
   publish: (event: TrustedEvent, relays: string[]) => Promise<number>
 }
@@ -94,11 +97,16 @@ export const uploadPerformanceDiagnosticsArtifact = async (
   artifact: PreparedPerformanceDiagnosticsArtifact,
   server = PERFORMANCE_DIAGNOSTICS_DEFAULT_BLOSSOM,
   fetcher: typeof fetch = fetch,
+  authorization = "",
 ) => {
   const origin = server.replace(/\/+$/, "")
   const response = await fetcher(`${origin}/upload`, {
     method: "PUT",
-    headers: {"content-type": artifact.contentType},
+    headers: {
+      "content-type": artifact.contentType,
+      "x-sha-256": artifact.sha256,
+      ...(authorization ? {authorization} : {}),
+    },
     body: artifact.bytes as BodyInit,
   })
   if (!response.ok) throw new Error(`Blossom upload failed (${response.status})`)
@@ -129,7 +137,8 @@ const defaultDependencies: PublishDependencies = {
     pubkey: pubkey.get() || "",
     signer: signer.get() as unknown as Signer | undefined,
   }),
-  upload: uploadPerformanceDiagnosticsArtifact,
+  upload: (artifact, server, authorization) =>
+    uploadPerformanceDiagnosticsArtifact(artifact, server, fetch, authorization),
   publish: defaultPublish,
 }
 
@@ -160,8 +169,24 @@ export const publishPerformanceDiagnosticsArtifact = async ({
     }
   }
 
+  onStage?.("signing-upload")
+  const uploadAuthEvent = await initial.signer.sign(
+    makeBudabitBlossomAuthEvent({
+      action: "upload",
+      server: blossomServer,
+      hashes: [artifact.sha256],
+    }),
+  )
+  assertIdentity()
+  if (uploadAuthEvent.pubkey !== initial.pubkey)
+    throw new Error("Signer returned the wrong account")
+
   onStage?.("uploading")
-  const uploaded = await dependencies.upload(artifact, blossomServer)
+  const uploaded = await dependencies.upload(
+    artifact,
+    blossomServer,
+    makeBudabitBlossomAuthHeader(uploadAuthEvent),
+  )
   assertIdentity()
 
   const publishManifest = async (

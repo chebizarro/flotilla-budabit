@@ -234,7 +234,9 @@ const armDiagnosticCapture = async (page: Page, route: string) => {
 }
 
 const captureDiagnosticArtifact = async (page: Page, profile: string) => {
-  await page.locator('[data-perf="diagnostics-status"]').click()
+  const status = page.locator('[data-perf="diagnostics-status"]')
+  await expect(status).toHaveText("Perf: captured", {timeout: 65_000})
+  await status.click()
   await expect(page).toHaveURL(/\/settings\/performance$/)
   const panel = page.getByRole("region", {name: "Captured diagnostics"})
   await expect(panel.getByText("complete", {exact: true})).toBeVisible()

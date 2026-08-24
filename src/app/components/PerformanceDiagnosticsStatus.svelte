@@ -3,7 +3,7 @@
   import {PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
   import {
     activePerformanceDiagnosticsRun,
-    getPerformanceDiagnosticsSnapshot,
+    hasPerformanceDiagnosticsRun,
     performanceDiagnosticsRevision,
   } from "@app/core/performance-diagnostics"
 
@@ -12,7 +12,7 @@
   const activeHere = $derived($activePerformanceDiagnosticsRun?.route === route)
   const capturedHere = $derived.by(() => {
     void $performanceDiagnosticsRevision
-    return getPerformanceDiagnosticsSnapshot().runs.some(run => run.route === route)
+    return hasPerformanceDiagnosticsRun(route)
   })
 </script>
 

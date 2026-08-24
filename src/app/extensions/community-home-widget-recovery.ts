@@ -1,6 +1,7 @@
 import type {Writable} from "svelte/store"
 import type {CommunitySharedConfigDescriptorAuthority} from "./community-shared-config"
 import type {SmartWidgetEvent} from "./types"
+import type {WidgetHomeSlotType} from "./types"
 
 export type CommunityHomeWidgetRecoveryState = {
   communityAddress: string
@@ -8,6 +9,18 @@ export type CommunityHomeWidgetRecoveryState = {
   sharedConfigEvents: any[]
   authorizedPubkeys: Set<string>
   descriptorAuthorities: CommunitySharedConfigDescriptorAuthority[]
+  curatedFirstAttemptTerminal: boolean
+  curatedFirstAttemptComplete: boolean
+  sharedConfigFirstAttemptTerminal: boolean
+  sharedConfigFirstAttemptComplete: boolean
+}
+
+export type CommunityHomeWidgetSlotInitialState = {
+  slotType: WidgetHomeSlotType
+  frameCount: number
+  loadedCount: number
+  resolvedCount: number
+  terminal: boolean
 }
 
 export type CommunityHomeWidgetRecoveryStore = Writable<CommunityHomeWidgetRecoveryState>
@@ -18,4 +31,8 @@ export const emptyCommunityHomeWidgetRecoveryState = (): CommunityHomeWidgetReco
   sharedConfigEvents: [],
   authorizedPubkeys: new Set(),
   descriptorAuthorities: [],
+  curatedFirstAttemptTerminal: false,
+  curatedFirstAttemptComplete: false,
+  sharedConfigFirstAttemptTerminal: false,
+  sharedConfigFirstAttemptComplete: false,
 })

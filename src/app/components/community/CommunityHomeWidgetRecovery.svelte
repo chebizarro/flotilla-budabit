@@ -120,6 +120,8 @@
   let curatedBaseKey = ""
   let curatedLoadKey = ""
   let curatedRequestId = 0
+  let curatedFirstAttemptTerminal = $state(false)
+  let curatedFirstAttemptComplete = $state(false)
   let lastEvidenceKey = ""
   let lastReadinessKey = ""
   let forceNextLoad = false
@@ -128,6 +130,9 @@
   let curationRetryDelay = 1_000
   let sharedConfigLoadKey = ""
   let sharedConfigRequestId = 0
+  let sharedConfigBaseKey = ""
+  let sharedConfigFirstAttemptTerminal = $state(false)
+  let sharedConfigFirstAttemptComplete = $state(false)
   let sharedConfigRetryTimer: ReturnType<typeof setTimeout> | undefined
   let sharedConfigRetryDelay = 1_000
   const FORCED_REFRESH_DEBOUNCE_MS = 1_000
@@ -208,7 +213,15 @@
       loadedSharedConfigEvents = []
       sharedConfigLoadKey = ""
       sharedConfigRequestId += 1
+      sharedConfigBaseKey = ""
+      sharedConfigFirstAttemptTerminal = false
+      sharedConfigFirstAttemptComplete = false
       return
+    }
+    if (key !== sharedConfigBaseKey) {
+      sharedConfigBaseKey = key
+      sharedConfigFirstAttemptTerminal = false
+      sharedConfigFirstAttemptComplete = false
     }
     if (key === sharedConfigLoadKey) return
 
@@ -229,6 +242,8 @@
       .then(result => {
         if (requestId !== sharedConfigRequestId || key !== sharedConfigLoadKey) return
         loadedSharedConfigEvents = result.events
+        sharedConfigFirstAttemptTerminal = true
+        sharedConfigFirstAttemptComplete = result.complete
         if (shouldRetryCommunitySharedConfigRecovery(result)) scheduleSharedConfigRetry()
         else {
           clearSharedConfigRetry()
@@ -238,6 +253,8 @@
       .catch(error => {
         if (requestId !== sharedConfigRequestId || key !== sharedConfigLoadKey) return
         loadedSharedConfigEvents = []
+        sharedConfigFirstAttemptTerminal = true
+        sharedConfigFirstAttemptComplete = false
         scheduleSharedConfigRetry()
         console.warn("[community-home-widgets] Failed to load shared config hints", error)
       })
@@ -260,6 +277,8 @@
       lastReadinessKey = ""
       curatedLoadKey = ""
       curatedRequestId += 1
+      curatedFirstAttemptTerminal = false
+      curatedFirstAttemptComplete = false
       return
     }
 
@@ -271,6 +290,8 @@
         ? []
         : getLastValidatedCommunityCuratedWidgets(input, $pubkey || "", evidence.key)
       curatedBaseKey = baseKey
+      curatedFirstAttemptTerminal = false
+      curatedFirstAttemptComplete = false
       lastReadinessKey = ""
     }
     if (key === curatedLoadKey) return
@@ -294,6 +315,8 @@
       .then(result => {
         if (requestId !== curatedRequestId || key !== curatedLoadKey) return
         const nextWidgets = result?.status === "community" ? result.widgets : []
+        curatedFirstAttemptTerminal = true
+        curatedFirstAttemptComplete = result?.complete ?? true
         if (
           !shouldPreserveCuratedWidgetView(
             curatedWidgets,
@@ -312,6 +335,8 @@
       .catch(error => {
         if (requestId !== curatedRequestId || key !== curatedLoadKey) return
         curatedLoadKey = ""
+        curatedFirstAttemptTerminal = true
+        curatedFirstAttemptComplete = false
         scheduleCurationRetry()
         console.warn("[community-home-widgets] Failed to load widgets", error)
       })
@@ -324,6 +349,10 @@
       sharedConfigEvents: ready ? sharedConfigEvents : [],
       authorizedPubkeys: ready ? sharedConfigAuthority.authorizedPubkeys : new Set(),
       descriptorAuthorities: ready ? sharedConfigAuthority.descriptorAuthorities : [],
+      curatedFirstAttemptTerminal: ready && curatedFirstAttemptTerminal,
+      curatedFirstAttemptComplete: ready && curatedFirstAttemptComplete,
+      sharedConfigFirstAttemptTerminal: ready && sharedConfigFirstAttemptTerminal,
+      sharedConfigFirstAttemptComplete: ready && sharedConfigFirstAttemptComplete,
     })
   })
 
