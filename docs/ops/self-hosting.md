@@ -231,6 +231,16 @@ pnpm run build-in-production
 ./scripts/deploy-static-lftp.sh
 ```
 
+For the main Budabit deployment, the one-command wrapper builds with
+`https://budabit.club`, disables performance diagnostics, and runs the same
+ordered publisher using `.deploy.local.env`:
+
+```sh
+pnpm run deploy:main
+```
+
+Set `BUDABIT_MAIN_DEPLOY_CONFIG` to use a different local deployment config.
+
 The wrapper runs six ordered phases:
 
 1. Upload new `/_app/immutable/*` files without deleting old immutable files.

@@ -6,6 +6,7 @@
     "dev": "vite dev",
     "dev:app": "vite dev",
     "dev:full": "node dev-full.mjs",
+    "deploy:main": "./scripts/deploy-main.sh",
     "deploy:test": "./scripts/deploy-test.sh",
     "screenshots:landing": "node scripts/capture-landing-screenshots.mjs",
     "build": "./build.sh",
