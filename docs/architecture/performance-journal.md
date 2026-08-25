@@ -1841,6 +1841,62 @@ net tests including 42 repository tests, `pnpm check`, `pnpm e2e:check`,
 affected-file ESLint, `git diff --check`, and the production desktop/mobile-4x
 matrix.
 
+Physical validation recorded 2026-08-25 for deployed build
+`25a9d21fd-20260825155653` retrieved four complete, signed, hash/size-verified
+captures. Both mobile captures completed after the previous build had twice
+become permanently stuck in `recording`. Mobile `/git` painted foreground at
+1.83 s, recorded 12.19 s of long tasks, and had a 2.29 s largest task. Mobile
+Community reached core readiness at 1.72 s, settled at 41.20 s, recorded 25.35 s
+of long tasks, and had a 1.59 s largest task. Directionally against the previous
+physical mobile captures, Community long-task time fell about 32% and its
+largest task fell about 69%; `/git` total long-task time was nearly unchanged
+while its largest task fell about 16%. Useful foreground milestones were about
+27% slower. The user's independent observation of visibly lower mobile lag is
+consistent with the much smaller worst Community task, but is supporting
+observation rather than a measured interaction result.
+
+The bounded ingress was active: many relay repository updates contained exactly
+16 events. Mobile `/git` recorded 20 singleton subscriber updates rather than 59
+individual kind `5` updates; Community recorded 37 rather than the previous 168
+kind `5` updates followed by 52 kind `30617` updates. Scheduler queues and oldest
+queue age remained zero, queue-start delay reached at most 1 ms, and no notices
+were recorded. Neither mobile capture contains the direct three-dot-menu probe.
+The initial persisted-state update remained atomic at 296-297 events and took
+about 554-578 ms of subscriber time. This update is not relay ingress and is not
+subject to the 16-event relay ceiling.
+
+`repository-singleton/subscriber-update` measures the synchronous
+`emit("update", update)` fan-out of the process-wide authoritative repository,
+not primarily event insertion or index maintenance. The singleton provides one
+deduplicated view with replacement, deletion, expiration, and query indexes for
+relay, IndexedDB, and optimistic events. Every active listener on the single
+`update` channel is invoked for every update. Active Welshman Svelte repository
+stores then perform their own filter matching and normally call downstream
+`set` only when dirty, so unconditional callback delivery does not imply that
+every downstream component rerenders. Readable stores also install listeners
+only while subscribed. Direct persistence/cache listeners may independently
+batch their eventual side effects.
+
+This remains a broadcast architecture with consumer-side filtering. The latest
+mobile runs observed about 16-41 active listeners, and even one-event singleton
+updates frequently took 170-257 ms while 16-event updates often took 170-275 ms.
+The similar cost indicates a substantial fixed fan-out or reactive propagation
+cost rather than event iteration alone. Batching reduced the number of complete
+fan-outs and prevented an unlimited relay task, but it cannot interrupt one
+synchronous listener chain, avoid waking irrelevant active listeners, or bound
+an update by elapsed time. Events outside the collection window still cause a
+new fan-out, and atomic cache load remains a separate large update.
+
+The next diagnostic must attribute elapsed time to identified repository
+listeners. Aggregate subscriber duration cannot distinguish broad architectural
+overhead across 40 moderately expensive listeners from one dirty store causing
+most of a 250 ms update. That distinction determines whether the next fix should
+optimize a small number of derived stores, deduplicate equivalent queries, or
+introduce repository-level coarse filtered subscriptions backed by existing
+kind/author/id/tag indexes. Repository-level routing would still need final
+`matchFilters` verification because Nostr filters contain intersections and
+broad conditions.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.
