@@ -1932,6 +1932,49 @@ matrix mobile Community span successfully attributed 12.8 ms of a 22.3 ms
 aggregate update to one kind `32222` `derive-events-by-id` instance, confirming
 that listener identity and filter metadata survive artifact serialization.
 
+Physical attribution recorded 2026-08-25 for deployed build
+`03d54f4c7-20260825171430`. Status: `Validated diagnosis; fix implemented,
+physical validation pending`.
+The relay exposed two new immutable run manifests, one mobile Community run and
+one mobile `/git` run, rather than four manifests. Both available events had
+valid signatures and both exact signed Blossom URLs passed SHA-256, compressed
+byte-length, gzip-integrity, and decoded-schema validation. The standard
+hash-only Blossom download continued to return 404. No desktop artifact was
+available for this round.
+
+Per-listener attribution made the sustained repository cost conclusive rather
+than broad. In Community, one `derive-events-by-id` subscription for the
+signed-in author's kind `30000` profile lists and kind `5` deletes consumed
+6.34 s across 40 updates, with a 231.2 ms maximum. This was 84.9% of the 7.48 s
+of measured repository-listener time. In `/git`, the equivalent subscription
+consumed 4.33 s across 16 updates, with a 288.7 ms maximum, or 91.8% of the
+4.72 s measured total. Every listener was attributed; aggregate unattributed
+time was only 3.2 ms on Community and 0.9 ms on `/git`. The next-ranked source
+queries were hundreds rather than thousands of milliseconds cumulatively.
+
+The expensive store was `communityModeratorProfileListEvents`. Its broad kind
+`5` branch made every unrelated deletion by the signed-in author mark the store
+dirty and synchronously propagate through the Community preference graph. The
+repository already applies Nostr deletion semantics and reports a deleted
+profile-list event ID through the update's `removed` set, including address
+deletes and deletes received before their target. The reactive store therefore
+does not need to retain deletion events. The targeted follow-up removes only
+that redundant kind `5` filter while preserving profile-list removal updates.
+Physical validation of this reduction is pending.
+
+The mobile Community run reached core readiness at 1.84 s and settled at
+39.36 s. It recorded 23.41 s of long tasks with a 2.75 s maximum. The captured
+three-dot interaction confirms that drawer construction is not the primary
+latency: the `community-menu` handler took 0.7 ms, and pointer-down to its next
+observed paint took 112.1 ms. Browser Event Timing recorded 227.1 ms of input
+delay before pointer-down dispatch while background long tasks were active. The
+menu delay is therefore main-thread availability before dispatch, not expensive
+drawer state creation. The mobile `/git` run reached foreground paint at 1.87 s,
+recorded 10.77 s of long tasks with a 2.53 s maximum, and expired its 10-second
+background tail while Community repository announcements remained unsettled.
+The attempted `/git` drawer capture froze and produced no artifact, so it is
+useful lifecycle evidence but does not provide a timing record.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.

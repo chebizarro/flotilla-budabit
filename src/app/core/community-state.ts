@@ -1555,10 +1555,7 @@ export const communityModeratorProfileListEvents: Readable<TrustedEvent[]> = der
     return deriveEventsAsc(
       deriveEventsById({
         repository,
-        filters: [
-          filter,
-          {kinds: [DELETE], authors: [$pubkey!], limit: COMMUNITY_PREFERENCE_LIMIT},
-        ],
+        filters: [filter],
       }),
     ).subscribe(set)
   },
