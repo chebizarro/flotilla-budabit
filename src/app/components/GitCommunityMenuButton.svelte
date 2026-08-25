@@ -1,24 +1,20 @@
 <script lang="ts">
   import CommunityMenu from "@app/components/CommunityMenu.svelte"
-  import {activeExactCommunitySession} from "@app/core/community-state"
+  import {activeExactCommunityPointer} from "@app/core/community-state"
   import {recordPerformanceDiagnosticsInteractionPaint} from "@app/core/performance-diagnostics"
   import {pushDrawer} from "@app/util/modal"
   import MenuDots from "@assets/icons/menu-dots.svg?dataurl"
   import Button from "@lib/components/Button.svelte"
   import Icon from "@lib/components/Icon.svelte"
 
-  const activeCommunityPubkey = $derived($activeExactCommunitySession?.definition.ownerPubkey || "")
+  const communityPointer = $derived($activeExactCommunityPointer)
   let inputStartedAt = 0
 
   const openCommunityMenu = () => {
-    if (!activeCommunityPubkey) return
+    if (!communityPointer) return
 
     const handlerStartedAt = performance.now()
-    const modalId = pushDrawer(
-      CommunityMenu,
-      {community: activeCommunityPubkey},
-      {replaceState: true},
-    )
+    const modalId = pushDrawer(CommunityMenu, {community: communityPointer}, {replaceState: true})
     const stateChangedAt = performance.now()
     if (modalId) {
       recordPerformanceDiagnosticsInteractionPaint({
@@ -32,7 +28,7 @@
   }
 </script>
 
-{#if activeCommunityPubkey}
+{#if communityPointer}
   <Button
     aria-label="Open community menu"
     onpointerdown={() => (inputStartedAt = performance.now())}

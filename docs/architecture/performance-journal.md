@@ -1975,6 +1975,56 @@ background tail while Community repository announcements remained unsettled.
 The attempted `/git` drawer capture froze and produced no artifact, so it is
 useful lifecycle evidence but does not provide a timing record.
 
+Follow-up physical evidence recorded 2026-08-25 for deployed build
+`51e5cd2bb-20260825184048`. Status: `Validated reduction; Git drawer defect
+identified; fixes implemented, physical validation pending`.
+
+Two immutable manifests were available and passed signature, exact signed-URL,
+SHA-256, compressed-size, gzip, and schema validation: mobile Community run
+`mt90pgnv-w6x3v96u` and desktop `/git` run `mt90kuef-0njl6vpb`. The standard
+Blossom hash download still returned 404. A screenshot separately proves that a
+desktop Community capture completed in 18.46 s and that its publication UI
+reported `complete`, but no corresponding immutable event is present on the
+manifest relay. The frozen mobile `/git` drawer attempt produced no artifact.
+
+The redundant kind `5` removal had the intended effect in the compatible mobile
+Community run. Measured repository-listener time fell from 7.48 s to 1.36 s,
+and the former dominant profile-list/delete subscription no longer exists. Long
+task time fell from 23.41 s to 20.69 s, the largest task fell from 2.75 s to
+561 ms, and settlement improved from 39.36 s to 28.34 s. Core readiness was
+1.65 s. The Community drawer handler took 0.6 ms; pointer-down to the next
+observed paint was 230.5 ms, including 136.6 ms before handler dispatch. The
+user reported that the drawer opened smoothly. Repository attribution now
+accounts for only a minority of the remaining Community long-task total.
+
+Desktop `/git` reached foreground paint at 1.26 s, recorded 653 ms across four
+long tasks with a 312 ms maximum, and measured only 409 ms of repository
+listener work. It still expired the 10-second background tail because Community
+repository announcements remained unsettled. It also recorded an unrelated
+NIP-46 publication timeout to three public relays. Scheduler queue depth reached
+five, oldest age 22 ms, and maximum start delay 99 ms.
+
+The mobile Git drawer failure was a deterministic prop-shape defect rather than
+evidence that drawer rendering itself is too expensive. `GitCommunityMenuButton`
+passed the active Community owner's pubkey string to `CommunityMenu`, while the
+component requires a complete `CommunityPointer` and immediately evaluates
+`community.naddr.slice(...)`. `pushModal` updates modal state and starts the hash
+navigation before `ModalContainer` mounts the child, explaining why the URL hash
+changed immediately and the drawer then failed to appear. The mount exception
+can leave the current client navigation/reactive cycle inconsistent; a full
+reload reconstructs it. The first post-refresh repository load followed by an
+instant second refresh is consistent with interrupted first-load work populating
+the cache, but no failed artifact exists to prove that secondary mechanism. The
+button now passes `activeExactCommunityPointer`, matching the Community route and
+desktop Git sidebar, with a mobile browser regression test.
+
+Diagnostics publication also overclaimed durability. `complete` previously
+meant that Blossom accepted the bytes and the relay returned a successful publish
+acknowledgement for both manifests. It did not read either event back. Because
+the screenshot's acknowledged desktop Community event is absent, publication
+now requires exact-event-ID relay readback before reporting completion. A relay
+acknowledgement without readback becomes a retryable failure.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.

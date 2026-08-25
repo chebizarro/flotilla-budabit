@@ -83,6 +83,7 @@ describe("performance diagnostics publication", () => {
     const account = {pubkey: "b".repeat(64)}
     const signer = {sign: vi.fn(async template => signedEvent(template, account.pubkey))}
     const publish = vi.fn(async (_event: TrustedEvent, _relays: string[]) => 1)
+    const verify = vi.fn(async (_event: TrustedEvent, _relays: string[]) => true)
     const upload = vi.fn(
       async (
         _artifact: PreparedPerformanceDiagnosticsArtifact,
@@ -103,12 +104,14 @@ describe("performance diagnostics publication", () => {
         getIdentity: () => ({...account, signer}),
         upload,
         publish,
+        verify,
       },
     })
 
     expect(signer.sign).toHaveBeenCalledTimes(3)
     expect(upload.mock.calls[0][2]).toMatch(/^Nostr /)
     expect(publish).toHaveBeenCalledTimes(2)
+    expect(verify).toHaveBeenCalledTimes(2)
     expect(publish.mock.calls.map(call => call[1])).toEqual([
       ["wss://relay.budabit.club"],
       ["wss://relay.budabit.club"],
@@ -124,8 +127,10 @@ describe("performance diagnostics publication", () => {
       "uploading",
       "signing-run",
       "publishing-run",
+      "verifying-run",
       "signing-latest",
       "publishing-latest",
+      "verifying-latest",
       "complete",
     ])
   })
@@ -143,6 +148,7 @@ describe("performance diagnostics publication", () => {
           getIdentity: () => ({pubkey, signer: undefined}),
           upload,
           publish: async () => 1,
+          verify: async () => true,
         },
       }),
     ).rejects.toThrow("No active signer")
@@ -159,6 +165,7 @@ describe("performance diagnostics publication", () => {
             return result
           },
           publish: async () => 1,
+          verify: async () => true,
         },
       }),
     ).rejects.toThrow("account changed")
@@ -166,8 +173,35 @@ describe("performance diagnostics publication", () => {
     await expect(
       publishPerformanceDiagnosticsArtifact({
         ...base,
-        dependencies: {getIdentity: () => ({pubkey, signer}), upload, publish: async () => 0},
+        dependencies: {
+          getIdentity: () => ({pubkey, signer}),
+          upload,
+          publish: async () => 0,
+          verify: async () => true,
+        },
       }),
     ).rejects.toThrow("not accepted")
+  })
+
+  it("rejects an acknowledged manifest that cannot be read back", async () => {
+    const pubkey = "b".repeat(64)
+    const signer = {sign: vi.fn(async template => signedEvent(template, pubkey))}
+
+    await expect(
+      publishPerformanceDiagnosticsArtifact({
+        artifact,
+        runId: "run-1",
+        routes: ["/git"],
+        dependencies: {
+          getIdentity: () => ({pubkey, signer}),
+          upload: async () => ({
+            url: "https://blossom.example/blob",
+            sha256: artifact.sha256,
+          }),
+          publish: async () => 1,
+          verify: async () => false,
+        },
+      }),
+    ).rejects.toThrow("acknowledged but not found")
   })
 })

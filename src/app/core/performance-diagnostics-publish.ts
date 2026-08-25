@@ -1,4 +1,5 @@
 import {pubkey, publishThunk, signer} from "@welshman/app"
+import {request} from "@welshman/net"
 import type {TrustedEvent} from "@welshman/util"
 import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 import {makeBudabitBlossomAuthEvent, makeBudabitBlossomAuthHeader} from "@app/util/blossom-auth"
@@ -19,8 +20,10 @@ export type PerformanceDiagnosticsPublishStage =
   | "uploading"
   | "signing-run"
   | "publishing-run"
+  | "verifying-run"
   | "signing-latest"
   | "publishing-latest"
+  | "verifying-latest"
   | "complete"
 
 export type PerformanceDiagnosticsManifestInput = {
@@ -49,6 +52,7 @@ type PublishDependencies = {
     authorization: string,
   ) => Promise<{url: string; sha256: string; size?: number}>
   publish: (event: TrustedEvent, relays: string[]) => Promise<number>
+  verify: (event: TrustedEvent, relays: string[]) => Promise<boolean>
 }
 
 export const buildPerformanceDiagnosticsManifest = ({
@@ -132,6 +136,16 @@ const defaultPublish = async (event: TrustedEvent, relays: string[]) => {
   return Object.values(thunk.results || {}).filter(result => result?.status === "success").length
 }
 
+const defaultVerify = async (event: TrustedEvent, relays: string[]) => {
+  const events = await request({
+    relays,
+    filters: [{ids: [event.id], limit: 1}],
+    autoClose: true,
+    signal: AbortSignal.timeout(5_000),
+  })
+  return events.some(candidate => candidate.id === event.id)
+}
+
 const defaultDependencies: PublishDependencies = {
   getIdentity: () => ({
     pubkey: pubkey.get() || "",
@@ -140,6 +154,7 @@ const defaultDependencies: PublishDependencies = {
   upload: (artifact, server, authorization) =>
     uploadPerformanceDiagnosticsArtifact(artifact, server, fetch, authorization),
   publish: defaultPublish,
+  verify: defaultVerify,
 }
 
 export const publishPerformanceDiagnosticsArtifact = async ({
@@ -193,6 +208,7 @@ export const publishPerformanceDiagnosticsArtifact = async ({
     dTag: string,
     signStage: PerformanceDiagnosticsPublishStage,
     publishStage: PerformanceDiagnosticsPublishStage,
+    verifyStage: PerformanceDiagnosticsPublishStage,
   ) => {
     onStage?.(signStage)
     const event = await initial.signer!.sign(
@@ -211,6 +227,11 @@ export const publishPerformanceDiagnosticsArtifact = async ({
     const accepted = await dependencies.publish(event, relays)
     assertIdentity()
     if (accepted < 1) throw new Error("Diagnostics manifest was not accepted by any relay")
+
+    onStage?.(verifyStage)
+    const verified = await dependencies.verify(event, relays)
+    assertIdentity()
+    if (!verified) throw new Error("Diagnostics manifest was acknowledged but not found on relay")
     return event
   }
 
@@ -218,11 +239,13 @@ export const publishPerformanceDiagnosticsArtifact = async ({
     `${PERFORMANCE_DIAGNOSTICS_RUN_D_TAG_PREFIX}${runId}`,
     "signing-run",
     "publishing-run",
+    "verifying-run",
   )
   const latestEvent = await publishManifest(
     PERFORMANCE_DIAGNOSTICS_LATEST_D_TAG,
     "signing-latest",
     "publishing-latest",
+    "verifying-latest",
   )
   onStage?.("complete")
 
