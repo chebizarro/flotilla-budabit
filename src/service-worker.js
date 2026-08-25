@@ -42,7 +42,6 @@ const APP_SHELL_PATHS = Array.from(
   .sort()
 const APP_SHELL_PATH_SET = new Set(APP_SHELL_PATHS)
 const IMMUTABLE_PATH_PREFIX = toAppPath("/_app/immutable/")
-let activationRequested = false
 
 self.__SW_VERSION__ = version
 self.__SW_BUILD_CONTRACT__ = "budabit-build:" + import.meta.env.VITE_BUILD_ID
@@ -195,13 +194,6 @@ const cleanupOldAppCaches = async () => {
   )
 }
 
-const reloadWindowClients = async () => {
-  const clientList = await self.clients.matchAll({type: "window", includeUncontrolled: true})
-  for (const client of clientList) {
-    void client.navigate(client.url).catch(() => null)
-  }
-}
-
 const appShellMiss = pathname =>
   new Response(`App shell file is not available in the active cache: ${pathname}`, {
     status: 503,
@@ -239,7 +231,6 @@ self.addEventListener("message", event => {
   }
 
   if (data?.type === "SKIP_WAITING") {
-    activationRequested = true
     event.waitUntil(self.skipWaiting())
   }
 })
@@ -249,7 +240,6 @@ self.addEventListener("activate", event => {
     (async () => {
       await self.clients.claim()
       await notifyClients({type: "APP_CACHE_ACTIVATED", version})
-      if (activationRequested) await reloadWindowClients()
 
       try {
         await cleanupOldAppCaches()

@@ -12,7 +12,12 @@ const buildOutput = path.join(projectRoot, "build")
 const build = async buildId => {
   await execFileAsync("./build.sh", [], {
     cwd: projectRoot,
-    env: {...process.env, VITE_BUILD_HASH: buildId, VITE_BUILD_ID: buildId},
+    env: {
+      ...process.env,
+      VITE_BUILD_HASH: buildId,
+      VITE_BUILD_ID: buildId,
+      VITE_PERFORMANCE_DIAGNOSTICS: "1",
+    },
     maxBuffer: 20 * 1024 * 1024,
   })
 

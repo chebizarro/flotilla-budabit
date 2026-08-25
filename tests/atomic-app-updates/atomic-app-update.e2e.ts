@@ -26,6 +26,13 @@ const updateRegistration = (page: Page) =>
     await registration.update()
   })
 
+const navigateFromGitToPerformanceSettings = async (page: Page) => {
+  await page.goto("/git")
+  await page.getByRole("button", {name: "Settings", exact: true}).click()
+  await page.getByRole("link", {name: /Performance Diagnostics/}).click()
+  await expect(page).toHaveURL(/\/settings\/performance$/)
+}
+
 test("moves every tab between complete app builds", async ({browser, request}) => {
   await request.post("/__atomic/reset")
   const context = await browser.newContext()
@@ -33,7 +40,7 @@ test("moves every tab between complete app builds", async ({browser, request}) =
   const pageErrors: string[] = []
   first.on("pageerror", error => pageErrors.push(error.message))
 
-  await first.goto("/settings/about")
+  await navigateFromGitToPerformanceSettings(first)
   await expect.poll(() => getBuildId(first)).toBe("atomic-a")
   await expect.poll(() => getCacheNames(first)).toContain("budabit-app-atomic-a")
   await expect
@@ -81,7 +88,7 @@ test("moves every tab between complete app builds", async ({browser, request}) =
 
   const second = await context.newPage()
   second.on("pageerror", error => pageErrors.push(error.message))
-  await second.goto("/settings/about")
+  await navigateFromGitToPerformanceSettings(second)
   await expect.poll(() => getBuildId(second)).toBe("atomic-a")
   await first.evaluate(async () => {
     const abandoned = await caches.open("budabit-app-atomic-c")
@@ -96,6 +103,8 @@ test("moves every tab between complete app builds", async ({browser, request}) =
       worker: {active: "activated", installing: "", waiting: "", controller: "activated"},
     })
   await expect.poll(() => getBuildId(second)).toBe("atomic-b")
+  await expect(first).toHaveURL(/\/settings\/performance(?:\?v=\d+)?$/)
+  await expect(second).toHaveURL(/\/settings\/performance(?:\?v=\d+)?$/)
   await expect
     .poll(() => getCacheNames(first))
     .toEqual(expect.arrayContaining(["budabit-app-atomic-a", "budabit-app-atomic-b"]))
