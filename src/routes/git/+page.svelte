@@ -3313,6 +3313,10 @@
   )
   let performanceRunId = ""
   const performanceMilestones = new Set<string>()
+  const PERFORMANCE_BACKGROUND_TAIL_MS = 10_000
+  let performanceForegroundKey = ""
+  let performancePaintGeneration = 0
+  let performanceBackgroundTimer: ReturnType<typeof setTimeout> | undefined
   const markPerformanceMilestone = (name: string, detail?: unknown) => {
     const active = $activePerformanceDiagnosticsRun
     if (!PERFORMANCE_DIAGNOSTICS_ENABLED || !active || active.route !== $page.url.pathname) return
@@ -3323,6 +3327,45 @@
     if (performanceMilestones.has(name)) return
     performanceMilestones.add(name)
     markPerformanceDiagnosticsMilestone(active.id, name, detail)
+  }
+  const getPerformanceBackgroundDetail = () => ({
+    mode: activeMode,
+    tab: activeTab,
+    hydrationReady: $repoListHydrationReadyStore,
+    personalRepoAnnouncementsSettled,
+    personalStarredReposLoading,
+    communityRepoAnnouncementsSettled,
+    communityTargetsSettled,
+    communityTargetDeletesSettled,
+    communityOriginalsSettled,
+    communityStarReposSettled,
+    cards: repoCardModelsForEnrichment.length,
+    scopeContext: repoCardsScopeContext,
+  })
+  const completePerformanceAfterBackgroundTail = (runId: string) => {
+    if (performanceBackgroundTimer) clearTimeout(performanceBackgroundTimer)
+    if (!activeRepoDataLoading) {
+      recordPerformanceDiagnostics(
+        runId,
+        "git-background-terminal",
+        getPerformanceBackgroundDetail(),
+      )
+      markPerformanceMilestone("background-data-terminal")
+      completeAutomaticPerformanceDiagnosticsCapture(runId)
+      return
+    }
+    recordPerformanceDiagnostics(runId, "git-background-pending", getPerformanceBackgroundDetail())
+    performanceBackgroundTimer = setTimeout(() => {
+      const active = $activePerformanceDiagnosticsRun
+      if (!active || active.id !== runId) return
+      recordPerformanceDiagnostics(
+        runId,
+        "git-background-tail-expired",
+        {tailMs: PERFORMANCE_BACKGROUND_TAIL_MS, ...getPerformanceBackgroundDetail()},
+        "warnings",
+      )
+      completeAutomaticPerformanceDiagnosticsCapture(runId)
+    }, PERFORMANCE_BACKGROUND_TAIL_MS)
   }
   $effect(() => {
     const active = $activePerformanceDiagnosticsRun
@@ -3348,14 +3391,61 @@
     if (hasRenderedRepoCardsForCurrentContext) {
       markPerformanceMilestone("cards-rendered", {count: repoCardModelsForEnrichment.length})
     }
-    if (!repoListLoading && !repoSearchUpdating && !activeRepoDataLoading) {
-      markPerformanceMilestone("loading-settled")
-      markPerformanceMilestone("settled", {
-        mode: activeMode,
-        tab: activeTab,
-        cards: repoCardModelsForEnrichment.length,
+    const hasPositiveResult =
+      hasRenderedRepoCardsForCurrentContext && !repoCardsComputing && !repoSearchUpdating
+    const hasAuthoritativeEmptyResult =
+      canShowRepoEmpty && !repoListLoading && !repoSearchUpdating && !activeRepoDataLoading
+    if (!hasPositiveResult && !hasAuthoritativeEmptyResult) return
+
+    const foregroundKey = JSON.stringify([
+      active.id,
+      activeMode,
+      activeTab,
+      repoCardsScopeContext,
+      repoCardsContext,
+      repoCardModelsForEnrichment.map(model => model.address),
+    ])
+    if (performanceForegroundKey === foregroundKey) return
+    performanceForegroundKey = foregroundKey
+    const generation = ++performancePaintGeneration
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const current = $activePerformanceDiagnosticsRun
+        if (!current || current.id !== active.id || generation !== performancePaintGeneration)
+          return
+        const currentKey = JSON.stringify([
+          current.id,
+          activeMode,
+          activeTab,
+          repoCardsScopeContext,
+          repoCardsContext,
+          repoCardModelsForEnrichment.map(model => model.address),
+        ])
+        if (currentKey !== foregroundKey) return
+        markPerformanceMilestone("foreground-painted", {
+          cards: repoCardModelsForEnrichment.length,
+          result: hasPositiveResult ? "cards" : "authoritative-empty",
+        })
+        if (hasPositiveResult) {
+          markPerformanceMilestone("cards-painted", {cards: repoCardModelsForEnrichment.length})
+        }
+        markPerformanceMilestone("loading-settled")
+        markPerformanceMilestone("settled", {
+          mode: activeMode,
+          tab: activeTab,
+          cards: repoCardModelsForEnrichment.length,
+          foreground: hasPositiveResult ? "stable-rendered-cards" : "authoritative-empty",
+          backgroundDataLoading: activeRepoDataLoading,
+        })
+        completePerformanceAfterBackgroundTail(active.id)
       })
-      completeAutomaticPerformanceDiagnosticsCapture(active.id)
+    })
+  })
+  $effect(() => {
+    const active = $activePerformanceDiagnosticsRun
+    if (!active || active.id !== performanceRunId || !performanceForegroundKey) return
+    if (!activeRepoDataLoading && performanceBackgroundTimer) {
+      completePerformanceAfterBackgroundTail(active.id)
     }
   })
 
@@ -3810,6 +3900,8 @@
   }
 
   onDestroy(() => {
+    performancePaintGeneration++
+    if (performanceBackgroundTimer) clearTimeout(performanceBackgroundTimer)
     stopGitPageReadWork()
     for (const transport of activeRepoPublishTransports) transport.dispose()
     activeRepoPublishTransports.clear()

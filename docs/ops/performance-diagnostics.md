@@ -22,6 +22,10 @@ Open **Settings → Performance Diagnostics**:
 
 The artifact schema is `budabit-performance-run-v1`. Captures include route milestones, bounded state samples, long tasks, resources, relay scheduler snapshots, warnings, build metadata, and browser environment data. Known secret fields and secret-shaped values are redacted before serialization.
 
+`/git` foreground settlement means a current positive card projection remained stable through two animation frames. Background repository acquisition is recorded separately until it becomes terminal or a bounded 10-second telemetry tail expires. Authoritative empty results still require background acquisition to become terminal.
+
+Best-effort browser telemetry also records final navigation timing, bounded Long Task attribution, and Event Timing interaction samples where the browser supports those APIs. Interaction samples contain timing metadata only; input values and element text are not captured.
+
 Community Home records core readiness, widget discovery, frame loading, and initial layout as separate milestones. Final settlement waits for the first widget catalog attempt and each selected frame's initial resize or 15-second layout deadline; later background recovery and manual retries do not keep the bounded capture open.
 
 Upload defaults:

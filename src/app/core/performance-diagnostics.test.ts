@@ -10,6 +10,9 @@ import {
   consumeArmedPerformanceDiagnosticsCapture,
   disarmPerformanceDiagnosticsCapture,
   finishPerformanceDiagnosticsRun,
+  getPerformanceInteractionTimingDetail,
+  getPerformanceLongTaskDetail,
+  getPerformanceNavigationTimingDetail,
   getPerformanceDiagnosticsSnapshot,
   markPerformanceDiagnosticsMilestone,
   preparePerformanceDiagnosticsArtifact,
@@ -150,6 +153,58 @@ describe("performance diagnostics", () => {
         filter: {kinds: [1, 30078], authors: ["a".repeat(64)]},
       },
     })
+  })
+
+  it("derives bounded navigation and interaction timing details", () => {
+    const navigation = getPerformanceNavigationTimingDetail({
+      name: "https://example.test/git",
+      type: "navigate",
+      nextHopProtocol: "h2",
+      workerStart: 2,
+      fetchStart: 4,
+      domainLookupStart: 5,
+      domainLookupEnd: 8,
+      connectStart: 8,
+      secureConnectionStart: 10,
+      connectEnd: 14,
+      requestStart: 15,
+      responseStart: 25,
+      responseEnd: 40,
+      domInteractive: 50,
+      domContentLoadedEventEnd: 60,
+      loadEventEnd: 70,
+      transferSize: 100,
+      encodedBodySize: 80,
+      decodedBodySize: 120,
+    } as PerformanceNavigationTiming)
+    expect(navigation).toMatchObject({dnsMs: 3, connectMs: 6, tlsMs: 4, ttfbMs: 10, responseMs: 15})
+
+    const interaction = getPerformanceInteractionTimingDetail({
+      name: "click",
+      startTime: 100,
+      duration: 80,
+      processingStart: 120,
+      processingEnd: 150,
+      interactionId: 7,
+      cancelable: true,
+    } as unknown as PerformanceEventTiming & {interactionId?: number})
+    expect(interaction).toMatchObject({inputDelayMs: 20, processingMs: 30, presentationDelayMs: 30})
+  })
+
+  it("retains bounded long-task attribution", () => {
+    const detail = getPerformanceLongTaskDetail({
+      name: "self",
+      startTime: 10,
+      duration: 200,
+      attribution: Array.from({length: 12}, (_, index) => ({
+        name: `task-${index}`,
+        containerType: "iframe",
+        containerSrc: `https://widgets.example/${index}`,
+      })),
+    } as unknown as PerformanceEntry)
+
+    expect(detail.attribution).toHaveLength(10)
+    expect(detail.attribution[0]).toMatchObject({name: "task-0", containerType: "iframe"})
   })
 
   it("serializes object keys deterministically", () => {

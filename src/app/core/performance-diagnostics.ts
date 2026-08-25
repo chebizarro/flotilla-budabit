@@ -528,6 +528,75 @@ export const completeAutomaticPerformanceDiagnosticsCapture = (runId: string) =>
   return stopPerformanceDiagnosticsCapture("complete")
 }
 
+const nonNegativeDuration = (end: number, start: number) =>
+  end > 0 && start > 0 ? Math.max(0, end - start) : 0
+
+export const getPerformanceNavigationTimingDetail = (navigation: PerformanceNavigationTiming) => ({
+  name: navigation.name,
+  type: navigation.type,
+  protocol: navigation.nextHopProtocol,
+  workerStart: navigation.workerStart,
+  fetchStart: navigation.fetchStart,
+  dnsMs: nonNegativeDuration(navigation.domainLookupEnd, navigation.domainLookupStart),
+  connectMs: nonNegativeDuration(navigation.connectEnd, navigation.connectStart),
+  tlsMs: nonNegativeDuration(navigation.connectEnd, navigation.secureConnectionStart),
+  requestStart: navigation.requestStart,
+  responseStart: navigation.responseStart,
+  responseEnd: navigation.responseEnd,
+  ttfbMs: nonNegativeDuration(navigation.responseStart, navigation.requestStart),
+  responseMs: nonNegativeDuration(navigation.responseEnd, navigation.responseStart),
+  domInteractive: navigation.domInteractive,
+  domContentLoaded: navigation.domContentLoadedEventEnd,
+  loadEventEnd: navigation.loadEventEnd,
+  transferSize: navigation.transferSize,
+  encodedBodySize: navigation.encodedBodySize,
+  decodedBodySize: navigation.decodedBodySize,
+})
+
+export const getPerformanceLongTaskDetail = (entry: PerformanceEntry) => {
+  const attributed = entry as PerformanceEntry & {
+    attribution?: Array<{
+      name?: string
+      startTime?: number
+      duration?: number
+      containerType?: string
+      containerName?: string
+      containerId?: string
+      containerSrc?: string
+    }>
+  }
+
+  return {
+    name: entry.name,
+    startTime: entry.startTime,
+    duration: entry.duration,
+    attribution: (attributed.attribution || []).slice(0, 10).map(item => ({
+      name: item.name || "",
+      startTime: item.startTime || 0,
+      duration: item.duration || 0,
+      containerType: item.containerType || "",
+      containerName: item.containerName || "",
+      containerId: item.containerId || "",
+      containerSrc: item.containerSrc || "",
+    })),
+  }
+}
+
+export const getPerformanceInteractionTimingDetail = (
+  entry: PerformanceEventTiming & {interactionId?: number},
+) => ({
+  name: entry.name,
+  startTime: entry.startTime,
+  duration: entry.duration,
+  processingStart: entry.processingStart,
+  processingEnd: entry.processingEnd,
+  inputDelayMs: nonNegativeDuration(entry.processingStart, entry.startTime),
+  processingMs: nonNegativeDuration(entry.processingEnd, entry.processingStart),
+  presentationDelayMs: Math.max(0, entry.duration - (entry.processingEnd - entry.startTime)),
+  interactionId: entry.interactionId || 0,
+  cancelable: entry.cancelable,
+})
+
 export const stopPerformanceDiagnosticsCapture = (
   status: Exclude<PerformanceDiagnosticRun["status"], "running"> = "complete",
 ) => {
@@ -556,7 +625,7 @@ export const startPerformanceDiagnosticsObservers = (
           recordPerformanceDiagnostics(
             runId,
             "long-task",
-            {name: entry.name, startTime: entry.startTime, duration: entry.duration},
+            getPerformanceLongTaskDetail(entry),
             "longTasks",
           )
         }
@@ -592,7 +661,49 @@ export const startPerformanceDiagnosticsObservers = (
     } catch {
       // Resource Timing observation is best effort.
     }
+
+    const recordedInteractions = new Set<string>()
+    const observeInteractions = (type: "event" | "first-input") => {
+      try {
+        const observer = new PerformanceObserver(list => {
+          for (const rawEntry of list.getEntries()) {
+            const entry = rawEntry as PerformanceEventTiming
+            const detail = getPerformanceInteractionTimingDetail(entry)
+            const key = `${detail.name}:${detail.startTime}:${detail.interactionId}`
+            if (recordedInteractions.has(key)) continue
+            recordedInteractions.add(key)
+            recordPerformanceDiagnostics(runId, "interaction-timing", detail)
+          }
+        })
+        observer.observe(
+          type === "event"
+            ? ({type, buffered: true, durationThreshold: 16} as PerformanceObserverInit)
+            : ({type, buffered: true} as PerformanceObserverInit),
+        )
+        observers.push(observer)
+      } catch {
+        // Event Timing is not available in every browser.
+      }
+    }
+    observeInteractions("event")
+    observeInteractions("first-input")
   }
+
+  const recordNavigationTiming = () => {
+    const navigation = performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined
+    if (navigation) {
+      recordPerformanceDiagnostics(
+        runId,
+        "navigation-timing",
+        getPerformanceNavigationTimingDetail(navigation),
+      )
+    }
+  }
+  const onLoad = () => recordNavigationTiming()
+  if (document.readyState === "complete") queueMicrotask(recordNavigationTiming)
+  else window.addEventListener("load", onLoad, {once: true})
 
   const schedulerInterval = window.setInterval(
     () => {
@@ -618,6 +729,7 @@ export const startPerformanceDiagnosticsObservers = (
     window.clearInterval(schedulerInterval)
     window.removeEventListener("error", onError)
     window.removeEventListener("unhandledrejection", onRejection)
+    window.removeEventListener("load", onLoad)
   }
 }
 

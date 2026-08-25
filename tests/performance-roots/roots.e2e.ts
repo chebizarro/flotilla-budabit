@@ -216,7 +216,7 @@ const measure = async (
 const armDiagnosticCapture = async (page: Page, route: string) => {
   await page.addInitScript(
     ({storageKey, route}) => {
-      const sessionKey = `${storageKey}:installed`
+      const sessionKey = `${storageKey}:installed:${route}`
       if (location.pathname !== route || sessionStorage.getItem(sessionKey)) return
       sessionStorage.setItem(sessionKey, "1")
       localStorage.setItem(
@@ -224,7 +224,7 @@ const armDiagnosticCapture = async (page: Page, route: string) => {
         JSON.stringify({
           version: 1,
           route,
-          preset: "community-home",
+          preset: route === "/git" ? "git-root" : "community-home",
           armedAt: Date.now(),
         }),
       )
@@ -233,7 +233,7 @@ const armDiagnosticCapture = async (page: Page, route: string) => {
   )
 }
 
-const captureDiagnosticArtifact = async (page: Page, profile: string) => {
+const captureDiagnosticArtifact = async (page: Page, profile: string, route: string) => {
   const status = page.locator('[data-perf="diagnostics-status"]')
   await expect(status).toHaveText("Perf: captured", {timeout: 65_000})
   await status.click()
@@ -250,19 +250,37 @@ const captureDiagnosticArtifact = async (page: Page, profile: string) => {
   const artifact = JSON.parse(decoded.toString("utf8")) as {
     schema?: string
     schemaVersion?: number
-    runs?: Array<{route?: string; milestones?: Array<{name?: string}>}>
+    runs?: Array<{
+      route?: string
+      preset?: string
+      milestones?: Array<{name?: string; elapsedMs?: number; detail?: Record<string, unknown>}>
+      records?: Array<{type?: string}>
+    }>
   }
 
   expect(artifact.schema).toBe("budabit-performance-run-v1")
   expect(artifact.schemaVersion).toBe(1)
-  expect(
-    artifact.runs?.some(
-      run => run.route?.startsWith("/c/") && run.milestones?.some(item => item.name === "settled"),
-    ),
-  ).toBe(true)
+  const run = artifact.runs?.find(candidate => candidate.route === route)
+  expect(run?.preset).toBe(route === "/git" ? "git-root" : "community-home")
+  expect(run?.milestones?.some(item => item.name === "settled")).toBe(true)
+  if (route === "/git") {
+    expect(run?.milestones?.some(item => item.name === "foreground-painted")).toBe(true)
+    const settled = run?.milestones?.find(item => item.name === "settled")
+    if (settled?.detail?.foreground === "stable-rendered-cards") {
+      expect(run?.milestones?.some(item => item.name === "cards-painted")).toBe(true)
+    }
+    expect(
+      run?.records?.some(item =>
+        ["git-background-terminal", "git-background-tail-expired"].includes(item.type || ""),
+      ),
+    ).toBe(true)
+  }
   const output = path.resolve("test-results/performance-roots")
   await mkdir(output, {recursive: true})
-  await writeFile(path.join(output, `${profile}-diagnostic.json.gz`), bytes)
+  await writeFile(
+    path.join(output, `${profile}-${route === "/git" ? "git" : "community"}-diagnostic.json.gz`),
+    bytes,
+  )
 }
 
 test("measures Community Home and git with cold data and warm atomic assets", async ({
@@ -322,9 +340,9 @@ test("measures Community Home and git with cold data and warm atomic assets", as
   const measurements: Measurement[] = []
 
   for (const route of routes) {
-    if (route !== "/git") await armDiagnosticCapture(page, route)
+    await armDiagnosticCapture(page, route)
     measurements.push(await measure(page, mockRelay, route, "cold-data"))
-    if (route !== "/git") await captureDiagnosticArtifact(page, testInfo.project.name)
+    await captureDiagnosticArtifact(page, testInfo.project.name, route)
   }
   await waitForCacheComplete(page)
   for (const route of routes)
