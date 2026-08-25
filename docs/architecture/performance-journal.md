@@ -1721,6 +1721,126 @@ retrieve these artifacts.
   aggregate persisted hydration validated for the observed pre-route stall,
   while sustained main-thread saturation remained.
 
+## Sustained Main-Thread Scheduling And Attribution
+
+Implementation recorded 2026-08-25 after `365de3905`. Status: `Locally validated;
+physical validation pending`.
+
+The physical `365de3905` captures showed that foreground paint improved while
+mobile background work still produced long periods of main-thread starvation.
+The follow-up implementation adds active-capture-only `work-span` records with
+owner, phase, input counts, synchronous duration, next-frame delay, and
+next-paint delay. Slow spans now cover persisted event merge, repository-cache
+indexing and hydration, notification and repo-watch ingress bursts, widget
+authority/deletion/original matching, widget parsing and recommendation
+context, slot selection, and recovery-store commits. Community and Git mobile
+menu buttons also record pointer-to-handler-to-painted-frame latency directly.
+
+Notification background activation is no longer released as one graph at the
+first idle callback. Budabit sources, repository watches, widget updates, and
+badge projection now enter separate idle windows with a two-second quiet period
+between stages. Pointer or keyboard input restarts that quiet period. Navigation
+shutdown cancels pending stages and queued notification/repository-watch event
+bursts.
+
+Community widget curation now:
+
+- preserves cached positive widgets while replacement evidence is incomplete;
+- physically aborts obsolete recovery generations;
+- yields between definition, authority, targeting/deletion, parsing, and
+  recommendation phases;
+- parses and publishes authorized positive candidates in bounded batches;
+- keeps final completeness and authoritative empty-state handling unchanged;
+- avoids constructing large widget debug projections while debug logging is
+  disabled.
+
+Local verification passed 96 focused application tests, 29 Welshman repository
+tests, `pnpm check`, `pnpm e2e:check`, affected-file ESLint,
+`git diff --check`, and the clean production `pnpm perf:roots`
+desktop/mobile-4x matrix. In that deterministic fixture, mobile-4x Community
+Home reached useful state at 1.59 s and settled at 1.97 s; mobile-4x `/git`
+reached useful state at 3.92 s and settled at 3.93 s. Those
+timings are informational and are not evidence that the physical-device menu
+lag is resolved. The next physical artifacts must compare `work-span` owners,
+frame/paint delay, direct menu interaction latency, long tasks, and scheduler
+tail lateness.
+
+### Physical Validation And Repository Fan-Out
+
+Validation recorded 2026-08-25 for build `365de3905-20260825124353`. Status:
+`Foreground improved; sustained pressure attributed and unresolved`.
+
+Four immutable desktop/mobile artifacts were retrieved from signed kind `30078`
+manifests and validated by event signature, SHA-256, byte length, gzip integrity,
+and decoded schema. Standard hash-only `nak blossom download` still returned 404
+for every artifact; the exact signed `.gz` URLs on the same configured Blossom
+origin returned the validated bytes.
+
+Compared with the compatible `365de3905-20260825113746` captures:
+
+| Profile | Route     | Foreground/core before | Foreground/core after | Long-task time before | Long-task time after | Largest after |
+| ------- | --------- | ---------------------: | --------------------: | --------------------: | -------------------: | ------------: |
+| desktop | `/git`    |                 376 ms |                363 ms |                8.07 s |               8.02 s |        668 ms |
+| desktop | Community |                 312 ms |                296 ms |                7.79 s |               7.69 s |        891 ms |
+| mobile  | `/git`    |                 2.01 s |                1.43 s |               17.96 s |              12.39 s |        2.73 s |
+| mobile  | Community |                 1.44 s |                1.35 s |               44.37 s |              37.16 s |        5.19 s |
+
+Community terminal paint improved from 25.65 s to 10.22 s on desktop and from
+52.44 s to 49.02 s on mobile. These are real reductions for the compatible
+captures, but mobile remains severely unresponsive after core paint.
+
+The new owner timing establishes that singleton repository subscriber fan-out
+dominates the sustained work. The mobile `/git` run recorded 59 individual kind
+`5` updates, generally taking about 263-271 ms each, plus a 564 ms persisted
+repository update. Mobile Community recorded 168 individual kind `5` updates,
+generally taking about 280-293 ms each, then 52 kind `30617` updates. Repository
+updates had 14-40 synchronous listeners. Their next-paint delay reached 5.90 s
+on `/git` and 7.56 s on Community. Span totals can overlap and must not be added
+as exclusive CPU time; the Long Tasks API remains the aggregate pressure
+measure.
+
+Desktop showed the same pattern at lower per-event cost: 197-236 individually
+published kind `5`/`30617` events consumed roughly 5.7 s of measured subscriber
+work after foreground paint. Both desktop runs reached the 500-record cap, so
+late diagnostic records are incomplete. None of the four runs contains a direct
+Community-menu interaction record, so pointer-to-painted-menu latency remains
+unmeasured. Active-capture recording also adds bounded observer overhead, but
+subscriber duration is measured before diagnostic recording and independently
+confirms the fan-out cost.
+
+Relay scheduler snapshots had zero queued subscriptions, zero oldest queue age,
+at most 1 ms queue-start delay, and no notices. No error/failure records were
+captured. Both Git runs ended with `git-background-tail-expired` because
+community repository announcements remained unsettled; Community runs had no
+warnings.
+
+The immediate follow-up admits relay events in delayed repository batches.
+Events arriving in the same relay burst produce final-state repository updates
+instead of one full listener pass per event. Merged deltas remove events deleted
+or superseded inside the same batch while preserving the repository's
+snapshot-then-subscribe contract.
+
+The first cold-launch capture attempt after deployment became unresponsive: the
+Community drawer did not paint reliably and neither the 10-second Git tail nor
+the 60-second diagnostics watchdog ran after several minutes. No artifact could
+be produced. A hard reload and retry completed normally, so stale
+service-worker/client state may have contributed, but the attempt also exposed
+that a delayed relay timer could accumulate an unbounded first batch. Since all
+capture watchdogs are main-thread timers, they cannot recover while one
+synchronous batch monopolizes that thread.
+
+The corrected implementation admits at most 16 relay events per slice and waits
+16 ms before each remaining slice. Synchronous and reentrant publications no
+longer drain the relay backlog, and repository update delivery is serialized so
+all listeners observe the same order. Deferred notification intent and shorter
+requested deadlines are retained. The automatic 60-second failure path now has
+an explicit regression test, although no JavaScript watchdog can fire during an
+uninterrupted main-thread task. Physical validation of the bounded version is
+pending. Local validation passed 97 focused application tests, all 139 Welshman
+net tests including 42 repository tests, `pnpm check`, `pnpm e2e:check`,
+affected-file ESLint, `git diff --check`, and the production desktop/mobile-4x
+matrix.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.

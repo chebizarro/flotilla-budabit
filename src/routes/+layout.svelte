@@ -49,12 +49,17 @@
   import {ExtensionProvider} from "@src/app/extensions"
   import {installBuiltinExtensions} from "@app/extensions/builtin"
   import {setupWidgetUpdateNotifications} from "@app/extensions/widget-update-notifications"
+  import {cancelQueuedNotificationEvents} from "@app/util/notification-events"
   import {
     scheduleNotificationBackgroundAdmission,
+    scheduleNotificationBackgroundStages,
     setNotificationBackgroundEnabled,
   } from "@app/util/notification-background"
   import {CASHU_WALLET_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
-  import {consumeArmedPerformanceDiagnosticsCapture} from "@app/core/performance-diagnostics"
+  import {
+    consumeArmedPerformanceDiagnosticsCapture,
+    measurePerformanceDiagnosticsWork,
+  } from "@app/core/performance-diagnostics"
   import {initializeCashuWallet} from "@app/core/cashu"
   import {registerCashuBridgeHandlers} from "@app/core/cashu-bridge"
   import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
@@ -168,6 +173,7 @@
   let notificationPreferenceLoadingSeenKey = ""
   let notificationStartupTimer: ReturnType<typeof setTimeout> | null = null
   let cancelNotificationAdmission: (() => void) | null = null
+  let cancelNotificationStages: (() => void) | null = null
   let notificationAdmissionKey = ""
   let notificationBackgroundStarted = false
   let notificationBackgroundUnsubscribers: Array<() => void> = []
@@ -249,13 +255,24 @@
     clearNotificationStartupTimer()
     clearNotificationAdmission()
     notificationBackgroundStarted = true
-    notificationBackgroundUnsubscribers = [
-      setupBudabitNotifications(),
-      setupRepoWatchNotifications(),
-      setupWidgetUpdateNotifications(),
-      badgeCount.subscribe(handleBadgeCountChanges),
-    ]
-    setNotificationBackgroundEnabled(true)
+    const startStage = (phase: string, setup: () => () => void) => () => {
+      if (!notificationBackgroundStarted) return
+      const unsubscribe = measurePerformanceDiagnosticsWork(
+        {owner: "notification-background", phase, recordAll: true},
+        setup,
+      )
+      notificationBackgroundUnsubscribers.push(unsubscribe)
+    }
+    cancelNotificationStages = scheduleNotificationBackgroundStages([
+      startStage("budabit-sources", () => {
+        const unsubscribe = setupBudabitNotifications()
+        setNotificationBackgroundEnabled(true)
+        return unsubscribe
+      }),
+      startStage("repo-watch", setupRepoWatchNotifications),
+      startStage("widget-updates", setupWidgetUpdateNotifications),
+      startStage("badge-projection", () => badgeCount.subscribe(handleBadgeCountChanges)),
+    ])
   }
 
   const scheduleNotificationBackground = (key: string) => {
@@ -272,7 +289,10 @@
   const stopNotificationBackground = () => {
     clearNotificationStartupTimer()
     clearNotificationAdmission()
+    cancelNotificationStages?.()
+    cancelNotificationStages = null
     setNotificationBackgroundEnabled(false)
+    cancelQueuedNotificationEvents()
     notificationBackgroundUnsubscribers.forEach(call)
     notificationBackgroundUnsubscribers = []
     notificationBackgroundStarted = false

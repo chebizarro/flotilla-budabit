@@ -4,6 +4,7 @@
   import {onDestroy} from "svelte"
   import WidgetFrame from "@app/components/WidgetFrame.svelte"
   import {normalizePubkey} from "@app/core/community"
+  import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
   import {
     activeCommunityAuthorityReadiness,
     activeCommunityProfileListEvents,
@@ -64,25 +65,43 @@
   const recoveryMatchesCommunity = $derived(recovery.communityAddress === communityAddress)
   const installedWidgets = $derived($effectiveExtensionSettings.installed?.widget || {})
   const enabledWidgetIds = $derived(new Set($effectiveExtensionSettings.enabled || []))
-  const slotWidgets = $derived.by(() =>
-    getEnabledCommunitySlotWidgets({
-      curatedWidgets: recoveryMatchesCommunity ? recovery.curatedWidgets : [],
-      installedWidgets,
-      enabledIds: enabledWidgetIds,
-      slotType,
-    }),
-  )
-  const sharedConfigSlotWidgets = $derived.by(() =>
-    getEnabledCommunitySlotWidgetsWithSharedConfig({
-      communityAddress,
-      sharedConfigEvents: recoveryMatchesCommunity ? recovery.sharedConfigEvents : [],
-      authorizedPubkeys: recoveryMatchesCommunity ? recovery.authorizedPubkeys : new Set(),
-      descriptorAuthorities: recoveryMatchesCommunity ? recovery.descriptorAuthorities : [],
-      installedWidgets,
-      enabledIds: enabledWidgetIds,
-      slotType,
-    }),
-  )
+  const slotWidgets = $derived.by(() => {
+    const curatedWidgets = recoveryMatchesCommunity ? recovery.curatedWidgets : []
+    return measurePerformanceDiagnosticsWork(
+      {
+        owner: "widget-slot",
+        phase: "curated-selection",
+        detail: {slotType, candidates: curatedWidgets.length},
+      },
+      () =>
+        getEnabledCommunitySlotWidgets({
+          curatedWidgets,
+          installedWidgets,
+          enabledIds: enabledWidgetIds,
+          slotType,
+        }),
+    )
+  })
+  const sharedConfigSlotWidgets = $derived.by(() => {
+    const sharedConfigEvents = recoveryMatchesCommunity ? recovery.sharedConfigEvents : []
+    return measurePerformanceDiagnosticsWork(
+      {
+        owner: "widget-slot",
+        phase: "shared-config-selection",
+        detail: {slotType, events: sharedConfigEvents.length},
+      },
+      () =>
+        getEnabledCommunitySlotWidgetsWithSharedConfig({
+          communityAddress,
+          sharedConfigEvents,
+          authorizedPubkeys: recoveryMatchesCommunity ? recovery.authorizedPubkeys : new Set(),
+          descriptorAuthorities: recoveryMatchesCommunity ? recovery.descriptorAuthorities : [],
+          installedWidgets,
+          enabledIds: enabledWidgetIds,
+          slotType,
+        }),
+    )
+  })
   const frameWidgets = $derived.by(() =>
     exactCommunity ? mergeCommunitySlotWidgets(slotWidgets, sharedConfigSlotWidgets) : [],
   )
@@ -119,8 +138,8 @@
     }
   })
 
-  let initiallyResolvedWidgetLoads = $state<Record<string, true>>({})
-  let initiallyLoadedWidgetLoads = $state<Record<string, true>>({})
+  const initiallyResolvedWidgetLoads = $state<Record<string, true>>({})
+  const initiallyLoadedWidgetLoads = $state<Record<string, true>>({})
   const initialWidgetResizeTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const INITIAL_WIDGET_RESIZE_TIMEOUT_MS = 15_000
 

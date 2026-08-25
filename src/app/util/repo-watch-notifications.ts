@@ -79,6 +79,7 @@ import {
   type RepoLiveOwnership,
 } from "@app/core/repo-live-ownership"
 import {notificationBackgroundEnabled} from "@app/util/notification-background"
+import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
 import {receiveRepositoryCacheEvent} from "@app/core/repo-cache"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 import {
@@ -896,6 +897,11 @@ const receiveRepoWatchEvent = (event: TrustedEvent, relay: string) => {
 
 const queuedRepoWatchEvents = new Map<string, {event: TrustedEvent; relays: Set<string>}>()
 let repoWatchEventFlushTimer: ReturnType<typeof setTimeout> | undefined
+const cancelQueuedRepoWatchEvents = () => {
+  if (repoWatchEventFlushTimer) clearTimeout(repoWatchEventFlushTimer)
+  repoWatchEventFlushTimer = undefined
+  queuedRepoWatchEvents.clear()
+}
 const queueRepoWatchEvent = (event: TrustedEvent, relay: string) => {
   const current = queuedRepoWatchEvents.get(event.id)
   const relays = current?.relays || new Set<string>()
@@ -906,12 +912,16 @@ const queueRepoWatchEvent = (event: TrustedEvent, relay: string) => {
     repoWatchEventFlushTimer = undefined
     const queued = Array.from(queuedRepoWatchEvents.values())
     queuedRepoWatchEvents.clear()
-    repository.batch(() => {
-      for (const item of queued) {
-        if (item.relays.size === 0) receiveRepoWatchEvent(item.event, "")
-        else for (const relay of item.relays) receiveRepoWatchEvent(item.event, relay)
-      }
-    })
+    measurePerformanceDiagnosticsWork(
+      {owner: "repo-watch", phase: "event-flush", detail: {events: queued.length}},
+      () =>
+        repository.batch(() => {
+          for (const item of queued) {
+            if (item.relays.size === 0) receiveRepoWatchEvent(item.event, "")
+            else for (const relay of item.relays) receiveRepoWatchEvent(item.event, relay)
+          }
+        }),
+    )
   }, 16)
 }
 
@@ -1304,18 +1314,6 @@ const notificationReposWithAnnouncements = derived(
       Boolean(repo.repoEvent),
     ),
 )
-
-const watchedRepoActivityRelays = derived(knownRepoAnnouncementEvents, $events => {
-  const repoRelays = $events.flatMap(event => {
-    try {
-      return parseRepoAnnouncementEvent(event as RepoAnnouncementEvent).relays || []
-    } catch {
-      return []
-    }
-  })
-
-  return normalizeRelays(repoRelays)
-})
 
 const watchedRepoCommunityRefs = derived(knownRepoAnnouncementEvents, $events => {
   const refs = new Map<string, string[]>()
@@ -1846,6 +1844,7 @@ export const setupRepoWatchNotifications = () => {
   })
 
   return () => {
+    cancelQueuedRepoWatchEvents()
     unsubscribe()
     setNotificationsConfig({})
   }

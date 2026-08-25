@@ -47,6 +47,9 @@ import {deriveMessagingRelayList, getMessagingRelayList} from "./messagingRelayL
 
 // Sync relays with our database
 
+const RELAY_REPOSITORY_NOTIFY_DELAY_MS = 16
+const RELAY_REPOSITORY_BATCH_SIZE = 16
+
 Pool.get().subscribe(socket => {
   loadRelay(socket.url)
   trackRelayStats(socket)
@@ -65,7 +68,11 @@ Pool.get().subscribe(socket => {
         if (event.kind === WRAP) {
           unwrapAndStore(event)
         } else {
-          repository.publish(event)
+          // Collapse relay bursts into bounded reactive repository updates.
+          repository.publish(event, {
+            deferMs: RELAY_REPOSITORY_NOTIFY_DELAY_MS,
+            maxBatchSize: RELAY_REPOSITORY_BATCH_SIZE,
+          })
         }
       }
     }

@@ -1,6 +1,7 @@
 import {now} from "@welshman/lib"
 import {Repository} from "@welshman/net"
 import {getAddress, isReplaceable, type TrustedEvent} from "@welshman/util"
+import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
 
 export const MAX_NOTIFICATION_EVENTS = 4_000
 export const MAX_NOTIFICATION_EVENT_AGE_SECONDS = 60 * 60 * 24 * 90
@@ -101,6 +102,11 @@ export const receiveNotificationEvent = (event: TrustedEvent, relay: string) =>
   notificationEvents.publish(event, relay)
 const queuedNotificationEvents = new Map<string, {event: TrustedEvent; relays: Set<string>}>()
 let notificationEventFlushTimer: ReturnType<typeof setTimeout> | undefined
+export const cancelQueuedNotificationEvents = () => {
+  if (notificationEventFlushTimer) clearTimeout(notificationEventFlushTimer)
+  notificationEventFlushTimer = undefined
+  queuedNotificationEvents.clear()
+}
 
 export const queueNotificationEvent = (event: TrustedEvent, relay: string) => {
   const current = queuedNotificationEvents.get(event.id)
@@ -112,12 +118,16 @@ export const queueNotificationEvent = (event: TrustedEvent, relay: string) => {
     notificationEventFlushTimer = undefined
     const queued = Array.from(queuedNotificationEvents.values())
     queuedNotificationEvents.clear()
-    notificationEventRepository.batch(() => {
-      for (const item of queued) {
-        if (item.relays.size === 0) notificationEvents.publish(item.event, "")
-        else for (const relay of item.relays) notificationEvents.publish(item.event, relay)
-      }
-    })
+    measurePerformanceDiagnosticsWork(
+      {owner: "notifications", phase: "event-flush", detail: {events: queued.length}},
+      () =>
+        notificationEventRepository.batch(() => {
+          for (const item of queued) {
+            if (item.relays.size === 0) notificationEvents.publish(item.event, "")
+            else for (const relay of item.relays) notificationEvents.publish(item.event, relay)
+          }
+        }),
+    )
   }, 16)
 }
 export const getNotificationEventRelays = (eventId: string) => notificationEvents.getRelays(eventId)

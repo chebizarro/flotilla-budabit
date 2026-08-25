@@ -15,7 +15,9 @@ import {
   getPerformanceNavigationTimingDetail,
   getPerformanceDiagnosticsSnapshot,
   markPerformanceDiagnosticsMilestone,
+  measurePerformanceDiagnosticsWork,
   preparePerformanceDiagnosticsArtifact,
+  recordPerformanceDiagnosticsInteractionPaint,
   recordPerformanceDiagnostics,
   sanitizePerformanceDiagnosticValue,
   serializePerformanceDiagnostics,
@@ -118,6 +120,22 @@ describe("performance diagnostics", () => {
     })
   })
 
+  it("fails an automatic capture after its watchdog timeout", () => {
+    vi.useFakeTimers()
+    armPerformanceDiagnosticsCapture({route: "/git", preset: "git-root"})
+    consumeArmedPerformanceDiagnosticsCapture("/git")
+
+    vi.advanceTimersByTime(60_000)
+
+    expect(get(activePerformanceDiagnosticsRun)).toBeNull()
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)).toMatchObject({
+      route: "/git",
+      status: "failed",
+      warnings: [{type: "automatic-timeout", detail: {timeoutMs: 60_000}}],
+    })
+    vi.useRealTimers()
+  })
+
   it("bounds retained runs and run details", () => {
     const {clock} = makeClock()
     for (let index = 0; index < 25; index += 1) {
@@ -205,6 +223,94 @@ describe("performance diagnostics", () => {
 
     expect(detail.attribution).toHaveLength(10)
     expect(detail.attribution[0]).toMatchObject({name: "task-0", containerType: "iframe"})
+  })
+
+  it("records bounded work spans and interaction paint only during an active capture", () => {
+    let now = 100
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(performance, "now").mockImplementation(() => now)
+    vi.stubGlobal("window", {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frames.push(callback)
+        return frames.length
+      },
+    })
+    const runId = beginPerformanceDiagnosticsRun({route: "/git", preset: "git-root"})
+    activePerformanceDiagnosticsRun.set({
+      id: runId,
+      route: "/git",
+      preset: "git-root",
+      automatic: false,
+    })
+
+    expect(
+      measurePerformanceDiagnosticsWork(
+        {owner: "repository", phase: "merge", detail: {events: 12}},
+        () => {
+          now += 25
+          return "result"
+        },
+      ),
+    ).toBe("result")
+    expect(
+      recordPerformanceDiagnosticsInteractionPaint({
+        owner: "community-menu",
+        inputStartedAt: 90,
+        handlerStartedAt: 100,
+        stateChangedAt: 105,
+      }),
+    ).toBe(true)
+
+    now = 140
+    frames.shift()?.(now)
+    now = 156
+    frames.shift()?.(now)
+    now = 160
+    frames.shift()?.(now)
+    now = 176
+    frames.shift()?.(now)
+
+    vi.unstubAllGlobals()
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "work-span",
+          detail: expect.objectContaining({owner: "repository", phase: "merge", durationMs: 25}),
+        }),
+        expect.objectContaining({
+          type: "interaction-paint",
+          detail: expect.objectContaining({owner: "community-menu", inputDelayMs: 10}),
+        }),
+      ]),
+    )
+    stopPerformanceDiagnosticsCapture()
+    expect(runId).toBeTypeOf("string")
+  })
+
+  it("retains work attribution when capture completion precedes paint", () => {
+    let now = 100
+    vi.spyOn(performance, "now").mockImplementation(() => now)
+    vi.stubGlobal("window", {requestAnimationFrame: vi.fn(() => 1)})
+    const runId = beginPerformanceDiagnosticsRun({route: "/git", preset: "git-root"})
+    activePerformanceDiagnosticsRun.set({
+      id: runId,
+      route: "/git",
+      preset: "git-root",
+      automatic: false,
+    })
+
+    measurePerformanceDiagnosticsWork({owner: "repository", phase: "publish"}, () => {
+      now += 20
+    })
+    stopPerformanceDiagnosticsCapture()
+    vi.unstubAllGlobals()
+
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.records).toEqual([
+      expect.objectContaining({
+        type: "work-span",
+        detail: expect.objectContaining({owner: "repository", phase: "publish", durationMs: 20}),
+      }),
+    ])
   })
 
   it("serializes object keys deterministically", () => {

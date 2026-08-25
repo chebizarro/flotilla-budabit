@@ -307,6 +307,66 @@ describe("community curated widgets", () => {
     ])
   })
 
+  it("parses and publishes authorized widget candidates in bounded slices", async () => {
+    const definition = makeDefinition()
+    const profileList = makeEvent({
+      id: "batched-profile-list",
+      pubkey: managerPubkey,
+      kind: PROFILE_LIST_KIND,
+      tags: [
+        ["d", appsListIdentifier],
+        ["p", memberPubkey],
+      ],
+    })
+    const targets = Array.from({length: 10}, (_, index) =>
+      makeTargetingEvent({
+        id: `batched-target-${index}`,
+        pubkey: memberPubkey,
+        identifier: `batched-widget-${index}`,
+      }),
+    )
+    const widgets = Array.from({length: 10}, (_, index) =>
+      makeWidgetEvent(`batched-widget-${index}`),
+    )
+    let calls = 0
+    mocks.loadCommunityEventsWithStatus.mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) return loadResult([definition])
+      if (calls === 2) return loadResult([profileList])
+      if (calls === 3) return loadResult(targets)
+      if (calls === 4) return loadResult([])
+      return loadResult(widgets)
+    })
+    const yieldTask = vi.fn(async () => undefined)
+    const progressive: string[][] = []
+
+    const result = await loadCommunityCuratedWidgets(community.naddr, {
+      batchSize: 3,
+      yieldTask,
+      onWidgets: candidates => progressive.push(candidates.map(widget => widget.identifier)),
+    })
+
+    expect(result.widgets).toHaveLength(10)
+    expect(yieldTask.mock.calls.length).toBeGreaterThanOrEqual(6)
+    expect(progressive.map(items => items.length)).toEqual([3, 6, 9, 10])
+  })
+
+  it("cancels obsolete curation before targeting and widget projection", async () => {
+    const controller = new AbortController()
+    mocks.loadCommunityEventsWithStatus.mockResolvedValue(loadResult([makeDefinition()]))
+    const onWidgets = vi.fn()
+
+    await expect(
+      loadCommunityCuratedWidgets(community.naddr, {
+        signal: controller.signal,
+        onWidgets,
+        yieldTask: async () => controller.abort(),
+      }),
+    ).rejects.toMatchObject({name: "AbortError"})
+    expect(mocks.loadBoundedCommunityHistory).not.toHaveBeenCalled()
+    expect(onWidgets).not.toHaveBeenCalled()
+  })
+
   it("keeps pending widget-list owners as writers without trusting them as moderators", async () => {
     const definition = makeDefinition()
     const validTarget = makeTargetingEvent({

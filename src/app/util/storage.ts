@@ -45,6 +45,7 @@ import {
 } from "@welshman/app"
 import {isMobile} from "@lib/html"
 import type {IDBTable} from "@lib/indexeddb"
+import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
 import {
   isPersistedCommunityReportDeleteEvent,
   isPersistedCommunityDefinitionEvent,
@@ -104,16 +105,21 @@ const rankEvent = (event: TrustedEvent) => {
 }
 
 export const mergePersistedEvents = (events: TrustedEvent[]) => {
-  const cachedEvents: TrustedEvent[] = []
+  measurePerformanceDiagnosticsWork(
+    {owner: "indexeddb", phase: "merge-events", detail: {events: events.length}},
+    () => {
+      const cachedEvents: TrustedEvent[] = []
 
-  for (const event of events) {
-    // Persisted events were verified before storage. Keep newer in-memory
-    // replaceable events when IndexedDB finishes opening after network startup.
-    event[verifiedSymbol] = true
-    if (!repository.hasEvent(event)) cachedEvents.push(event)
-  }
+      for (const event of events) {
+        // Persisted events were verified before storage. Keep newer in-memory
+        // replaceable events when IndexedDB finishes opening after network startup.
+        event[verifiedSymbol] = true
+        if (!repository.hasEvent(event)) cachedEvents.push(event)
+      }
 
-  if (cachedEvents.length > 0) repository.load([...repository.dump(), ...cachedEvents])
+      if (cachedEvents.length > 0) repository.load([...repository.dump(), ...cachedEvents])
+    },
+  )
 }
 
 export const mergePersistedRelayProvenance = (items: TrackerItem[]) => {

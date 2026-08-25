@@ -1,6 +1,7 @@
 import {get, writable} from "svelte/store"
 import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 import {readRelayDiagnostics} from "@app/core/relay-diagnostics"
+import {setRepositoryUpdateTimingListener} from "@welshman/net"
 
 export const PERFORMANCE_DIAGNOSTICS_SCHEMA_VERSION = 1
 export const PERFORMANCE_DIAGNOSTICS_SCHEMA = "budabit-performance-run-v1"
@@ -18,6 +19,7 @@ const MAX_SCHEDULER_SNAPSHOTS = 240
 const MAX_WARNINGS = 100
 const MAX_DETAIL_DEPTH = 8
 const MAX_STRING_LENGTH = 20_000
+const DEFAULT_WORK_SPAN_THRESHOLD_MS = 8
 
 const SECRET_KEY_PATTERN =
   /^(authorization|cookie|private[-_]?key|secret|signer[-_]?secret|bunker|nostrconnect|nsec)$/i
@@ -320,6 +322,116 @@ export const recordPerformanceDiagnostics = (
   return true
 }
 
+export const recordActivePerformanceDiagnostics = (
+  type: string,
+  detail?: unknown,
+  target: "records" | "longTasks" | "resources" | "scheduler" | "warnings" = "records",
+) => {
+  const active = get(activePerformanceDiagnosticsRun)
+  return active ? recordPerformanceDiagnostics(active.id, type, detail, target) : false
+}
+
+type PerformanceWorkSpanOptions = {
+  owner: string
+  phase: string
+  detail?: Record<string, unknown>
+  recordAll?: boolean
+  slowThresholdMs?: number
+}
+
+const recordWorkAfterPaint = (
+  runId: string,
+  detail: Record<string, unknown>,
+  finishedAt: number,
+) => {
+  recordPerformanceDiagnostics(runId, "work-span", detail)
+  if (typeof window === "undefined") {
+    return
+  }
+
+  let firstFrameAt = 0
+  window.requestAnimationFrame(() => {
+    firstFrameAt = performance.now()
+    window.requestAnimationFrame(() => {
+      const paintedAt = performance.now()
+      recordPerformanceDiagnostics(runId, "work-span-paint", {
+        owner: detail.owner,
+        phase: detail.phase,
+        startTime: detail.startTime,
+        nextFrameMs: Math.max(0, firstFrameAt - finishedAt),
+        nextPaintMs: Math.max(0, paintedAt - finishedAt),
+      })
+    })
+  })
+}
+
+export const measurePerformanceDiagnosticsWork = <T>(
+  {owner, phase, detail = {}, recordAll = false, slowThresholdMs}: PerformanceWorkSpanOptions,
+  operation: () => T,
+): T => {
+  const active = get(activePerformanceDiagnosticsRun)
+  if (!active || typeof performance === "undefined") return operation()
+
+  const startedAt = performance.now()
+  let status = "complete"
+  try {
+    return operation()
+  } catch (error) {
+    status = "failed"
+    throw error
+  } finally {
+    const finishedAt = performance.now()
+    const durationMs = Math.max(0, finishedAt - startedAt)
+    if (recordAll || durationMs >= (slowThresholdMs ?? DEFAULT_WORK_SPAN_THRESHOLD_MS)) {
+      recordWorkAfterPaint(
+        active.id,
+        {owner, phase, status, startTime: startedAt, durationMs, ...detail},
+        finishedAt,
+      )
+    }
+  }
+}
+
+export const recordPerformanceDiagnosticsInteractionPaint = ({
+  owner,
+  inputStartedAt,
+  handlerStartedAt,
+  stateChangedAt,
+  detail = {},
+}: {
+  owner: string
+  inputStartedAt: number
+  handlerStartedAt: number
+  stateChangedAt: number
+  detail?: Record<string, unknown>
+}) => {
+  const active = get(activePerformanceDiagnosticsRun)
+  if (!active || typeof window === "undefined") return false
+
+  recordPerformanceDiagnostics(active.id, "interaction-paint", {
+    owner,
+    inputStartedAt,
+    inputDelayMs: Math.max(0, handlerStartedAt - inputStartedAt),
+    handlerMs: Math.max(0, stateChangedAt - handlerStartedAt),
+    ...detail,
+  })
+
+  window.requestAnimationFrame(() => {
+    const frameAt = performance.now()
+    window.requestAnimationFrame(() => {
+      const paintedAt = performance.now()
+      recordPerformanceDiagnostics(active.id, "interaction-paint-frame", {
+        owner,
+        inputStartedAt,
+        nextFrameMs: Math.max(0, frameAt - stateChangedAt),
+        nextPaintMs: Math.max(0, paintedAt - stateChangedAt),
+        totalMs: Math.max(0, paintedAt - inputStartedAt),
+      })
+    })
+  })
+  return true
+}
+
 export const finishPerformanceDiagnosticsRun = (
   runId: string,
   status: Exclude<PerformanceDiagnosticRun["status"], "running"> = "complete",
@@ -617,6 +729,24 @@ export const startPerformanceDiagnosticsObservers = (
 ) => {
   if (typeof window === "undefined" || !getRun(runId)) return () => {}
   const observers: PerformanceObserver[] = []
+  const stopRepositoryTiming = setRepositoryUpdateTimingListener(timing => {
+    if (timing.durationMs < DEFAULT_WORK_SPAN_THRESHOLD_MS) return
+    recordWorkAfterPaint(
+      runId,
+      {
+        owner: `repository-${timing.owner}`,
+        phase: "subscriber-update",
+        status: "complete",
+        startTime: timing.startTime,
+        durationMs: timing.durationMs,
+        added: timing.added,
+        removed: timing.removed,
+        kinds: timing.kinds,
+        listeners: timing.listeners,
+      },
+      timing.startTime + timing.durationMs,
+    )
+  })
 
   if (typeof PerformanceObserver !== "undefined") {
     try {
@@ -725,6 +855,7 @@ export const startPerformanceDiagnosticsObservers = (
   window.addEventListener("unhandledrejection", onRejection)
 
   return () => {
+    stopRepositoryTiming()
     observers.forEach(observer => observer.disconnect())
     window.clearInterval(schedulerInterval)
     window.removeEventListener("error", onError)

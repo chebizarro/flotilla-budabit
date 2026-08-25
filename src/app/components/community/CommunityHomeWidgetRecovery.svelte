@@ -2,6 +2,7 @@
   import {onDestroy, onMount} from "svelte"
   import {pubkey, repository} from "@welshman/app"
   import {normalizePubkey} from "@app/core/community"
+  import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
   import {getCommunitySectionAuthorityPubkeys} from "@app/core/community-permissions"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {
@@ -127,6 +128,7 @@
   let forceNextLoad = false
   let lastForcedRefreshAt = 0
   let curationRetryTimer: ReturnType<typeof setTimeout> | undefined
+  let curationController: AbortController | undefined
   let curationRetryDelay = 1_000
   let sharedConfigLoadKey = ""
   let sharedConfigRequestId = 0
@@ -134,6 +136,7 @@
   let sharedConfigFirstAttemptTerminal = $state(false)
   let sharedConfigFirstAttemptComplete = $state(false)
   let sharedConfigRetryTimer: ReturnType<typeof setTimeout> | undefined
+  let sharedConfigController: AbortController | undefined
   let sharedConfigRetryDelay = 1_000
   const FORCED_REFRESH_DEBOUNCE_MS = 1_000
   const MAX_RETRY_DELAY_MS = 15_000
@@ -209,6 +212,8 @@
         : ""
 
     if (!key) {
+      sharedConfigController?.abort()
+      sharedConfigController = undefined
       clearSharedConfigRetry()
       loadedSharedConfigEvents = []
       sharedConfigLoadKey = ""
@@ -226,6 +231,9 @@
     if (key === sharedConfigLoadKey) return
 
     clearSharedConfigRetry()
+    sharedConfigController?.abort()
+    const controller = new AbortController()
+    sharedConfigController = controller
     sharedConfigLoadKey = key
     const requestId = ++sharedConfigRequestId
     loadCommunityEventsWithStatus(
@@ -237,6 +245,7 @@
         priorityAuthRelays: relayHints,
         settle: "all",
         timeout: 3_000,
+        signal: controller.signal,
       },
     )
       .then(result => {
@@ -252,6 +261,7 @@
       })
       .catch(error => {
         if (requestId !== sharedConfigRequestId || key !== sharedConfigLoadKey) return
+        if (controller.signal.aborted) return
         loadedSharedConfigEvents = []
         sharedConfigFirstAttemptTerminal = true
         sharedConfigFirstAttemptComplete = false
@@ -271,6 +281,8 @@
     const key = baseKey ? `${baseKey}:${communityReadinessKey}` : ""
 
     if (!key || !input) {
+      curationController?.abort()
+      curationController = undefined
       clearCurationRetry()
       curatedWidgets = []
       curatedBaseKey = ""
@@ -303,6 +315,9 @@
     const force = forceNextLoad || readinessChanged || evidenceChanged
     forceNextLoad = false
     const requestId = ++curatedRequestId
+    curationController?.abort()
+    const controller = new AbortController()
+    curationController = controller
 
     logCommunityWidgetDebug("home loading curated widgets", {input, key, force})
     loadCachedCommunityCuratedWidgets(input, {
@@ -311,6 +326,18 @@
       priority: RELAY_REQUEST_PRIORITY.interactive,
       profileListEvents: evidence.profileListEvents,
       reportState: evidence.reportState,
+      signal: controller.signal,
+      onWidgets: nextWidgets => {
+        if (
+          controller.signal.aborted ||
+          requestId !== curatedRequestId ||
+          key !== curatedLoadKey ||
+          nextWidgets.length === 0
+        ) {
+          return
+        }
+        curatedWidgets = nextWidgets
+      },
     })
       .then(result => {
         if (requestId !== curatedRequestId || key !== curatedLoadKey) return
@@ -334,6 +361,7 @@
       })
       .catch(error => {
         if (requestId !== curatedRequestId || key !== curatedLoadKey) return
+        if (controller.signal.aborted || error?.name === "AbortError") return
         curatedLoadKey = ""
         curatedFirstAttemptTerminal = true
         curatedFirstAttemptComplete = false
@@ -343,17 +371,28 @@
   })
 
   $effect(() => {
-    recoveryStore.set({
-      communityAddress: ready ? communityAddress : "",
-      curatedWidgets: ready ? curatedWidgets : [],
-      sharedConfigEvents: ready ? sharedConfigEvents : [],
-      authorizedPubkeys: ready ? sharedConfigAuthority.authorizedPubkeys : new Set(),
-      descriptorAuthorities: ready ? sharedConfigAuthority.descriptorAuthorities : [],
-      curatedFirstAttemptTerminal: ready && curatedFirstAttemptTerminal,
-      curatedFirstAttemptComplete: ready && curatedFirstAttemptComplete,
-      sharedConfigFirstAttemptTerminal: ready && sharedConfigFirstAttemptTerminal,
-      sharedConfigFirstAttemptComplete: ready && sharedConfigFirstAttemptComplete,
-    })
+    measurePerformanceDiagnosticsWork(
+      {
+        owner: "widget-recovery",
+        phase: "reactive-commit",
+        detail: {
+          curatedWidgets: ready ? curatedWidgets.length : 0,
+          sharedConfigEvents: ready ? sharedConfigEvents.length : 0,
+        },
+      },
+      () =>
+        recoveryStore.set({
+          communityAddress: ready ? communityAddress : "",
+          curatedWidgets: ready ? curatedWidgets : [],
+          sharedConfigEvents: ready ? sharedConfigEvents : [],
+          authorizedPubkeys: ready ? sharedConfigAuthority.authorizedPubkeys : new Set(),
+          descriptorAuthorities: ready ? sharedConfigAuthority.descriptorAuthorities : [],
+          curatedFirstAttemptTerminal: ready && curatedFirstAttemptTerminal,
+          curatedFirstAttemptComplete: ready && curatedFirstAttemptComplete,
+          sharedConfigFirstAttemptTerminal: ready && sharedConfigFirstAttemptTerminal,
+          sharedConfigFirstAttemptComplete: ready && sharedConfigFirstAttemptComplete,
+        }),
+    )
   })
 
   onMount(() => {
@@ -371,6 +410,8 @@
   })
 
   onDestroy(() => {
+    curationController?.abort()
+    sharedConfigController?.abort()
     curatedRequestId += 1
     sharedConfigRequestId += 1
     clearCurationRetry()

@@ -491,6 +491,64 @@ describe("community widget slots", () => {
     expect(mocks.loadCommunityCuratedWidgets).toHaveBeenCalledTimes(1)
   })
 
+  it("keeps a shared curation load alive until every signal consumer cancels", async () => {
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+    let sharedSignal: AbortSignal | undefined
+    mocks.loadCommunityCuratedWidgets.mockImplementation((_input, options) => {
+      sharedSignal = options?.signal
+      return new Promise((_resolve, reject) =>
+        sharedSignal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("cancelled", "AbortError")),
+          {once: true},
+        ),
+      )
+    })
+
+    const first = loadCachedCommunityCuratedWidgets("community-a", {
+      signal: firstController.signal,
+    })
+    const second = loadCachedCommunityCuratedWidgets("community-a", {
+      signal: secondController.signal,
+    })
+    expect(second).toBe(first)
+
+    firstController.abort()
+    expect(sharedSignal?.aborted).toBe(false)
+    secondController.abort()
+    expect(sharedSignal?.aborted).toBe(true)
+    await expect(first).rejects.toMatchObject({name: "AbortError"})
+  })
+
+  it("replaces a shared load after its only consumer cancels", async () => {
+    const signals: AbortSignal[] = []
+    mocks.loadCommunityCuratedWidgets.mockImplementation((_input, options) => {
+      const signal = options?.signal as AbortSignal
+      signals.push(signal)
+      return new Promise((resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("cancelled", "AbortError")),
+          {once: true},
+        )
+        if (signals.length === 2) resolve(makeCuratedResult())
+      })
+    })
+
+    const controller = new AbortController()
+    const obsolete = loadCachedCommunityCuratedWidgets("community-a", {
+      signal: controller.signal,
+    })
+    controller.abort()
+    const replacement = loadCachedCommunityCuratedWidgets("community-a", {force: true})
+
+    expect(signals).toHaveLength(2)
+    expect(signals[0].aborted).toBe(true)
+    await expect(obsolete).rejects.toMatchObject({name: "AbortError"})
+    await expect(replacement).resolves.toMatchObject({complete: true})
+  })
+
   it("uses exact branch identity rather than relay hints for curated widget caches", async () => {
     const owner = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
     const communityId = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
@@ -584,12 +642,16 @@ describe("community widget slots", () => {
 
     expect(interactive).not.toBe(background)
     expect(duplicateInteractive).toBe(interactive)
-    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenNthCalledWith(1, "community-a", {
-      priority: RELAY_REQUEST_PRIORITY.background,
-    })
-    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenNthCalledWith(2, "community-a", {
-      priority: RELAY_REQUEST_PRIORITY.interactive,
-    })
+    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenNthCalledWith(
+      1,
+      "community-a",
+      expect.objectContaining({priority: RELAY_REQUEST_PRIORITY.background}),
+    )
+    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenNthCalledWith(
+      2,
+      "community-a",
+      expect.objectContaining({priority: RELAY_REQUEST_PRIORITY.interactive}),
+    )
 
     resolveBackground(makeCuratedResult())
     resolveInteractive(makeCuratedResult())
@@ -685,11 +747,15 @@ describe("community widget slots", () => {
     ).resolves.toMatchObject({widgets: [regrantedWidget]})
 
     expect(mocks.loadCommunityCuratedWidgets).toHaveBeenCalledTimes(3)
-    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenNthCalledWith(2, "community-a", {
-      priority: RELAY_REQUEST_PRIORITY.interactive,
-      profileListEvents: revokedProfileLists,
-      reportState: revokedReportState,
-    })
+    expect(mocks.loadCommunityCuratedWidgets).toHaveBeenNthCalledWith(
+      2,
+      "community-a",
+      expect.objectContaining({
+        priority: RELAY_REQUEST_PRIORITY.interactive,
+        profileListEvents: revokedProfileLists,
+        reportState: revokedReportState,
+      }),
+    )
   })
 
   it("force refresh bypasses fresh curated widget cache entries", async () => {

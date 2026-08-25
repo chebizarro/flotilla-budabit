@@ -1,5 +1,8 @@
 import {describe, expect, it, vi} from "vitest"
-import {scheduleNotificationBackgroundAdmission} from "./notification-background"
+import {
+  scheduleNotificationBackgroundAdmission,
+  scheduleNotificationBackgroundStages,
+} from "./notification-background"
 
 describe("notification background admission", () => {
   it("waits for two frames and idle time", () => {
@@ -51,5 +54,48 @@ describe("notification background admission", () => {
     frames.forEach(callback => callback(0))
     expect(start).not.toHaveBeenCalled()
     expect(target.cancelAnimationFrame).toHaveBeenCalled()
+  })
+
+  it("stages background services and defers the next stage after input", () => {
+    vi.useFakeTimers()
+    const idleCallbacks: IdleRequestCallback[] = []
+    const listeners = new Map<string, EventListener>()
+    const stages = [vi.fn(), vi.fn(), vi.fn()]
+    const target = {
+      requestIdleCallback: vi.fn((callback: IdleRequestCallback) => {
+        idleCallbacks.push(callback)
+        return idleCallbacks.length
+      }),
+      cancelIdleCallback: vi.fn(),
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      addEventListener: vi.fn((type: string, listener: EventListener) =>
+        listeners.set(type, listener),
+      ),
+      removeEventListener: vi.fn((type: string) => listeners.delete(type)),
+    } as unknown as Window & {
+      requestIdleCallback: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number
+      cancelIdleCallback: (handle: number) => void
+    }
+
+    const cancel = scheduleNotificationBackgroundStages(stages, {
+      target,
+      stageDelayMs: 100,
+    })
+    expect(stages[0]).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(100)
+    expect(idleCallbacks).toHaveLength(1)
+    listeners.get("pointerdown")?.(new Event("pointerdown"))
+    idleCallbacks.shift()?.({didTimeout: false, timeRemaining: () => 10})
+    expect(stages[1]).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(100)
+    idleCallbacks.shift()?.({didTimeout: false, timeRemaining: () => 10})
+    expect(stages[1]).toHaveBeenCalledTimes(1)
+    cancel()
+    vi.advanceTimersByTime(1_000)
+    expect(stages[2]).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 })

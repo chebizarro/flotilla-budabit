@@ -1,7 +1,7 @@
 import {describe, it, vi, expect, beforeEach} from "vitest"
 import {now, choice, range} from "@welshman/lib"
 import {getAddress, makeEvent, TrustedEvent, DELETE, MUTES} from "@welshman/util"
-import {Repository} from "../src/repository"
+import {Repository, setRepositoryUpdateTimingListener} from "../src/repository"
 
 const randomHex = () =>
   Array.from(range(0, 64))
@@ -18,7 +18,9 @@ const createEvent = (kind: number, extra = {}) => ({
 
 describe("Repository", () => {
   beforeEach(() => {
+    vi.useRealTimers()
     vi.clearAllMocks()
+    setRepositoryUpdateTimingListener(undefined)
   })
 
   describe("basic operations", () => {
@@ -81,6 +83,271 @@ describe("Repository", () => {
       expect(updateHandler).toHaveBeenCalledTimes(1)
       expect(repo.publish(createEvent(1))).toBe(true)
       expect(updateHandler).toHaveBeenCalledTimes(2)
+    })
+
+    it("reports aggregate synchronous subscriber timing only while observed", () => {
+      const timing = vi.fn()
+      const stop = setRepositoryUpdateTimingListener(timing)
+      const event = createEvent(1)
+      repo.on("update", () => undefined)
+
+      repo.publish(event)
+
+      expect(timing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner: "repository",
+          added: 1,
+          removed: 0,
+          kinds: [1],
+          listeners: 1,
+        }),
+      )
+      stop()
+      repo.publish(createEvent(2))
+      expect(timing).toHaveBeenCalledTimes(1)
+    })
+
+    it("finishes reporting when a subscriber removes the timing listener", () => {
+      const timing = vi.fn()
+      setRepositoryUpdateTimingListener(timing)
+      repo.on("update", () => setRepositoryUpdateTimingListener(undefined))
+
+      expect(() => repo.publish(createEvent(1))).not.toThrow()
+      expect(timing).toHaveBeenCalledTimes(1)
+    })
+
+    it("publishes deferred events once per burst", () => {
+      vi.useFakeTimers()
+      const first = createEvent(1)
+      const second = createEvent(2)
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.publish(first, {deferMs: 16})
+      repo.publish(second, {deferMs: 16})
+
+      expect(repo.getEvent(first.id)).toBeUndefined()
+      expect(repo.getEvent(second.id)).toBeUndefined()
+      expect(updateHandler).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(16)
+      expect(repo.getEvent(first.id)).toBe(first)
+      expect(repo.getEvent(second.id)).toBe(second)
+      expect(updateHandler).toHaveBeenCalledTimes(1)
+      expect(updateHandler).toHaveBeenCalledWith({added: [first, second], removed: new Set()})
+      vi.useRealTimers()
+    })
+
+    it("yields between bounded deferred event batches", () => {
+      vi.useFakeTimers()
+      const first = createEvent(1)
+      const second = createEvent(2)
+      const third = createEvent(3)
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      for (const event of [first, second, third]) {
+        repo.publish(event, {deferMs: 16, maxBatchSize: 2})
+      }
+
+      vi.advanceTimersByTime(16)
+      expect(repo.getEvent(first.id)).toBe(first)
+      expect(repo.getEvent(second.id)).toBe(second)
+      expect(repo.getEvent(third.id)).toBeUndefined()
+      expect(updateHandler).toHaveBeenCalledTimes(1)
+      expect(updateHandler).toHaveBeenLastCalledWith({
+        added: [first, second],
+        removed: new Set(),
+      })
+
+      vi.advanceTimersByTime(16)
+      expect(repo.getEvent(third.id)).toBe(third)
+      expect(updateHandler).toHaveBeenCalledTimes(2)
+      expect(updateHandler).toHaveBeenLastCalledWith({added: [third], removed: new Set()})
+      vi.useRealTimers()
+    })
+
+    it("does not drain a deferred backlog for a synchronous notification", () => {
+      vi.useFakeTimers()
+      const deferred = createEvent(1)
+      const immediate = createEvent(2)
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.publish(deferred, {deferMs: 16})
+      repo.publish(immediate)
+
+      expect(updateHandler).toHaveBeenNthCalledWith(1, {
+        added: [immediate],
+        removed: new Set(),
+      })
+      expect(repo.getEvent(deferred.id)).toBeUndefined()
+      vi.advanceTimersByTime(16)
+      expect(updateHandler).toHaveBeenNthCalledWith(2, {
+        added: [deferred],
+        removed: new Set(),
+      })
+      expect(updateHandler).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it("publishes silent events synchronously without notifying", () => {
+      vi.useFakeTimers()
+      const event = createEvent(1)
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.publish(event, {deferMs: 16, shouldNotify: false})
+
+      expect(repo.getEvent(event.id)).toBe(event)
+      expect(updateHandler).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(updateHandler).not.toHaveBeenCalled()
+      vi.useRealTimers()
+    })
+
+    it("reschedules a deferred flush for a shorter requested delay", () => {
+      vi.useFakeTimers()
+      const first = createEvent(1)
+      const second = createEvent(2)
+
+      repo.publish(first, {deferMs: 1_000})
+      vi.advanceTimersByTime(100)
+      repo.publish(second, {deferMs: 0})
+      vi.advanceTimersByTime(0)
+
+      expect(repo.getEvent(first.id)).toBe(first)
+      expect(repo.getEvent(second.id)).toBe(second)
+      vi.useRealTimers()
+    })
+
+    it("serializes updates published reentrantly by a listener", () => {
+      const first = createEvent(1)
+      const nested = createEvent(2)
+      const received: string[][] = []
+      repo.on("update", update => {
+        if (update.added[0]?.id === first.id) repo.publish(nested)
+      })
+      repo.on("update", update => received.push(update.added.map(event => event.id)))
+
+      repo.publish(first)
+
+      expect(received).toEqual([[first.id], [nested.id]])
+    })
+
+    it("yields during a long reentrant update chain", () => {
+      vi.useFakeTimers()
+      const events = Array.from({length: 20}, (_, kind) => createEvent(kind + 1))
+      const received: string[] = []
+      repo.on("update", update => {
+        const index = events.findIndex(event => event.id === update.added[0]?.id)
+        if (index >= 0 && events[index + 1]) repo.publish(events[index + 1])
+      })
+      repo.on("update", update => received.push(update.added[0]?.id))
+
+      repo.publish(events[0])
+
+      expect(received).toEqual(events.slice(0, 16).map(event => event.id))
+      vi.runAllTimers()
+      expect(received).toEqual(events.map(event => event.id))
+      vi.useRealTimers()
+    })
+
+    it("retains reentrant updates when a listener throws", () => {
+      vi.useFakeTimers()
+      const first = createEvent(1)
+      const nested = createEvent(2)
+      const received: string[] = []
+      repo.on("update", update => {
+        if (update.added[0]?.id === first.id) {
+          repo.publish(nested)
+          throw new Error("listener failed")
+        }
+      })
+      repo.on("update", update => received.push(update.added[0]?.id))
+
+      expect(() => repo.publish(first)).toThrow("listener failed")
+      vi.runAllTimers()
+
+      expect(received).toEqual([nested.id])
+      vi.useRealTimers()
+    })
+
+    it("absorbs deferred events into an atomic repository load", () => {
+      vi.useFakeTimers()
+      const persisted = createEvent(1)
+      const deferred = createEvent(2)
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.publish(deferred, {deferMs: 16})
+      repo.load([persisted])
+
+      expect(repo.getEvent(persisted.id)).toBe(persisted)
+      expect(repo.getEvent(deferred.id)).toBe(deferred)
+      expect(updateHandler).toHaveBeenCalledTimes(1)
+      expect(updateHandler).toHaveBeenCalledWith({
+        added: [persisted, deferred],
+        removed: new Set(),
+      })
+      vi.runAllTimers()
+      expect(updateHandler).toHaveBeenCalledTimes(1)
+      vi.useRealTimers()
+    })
+
+    it("emits only the final added state from an atomic repository load", () => {
+      const pubkey = randomHex()
+      const first = createEvent(MUTES, {pubkey, created_at: now() - 10})
+      const replacement = createEvent(MUTES, {pubkey, created_at: now()})
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.load([first, replacement])
+
+      expect(updateHandler).toHaveBeenCalledWith({
+        added: [replacement],
+        removed: new Set([first.id]),
+      })
+    })
+
+    it("reports the final delta when an event is deleted in the same burst", () => {
+      vi.useFakeTimers()
+      const event = createEvent(1, {created_at: now() - 10})
+      const deletion = createEvent(DELETE, {
+        pubkey: event.pubkey,
+        created_at: now(),
+        tags: [["e", event.id]],
+      })
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.publish(event, {deferMs: 16})
+      repo.publish(deletion, {deferMs: 16})
+      vi.advanceTimersByTime(16)
+
+      expect(updateHandler).toHaveBeenCalledWith({
+        added: [deletion],
+        removed: new Set([event.id]),
+      })
+      vi.useRealTimers()
+    })
+
+    it("reports the final delta when a replaceable is superseded in the same burst", () => {
+      vi.useFakeTimers()
+      const pubkey = randomHex()
+      const first = createEvent(MUTES, {pubkey, created_at: now() - 10})
+      const replacement = createEvent(MUTES, {pubkey, created_at: now()})
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.publish(first, {deferMs: 16})
+      repo.publish(replacement, {deferMs: 16})
+      vi.advanceTimersByTime(16)
+
+      expect(updateHandler).toHaveBeenCalledWith({
+        added: [replacement],
+        removed: new Set([first.id]),
+      })
+      vi.useRealTimers()
     })
   })
 

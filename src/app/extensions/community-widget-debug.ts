@@ -11,12 +11,13 @@ export const isCommunityWidgetDebugEnabled = () => {
   }
 }
 
-export const logCommunityWidgetDebug = (message: string, data?: unknown) => {
+export const logCommunityWidgetDebug = (message: string, data?: unknown | (() => unknown)) => {
   if (!isCommunityWidgetDebugEnabled()) return
 
-  if (data === undefined) {
+  const resolved = typeof data === "function" ? data() : data
+  if (resolved === undefined) {
     console.debug(`[community-widgets] ${message}`)
   } else {
-    console.debug(`[community-widgets] ${message}`, data)
+    console.debug(`[community-widgets] ${message}`, resolved)
   }
 }

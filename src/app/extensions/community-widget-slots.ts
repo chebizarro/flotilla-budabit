@@ -29,6 +29,11 @@ type CuratedWidgetLoad = ReturnType<typeof loadCommunityCuratedWidgets>
 type CuratedWidgetCacheEntry = {
   promise: CuratedWidgetLoad
   priority: number
+  controller: AbortController
+  widgetListeners: Set<(widgets: SmartWidgetEvent[]) => void>
+  signalConsumers: Set<AbortSignal>
+  signalCleanups: Array<() => void>
+  hasUnsignalledConsumer: boolean
   settledAt?: number
   ttlMs?: number
 }
@@ -40,6 +45,10 @@ export type LoadCachedCommunityCuratedWidgetsOptions = {
   priority?: number
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
+  signal?: AbortSignal
+  batchSize?: number
+  yieldTask?: () => Promise<void>
+  onWidgets?: (widgets: SmartWidgetEvent[]) => void
 }
 
 // Bounded LRUs: entries hold full widget events and load promises, keyed by
@@ -88,6 +97,38 @@ const getCuratedWidgetResultTtl = (result: CommunityCuratedExtensionsResult | un
 const isFreshCacheEntry = (entry: CuratedWidgetCacheEntry, now: number) =>
   entry.settledAt === undefined || now - entry.settledAt < (entry.ttlMs || 0)
 
+const registerCuratedWidgetConsumer = (
+  entry: CuratedWidgetCacheEntry,
+  signal?: AbortSignal,
+  onWidgets?: (widgets: SmartWidgetEvent[]) => void,
+) => {
+  if (onWidgets) entry.widgetListeners.add(onWidgets)
+  if (!signal) {
+    entry.hasUnsignalledConsumer = true
+    return
+  }
+  if (signal.aborted || entry.signalConsumers.has(signal)) return
+
+  entry.signalConsumers.add(signal)
+  const onAbort = () => {
+    if (
+      !entry.hasUnsignalledConsumer &&
+      Array.from(entry.signalConsumers).every(candidate => candidate.aborted)
+    ) {
+      entry.controller.abort()
+    }
+  }
+  signal.addEventListener("abort", onAbort, {once: true})
+  entry.signalCleanups.push(() => signal.removeEventListener("abort", onAbort))
+}
+
+const clearCuratedWidgetConsumers = (entry: CuratedWidgetCacheEntry) => {
+  entry.signalCleanups.forEach(cleanup => cleanup())
+  entry.signalCleanups = []
+  entry.signalConsumers.clear()
+  entry.widgetListeners.clear()
+}
+
 export const loadCachedCommunityCuratedWidgets = (
   input: string,
   {
@@ -97,6 +138,10 @@ export const loadCachedCommunityCuratedWidgets = (
     priority = RELAY_REQUEST_PRIORITY.interactive,
     profileListEvents,
     reportState,
+    signal,
+    batchSize,
+    yieldTask,
+    onWidgets,
   }: LoadCachedCommunityCuratedWidgetsOptions = {},
 ) => {
   const viewerPubkey = normalizePubkey(pubkey.get() || "")
@@ -110,21 +155,42 @@ export const loadCachedCommunityCuratedWidgets = (
   if (!key) return Promise.resolve(undefined)
 
   const existing = curatedWidgetLoads.get(key)
-  if (existing && existing.settledAt === undefined && existing.priority >= priority) {
+  if (
+    existing &&
+    existing.settledAt === undefined &&
+    !existing.controller.signal.aborted &&
+    existing.priority >= priority
+  ) {
+    registerCuratedWidgetConsumer(existing, signal, onWidgets)
     return existing.promise
   }
   if (!force && existing?.settledAt !== undefined && isFreshCacheEntry(existing, now)) {
     return existing.promise
   }
 
+  if (existing && existing.settledAt === undefined) existing.controller.abort()
+  const entry: CuratedWidgetCacheEntry = {
+    promise: undefined as unknown as CuratedWidgetLoad,
+    priority,
+    controller: new AbortController(),
+    widgetListeners: new Set(),
+    signalConsumers: new Set(),
+    signalCleanups: [],
+    hasUnsignalledConsumer: false,
+  }
+  registerCuratedWidgetConsumer(entry, signal, onWidgets)
   const pending = loadCommunityCuratedWidgets(input.trim(), {
     priority,
     ...(profileListEvents === undefined ? {} : {profileListEvents}),
     ...(reportState === undefined ? {} : {reportState}),
+    signal: entry.controller.signal,
+    ...(batchSize === undefined ? {} : {batchSize}),
+    ...(yieldTask === undefined ? {} : {yieldTask}),
+    onWidgets: widgets => entry.widgetListeners.forEach(listener => listener(widgets)),
   })
     .then(result => {
-      const entry = curatedWidgetLoads.get(key)
-      if (entry?.promise === pending) {
+      const current = curatedWidgetLoads.get(key)
+      if (current?.promise === pending) {
         if (result?.status === "community" && result.widgets.length > 0) {
           curatedWidgetSnapshots.set(snapshotKey, result.widgets)
         } else if (result?.complete) {
@@ -136,8 +202,8 @@ export const loadCachedCommunityCuratedWidgets = (
           return result
         }
 
-        entry.settledAt = Date.now()
-        entry.ttlMs = getCuratedWidgetResultTtl(result)
+        current.settledAt = Date.now()
+        current.ttlMs = getCuratedWidgetResultTtl(result)
       }
 
       return result
@@ -146,7 +212,9 @@ export const loadCachedCommunityCuratedWidgets = (
       if (curatedWidgetLoads.get(key)?.promise === pending) curatedWidgetLoads.pop(key)
       throw error
     })
-  curatedWidgetLoads.set(key, {promise: pending, priority})
+    .finally(() => clearCuratedWidgetConsumers(entry))
+  entry.promise = pending
+  curatedWidgetLoads.set(key, entry)
 
   return pending
 }
@@ -443,7 +511,7 @@ export const getEnabledCommunitySlotWidgets = ({
   const selected: SmartWidgetEvent[] = []
   const installedIndex = buildInstalledWidgetIndex(installedWidgets)
 
-  logCommunityWidgetDebug("selecting slot widgets", {
+  logCommunityWidgetDebug("selecting slot widgets", () => ({
     slotType,
     curatedWidgets: curatedWidgets.map(widget => ({
       id: getWidgetLineId(widget),
@@ -453,7 +521,7 @@ export const getEnabledCommunitySlotWidgets = ({
     })),
     installedKeys: Object.keys(installedWidgets),
     enabledIds: Array.from(enabledIds),
-  })
+  }))
 
   for (const widget of curatedWidgets) {
     const id = getWidgetLineId(widget)
@@ -502,7 +570,7 @@ export const getEnabledCommunitySlotWidgets = ({
     })
   }
 
-  logCommunityWidgetDebug("selected slot widgets result", {
+  logCommunityWidgetDebug("selected slot widgets result", () => ({
     slotType,
     selected: selected.map(widget => ({
       id: getWidgetLineId(widget),
@@ -510,7 +578,7 @@ export const getEnabledCommunitySlotWidgets = ({
       pubkey: widget.pubkey,
       slot: widget.slot,
     })),
-  })
+  }))
 
   return selected
 }

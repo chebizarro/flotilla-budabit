@@ -24,6 +24,7 @@ import {
 } from "@nostr-git/core/events"
 import {getRepoPublicationAddress} from "@app/core/repo-publication"
 import {userRepoWatch, type RepoWatchItem} from "@app/core/repo-watch"
+import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
 
 export const REPO_CACHE_DB_NAME = "budabit-repository-cache"
 export const REPO_CACHE_DB_VERSION = 1
@@ -352,21 +353,33 @@ export class RepositoryCache {
   private async ensureLoaded() {
     if (this.loaded) return
     const state = await this.storage.load()
-    this.repositories.clear()
-    this.events.clear()
-    for (const item of state.repositories || []) {
-      const address = canonicalizeRepoCacheAddress(item.address)
-      if (address) this.repositories.set(address, {...item, address})
-    }
-    for (const item of state.events || []) {
-      const address = canonicalizeRepoCacheAddress(item.repositoryAddress)
-      if (!address || !item.event?.id) continue
-      this.events.set(getEventRecordKey(address, item.event.id), {
-        ...item,
-        key: getEventRecordKey(address, item.event.id),
-        repositoryAddress: address,
-      })
-    }
+    measurePerformanceDiagnosticsWork(
+      {
+        owner: "repository-cache",
+        phase: "load-index",
+        detail: {
+          repositories: state.repositories?.length || 0,
+          events: state.events?.length || 0,
+        },
+      },
+      () => {
+        this.repositories.clear()
+        this.events.clear()
+        for (const item of state.repositories || []) {
+          const address = canonicalizeRepoCacheAddress(item.address)
+          if (address) this.repositories.set(address, {...item, address})
+        }
+        for (const item of state.events || []) {
+          const address = canonicalizeRepoCacheAddress(item.repositoryAddress)
+          if (!address || !item.event?.id) continue
+          this.events.set(getEventRecordKey(address, item.event.id), {
+            ...item,
+            key: getEventRecordKey(address, item.event.id),
+            repositoryAddress: address,
+          })
+        }
+      },
+    )
     this.loaded = true
   }
 
@@ -794,10 +807,19 @@ export class RepositoryCache {
     ) {
       if (signal?.aborted) break
       const batch = plannedRecords.slice(offset, offset + REPO_CACHE_LIST_HYDRATION_BATCH_SIZE)
-      for (const record of batch) {
-        if (signal?.aborted) break
-        hydrated += Number(this.hydrateRecord(record, affected))
-      }
+      measurePerformanceDiagnosticsWork(
+        {
+          owner: "repository-cache",
+          phase: "hydrate-announcements",
+          detail: {batch: batch.length, offset, total: plannedRecords.length},
+        },
+        () => {
+          for (const record of batch) {
+            if (signal?.aborted) break
+            hydrated += Number(this.hydrateRecord(record, affected))
+          }
+        },
+      )
       if (
         offset + REPO_CACHE_LIST_HYDRATION_BATCH_SIZE < plannedRecords.length &&
         !signal?.aborted

@@ -28,7 +28,6 @@ import {
   getCommunityTargetAuthorityPubkeys,
   getCommunityTargetWriterPubkeys,
   getCommunityWriteTargetSections,
-  isCommunityReportStatePersonBanned,
 } from "@app/core/community-permissions"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 import {loadBoundedCommunityHistory} from "@app/core/requests"
@@ -38,6 +37,7 @@ import type {SmartWidgetEvent} from "@app/extensions/types"
 import {recordCommunityWidgetRecommendationContext} from "./recommendation-context"
 import {logCommunityWidgetDebug} from "./community-widget-debug"
 import {getWidgetLineId} from "./widget-identity"
+import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
 
 export type CommunityCuratedExtensionsStatus = "invalid-input" | "not-community" | "community"
 
@@ -61,6 +61,23 @@ export type CommunityCuratedExtensionsLoadOptions = {
   priority?: number
   profileListEvents?: TrustedEvent[]
   reportState?: EffectiveCommunityReportState
+  signal?: AbortSignal
+  batchSize?: number
+  yieldTask?: () => Promise<void>
+  onWidgets?: (widgets: SmartWidgetEvent[]) => void
+}
+
+const defaultYieldTask = () => {
+  const taskScheduler = (
+    globalThis as typeof globalThis & {scheduler?: {yield?: () => Promise<void>}}
+  ).scheduler
+  return taskScheduler?.yield
+    ? taskScheduler.yield()
+    : new Promise<void>(resolve => setTimeout(resolve, 0))
+}
+
+const throwIfAborted = (signal?: AbortSignal) => {
+  if (signal?.aborted) throw new DOMException("Widget curation cancelled", "AbortError")
 }
 
 const dedupeEvents = (events: TrustedEvent[]) =>
@@ -86,7 +103,7 @@ const loadCurationEvents = async (
   const cachedEvents = queryCachedEvents(filters)
 
   if (cachedIsSufficient(cachedEvents)) {
-    void loadCommunityEventsWithStatus(relays, filters, options)
+    void loadCommunityEventsWithStatus(relays, filters, options).catch(() => undefined)
 
     return {events: cachedEvents, complete: true, timedOutRelays: [], failedRelays: []}
   }
@@ -102,12 +119,14 @@ const loadTargetingEvents = async ({
   localFilters,
   priority,
   owner,
+  signal,
 }: {
   relays: string[]
   relayFilters: Filter[]
   localFilters: Filter[]
   priority: number
   owner: string
+  signal?: AbortSignal
 }): Promise<CommunityRelayLoadResult> => {
   const cachedEvents = queryCachedEvents(localFilters).filter(event =>
     matchFilters(localFilters, event),
@@ -118,6 +137,7 @@ const loadTargetingEvents = async ({
     localFilters,
     priority,
     owner,
+    signal,
   })
 
   return {
@@ -219,8 +239,17 @@ export const loadCommunityCuratedWidgets = async (
     priority = RELAY_REQUEST_PRIORITY.interactive,
     profileListEvents: currentProfileListEvents,
     reportState,
+    signal,
+    batchSize = 8,
+    yieldTask = defaultYieldTask,
+    onWidgets,
   }: CommunityCuratedExtensionsLoadOptions = {},
 ): Promise<CommunityCuratedExtensionsResult> => {
+  const yieldForInput = async () => {
+    throwIfAborted(signal)
+    await yieldTask()
+    throwIfAborted(signal)
+  }
   const community = parseCommunityNaddr(input)
 
   if (!community) {
@@ -237,7 +266,7 @@ export const loadCommunityCuratedWidgets = async (
   const definitionResult = await loadCurationEvents(
     getCommunityBootstrapRelays(community.relayHints),
     [makeExactCommunityDefinitionFilter(community)],
-    {authenticate: true, priority},
+    {authenticate: true, priority, signal},
   )
   const definitionEvents = definitionResult.events
   const definition = selectExactCommunityDefinition(definitionEvents, community)
@@ -258,6 +287,8 @@ export const loadCommunityCuratedWidgets = async (
       widgets: [],
     }
   }
+
+  await yieldForInput()
 
   const communityRelays = normalizeRelays(
     definition.relays.length ? definition.relays : community.relayHints,
@@ -282,7 +313,7 @@ export const loadCommunityCuratedWidgets = async (
   const profileListResult = await loadCurationEvents(
     communityRelays,
     profileListFilters,
-    {authenticate: true, priority},
+    {authenticate: true, priority, signal},
     () => filtersCoveredByCache(profileListFilters),
   )
   const profileListEvents = currentProfileListEvents ?? profileListResult.events
@@ -306,6 +337,7 @@ export const loadCommunityCuratedWidgets = async (
       }),
     ]),
   )
+  await yieldForInput()
   const targetingFilterPlan = makeCommunityContentFilterPlan(
     [makeCommunityTargetingFilter(community.communityId, [SMART_WIDGET_KIND])],
     widgetTargetAuthorPubkeys,
@@ -316,38 +348,66 @@ export const loadCommunityCuratedWidgets = async (
     localFilters: targetingFilterPlan.localFilters,
     priority,
     owner: `community-widget-curation:${definition.pointer.address}`,
+    signal,
   })
   const targetingEvents = targetingResult.events
-  logCommunityWidgetDebug("loaded curation sources", {
+  logCommunityWidgetDebug("loaded curation sources", () => ({
     community,
     communityRelays,
     profileListEvents: profileListEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
     targetingEvents: targetingEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
-  })
+  }))
 
-  const authorizedTargetingEvents = filterAuthorizedCommunityTargetingEvents({
-    community,
-    definition,
-    profileListEvents,
-    events: targetingEvents,
-    reportState,
-    kinds: [SMART_WIDGET_KIND],
-  })
+  const authorizedTargetingEvents = measurePerformanceDiagnosticsWork(
+    {
+      owner: "widget-curation",
+      phase: "authority-filter",
+      detail: {events: targetingEvents.length},
+    },
+    () =>
+      filterAuthorizedCommunityTargetingEvents({
+        community,
+        definition,
+        profileListEvents,
+        events: targetingEvents,
+        reportState,
+        kinds: [SMART_WIDGET_KIND],
+      }),
+  )
   const deleteFilters = makeTargetDeleteFilters(authorizedTargetingEvents)
   const deleteResult = deleteFilters.length
     ? await loadCurationEvents(
         communityRelays,
         deleteFilters,
-        {authenticate: true, priority},
+        {authenticate: true, priority, signal},
         () => false,
       )
     : {events: [], complete: true, timedOutRelays: [], failedRelays: []}
   const targetDeleteEvents = deleteResult.events
-  const deletedTargetIds = getDeletedTargetEventIds(authorizedTargetingEvents, targetDeleteEvents)
-  const eligibleTargetingEvents = authorizedTargetingEvents.filter(
-    event => !deletedTargetIds.has(event.id),
+  const {deletedTargetIds, eligibleTargetingEvents} = measurePerformanceDiagnosticsWork(
+    {
+      owner: "widget-curation",
+      phase: "target-deletion-filter",
+      detail: {
+        targets: authorizedTargetingEvents.length,
+        deletes: targetDeleteEvents.length,
+      },
+    },
+    () => {
+      const deletedTargetIds = getDeletedTargetEventIds(
+        authorizedTargetingEvents,
+        targetDeleteEvents,
+      )
+      return {
+        deletedTargetIds,
+        eligibleTargetingEvents: authorizedTargetingEvents.filter(
+          event => !deletedTargetIds.has(event.id),
+        ),
+      }
+    },
   )
-  logCommunityWidgetDebug("filtered targeting events", {
+  await yieldForInput()
+  logCommunityWidgetDebug("filtered targeting events", () => ({
     communityAddress: definition.pointer.address,
     widgetTargetAuthorPubkeys,
     trustedWidgetAuthorPubkeys,
@@ -357,7 +417,7 @@ export const loadCommunityCuratedWidgets = async (
       pubkey: event.pubkey,
       ref: parseTargetedPublication(event)?.source,
     })),
-  })
+  }))
 
   const widgetFilterPlan = makeTargetedPublicationOriginalFilterPlan(eligibleTargetingEvents)
 
@@ -389,23 +449,43 @@ export const loadCommunityCuratedWidgets = async (
   const widgetResult = await loadCurationEvents(
     widgetRelays,
     widgetFilterPlan.relayFilters,
-    {authenticate: true, priority, settle: "first-non-empty"},
+    {authenticate: true, priority, settle: "first-non-empty", signal},
     () => filtersCoveredByCache(widgetFilterPlan.localFilters),
   )
-  const widgetEvents = widgetResult.events.filter(event =>
-    matchFilters(widgetFilterPlan.localFilters, event),
+  const widgetEvents = measurePerformanceDiagnosticsWork(
+    {
+      owner: "widget-curation",
+      phase: "widget-original-matching",
+      detail: {events: widgetResult.events.length, filters: widgetFilterPlan.localFilters.length},
+    },
+    () => widgetResult.events.filter(event => matchFilters(widgetFilterPlan.localFilters, event)),
   )
   const widgets: SmartWidgetEvent[] = []
 
-  for (const event of widgetEvents) {
-    try {
-      widgets.push(parseSmartWidget(event))
-    } catch {
-      // Ignore malformed or unsupported widget events.
-    }
+  for (let offset = 0; offset < widgetEvents.length; offset += Math.max(1, batchSize)) {
+    const batch = widgetEvents.slice(offset, offset + Math.max(1, batchSize))
+    measurePerformanceDiagnosticsWork(
+      {
+        owner: "widget-curation",
+        phase: "parse-widget-batch",
+        detail: {batch: batch.length, offset, total: widgetEvents.length},
+      },
+      () => {
+        for (const event of batch) {
+          try {
+            widgets.push(parseSmartWidget(event))
+          } catch {
+            // Ignore malformed or unsupported widget events.
+          }
+        }
+      },
+    )
+    const progressiveWidgets = dedupeWidgets(widgets)
+    if (progressiveWidgets.length > 0) onWidgets?.(progressiveWidgets)
+    if (offset + batch.length < widgetEvents.length) await yieldForInput()
   }
 
-  logCommunityWidgetDebug("loaded curated widget events", {
+  logCommunityWidgetDebug("loaded curated widget events", () => ({
     communityAddress: definition.pointer.address,
     widgetFilters: widgetFilterPlan.relayFilters,
     widgetEvents: widgetEvents.map(event => ({id: event.id, pubkey: event.pubkey})),
@@ -416,29 +496,45 @@ export const loadCommunityCuratedWidgets = async (
       slot: widget.slot,
       appUrl: widget.appUrl,
     })),
-  })
+  }))
 
-  const dedupedWidgets = dedupeWidgets(widgets)
+  const dedupedWidgets = measurePerformanceDiagnosticsWork(
+    {owner: "widget-curation", phase: "deduplicate", detail: {widgets: widgets.length}},
+    () => dedupeWidgets(widgets),
+  )
   const relayHints = normalizeRelays([
     ...community.relayHints,
     ...communityRelays,
     ...getTargetingRelayHints(eligibleTargetingEvents),
   ])
 
-  for (const widget of dedupedWidgets) {
-    const targetingSources = getWidgetTargetingEvents(widget, eligibleTargetingEvents)
+  for (let offset = 0; offset < dedupedWidgets.length; offset += Math.max(1, batchSize)) {
+    const batch = dedupedWidgets.slice(offset, offset + Math.max(1, batchSize))
+    measurePerformanceDiagnosticsWork(
+      {
+        owner: "widget-curation",
+        phase: "recommendation-context-batch",
+        detail: {batch: batch.length, offset, total: dedupedWidgets.length},
+      },
+      () => {
+        for (const widget of batch) {
+          const targetingSources = getWidgetTargetingEvents(widget, eligibleTargetingEvents)
 
-    recordCommunityWidgetRecommendationContext(getWidgetLineId(widget), {
-      community,
-      relays: communityRelays,
-      relayHints,
-      definition,
-      profileListEvents,
-      trustedWidgetAuthorPubkeys,
-      widgetTargetAuthorPubkeys,
-      targetingEventIds: targetingSources.map(event => event.id).filter(Boolean),
-      targetingRelayHints: getTargetingRelayHints(targetingSources),
-    })
+          recordCommunityWidgetRecommendationContext(getWidgetLineId(widget), {
+            community,
+            relays: communityRelays,
+            relayHints,
+            definition,
+            profileListEvents,
+            trustedWidgetAuthorPubkeys,
+            widgetTargetAuthorPubkeys,
+            targetingEventIds: targetingSources.map(event => event.id).filter(Boolean),
+            targetingRelayHints: getTargetingRelayHints(targetingSources),
+          })
+        }
+      },
+    )
+    if (offset + batch.length < dedupedWidgets.length) await yieldForInput()
   }
 
   return {
