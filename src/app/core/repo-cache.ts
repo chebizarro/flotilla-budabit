@@ -970,17 +970,20 @@ export const setupRepositoryCache = () => {
       .reconcileWatched(getWatchedAddresses(item))
       .catch(error => console.warn("[repo-cache] Failed to reconcile watched repositories", error))
   })
-  const onRepositoryUpdate = (update: {added: Set<TrustedEvent>}) => {
+  const onRepositoryUpdate = (update: {added: TrustedEvent[]}) => {
     for (const event of update.added || []) {
       receiveRepositoryCacheEvent(event, Array.from(tracker.getRelays(event.id) || [])[0])
     }
   }
-  repository.on("update", onRepositoryUpdate)
+  const unsubscribeRepository = repository.onUpdate(
+    {name: "repository-cache-persistence"},
+    onRepositoryUpdate,
+  )
 
   return () => {
     stopped = true
     unsubscribeWatch()
-    repository.off("update", onRepositoryUpdate)
+    unsubscribeRepository()
     if (pendingEventTimer) clearTimeout(pendingEventTimer)
     pendingEventTimer = undefined
     pendingEvents.clear()

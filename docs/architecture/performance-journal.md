@@ -1897,6 +1897,41 @@ kind/author/id/tag indexes. Repository-level routing would still need final
 `matchFilters` verification because Nostr filters contain intersections and
 broad conditions.
 
+The follow-up measurement instruments identified repository subscriptions
+without splitting them into separate diagnostic records. Production listeners
+register through `Repository.onUpdate` with a stable source name, a
+process-local registration ID, and, for reactive queries, a non-sensitive filter
+shape containing filter keys, kinds, author/id counts, tag keys, and limits but
+not author, id, or tag values. While diagnostics are active, the existing
+aggregate `repository-singleton/subscriber-update` span embeds each identified
+listener's synchronous start time and duration plus measured listener coverage
+and unattributed aggregate duration. At most the 50 slowest listener timings are embedded while
+totals cover every measured listener. Filter, filter-key, kind, and tag-key
+arrays are independently capped at 20. The typed registration API does not
+accept arbitrary diagnostic detail. This captures synchronous downstream Svelte
+propagation inside each callback while preserving the aggregate timing and the
+500-record budget. It identifies the repository-backed source query, not an
+eventual component inside its synchronous propagation, and work resumed after
+an `await` is outside that callback's attribution. Outside an active repository
+timing observer, listeners take the direct unmeasured path. The unattributed
+listener count can include raw listeners or listeners not reached after an
+earlier callback throws; unattributed duration also includes EventEmitter
+dispatch and timing overhead. Failed listeners are
+reported before their original error is rethrown, and listener coverage uses the
+count sampled before emission so self-removal cannot corrupt the remainder.
+
+All production repository `update` registrations in the application and
+workspace Welshman packages now use identified subscriptions, including the six
+generic repository-store derivations, live and calendar feeds, local adapter,
+topics, event/relay persistence, and repository cache persistence. Third-party
+or future raw EventEmitter listeners remain visible as unmeasured aggregate
+remainder. Local validation passed 147 Welshman net/store tests, 75 affected
+application tests, `pnpm check`, `pnpm e2e:check`, affected-file ESLint,
+`git diff --check`, and the production desktop/mobile-4x diagnostics matrix. A
+matrix mobile Community span successfully attributed 12.8 ms of a 22.3 ms
+aggregate update to one kind `32222` `derive-events-by-id` instance, confirming
+that listener identity and filter metadata survive artifact serialization.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.

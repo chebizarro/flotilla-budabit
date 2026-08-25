@@ -67,7 +67,7 @@ export class LocalAdapter extends AbstractAdapter {
     super()
 
     this._unsubscribers.push(
-      on(repository, "update", ({added}) => {
+      repository.onUpdate({name: "local-adapter"}, ({added}) => {
         for (const [subId, filters] of this.subs.entries()) {
           for (const event of added) {
             if (matchFilters(filters, event)) {

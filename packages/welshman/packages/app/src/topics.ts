@@ -1,5 +1,5 @@
 import {readable} from "svelte/store"
-import {on, call} from "@welshman/lib"
+import {call} from "@welshman/lib"
 import {deriveItems} from "@welshman/store"
 import {getTopicTagValues} from "@welshman/util"
 import {repository} from "./core.js"
@@ -29,7 +29,7 @@ export const topicsByName = call(() => {
   }
 
   return readable<Map<string, Topic>>(topicsByName, set => {
-    return on(repository, "update", ({added}) => {
+    return repository.onUpdate({name: "topics-by-name"}, ({added}) => {
       let dirty = false
 
       for (const event of added) {

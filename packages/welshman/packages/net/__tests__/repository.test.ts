@@ -89,7 +89,10 @@ describe("Repository", () => {
       const timing = vi.fn()
       const stop = setRepositoryUpdateTimingListener(timing)
       const event = createEvent(1)
-      repo.on("update", () => undefined)
+      const unsubscribe = repo.onUpdate(
+        {name: "test-subscriber", filters: [{keys: ["kinds"], kinds: [1]}]},
+        () => undefined,
+      )
 
       repo.publish(event)
 
@@ -100,11 +103,25 @@ describe("Repository", () => {
           removed: 0,
           kinds: [1],
           listeners: 1,
+          subscribers: [
+            expect.objectContaining({
+              id: 1,
+              name: "test-subscriber",
+              filters: [{keys: ["kinds"], kinds: [1]}],
+              durationMs: expect.any(Number),
+            }),
+          ],
         }),
       )
-      stop()
+      unsubscribe()
       repo.publish(createEvent(2))
-      expect(timing).toHaveBeenCalledTimes(1)
+      expect(timing).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({listeners: 0, subscribers: []}),
+      )
+      stop()
+      repo.publish(createEvent(3))
+      expect(timing).toHaveBeenCalledTimes(2)
     })
 
     it("finishes reporting when a subscriber removes the timing listener", () => {
@@ -114,6 +131,39 @@ describe("Repository", () => {
 
       expect(() => repo.publish(createEvent(1))).not.toThrow()
       expect(timing).toHaveBeenCalledTimes(1)
+    })
+
+    it("reports the listener count from the start of an update", () => {
+      const timing = vi.fn()
+      setRepositoryUpdateTimingListener(timing)
+      let unsubscribe = () => undefined
+      unsubscribe = repo.onUpdate({name: "self-removing"}, () => unsubscribe())
+
+      repo.publish(createEvent(1))
+
+      expect(timing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          listeners: 1,
+          subscribers: [expect.objectContaining({name: "self-removing"})],
+        }),
+      )
+    })
+
+    it("reports identified subscriber timing when a listener throws", () => {
+      const timing = vi.fn()
+      setRepositoryUpdateTimingListener(timing)
+      repo.onUpdate({name: "failing-subscriber"}, () => {
+        throw new Error("listener failed")
+      })
+
+      expect(() => repo.publish(createEvent(1))).toThrow("listener failed")
+      expect(timing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "failed",
+          listeners: 1,
+          subscribers: [expect.objectContaining({name: "failing-subscriber"})],
+        }),
+      )
     })
 
     it("publishes deferred events once per burst", () => {

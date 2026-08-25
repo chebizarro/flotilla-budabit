@@ -1,4 +1,4 @@
-import {on, fromPairs, batch, indexBy} from "@welshman/lib"
+import {fromPairs, batch, indexBy} from "@welshman/lib"
 import {throttled} from "@welshman/store"
 import {
   APP_DATA,
@@ -204,7 +204,7 @@ export const eventsAdapter = {
         )
       }
     })
-    const unsubscribe = on(repository, "update", (update: RepositoryUpdate) => {
+    const unsubscribe = repository.onUpdate({name: "event-persistence"}, update => {
       for (const event of update.added) {
         if (rankEvent(event) > 0) markEventPersistencePending(event.id)
       }
@@ -268,14 +268,17 @@ export const trackerAdapter = {
     tracker.on("remove", onRemove)
     tracker.on("load", onLoad)
     tracker.on("clear", onClear)
-    repository.on("update", onRepositoryUpdate)
+    const unsubscribeRepository = repository.onUpdate(
+      {name: "relay-provenance-persistence"},
+      onRepositoryUpdate,
+    )
 
     return () => {
       tracker.off("add", onAdd)
       tracker.off("remove", onRemove)
       tracker.off("load", onLoad)
       tracker.off("clear", onClear)
-      repository.off("update", onRepositoryUpdate)
+      unsubscribeRepository()
     }
   },
 }

@@ -20,6 +20,7 @@ const MAX_WARNINGS = 100
 const MAX_DETAIL_DEPTH = 8
 const MAX_STRING_LENGTH = 20_000
 const DEFAULT_WORK_SPAN_THRESHOLD_MS = 8
+const MAX_REPOSITORY_SUBSCRIBER_TIMINGS = 50
 
 const SECRET_KEY_PATTERN =
   /^(authorization|cookie|private[-_]?key|secret|signer[-_]?secret|bunker|nostrconnect|nsec)$/i
@@ -731,18 +732,31 @@ export const startPerformanceDiagnosticsObservers = (
   const observers: PerformanceObserver[] = []
   const stopRepositoryTiming = setRepositoryUpdateTimingListener(timing => {
     if (timing.durationMs < DEFAULT_WORK_SPAN_THRESHOLD_MS) return
+    const measuredSubscriberMs = timing.subscribers.reduce(
+      (total, subscriber) => total + subscriber.durationMs,
+      0,
+    )
+    const subscribers = [...timing.subscribers]
+      .sort((a, b) => b.durationMs - a.durationMs)
+      .slice(0, MAX_REPOSITORY_SUBSCRIBER_TIMINGS)
     recordWorkAfterPaint(
       runId,
       {
         owner: `repository-${timing.owner}`,
         phase: "subscriber-update",
-        status: "complete",
+        status: timing.status,
         startTime: timing.startTime,
         durationMs: timing.durationMs,
         added: timing.added,
         removed: timing.removed,
         kinds: timing.kinds,
         listeners: timing.listeners,
+        subscribers,
+        recordedSubscribers: subscribers.length,
+        measuredSubscribers: timing.subscribers.length,
+        measuredSubscriberMs,
+        unattributedListeners: Math.max(0, timing.listeners - timing.subscribers.length),
+        unattributedMs: Math.max(0, timing.durationMs - measuredSubscriberMs),
       },
       timing.startTime + timing.durationMs,
     )

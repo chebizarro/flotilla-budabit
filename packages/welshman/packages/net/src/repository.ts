@@ -35,12 +35,36 @@ export type RepositoryUpdate = {
 
 export type RepositoryUpdateTiming = {
   owner: "singleton" | "repository"
+  status: "complete" | "failed"
   startTime: number
   durationMs: number
   added: number
   removed: number
   kinds: number[]
   listeners: number
+  subscribers: RepositoryUpdateSubscriberTiming[]
+}
+
+export type RepositoryUpdateSubscriber = {
+  name: string
+  filters?: RepositoryUpdateSubscriberFilter[]
+}
+
+export type RepositoryUpdateSubscriberFilter = {
+  keys: string[]
+  kinds?: number[]
+  authors?: number
+  ids?: number
+  tags?: string[]
+  limit?: number
+  since?: boolean
+  until?: boolean
+}
+
+export type RepositoryUpdateSubscriberTiming = RepositoryUpdateSubscriber & {
+  id: number
+  startTime: number
+  durationMs: number
 }
 
 let repositoryUpdateTimingListener: ((timing: RepositoryUpdateTiming) => void) | undefined
@@ -88,6 +112,8 @@ export class Repository extends Emitter {
   private pendingUpdates: RepositoryUpdate[] = []
   private emittingUpdate = false
   private pendingUpdateTimer: ReturnType<typeof setTimeout> | undefined
+  private updateSubscriberSequence = 0
+  private updateSubscriberTimings: RepositoryUpdateSubscriberTiming[] | undefined
   private deferredEvents = new Map<string, TrustedEvent>()
   private deferredEventTimer: ReturnType<typeof setTimeout> | undefined
   private deferredEventFlushAt = 0
@@ -106,6 +132,32 @@ export class Repository extends Emitter {
     super()
 
     this.setMaxListeners(1000)
+  }
+
+  onUpdate = (
+    subscriber: RepositoryUpdateSubscriber,
+    listener: (update: RepositoryUpdate) => void,
+  ) => {
+    const id = ++this.updateSubscriberSequence
+    const wrapped = (update: RepositoryUpdate) => {
+      const timings = this.updateSubscriberTimings
+      if (!timings || typeof performance === "undefined") return listener(update)
+
+      const startTime = performance.now()
+      try {
+        return listener(update)
+      } finally {
+        timings.push({
+          id,
+          ...subscriber,
+          startTime,
+          durationMs: Math.max(0, performance.now() - startTime),
+        })
+      }
+    }
+
+    this.on("update", wrapped)
+    return () => this.off("update", wrapped)
   }
 
   private emitUpdate = (update: RepositoryUpdate) => {
@@ -136,17 +188,36 @@ export class Repository extends Emitter {
         }
 
         const startTime = performance.now()
-        this.emit("update", pending)
+        const listeners = this.listenerCount("update")
+        const subscribers: RepositoryUpdateSubscriberTiming[] = []
+        this.updateSubscriberTimings = subscribers
+        let emissionError: unknown
+        let emissionFailed = false
+        try {
+          this.emit("update", pending)
+        } catch (error) {
+          emissionError = error
+          emissionFailed = true
+        } finally {
+          this.updateSubscriberTimings = undefined
+        }
         const durationMs = Math.max(0, performance.now() - startTime)
-        timingListener({
-          owner: this === repositorySingleton ? "singleton" : "repository",
-          startTime,
-          durationMs,
-          added: pending.added.length,
-          removed: pending.removed.size,
-          kinds: Array.from(new Set(pending.added.map(event => event.kind))).slice(0, 20),
-          listeners: this.listenerCount("update"),
-        })
+        try {
+          timingListener({
+            owner: this === repositorySingleton ? "singleton" : "repository",
+            status: emissionFailed ? "failed" : "complete",
+            startTime,
+            durationMs,
+            added: pending.added.length,
+            removed: pending.removed.size,
+            kinds: Array.from(new Set(pending.added.map(event => event.kind))).slice(0, 20),
+            listeners,
+            subscribers,
+          })
+        } catch (error) {
+          if (!emissionFailed) throw error
+        }
+        if (emissionFailed) throw emissionError
       }
     } finally {
       this.emittingUpdate = false

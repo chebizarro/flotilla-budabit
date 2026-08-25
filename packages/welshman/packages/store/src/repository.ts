@@ -22,6 +22,24 @@ export type EventsByIdOptions = {
   includeDeleted?: boolean
 }
 
+const summarizeFilters = (filters: Filter[]) =>
+  filters.slice(0, 20).map(filter => {
+    const tags = Object.keys(filter)
+      .filter(key => key.startsWith("#"))
+      .sort()
+
+    return {
+      keys: Object.keys(filter).sort().slice(0, 20),
+      ...(filter.kinds ? {kinds: filter.kinds.slice(0, 20)} : {}),
+      ...(filter.authors ? {authors: filter.authors.length} : {}),
+      ...(filter.ids ? {ids: filter.ids.length} : {}),
+      ...(tags.length > 0 ? {tags: tags.slice(0, 20)} : {}),
+      ...(filter.limit !== undefined ? {limit: filter.limit} : {}),
+      ...(filter.since !== undefined ? {since: true} : {}),
+      ...(filter.until !== undefined ? {until: true} : {}),
+    }
+  })
+
 export const getEventsById = ({filters, repository, includeDeleted}: EventsByIdOptions) => {
   const eventsById = new Map<string, TrustedEvent>()
 
@@ -38,26 +56,29 @@ export const deriveEventsById = ({filters, repository, includeDeleted}: EventsBy
 
     set(eventsById)
 
-    return on(repository, "update", ({added, removed}: RepositoryUpdate) => {
-      let dirty = false
+    return repository.onUpdate(
+      {name: "derive-events-by-id", filters: summarizeFilters(filters)},
+      ({added, removed}: RepositoryUpdate) => {
+        let dirty = false
 
-      for (const event of added) {
-        if (matchFilters(filters, event)) {
-          dirty = true
-          eventsById.set(event.id, event)
+        for (const event of added) {
+          if (matchFilters(filters, event)) {
+            dirty = true
+            eventsById.set(event.id, event)
+          }
         }
-      }
 
-      for (const id of removed) {
-        if (mapPop(id, eventsById)) {
-          dirty = true
+        for (const id of removed) {
+          if (mapPop(id, eventsById)) {
+            dirty = true
+          }
         }
-      }
 
-      if (dirty) {
-        set(eventsById)
-      }
-    })
+        if (dirty) {
+          set(eventsById)
+        }
+      },
+    )
   })
 
 export const deriveArray = <T>(itemsByIdStore: Readable<Map<string, T>>) =>
@@ -88,22 +109,25 @@ export const makeDeriveEvent = ({repository, includeDeleted = false, onDerive}: 
 
       set(event)
 
-      return on(repository, "update", ({added, removed}: RepositoryUpdate) => {
-        if (!includeDeleted) {
-          for (const id of removed) {
-            if (event?.id === id) {
-              set(undefined)
+      return repository.onUpdate(
+        {name: "derive-event", filters: summarizeFilters(filters)},
+        ({added, removed}: RepositoryUpdate) => {
+          if (!includeDeleted) {
+            for (const id of removed) {
+              if (event?.id === id) {
+                set(undefined)
+              }
             }
           }
-        }
 
-        for (const newEvent of added) {
-          if (matchFilters(filters, newEvent)) {
-            event = newEvent
-            set(event)
+          for (const newEvent of added) {
+            if (matchFilters(filters, newEvent)) {
+              event = newEvent
+              set(event)
+            }
           }
-        }
-      })
+        },
+      )
     })
   }
 }
@@ -186,25 +210,28 @@ export const deriveEventsByIdByUrl = ({
     set(eventsByIdByUrl)
 
     const unsubscribers = [
-      on(repository, "update", ({added, removed}: RepositoryUpdate) => {
-        let dirty = false
+      repository.onUpdate(
+        {name: "derive-events-by-id-by-url", filters: summarizeFilters(filters)},
+        ({added, removed}: RepositoryUpdate) => {
+          let dirty = false
 
-        for (const event of added) {
-          for (const url of tracker.getRelays(event.id)) {
-            dirty = dirty || addEvent(url, event)
+          for (const event of added) {
+            for (const url of tracker.getRelays(event.id)) {
+              dirty = dirty || addEvent(url, event)
+            }
           }
-        }
 
-        for (const id of removed) {
-          for (const url of tracker.getRelays(id)) {
-            dirty = dirty || removeEvent(url, id)
+          for (const id of removed) {
+            for (const url of tracker.getRelays(id)) {
+              dirty = dirty || removeEvent(url, id)
+            }
           }
-        }
 
-        if (dirty) {
-          set(eventsByIdByUrl)
-        }
-      }),
+          if (dirty) {
+            set(eventsByIdByUrl)
+          }
+        },
+      ),
       on(tracker, "add", (id: string, url: string) => {
         const event = repository.getEvent(id)
 
@@ -279,27 +306,33 @@ export const deriveEventsByIdForUrl = ({
     reset()
 
     const unsubscribers = [
-      on(repository, "update", ({added, removed}: RepositoryUpdate) => {
-        let dirty = false
+      repository.onUpdate(
+        {
+          name: "derive-events-by-id-for-url",
+          filters: summarizeFilters(filters),
+        },
+        ({added, removed}: RepositoryUpdate) => {
+          let dirty = false
 
-        for (const event of added) {
-          if (tracker.hasRelay(event.id, url) && matchFilters(filters, event)) {
-            eventsById.set(event.id, event)
-            dirty = true
+          for (const event of added) {
+            if (tracker.hasRelay(event.id, url) && matchFilters(filters, event)) {
+              eventsById.set(event.id, event)
+              dirty = true
+            }
           }
-        }
 
-        for (const id of removed) {
-          if (eventsById.has(id)) {
-            eventsById.delete(id)
-            dirty = true
+          for (const id of removed) {
+            if (eventsById.has(id)) {
+              eventsById.delete(id)
+              dirty = true
+            }
           }
-        }
 
-        if (dirty) {
-          set(eventsById)
-        }
-      }),
+          if (dirty) {
+            set(eventsById)
+          }
+        },
+      ),
       on(tracker, "add", (id: string, trackedUrl: string) => {
         if (trackedUrl === url) {
           const event = repository.getEvent(id)
@@ -384,31 +417,34 @@ export const deriveItemsByKey = <T>({
       addEvent(event)
     }
 
-    return on(repository, "update", ({added, removed}: RepositoryUpdate) => {
-      for (const event of added) {
-        if (matchFilters(filters, event)) {
-          addEvent(event)
-        }
-      }
-
-      if (!includeDeleted) {
-        let dirty = false
-
-        for (const id of removed) {
-          const key = mapPop(id, keysById)
-
-          if (key) {
-            idsByKey.delete(key)
-            itemsByKey.delete(key)
-            dirty = true
+    return repository.onUpdate(
+      {name: "derive-items-by-key", filters: summarizeFilters(filters)},
+      ({added, removed}: RepositoryUpdate) => {
+        for (const event of added) {
+          if (matchFilters(filters, event)) {
+            addEvent(event)
           }
         }
 
-        if (dirty) {
-          set(itemsByKey)
+        if (!includeDeleted) {
+          let dirty = false
+
+          for (const id of removed) {
+            const key = mapPop(id, keysById)
+
+            if (key) {
+              idsByKey.delete(key)
+              itemsByKey.delete(key)
+              dirty = true
+            }
+          }
+
+          if (dirty) {
+            set(itemsByKey)
+          }
         }
-      }
-    })
+      },
+    )
   })
 }
 
@@ -515,7 +551,7 @@ export const deriveIsDeleted = (repository: Repository, event: TrustedEvent) =>
 
     set(repository.isDeleted(event))
 
-    return on(repository, "update", ({removed, added}: RepositoryUpdate) => {
+    return repository.onUpdate({name: "derive-is-deleted"}, ({removed, added}) => {
       if (removed.has(event.id)) {
         set(true)
       }

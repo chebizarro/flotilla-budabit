@@ -11,7 +11,7 @@ import {
 } from "@welshman/util"
 import type {TrustedEvent, Filter, List} from "@welshman/util"
 import {feedFromFilters, makeRelayFeed, makeIntersectionFeed} from "@welshman/feeds"
-import {load, request, Tracker, type RequestOptions} from "@welshman/net"
+import {request, Tracker, type RequestOptions} from "@welshman/net"
 import {repository, makeFeedController, loadRelay, tracker} from "@welshman/app"
 import {createScroller} from "@lib/html"
 import {daysBetween} from "@lib/util"
@@ -33,6 +33,18 @@ const MAX_EMPTY_ADMISSION_SCAN_PAGES = 3
 const COMMUNITY_HISTORY_PAGE_SIZE = 100
 const COMMUNITY_HISTORY_MAX_PAGES = 3
 const COMMUNITY_HISTORY_TIMEOUT_MS = 30_000
+
+const summarizeRepositoryFilters = (filters: Filter[]) =>
+  filters.slice(0, 20).map(filter => ({
+    keys: Object.keys(filter).sort().slice(0, 20),
+    ...(filter.kinds ? {kinds: filter.kinds.slice(0, 20)} : {}),
+    ...(filter.authors ? {authors: filter.authors.length} : {}),
+    ...(filter.ids ? {ids: filter.ids.length} : {}),
+    tags: Object.keys(filter)
+      .filter(key => key.startsWith("#"))
+      .sort()
+      .slice(0, 20),
+  }))
 const COMMUNITY_HISTORY_TAG_CHUNK_SIZE = 100
 
 const filterIncludesKind = (filter: Filter, kind: number) =>
@@ -510,33 +522,36 @@ export const makeFeed = ({
     removeEvents(event => ids.has(event.id))
   })
 
-  const unsubscribe = on(repository, "update", ({added, removed}) => {
-    if (removed.size > 0) {
-      for (const id of removed) seen.delete(id)
-      removeEvents(event => removed.has(event.id))
-    }
-
-    const addedEvents = Array.from(added) as TrustedEvent[]
-    const deleteEvents = addedEvents.filter(event => event.kind === DELETE)
-
-    if (deleteEvents.length > 0) {
-      removeEvents(event => deleteEventsDeleteTarget(deleteEvents, event))
-    }
-
-    for (const event of addedEvents) {
-      if (!matchFilters(liveFilters, event) || !isVisibleAfterDeletesAndEdits(event)) {
-        continue
+  const unsubscribe = repository.onUpdate(
+    {name: "live-feed", filters: summarizeRepositoryFilters(liveFilters)},
+    ({added, removed}) => {
+      if (removed.size > 0) {
+        for (const id of removed) seen.delete(id)
+        removeEvents(event => removed.has(event.id))
       }
 
-      const eventRelays = tracker.getRelays(event.id)
-      for (const url of eventRelays) {
-        if (relaysSet.has(url)) {
-          insertEvent(event)
-          break
+      const addedEvents = Array.from(added) as TrustedEvent[]
+      const deleteEvents = addedEvents.filter(event => event.kind === DELETE)
+
+      if (deleteEvents.length > 0) {
+        removeEvents(event => deleteEventsDeleteTarget(deleteEvents, event))
+      }
+
+      for (const event of addedEvents) {
+        if (!matchFilters(liveFilters, event) || !isVisibleAfterDeletesAndEdits(event)) {
+          continue
+        }
+
+        const eventRelays = tracker.getRelays(event.id)
+        for (const url of eventRelays) {
+          if (relaysSet.has(url)) {
+            insertEvent(event)
+            break
+          }
         }
       }
-    }
-  })
+    },
+  )
 
   // Promote a cached event once a relay actually acknowledges or delivers it.
   const unsubscribeTracker = on(tracker, "add", (id: string, url: string) => {
@@ -752,24 +767,27 @@ export const makeCalendarFeed = ({
     })
   }
 
-  const unsubscribe = on(repository, "update", ({added, removed}) => {
-    if (removed.size > 0) {
-      removeEvents(event => removed.has(event.id))
-    }
-
-    const addedEvents = Array.from(added) as TrustedEvent[]
-    const deleteEvents = addedEvents.filter(event => event.kind === DELETE)
-
-    if (deleteEvents.length > 0) {
-      removeEvents(event => deleteEventsDeleteTarget(deleteEvents, event))
-    }
-
-    for (const event of addedEvents) {
-      if (matchFilters(filters, event) && isVisibleAfterDeletesAndEdits(event)) {
-        insertEvent(event)
+  const unsubscribe = repository.onUpdate(
+    {name: "calendar-feed", filters: summarizeRepositoryFilters(filters)},
+    ({added, removed}) => {
+      if (removed.size > 0) {
+        removeEvents(event => removed.has(event.id))
       }
-    }
-  })
+
+      const addedEvents = Array.from(added) as TrustedEvent[]
+      const deleteEvents = addedEvents.filter(event => event.kind === DELETE)
+
+      if (deleteEvents.length > 0) {
+        removeEvents(event => deleteEventsDeleteTarget(deleteEvents, event))
+      }
+
+      for (const event of addedEvents) {
+        if (matchFilters(filters, event) && isVisibleAfterDeletesAndEdits(event)) {
+          insertEvent(event)
+        }
+      }
+    },
+  )
 
   const unsubscribeSuppressedEdits = editedTargetIds.subscribe(ids => {
     if (ids.size === 0) return
