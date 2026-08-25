@@ -1601,6 +1601,126 @@ Proposed 2026-08-24 at `9291099f8`. Status: `Proposed`.
 - 2026-08-24 `9291099f8`: manual smoke finding recorded and mechanisms audited;
   no fix implemented yet.
 
+## Finding 024: Physical Captures Separate Startup Recovery From Sustained Main-Thread Work
+
+Observed 2026-08-25 on build `acd10ceee-20260825012104`. Status:
+`Observed`; the persisted-hydration startup result is `Validated` for this
+device and workload only.
+
+### Workload And Artifact Validation
+
+One authenticated account captured Community Home and `/git` separately on a
+desktop browser and a physical Android mobile browser. All four immutable kind
+`30078` manifests on `wss://relay.budabit.club` passed signature, author,
+d-tag, manifest-tag, and schema validation. Their four distinct artifacts on
+`https://blossom.budabit.club` passed byte-count, SHA-256, gzip, and diagnostics
+schema validation:
+
+| Device  | Route          | Run                 | Artifact hash                                                      | Status   | Duration |
+| ------- | -------------- | ------------------- | ------------------------------------------------------------------ | -------- | -------: |
+| Desktop | Community Home | `mt7zhpbd-qexugy90` | `2d44cc8fb41e5f00689b8c2751f9cbf73186a91ed5e21bd83126d331a8c54762` | complete |  38.71 s |
+| Desktop | `/git`         | `mt7zjtn2-hxkgid0u` | `3cf060ac02576562f9c570dd2a1c365d42e3f83e9d2cb9f2a1aada1f00a392a4` | failed   |  60.10 s |
+| Mobile  | Community Home | `mt7znboy-ejiymatk` | `5a7c4622486eb9f04f294ebd6fcf10cf6ee3a28376856d192e5ab82370a67496` | failed   |  71.30 s |
+| Mobile  | `/git`         | `mt7zws3b-zowlb6xm` | `22b0e66298ee11b1b688c7308a5f526bf760d4c7a3fe7b4ec28d58e5efd72d61` | failed   |  84.57 s |
+
+The desktop environment reported 16 hardware threads and 32 GiB device
+memory. Mobile reported 8 hardware threads and 8 GiB device memory at a
+411-by-809 CSS-pixel viewport. Every run was service-worker controlled and
+reported zero transferred bytes for the approximately 5.7-5.9 MB decoded app
+resource graph, so these are warm-asset, persisted-session captures rather than
+cold-network measurements.
+
+### Validated Startup Change
+
+The preceding physical mobile Community capture on build `555f198c3` mounted
+the route at 19.43 s. After `acd10ceee` changed persisted repository and relay
+provenance hydration from per-record notifications to aggregate loads, the same
+route mounted at 0.83 s. The current mobile `/git` route mounted at 1.23 s and
+rendered its first repository card at 1.41 s.
+
+This validates removal of the observed pre-route hydration stall for this
+device and stored dataset. It does not show that IndexedDB `getAll()`, aggregate
+repository indexing, or post-mount reactive work are generally bounded.
+
+### Sustained Mobile Main-Thread Saturation
+
+Fast route mounting did not produce a responsive settled application. Mobile
+Community Home recorded 64 long tasks totaling 69.14 s, with a 7.69 s maximum.
+Its nominal 60 s timeout ran at 71.30 s. Mobile `/git` recorded 32 long tasks
+totaling 61.99 s, with a 12.74 s maximum; its timeout ran at 84.57 s. Timer
+lateness of 11.30 s and 24.57 s is direct evidence that synchronous main-thread
+work prevented timely scheduling.
+
+Relay scheduler snapshots showed no queued subscriptions and zero oldest queue
+age in all four runs. Maximum active filter counts were 74-130, so event volume
+and projection fan-out remain relevant, but scheduler admission was not the
+measured bottleneck.
+
+### Community Home Critical Path
+
+Desktop Community Home reached core readiness at 3.45 s, widget catalog
+terminal state at 23.68 s, and final widget layout settlement at 38.68 s.
+Thirty-five long tasks totaled 21.36 s. The visible core and widget lifecycle
+therefore need separate responsiveness and settlement budgets.
+
+Mobile Community Home reached core readiness only at 18.26 s, first observed a
+room at 29.31 s, and reached shared-widget-config terminal state at 44.06 s. It
+never reached widget catalog terminal state, selected no widget candidates, and
+timed out. The final record had five rooms but no widget frames or resolved
+layouts.
+
+### Git Foreground And Background Semantics Diverge
+
+Desktop `/git` mounted at 0.25 s and rendered a repository card at 0.30 s.
+Mobile mounted at 1.23 s and rendered one at 1.41 s. Both nevertheless failed
+because diagnostics settlement required `activeRepoDataLoading` to become
+false. Their final records had 11 rendered cards with list loading, card
+projection, and search updating all false, while background data loading
+remained true.
+
+The existing capture therefore measures an unbounded background terminal
+condition rather than stable foreground usefulness. Positive rendered results
+should settle after paint while retaining separate bounded telemetry for
+background acquisition. Authoritative empty results must continue to require
+complete source evidence.
+
+### Unexpected Signer Work
+
+Mobile Community Home recorded an unhandled NIP-46 publication failure around
+31 s. Mobile `/git` recorded three NIP-46 request timeouts and one signing
+timeout around 56 s. The operation owners are absent from the artifact. Route
+loading should not initiate unexplained signing, and all background signer
+operations require ownership, deduplication, and handled failure telemetry.
+
+### Blossom Retrieval Compatibility
+
+Content-addressed artifacts remain distinct and intact, and the immutable
+manifests were not overwritten. Standard hash-only `nak blossom download`
+returned HTTP 404, while the manifest URLs ending in `.gz` returned the exact
+validated bytes from the same Blossom origin. The server should resolve the
+hash without requiring a filename extension so standard Blossom tooling can
+retrieve these artifacts.
+
+### Next Changes
+
+- Align `/git` diagnostics settlement with painted positive results and record
+  background source terminal state independently.
+- Add navigation, startup-phase, long-task attribution, and best-effort input
+  timing records before making broader performance claims.
+- Keep full notification row projection out of `PrimaryNav` startup, and admit
+  notification networking only after destination paint and idle time.
+- Batch background repository publication so event bursts do not synchronously
+  recompute every active derived source per event.
+- Preserve strict completeness requirements for empty states.
+- Investigate and remove unexplained route-start NIP-46 signing operations.
+- Stage Community Home widget discovery and layout after foreground core paint.
+
+### History
+
+- 2026-08-25 `acd10ceee`: four physical artifacts retrieved and validated;
+  aggregate persisted hydration validated for the observed pre-route stall,
+  while sustained main-thread saturation remained.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.
