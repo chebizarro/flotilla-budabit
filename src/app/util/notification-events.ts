@@ -99,4 +99,25 @@ export const notificationEvents = new NotificationEventStore()
 export const notificationEventRepository = notificationEvents.repository
 export const receiveNotificationEvent = (event: TrustedEvent, relay: string) =>
   notificationEvents.publish(event, relay)
+const queuedNotificationEvents = new Map<string, {event: TrustedEvent; relays: Set<string>}>()
+let notificationEventFlushTimer: ReturnType<typeof setTimeout> | undefined
+
+export const queueNotificationEvent = (event: TrustedEvent, relay: string) => {
+  const current = queuedNotificationEvents.get(event.id)
+  const relays = current?.relays || new Set<string>()
+  if (relay) relays.add(relay)
+  queuedNotificationEvents.set(event.id, {event, relays})
+  if (notificationEventFlushTimer) return
+  notificationEventFlushTimer = setTimeout(() => {
+    notificationEventFlushTimer = undefined
+    const queued = Array.from(queuedNotificationEvents.values())
+    queuedNotificationEvents.clear()
+    notificationEventRepository.batch(() => {
+      for (const item of queued) {
+        if (item.relays.size === 0) notificationEvents.publish(item.event, "")
+        else for (const relay of item.relays) notificationEvents.publish(item.event, relay)
+      }
+    })
+  }, 16)
+}
 export const getNotificationEventRelays = (eventId: string) => notificationEvents.getRelays(eventId)

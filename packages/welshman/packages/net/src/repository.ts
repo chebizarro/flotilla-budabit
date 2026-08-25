@@ -61,6 +61,8 @@ export class Repository extends Emitter {
   deletes = new Map<string, {created_at: number; pubkey: string}[]>()
   replaced = new Set<string>()
   expired = new Map<string, number>()
+  private batchDepth = 0
+  private batchedUpdates: RepositoryUpdate[] = []
 
   static get() {
     if (!repositorySingleton) {
@@ -74,6 +76,25 @@ export class Repository extends Emitter {
     super()
 
     this.setMaxListeners(1000)
+  }
+
+  private emitUpdate = (update: RepositoryUpdate) => {
+    if (this.batchDepth > 0) this.batchedUpdates.push(update)
+    else this.emit("update", update)
+  }
+
+  batch = <T>(callback: () => T): T => {
+    this.batchDepth++
+    try {
+      return callback()
+    } finally {
+      this.batchDepth--
+      if (this.batchDepth === 0 && this.batchedUpdates.length > 0) {
+        const update = mergeRepositoryUpdates(this.batchedUpdates)
+        this.batchedUpdates = []
+        this.emit("update", update)
+      }
+    }
   }
 
   // Dump/load/clear
@@ -129,7 +150,7 @@ export class Repository extends Emitter {
       removed.add(id)
     }
 
-    this.emit("update", {added, removed})
+    this.emitUpdate({added, removed})
   }
 
   // API
@@ -163,7 +184,7 @@ export class Repository extends Emitter {
       this._updateIndex(this.eventsByAuthor, event.pubkey, undefined, event)
       this._updateIndex(this.eventsByKind, event.kind, undefined, event)
 
-      this.emit("update", {added: [], removed: new Set([event.id])})
+      this.emitUpdate({added: [], removed: new Set([event.id])})
     }
   }
 
@@ -280,7 +301,7 @@ export class Repository extends Emitter {
 
     // Notify, but only if the event hasn't been deleted
     if (shouldNotify && !this.isDeleted(event)) {
-      this.emit("update", {added: [event], removed})
+      this.emitUpdate({added: [event], removed})
     }
 
     return true

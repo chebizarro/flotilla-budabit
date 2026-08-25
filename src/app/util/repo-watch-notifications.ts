@@ -894,6 +894,27 @@ const receiveRepoWatchEvent = (event: TrustedEvent, relay: string) => {
   receiveRepositoryCacheEvent(event, relay)
 }
 
+const queuedRepoWatchEvents = new Map<string, {event: TrustedEvent; relays: Set<string>}>()
+let repoWatchEventFlushTimer: ReturnType<typeof setTimeout> | undefined
+const queueRepoWatchEvent = (event: TrustedEvent, relay: string) => {
+  const current = queuedRepoWatchEvents.get(event.id)
+  const relays = current?.relays || new Set<string>()
+  if (relay) relays.add(relay)
+  queuedRepoWatchEvents.set(event.id, {event, relays})
+  if (repoWatchEventFlushTimer) return
+  repoWatchEventFlushTimer = setTimeout(() => {
+    repoWatchEventFlushTimer = undefined
+    const queued = Array.from(queuedRepoWatchEvents.values())
+    queuedRepoWatchEvents.clear()
+    repository.batch(() => {
+      for (const item of queued) {
+        if (item.relays.size === 0) receiveRepoWatchEvent(item.event, "")
+        else for (const relay of item.relays) receiveRepoWatchEvent(item.event, relay)
+      }
+    })
+  }, 16)
+}
+
 export const createBoundedRepoWatchHistoryLoader = ({
   request: requestHistory,
   onEvent,
@@ -938,7 +959,7 @@ const receiveRepoWatchLiveEvent = (event: TrustedEvent, relay: string) => {
   )
 
   if (localFilters.length > 0 && matchFilters(localFilters, event)) {
-    receiveRepoWatchEvent(event, normalizedRelay)
+    queueRepoWatchEvent(event, normalizedRelay)
   }
 }
 
@@ -953,7 +974,7 @@ const repoWatchLiveCoordinator = createBackgroundLiveCoordinator({
 
 const loadBoundedRepoWatchHistory = createBoundedRepoWatchHistoryLoader({
   request,
-  onEvent: receiveRepoWatchEvent,
+  onEvent: queueRepoWatchEvent,
 })
 
 const initialLoadedRepoWatchEvents = <T extends TrustedEvent>(): LoadedRepoWatchEvents<T> => ({

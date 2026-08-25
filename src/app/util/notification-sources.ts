@@ -187,6 +187,7 @@ import {userRenouncedCommunityAddresses} from "@app/core/community-renunciations
 import {
   getNotificationEventRelays,
   notificationEventRepository,
+  queueNotificationEvent,
   receiveNotificationEvent,
 } from "@app/util/notification-events"
 import {
@@ -1461,7 +1462,7 @@ export const createBoundedNotificationHistoryLoader = ({
 const notificationLiveCoordinator = createBackgroundLiveCoordinator({
   request,
   owner: "notification-background",
-  onEvent: receiveNotificationEvent,
+  onEvent: queueNotificationEvent,
   onError: (relay, error) => {
     console.warn(`[notification-sources] Failed to subscribe on ${relay}`, error)
   },
@@ -1469,7 +1470,7 @@ const notificationLiveCoordinator = createBackgroundLiveCoordinator({
 
 const loadBoundedNotificationHistory = createBoundedNotificationHistoryLoader({
   request,
-  onEvent: receiveNotificationEvent,
+  onEvent: queueNotificationEvent,
 })
 
 type LoadedNotificationEvents = {

@@ -6,7 +6,7 @@
   import type {Unsubscriber} from "svelte/store"
   import {get} from "svelte/store"
   import {browser, dev} from "$app/environment"
-  import {goto} from "$app/navigation"
+  import {goto, onNavigate} from "$app/navigation"
   import {page} from "$app/stores"
   import {sync} from "@welshman/store"
   import {call} from "@welshman/lib"
@@ -49,7 +49,10 @@
   import {ExtensionProvider} from "@src/app/extensions"
   import {installBuiltinExtensions} from "@app/extensions/builtin"
   import {setupWidgetUpdateNotifications} from "@app/extensions/widget-update-notifications"
-  import {setNotificationBackgroundEnabled} from "@app/util/notification-background"
+  import {
+    scheduleNotificationBackgroundAdmission,
+    setNotificationBackgroundEnabled,
+  } from "@app/util/notification-background"
   import {CASHU_WALLET_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
   import {consumeArmedPerformanceDiagnosticsCapture} from "@app/core/performance-diagnostics"
   import {initializeCashuWallet} from "@app/core/cashu"
@@ -164,8 +167,12 @@
   let notificationStartupDelayKey = ""
   let notificationPreferenceLoadingSeenKey = ""
   let notificationStartupTimer: ReturnType<typeof setTimeout> | null = null
+  let cancelNotificationAdmission: (() => void) | null = null
+  let notificationAdmissionKey = ""
   let notificationBackgroundStarted = false
   let notificationBackgroundUnsubscribers: Array<() => void> = []
+  let notificationRootReady = $state(false)
+  let notificationNavigationGeneration = $state(0)
   let communityAuthWarmupKey = ""
   let builtinExtensionInstallFrame: number | null = null
   let builtinExtensionInstallCancelled = false
@@ -230,22 +237,41 @@
     notificationStartupTimer = null
   }
 
+  const clearNotificationAdmission = () => {
+    cancelNotificationAdmission?.()
+    cancelNotificationAdmission = null
+    notificationAdmissionKey = ""
+  }
+
   const startNotificationBackground = () => {
     if (notificationBackgroundStarted) return
 
     clearNotificationStartupTimer()
+    clearNotificationAdmission()
     notificationBackgroundStarted = true
-    setNotificationBackgroundEnabled(true)
     notificationBackgroundUnsubscribers = [
       setupBudabitNotifications(),
       setupRepoWatchNotifications(),
       setupWidgetUpdateNotifications(),
       badgeCount.subscribe(handleBadgeCountChanges),
     ]
+    setNotificationBackgroundEnabled(true)
+  }
+
+  const scheduleNotificationBackground = (key: string) => {
+    if (notificationBackgroundStarted) return
+    if (notificationAdmissionKey === key && cancelNotificationAdmission) return
+    clearNotificationAdmission()
+    notificationAdmissionKey = key
+    cancelNotificationAdmission = scheduleNotificationBackgroundAdmission(() => {
+      cancelNotificationAdmission = null
+      startNotificationBackground()
+    })
   }
 
   const stopNotificationBackground = () => {
     clearNotificationStartupTimer()
+    clearNotificationAdmission()
     setNotificationBackgroundEnabled(false)
     notificationBackgroundUnsubscribers.forEach(call)
     notificationBackgroundUnsubscribers = []
@@ -254,15 +280,26 @@
     notificationPreferenceLoadingSeenKey = ""
   }
 
+  if (browser) {
+    onNavigate(navigation => {
+      if (navigation.from?.url.pathname === navigation.to?.url.pathname) return
+      stopNotificationBackground()
+      return () => {
+        notificationNavigationGeneration += 1
+      }
+    })
+  }
+
   $effect(() => {
-    if (!browser || notificationBackgroundStarted) return
+    void notificationNavigationGeneration
+    if (!browser || !notificationRootReady || notificationBackgroundStarted) return
 
     const routeId = $page.route.id || ""
     const user = $pubkey || ""
     const isExploreRoute = routeId === "/explore"
 
     if (!isExploreRoute) {
-      startNotificationBackground()
+      scheduleNotificationBackground(`${routeId}:${user}`)
       return
     }
 
@@ -281,7 +318,7 @@
       notificationPreferenceLoadingSeenKey === key && !$communityPreferencesLoading
 
     if (preferredCommunitiesReady || preferencesSettled) {
-      startNotificationBackground()
+      scheduleNotificationBackground(key)
       return
     }
 
@@ -290,7 +327,7 @@
     clearNotificationStartupTimer()
     notificationStartupDelayKey = key
     notificationStartupTimer = setTimeout(() => {
-      startNotificationBackground()
+      scheduleNotificationBackground(key)
     }, EXPLORE_NOTIFICATION_STARTUP_DELAY_MS)
   })
 
@@ -1174,6 +1211,7 @@
 
   if (browser) {
     void unsubscribe.then(() => {
+      notificationRootReady = true
       if (builtinExtensionInstallCancelled) return
 
       // Let the child route mount and begin its community bootstrap before

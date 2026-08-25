@@ -13,14 +13,14 @@
   import ImageIcon from "@lib/components/ImageIcon.svelte"
   import PrimaryNavItem from "@lib/components/PrimaryNavItem.svelte"
   import MenuSettings from "@app/components/MenuSettings.svelte"
-  import NotificationsModal from "@app/components/NotificationsModal.svelte"
   import {publicationOperationsNeedingAttention} from "@app/core/publication-operations"
+  import {badgeCount} from "@app/util/notifications"
   import {pushModal} from "@app/util/modal"
   import {
     NOTIFICATION_CENTER_MODAL_KIND,
     notificationCenterOpen,
+    notificationUnreadHints,
   } from "@app/util/notification-center"
-  import {hasNotificationCenterUnread} from "@app/util/notification-sources"
   import Git from "@assets/icons/git.svg?dataurl"
 
   type Props = {
@@ -31,8 +31,14 @@
 
   const showSettingsMenu = () => pushModal(MenuSettings)
 
-  const showNotifications = () =>
+  let notificationsModalPromise: Promise<
+    typeof import("@app/components/NotificationsModal.svelte")
+  > | null = null
+  const showNotifications = async () => {
+    notificationsModalPromise ||= import("@app/components/NotificationsModal.svelte")
+    const {default: NotificationsModal} = await notificationsModalPromise
     pushModal(NotificationsModal, {}, {kind: NOTIFICATION_CENTER_MODAL_KIND})
+  }
 
   const openChat = () => {
     if ($pubkey) goto("/chat")
@@ -40,7 +46,9 @@
   }
   const hasTopLevelNotification = $derived(
     !$notificationCenterOpen &&
-      ($hasNotificationCenterUnread || $publicationOperationsNeedingAttention.length > 0),
+      (Boolean($pubkey && $notificationUnreadHints[$pubkey]) ||
+        $badgeCount > 0 ||
+        $publicationOperationsNeedingAttention.length > 0),
   )
 </script>
 

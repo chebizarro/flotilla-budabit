@@ -1,6 +1,11 @@
-import {describe, expect, it} from "vitest"
+import {afterEach, describe, expect, it, vi} from "vitest"
 import type {TrustedEvent} from "@welshman/util"
-import {NotificationEventStore} from "./notification-events"
+import {
+  NotificationEventStore,
+  notificationEventRepository,
+  notificationEvents,
+  queueNotificationEvent,
+} from "./notification-events"
 
 const makeEvent = (
   id: string,
@@ -19,6 +24,9 @@ const makeEvent = (
   }) as TrustedEvent
 
 describe("NotificationEventStore", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   it("retains only the newest events up to its size bound", () => {
     const store = new NotificationEventStore(2, 1_000)
 
@@ -68,5 +76,26 @@ describe("NotificationEventStore", () => {
     expect(store.repository.getEvent(older.id)).toBeUndefined()
     expect(store.repository.getEvent(`30001:${newer.pubkey}:widget`)?.id).toBe(newer.id)
     expect(store.size).toBe(1)
+  })
+
+  it("coalesces a network burst while retaining relay provenance", async () => {
+    vi.useFakeTimers()
+    notificationEvents.clear()
+    const emit = vi.spyOn(notificationEventRepository, "emit")
+    const createdAt = Math.floor(Date.now() / 1000)
+    const first = makeEvent("queued-first", createdAt)
+    const second = makeEvent("queued-second", createdAt)
+
+    queueNotificationEvent(first, "wss://one.example")
+    queueNotificationEvent(first, "wss://two.example")
+    queueNotificationEvent(second, "wss://one.example")
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(emit.mock.calls.filter(call => call[0] === "update")).toHaveLength(1)
+    expect(notificationEvents.getRelays(first.id)).toEqual([
+      "wss://one.example",
+      "wss://two.example",
+    ])
+    notificationEvents.clear()
   })
 })

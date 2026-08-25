@@ -51,6 +51,37 @@ describe("Repository", () => {
       repo.publish(event)
       expect(repo.hasEvent(event)).toBe(true)
     })
+
+    it("should emit one merged update for a nested batch", () => {
+      const first = createEvent(1)
+      const second = createEvent(1)
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      repo.batch(() => {
+        repo.publish(first)
+        repo.batch(() => repo.publish(second))
+      })
+
+      expect(updateHandler).toHaveBeenCalledTimes(1)
+      expect(updateHandler).toHaveBeenCalledWith({added: [first, second], removed: new Set()})
+    })
+
+    it("should flush a batch when its callback throws", () => {
+      const event = createEvent(1)
+      const updateHandler = vi.fn()
+      repo.on("update", updateHandler)
+
+      expect(() =>
+        repo.batch(() => {
+          repo.publish(event)
+          throw new Error("stop")
+        }),
+      ).toThrow("stop")
+      expect(updateHandler).toHaveBeenCalledTimes(1)
+      expect(repo.publish(createEvent(1))).toBe(true)
+      expect(updateHandler).toHaveBeenCalledTimes(2)
+    })
   })
 
   describe("replaceable events", () => {

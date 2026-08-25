@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {describe, expect, it, vi} from "vitest"
+import {get} from "svelte/store"
 
 vi.mock("@app/core/storage", () => ({
   kv: {get: vi.fn(), set: vi.fn(), clear: vi.fn()},
@@ -60,5 +61,15 @@ describe("notification center read state", () => {
     expect(getUnreadNotificationRowIdsState(read, "alice", ["newer-event", "older-event"])).toEqual(
       ["older-event"],
     )
+  })
+
+  it("keeps cheap unread hints isolated by account", async () => {
+    const {notificationUnreadHints, setNotificationUnreadHint} =
+      await import("./notification-center")
+
+    setNotificationUnreadHint("alice", true)
+    setNotificationUnreadHint("bob", false)
+
+    expect(get(notificationUnreadHints)).toMatchObject({alice: true, bob: false})
   })
 })

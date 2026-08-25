@@ -1,5 +1,5 @@
 import {synced} from "@welshman/store"
-import {derived} from "svelte/store"
+import {derived, writable} from "svelte/store"
 import {kv} from "@app/core/storage"
 import {modal} from "@app/util/modal"
 
@@ -92,6 +92,16 @@ export const notificationCenterOpen = derived(
   modal,
   $modal => $modal?.options.kind === NOTIFICATION_CENTER_MODAL_KIND,
 )
+
+export const notificationUnreadHints = writable<Record<string, boolean>>({})
+
+export const setNotificationUnreadHint = (pubkey: string | undefined, unread: boolean) => {
+  const account = String(pubkey || "").trim()
+  if (!account) return
+  notificationUnreadHints.update(hints =>
+    hints[account] === unread ? hints : {...hints, [account]: unread},
+  )
+}
 
 export const notificationReadState = synced<NotificationReadState>({
   key: "notificationCenter.readState",
