@@ -61,6 +61,10 @@ export type RepositoryUpdateSubscriber = {
   filters?: RepositoryUpdateSubscriberFilter[]
 }
 
+export type RepositoryUpdateRoute = {
+  kinds: readonly number[]
+}
+
 export type RepositoryUpdateSubscriberFilter = {
   keys: string[]
   kinds?: number[]
@@ -115,6 +119,13 @@ const mergeRepositoryUpdateEnvelopes = (
   affectedKinds: new Set(envelopes.flatMap(envelope => Array.from(envelope.affectedKinds))),
 })
 
+const kindsIntersect = (left: Iterable<number>, right: Set<number>) => {
+  for (const kind of left) {
+    if (right.has(kind)) return true
+  }
+  return false
+}
+
 export class Repository extends Emitter {
   eventsById = new Map<string, TrustedEvent>()
   eventsByAddress = new Map<string, TrustedEvent>()
@@ -132,6 +143,11 @@ export class Repository extends Emitter {
   private pendingUpdateTimer: ReturnType<typeof setTimeout> | undefined
   private updateSubscriberSequence = 0
   private updateSubscriberTimings: RepositoryUpdateSubscriberTiming[] | undefined
+  private updateSubscriberRoutes = new Map<
+    (update: RepositoryUpdate) => void,
+    Set<number> | undefined
+  >()
+  private activeUpdateEnvelope: RepositoryUpdateEnvelope | undefined
   private deferredEvents = new Map<string, TrustedEvent>()
   private deferredEventTimer: ReturnType<typeof setTimeout> | undefined
   private deferredEventFlushAt = 0
@@ -152,12 +168,19 @@ export class Repository extends Emitter {
     this.setMaxListeners(1000)
   }
 
-  onUpdate = (
+  private registerUpdateListener = (
     subscriber: RepositoryUpdateSubscriber,
+    route: RepositoryUpdateRoute | undefined,
     listener: (update: RepositoryUpdate) => void,
   ) => {
     const id = ++this.updateSubscriberSequence
+    const routedKinds = route ? new Set(route.kinds) : undefined
     const wrapped = (update: RepositoryUpdate) => {
+      const envelope = this.activeUpdateEnvelope
+      if (envelope && routedKinds && !kindsIntersect(routedKinds, envelope.affectedKinds)) {
+        return
+      }
+
       const timings = this.updateSubscriberTimings
       if (!timings || typeof performance === "undefined") return listener(update)
 
@@ -174,9 +197,24 @@ export class Repository extends Emitter {
       }
     }
 
+    this.updateSubscriberRoutes.set(wrapped, routedKinds)
     this.on("update", wrapped)
-    return () => this.off("update", wrapped)
+    return () => {
+      this.updateSubscriberRoutes.delete(wrapped)
+      this.off("update", wrapped)
+    }
   }
+
+  onUpdate = (
+    subscriber: RepositoryUpdateSubscriber,
+    listener: (update: RepositoryUpdate) => void,
+  ) => this.registerUpdateListener(subscriber, undefined, listener)
+
+  onRoutedUpdate = (
+    subscriber: RepositoryUpdateSubscriber,
+    route: RepositoryUpdateRoute,
+    listener: (update: RepositoryUpdate) => void,
+  ) => this.registerUpdateListener(subscriber, route, listener)
 
   private emitUpdate = (update: RepositoryUpdate, affectedKinds: Iterable<number>) => {
     const envelope = {update, affectedKinds: new Set(affectedKinds)}
@@ -192,7 +230,13 @@ export class Repository extends Emitter {
   }
 
   private broadcastUpdate = (envelope: RepositoryUpdateEnvelope) => {
-    this.emit("update", envelope.update)
+    const previousEnvelope = this.activeUpdateEnvelope
+    this.activeUpdateEnvelope = envelope
+    try {
+      this.emit("update", envelope.update)
+    } finally {
+      this.activeUpdateEnvelope = previousEnvelope
+    }
   }
 
   private drainPendingUpdates = () => {
@@ -212,6 +256,21 @@ export class Repository extends Emitter {
 
         const startTime = performance.now()
         const registeredListeners = this.listenerCount("update")
+        const managedListeners = this.updateSubscriberRoutes.size
+        const rawListeners = Math.max(0, registeredListeners - managedListeners)
+        const affectedKinds = pending.affectedKinds
+        let fallbackListeners = rawListeners
+        let routedListeners = 0
+        let routedCandidates = 0
+        for (const route of this.updateSubscriberRoutes.values()) {
+          if (!route) {
+            fallbackListeners++
+            continue
+          }
+          routedListeners++
+          if (kindsIntersect(route, affectedKinds)) routedCandidates++
+        }
+        const candidateListeners = fallbackListeners + routedCandidates
         const subscribers: RepositoryUpdateSubscriberTiming[] = []
         this.updateSubscriberTimings = subscribers
         let emissionError: unknown
@@ -236,10 +295,12 @@ export class Repository extends Emitter {
             kinds: Array.from(pending.affectedKinds).slice(0, 20),
             listeners: registeredListeners,
             registeredListeners,
-            candidateListeners: registeredListeners,
-            invokedListeners: emissionFailed ? subscribers.length : registeredListeners,
-            fallbackListeners: registeredListeners,
-            routedListeners: 0,
+            candidateListeners,
+            invokedListeners: emissionFailed
+              ? Math.min(candidateListeners, rawListeners + subscribers.length)
+              : candidateListeners,
+            fallbackListeners,
+            routedListeners,
             routingStatus: "known",
             subscribers,
           })

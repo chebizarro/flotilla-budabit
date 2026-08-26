@@ -166,6 +166,83 @@ describe("Repository", () => {
       )
     })
 
+    it("routes updates by affected kind while preserving fallback listener order", () => {
+      const received: string[] = []
+      repo.on("update", () => received.push("raw-before"))
+      repo.onRoutedUpdate({name: "kind-1"}, {kinds: [1]}, () => received.push("kind-1"))
+      repo.onRoutedUpdate({name: "kind-2"}, {kinds: [2]}, () => received.push("kind-2"))
+      repo.onUpdate({name: "fallback"}, () => received.push("fallback"))
+      repo.on("update", () => received.push("raw-after"))
+
+      repo.publish(createEvent(1))
+
+      expect(received).toEqual(["raw-before", "kind-1", "fallback", "raw-after"])
+    })
+
+    it("keeps diagnostic filter summaries separate from routing behavior", () => {
+      const listener = vi.fn()
+      repo.onUpdate({name: "diagnostic-only", filters: [{keys: ["kinds"], kinds: [1]}]}, listener)
+
+      repo.publish(createEvent(2))
+
+      expect(listener).toHaveBeenCalledTimes(1)
+    })
+
+    it("reports shadow routing and only times invoked subscribers", () => {
+      const timing = vi.fn()
+      setRepositoryUpdateTimingListener(timing)
+      repo.onRoutedUpdate({name: "matching"}, {kinds: [1]}, () => undefined)
+      repo.onRoutedUpdate({name: "unrelated"}, {kinds: [2]}, () => undefined)
+      repo.onUpdate({name: "fallback"}, () => undefined)
+
+      repo.publish(createEvent(1))
+
+      expect(timing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          listeners: 3,
+          registeredListeners: 3,
+          candidateListeners: 2,
+          invokedListeners: 2,
+          fallbackListeners: 1,
+          routedListeners: 2,
+          routingStatus: "known",
+          subscribers: [
+            expect.objectContaining({name: "matching"}),
+            expect.objectContaining({name: "fallback"}),
+          ],
+        }),
+      )
+    })
+
+    it("does not invoke a routed-out throwing listener", () => {
+      const matching = vi.fn()
+      repo.onRoutedUpdate({name: "unrelated"}, {kinds: [2]}, () => {
+        throw new Error("should not run")
+      })
+      repo.onRoutedUpdate({name: "matching"}, {kinds: [1]}, matching)
+
+      expect(() => repo.publish(createEvent(1))).not.toThrow()
+      expect(matching).toHaveBeenCalledTimes(1)
+    })
+
+    it("unions affected kinds across a nested batch", () => {
+      const kind1 = vi.fn()
+      const kind2 = vi.fn()
+      const kind3 = vi.fn()
+      repo.onRoutedUpdate({name: "kind-1"}, {kinds: [1]}, kind1)
+      repo.onRoutedUpdate({name: "kind-2"}, {kinds: [2]}, kind2)
+      repo.onRoutedUpdate({name: "kind-3"}, {kinds: [3]}, kind3)
+
+      repo.batch(() => {
+        repo.publish(createEvent(1))
+        repo.batch(() => repo.publish(createEvent(2)))
+      })
+
+      expect(kind1).toHaveBeenCalledTimes(1)
+      expect(kind2).toHaveBeenCalledTimes(1)
+      expect(kind3).not.toHaveBeenCalled()
+    })
+
     it("publishes deferred events once per burst", () => {
       vi.useFakeTimers()
       const first = createEvent(1)
@@ -184,6 +261,25 @@ describe("Repository", () => {
       expect(repo.getEvent(second.id)).toBe(second)
       expect(updateHandler).toHaveBeenCalledTimes(1)
       expect(updateHandler).toHaveBeenCalledWith({added: [first, second], removed: new Set()})
+      vi.useRealTimers()
+    })
+
+    it("routes a deferred merged burst by every affected kind", () => {
+      vi.useFakeTimers()
+      const kind1 = vi.fn()
+      const kind2 = vi.fn()
+      const kind3 = vi.fn()
+      repo.onRoutedUpdate({name: "kind-1"}, {kinds: [1]}, kind1)
+      repo.onRoutedUpdate({name: "kind-2"}, {kinds: [2]}, kind2)
+      repo.onRoutedUpdate({name: "kind-3"}, {kinds: [3]}, kind3)
+
+      repo.publish(createEvent(1), {deferMs: 16})
+      repo.publish(createEvent(2), {deferMs: 16})
+      vi.advanceTimersByTime(16)
+
+      expect(kind1).toHaveBeenCalledTimes(1)
+      expect(kind2).toHaveBeenCalledTimes(1)
+      expect(kind3).not.toHaveBeenCalled()
       vi.useRealTimers()
     })
 
@@ -284,6 +380,22 @@ describe("Repository", () => {
       expect(received).toEqual([[first.id], [nested.id]])
     })
 
+    it("preserves kind routing for serialized reentrant updates", () => {
+      const first = createEvent(1)
+      const nested = createEvent(2)
+      const received: string[] = []
+      repo.onRoutedUpdate({name: "publisher"}, {kinds: [1]}, () => {
+        received.push("kind-1")
+        repo.publish(nested)
+      })
+      repo.onRoutedUpdate({name: "nested"}, {kinds: [2]}, () => received.push("kind-2"))
+      repo.on("update", update => received.push(`raw-${update.added[0]?.kind}`))
+
+      repo.publish(first)
+
+      expect(received).toEqual(["kind-1", "raw-1", "kind-2", "raw-2"])
+    })
+
     it("yields during a long reentrant update chain", () => {
       vi.useFakeTimers()
       const events = Array.from({length: 20}, (_, kind) => createEvent(kind + 1))
@@ -359,6 +471,24 @@ describe("Repository", () => {
       })
     })
 
+    it("routes an atomic load by added and stale removed kinds", () => {
+      const stale = createEvent(1)
+      const added = createEvent(2)
+      repo.publish(stale)
+      const kind1 = vi.fn()
+      const kind2 = vi.fn()
+      const kind3 = vi.fn()
+      repo.onRoutedUpdate({name: "kind-1"}, {kinds: [1]}, kind1)
+      repo.onRoutedUpdate({name: "kind-2"}, {kinds: [2]}, kind2)
+      repo.onRoutedUpdate({name: "kind-3"}, {kinds: [3]}, kind3)
+
+      repo.load([added])
+
+      expect(kind1).toHaveBeenCalledWith({added: [added], removed: new Set([stale.id])})
+      expect(kind2).toHaveBeenCalledWith({added: [added], removed: new Set([stale.id])})
+      expect(kind3).not.toHaveBeenCalled()
+    })
+
     it("reports the final delta when an event is deleted in the same burst", () => {
       vi.useFakeTimers()
       const event = createEvent(1, {created_at: now() - 10})
@@ -379,6 +509,29 @@ describe("Repository", () => {
         removed: new Set([event.id]),
       })
       vi.useRealTimers()
+    })
+
+    it("routes a deletion update by both delete and removed target kinds", () => {
+      const event = createEvent(1, {created_at: now() - 10})
+      const deletion = createEvent(DELETE, {
+        pubkey: event.pubkey,
+        created_at: now(),
+        tags: [["e", event.id]],
+      })
+      repo.publish(event)
+      const targetListener = vi.fn()
+      const deleteListener = vi.fn()
+      const unrelatedListener = vi.fn()
+      repo.onRoutedUpdate({name: "target"}, {kinds: [1]}, targetListener)
+      repo.onRoutedUpdate({name: "delete"}, {kinds: [DELETE]}, deleteListener)
+      repo.onRoutedUpdate({name: "unrelated"}, {kinds: [2]}, unrelatedListener)
+
+      repo.publish(deletion)
+
+      const expected = {added: [deletion], removed: new Set([event.id])}
+      expect(targetListener).toHaveBeenCalledWith(expected)
+      expect(deleteListener).toHaveBeenCalledWith(expected)
+      expect(unrelatedListener).not.toHaveBeenCalled()
     })
 
     it("reports the final delta when a replaceable is superseded in the same burst", () => {
@@ -702,6 +855,20 @@ describe("Repository", () => {
         added: [],
         removed: new Set([event.id]),
       })
+    })
+
+    it("routes explicit removal by the target kind", () => {
+      const event = createEvent(1)
+      repo.publish(event)
+      const matching = vi.fn()
+      const unrelated = vi.fn()
+      repo.onRoutedUpdate({name: "matching"}, {kinds: [1]}, matching)
+      repo.onRoutedUpdate({name: "unrelated"}, {kinds: [2]}, unrelated)
+
+      repo.removeEvent(event.id)
+
+      expect(matching).toHaveBeenCalledWith({added: [], removed: new Set([event.id])})
+      expect(unrelated).not.toHaveBeenCalled()
     })
   })
 })
