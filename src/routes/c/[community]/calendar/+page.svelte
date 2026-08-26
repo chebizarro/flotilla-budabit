@@ -25,14 +25,12 @@
     activeCommunityProfileListEvents,
     activeExactCommunityRelays,
     activeCommunityReportState,
-    getUserOutboxRelays,
     getCommunityBootstrapKey,
     hasCommunityHydrationCompleted,
     markCommunityHydrationCompleted,
     recoverCommunityBootstrap,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
-  import {normalizeRelays} from "@app/core/community"
   import {
     CALENDAR_EVENT_KINDS,
     getCalendarEventRange,
@@ -117,9 +115,6 @@
   )
   const createPath = $derived(
     routeCommunity ? makeExactCommunityCalendarPath(routeCommunity, "create") : "",
-  )
-  const calendarEditPublishRelays = $derived(
-    normalizeRelays([...getUserOutboxRelays(), ...$activeExactCommunityRelays]),
   )
   const communityBootstrapReady = $derived(
     Boolean(
@@ -687,7 +682,7 @@
         url={communityId}
         community={routeCommunity}
         relays={$activeExactCommunityRelays}
-        publishRelays={calendarEditPublishRelays}
+        publishRelays={$activeExactCommunityRelays}
         reactionRelays={$activeExactCommunityRelays}
         scopeH={communityId}
         communitySectionName={getCalendarEventSectionName(event.kind)}

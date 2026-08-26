@@ -46,10 +46,8 @@
     activeCommunityProfileListEvents,
     activeExactCommunityRelays,
     activeCommunityReportState,
-    getUserOutboxRelays,
     type CommunityHydrationStatus,
   } from "@app/core/community-state"
-  import {normalizeRelays} from "@app/core/community"
   import {
     makeCommunityContentFilterPlan,
     makeCommunityTargetingFilter,
@@ -192,9 +190,6 @@
           reportState: $activeCommunityReportState,
         })
       : [],
-  )
-  const calendarEditPublishRelays = $derived(
-    normalizeRelays([...getUserOutboxRelays(), ...$activeExactCommunityRelays]),
   )
   const isEventIdParam = $derived(/^[0-9a-f]{64}$/i.test(eventParam))
   const targetingFilterPlan = $derived.by(() => {
@@ -875,7 +870,7 @@
               url={communityId}
               community={routeCommunity}
               relays={$activeExactCommunityRelays}
-              publishRelays={calendarEditPublishRelays}
+              publishRelays={$activeExactCommunityRelays}
               reactionRelays={$activeExactCommunityRelays}
               scopeH={communityId}
               communitySectionName={approvedEventSectionName}

@@ -50,6 +50,18 @@ describe("strict community publication source contracts", () => {
     }
   })
 
+  it("keeps calendar edits and deletes on community relays", () => {
+    for (const route of [
+      "../../routes/c/[community]/calendar/+page.svelte",
+      "../../routes/c/[community]/calendar/[event]/+page.svelte",
+    ]) {
+      const source = readProjectFile(route)
+
+      expect(source, route).toContain("publishRelays={$activeExactCommunityRelays}")
+      expect(source, route).not.toContain("getUserOutboxRelays")
+    }
+  })
+
   it("keeps read relays separate from action relays on community social surfaces", () => {
     const routes = [
       "../../routes/c/[community]/threads/+page.svelte",
