@@ -2,9 +2,39 @@
 
 ## Status
 
-- Proposed phased implementation.
+- Phases 0-4 implemented in the worktree on 2026-08-26.
+- Focused and full-suite correctness validation completed; physical mobile performance validation
+  remains pending.
 - Implements lesson 1 from `welshman-performance-lessons-from-applesauce.md`.
 - Designed for incremental rollout with the existing global update path retained as fallback.
+
+## Implementation Record
+
+The implemented scope includes:
+
+- Private affected-kind envelopes across immediate publication, nested and deferred batches,
+  reentrant queues, repository loads, deletes, replacements, and explicit removals.
+- `Repository.onRoutedUpdate` as an opt-in sibling to unchanged fallback `onUpdate` behavior.
+- Routing diagnostics for registered, candidate, invoked, fallback, and routed listener counts.
+- Safe kind-route derivation for generic `@welshman/store` repository projections.
+- Explicit target-kind routing for `deriveIsDeleted`.
+- Routed Budabit persistence, relay-provenance persistence, repository cache, calendar feed, and
+  safely constrained live-feed listeners.
+- Deliberate fallback delivery for the dynamic local-relay adapter, the all-kind topic index, and
+  live feeds containing any OR branch without a kind constraint.
+- Regression coverage for delete-target routing and unrelated community profile-list deletes.
+
+Validation completed during implementation:
+
+- Full Welshman suite: 32 files, 497 passed, 1 skipped.
+- Focused Budabit suite: 6 files, 78 passed.
+- `@welshman/net` and `@welshman/store` TypeScript builds.
+- `pnpm check` with zero errors and warnings.
+- Prettier and `git diff --check` for changed files.
+
+This evidence establishes implementation correctness, not production performance. Phase 5 remains
+deferred until physical captures validate the routed path and establish whether removing the
+legacy EventEmitter delivery mechanism is justified.
 
 ## Problem
 

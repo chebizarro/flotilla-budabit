@@ -77,6 +77,18 @@ const kinds = {
   ],
 }
 
+const persistedRepositoryKinds = Array.from(
+  new Set([
+    ...kinds.meta,
+    ...kinds.digest,
+    ...kinds.content,
+    ...kinds.community,
+    COMMUNITY_DEFINITION_KIND,
+    DELETE,
+    REACTION,
+  ]),
+)
+
 const isCommunityStarReaction = (event: TrustedEvent) =>
   event.kind === REACTION &&
   event.content === "+" &&
@@ -204,12 +216,16 @@ export const eventsAdapter = {
         )
       }
     })
-    const unsubscribe = repository.onUpdate({name: "event-persistence"}, update => {
-      for (const event of update.added) {
-        if (rankEvent(event) > 0) markEventPersistencePending(event.id)
-      }
-      persistUpdates(update)
-    })
+    const unsubscribe = repository.onRoutedUpdate(
+      {name: "event-persistence"},
+      {kinds: persistedRepositoryKinds},
+      update => {
+        for (const event of update.added) {
+          if (rankEvent(event) > 0) markEventPersistencePending(event.id)
+        }
+        persistUpdates(update)
+      },
+    )
 
     return () => {
       unsubscribe()
@@ -268,8 +284,9 @@ export const trackerAdapter = {
     tracker.on("remove", onRemove)
     tracker.on("load", onLoad)
     tracker.on("clear", onClear)
-    const unsubscribeRepository = repository.onUpdate(
+    const unsubscribeRepository = repository.onRoutedUpdate(
       {name: "relay-provenance-persistence"},
+      {kinds: persistedRepositoryKinds},
       onRepositoryUpdate,
     )
 

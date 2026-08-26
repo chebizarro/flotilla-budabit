@@ -45,6 +45,16 @@ const summarizeRepositoryFilters = (filters: Filter[]) =>
       .sort()
       .slice(0, 20),
   }))
+
+const getRepositoryKindRoute = (filters: Filter[], additionalKinds: number[] = []) => {
+  if (filters.length === 0 || filters.some(filter => !filter.kinds?.length)) return
+
+  return {
+    kinds: Array.from(
+      new Set([...additionalKinds, ...filters.flatMap(filter => filter.kinds || [])]),
+    ),
+  }
+}
 const COMMUNITY_HISTORY_TAG_CHUNK_SIZE = 100
 
 const filterIncludesKind = (filter: Filter, kind: number) =>
@@ -522,36 +532,38 @@ export const makeFeed = ({
     removeEvents(event => ids.has(event.id))
   })
 
-  const unsubscribe = repository.onUpdate(
-    {name: "live-feed", filters: summarizeRepositoryFilters(liveFilters)},
-    ({added, removed}) => {
-      if (removed.size > 0) {
-        for (const id of removed) seen.delete(id)
-        removeEvents(event => removed.has(event.id))
+  const liveFeedSubscriber = {name: "live-feed", filters: summarizeRepositoryFilters(liveFilters)}
+  const onRepositoryUpdate = ({added, removed}: {added: TrustedEvent[]; removed: Set<string>}) => {
+    if (removed.size > 0) {
+      for (const id of removed) seen.delete(id)
+      removeEvents(event => removed.has(event.id))
+    }
+
+    const addedEvents = Array.from(added) as TrustedEvent[]
+    const deleteEvents = addedEvents.filter(event => event.kind === DELETE)
+
+    if (deleteEvents.length > 0) {
+      removeEvents(event => deleteEventsDeleteTarget(deleteEvents, event))
+    }
+
+    for (const event of addedEvents) {
+      if (!matchFilters(liveFilters, event) || !isVisibleAfterDeletesAndEdits(event)) {
+        continue
       }
 
-      const addedEvents = Array.from(added) as TrustedEvent[]
-      const deleteEvents = addedEvents.filter(event => event.kind === DELETE)
-
-      if (deleteEvents.length > 0) {
-        removeEvents(event => deleteEventsDeleteTarget(deleteEvents, event))
-      }
-
-      for (const event of addedEvents) {
-        if (!matchFilters(liveFilters, event) || !isVisibleAfterDeletesAndEdits(event)) {
-          continue
-        }
-
-        const eventRelays = tracker.getRelays(event.id)
-        for (const url of eventRelays) {
-          if (relaysSet.has(url)) {
-            insertEvent(event)
-            break
-          }
+      const eventRelays = tracker.getRelays(event.id)
+      for (const url of eventRelays) {
+        if (relaysSet.has(url)) {
+          insertEvent(event)
+          break
         }
       }
-    },
-  )
+    }
+  }
+  const liveFeedRoute = getRepositoryKindRoute(liveFilters, [DELETE])
+  const unsubscribe = liveFeedRoute
+    ? repository.onRoutedUpdate(liveFeedSubscriber, liveFeedRoute, onRepositoryUpdate)
+    : repository.onUpdate(liveFeedSubscriber, onRepositoryUpdate)
 
   // Promote a cached event once a relay actually acknowledges or delivers it.
   const unsubscribeTracker = on(tracker, "add", (id: string, url: string) => {
@@ -767,8 +779,9 @@ export const makeCalendarFeed = ({
     })
   }
 
-  const unsubscribe = repository.onUpdate(
+  const unsubscribe = repository.onRoutedUpdate(
     {name: "calendar-feed", filters: summarizeRepositoryFilters(filters)},
+    {kinds: [DELETE, ...CALENDAR_EVENT_KINDS]},
     ({added, removed}) => {
       if (removed.size > 0) {
         removeEvents(event => removed.has(event.id))

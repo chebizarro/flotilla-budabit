@@ -120,7 +120,7 @@ type PendingRepositoryCacheEvent = {
   address?: string
 }
 
-const supportedActivityKinds = new Set([
+const supportedRepositoryCacheKinds = [
   COMMENT,
   GIT_PULL_REQUEST_UPDATE,
   GIT_LABEL,
@@ -130,7 +130,16 @@ const supportedActivityKinds = new Set([
   GIT_STATUS_CLOSED,
   GIT_STATUS_COMPLETE,
   REPORT,
-])
+] as const
+const supportedActivityKinds = new Set<number>(supportedRepositoryCacheKinds)
+const repositoryCacheRouteKinds = [
+  DELETE,
+  GIT_ISSUE,
+  GIT_PULL_REQUEST,
+  GIT_REPO_ANNOUNCEMENT,
+  GIT_REPO_STATE,
+  ...supportedRepositoryCacheKinds,
+]
 
 const textEncoder = new TextEncoder()
 
@@ -975,8 +984,9 @@ export const setupRepositoryCache = () => {
       receiveRepositoryCacheEvent(event, Array.from(tracker.getRelays(event.id) || [])[0])
     }
   }
-  const unsubscribeRepository = repository.onUpdate(
+  const unsubscribeRepository = repository.onRoutedUpdate(
     {name: "repository-cache-persistence"},
+    {kinds: repositoryCacheRouteKinds},
     onRepositoryUpdate,
   )
 
