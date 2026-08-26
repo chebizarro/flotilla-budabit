@@ -23,7 +23,9 @@
   transition:slide>
   <p class="text-xs text-primary">{verb} @{displayProfileByPubkey(event.pubkey)}</p>
   {#key event.id}
-    <NoteContentMinimal trimParent {event} />
+    <div class="line-clamp-3">
+      <NoteContentMinimal trimParent {event} />
+    </div>
   {/key}
   <Button class="absolute right-2 top-2 cursor-pointer" onclick={clear}>
     <Icon icon={CloseCircle} />
