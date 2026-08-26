@@ -11,9 +11,10 @@
   type Props = {
     pubkey: string
     url?: string
+    evidenceLabels?: string[]
   }
 
-  const {pubkey, url}: Props = $props()
+  const {pubkey, url, evidenceLabels = []}: Props = $props()
 
   const openProfile = () => pushModal(ProfileDetail, {pubkey, url})
 </script>
@@ -27,6 +28,13 @@
     </Button>
   </div>
   <ProfileInfo {pubkey} {url} />
+  {#if evidenceLabels.length > 0}
+    <div class="flex flex-wrap gap-2">
+      {#each evidenceLabels as label (label)}
+        <span class="badge badge-neutral">{label}</span>
+      {/each}
+    </div>
+  {/if}
   <ProfileBadges {pubkey} {url} />
   <Button onclick={openProfile} class="btn btn-primary sm:hidden">
     <Icon icon={UserCircle} />

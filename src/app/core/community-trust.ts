@@ -1,7 +1,7 @@
 import type {TrustedEvent} from "@welshman/util"
 import {normalizePubkey, type CommunityDefinition} from "@app/core/community"
 import {
-  selectUserCommunityRefs,
+  prepareUserCommunityRefSelection,
   type ActiveUserCommunityRef,
   type ActiveUserCommunityRole,
   type UserCommunityReportStates,
@@ -172,21 +172,18 @@ export const collectCommunityTrustRefs = ({
   renouncedCommunityAddresses = [],
 }: CommunityTrustRefsInput) => {
   const refsByPubkey = new Map<string, ActiveUserCommunityRef[]>()
+  const selectRefs = prepareUserCommunityRefSelection({
+    definitions,
+    definitionEvents,
+    profileListEvents,
+    excludedCommunityAddresses: renouncedCommunityAddresses,
+  })
 
   for (const rawPubkey of pubkeys) {
     const normalizedPubkey = normalizePubkey(rawPubkey)
     if (!normalizedPubkey || refsByPubkey.has(normalizedPubkey)) continue
 
-    refsByPubkey.set(
-      normalizedPubkey,
-      selectUserCommunityRefs({
-        author: normalizedPubkey,
-        definitions,
-        definitionEvents,
-        profileListEvents,
-        excludedCommunityAddresses: renouncedCommunityAddresses,
-      }),
-    )
+    refsByPubkey.set(normalizedPubkey, selectRefs(normalizedPubkey))
   }
 
   return refsByPubkey

@@ -62,6 +62,8 @@ export type SelectUserCommunityRefsOptions = {
   excludedCommunityAddresses?: string[]
 }
 
+export type PrepareUserCommunityRefSelectionOptions = Omit<SelectUserCommunityRefsOptions, "author">
+
 const roleOrder: ActiveUserCommunityRole[] = ["admin", "moderator", "member"]
 
 const getDTag = (event: TrustedEvent) => event.tags.find(tag => tag[0] === "d")?.[1] || ""
@@ -141,8 +143,8 @@ const hasValidatedModeratorRef = (
 const hasMemberRef = (
   ref: CommunityDefinitionProfileListRef,
   userPubkey: string,
-  profileListsByAddress: Map<string, TrustedEvent>,
-) => getProfileListPubkeys(profileListsByAddress.get(ref.address)).includes(userPubkey)
+  profileListPubkeysByAddress: Map<string, Set<string>>,
+) => profileListPubkeysByAddress.get(ref.address)?.has(userPubkey) || false
 
 const hasModeratorRef = (definition: CommunityDefinition, userPubkey: string) => {
   const normalizedUser = normalizePubkey(userPubkey)
@@ -355,69 +357,83 @@ export const selectCommunityMemberList = ({
     })
 }
 
-export const selectUserCommunityRefs = ({
-  author,
+export const prepareUserCommunityRefSelection = ({
   definitions = [],
   definitionEvents = [],
   profileListEvents = [],
   reportStates,
   excludedCommunityAddresses = [],
-}: SelectUserCommunityRefsOptions): ActiveUserCommunityRef[] => {
-  const normalizedAuthor = normalizePubkey(author || "")
-  if (!normalizedAuthor) return []
-
+}: PrepareUserCommunityRefSelectionOptions) => {
   const excludedCommunities = new Set(excludedCommunityAddresses)
   const parsedDefinitions = Array.from(selectCurrentCommunityDefinitions(definitionEvents).values())
   const profileListsByAddress = getLatestProfileListEventsByAddress(profileListEvents)
+  const profileListPubkeysByAddress = new Map(
+    Array.from(profileListsByAddress, ([address, event]) => [
+      address,
+      new Set(getProfileListPubkeys(event)),
+    ]),
+  )
+  const currentDefinitions = getLatestDefinitionsByAddress([...definitions, ...parsedDefinitions])
 
-  return getLatestDefinitionsByAddress([...definitions, ...parsedDefinitions])
-    .flatMap(definition => {
-      const isAdmin = definition.ownerPubkey === normalizedAuthor
-      const reportState = getReportState(reportStates, definition.pointer.address)
+  return (author?: string): ActiveUserCommunityRef[] => {
+    const normalizedAuthor = normalizePubkey(author || "")
+    if (!normalizedAuthor) return []
 
-      if (!isAdmin && excludedCommunities.has(definition.pointer.address)) return []
-      if (!isAdmin && isCommunityPersonBanned(reportState, normalizedAuthor)) return []
+    return currentDefinitions
+      .flatMap(definition => {
+        const isAdmin = definition.ownerPubkey === normalizedAuthor
+        const reportState = getReportState(reportStates, definition.pointer.address)
 
-      const roles = new Set<ActiveUserCommunityRole>()
-      const writableSections = new Set<string>()
+        if (!isAdmin && excludedCommunities.has(definition.pointer.address)) return []
+        if (!isAdmin && isCommunityPersonBanned(reportState, normalizedAuthor)) return []
 
-      if (isAdmin) {
-        roles.add("admin")
-        for (const section of definition.sections) writableSections.add(section.name)
-      }
+        const roles = new Set<ActiveUserCommunityRole>()
+        const writableSections = new Set<string>()
 
-      if (!isAdmin && hasModeratorRef(definition, normalizedAuthor)) {
-        roles.add("member")
-        for (const section of definition.sections) writableSections.add(section.name)
-      }
+        if (isAdmin) {
+          roles.add("admin")
+          for (const section of definition.sections) writableSections.add(section.name)
+        }
 
-      for (const section of definition.sections) {
-        const isModerator = section.profileLists.some(ref =>
-          hasValidatedModeratorRef(ref, normalizedAuthor, profileListsByAddress),
-        )
-        const isMember = section.profileLists.some(ref =>
-          hasMemberRef(ref, normalizedAuthor, profileListsByAddress),
-        )
+        if (!isAdmin && hasModeratorRef(definition, normalizedAuthor)) {
+          roles.add("member")
+          for (const section of definition.sections) writableSections.add(section.name)
+        }
 
-        if (isModerator) roles.add("moderator")
-        if (isMember) roles.add("member")
-        if (isModerator || isMember) writableSections.add(section.name)
-      }
+        for (const section of definition.sections) {
+          const isModerator = section.profileLists.some(ref =>
+            hasValidatedModeratorRef(ref, normalizedAuthor, profileListsByAddress),
+          )
+          const isMember = section.profileLists.some(ref =>
+            hasMemberRef(ref, normalizedAuthor, profileListPubkeysByAddress),
+          )
 
-      if (roles.size === 0) return []
+          if (isModerator) roles.add("moderator")
+          if (isMember) roles.add("member")
+          if (isModerator || isMember) writableSections.add(section.name)
+        }
 
-      return [
-        {
-          community: definition.pointer,
-          definition,
-          relayHints: definition.relays,
-          roles: roleOrder.filter(role => roles.has(role)),
-          writableSections: Array.from(writableSections).sort((a, b) => a.localeCompare(b)),
-        } satisfies ActiveUserCommunityRef,
-      ]
-    })
-    .sort((a, b) => a.community.address.localeCompare(b.community.address))
+        if (roles.size === 0) return []
+
+        return [
+          {
+            community: definition.pointer,
+            definition,
+            relayHints: definition.relays,
+            roles: roleOrder.filter(role => roles.has(role)),
+            writableSections: Array.from(writableSections).sort((a, b) => a.localeCompare(b)),
+          } satisfies ActiveUserCommunityRef,
+        ]
+      })
+      .sort((a, b) => a.community.address.localeCompare(b.community.address))
+  }
 }
+
+export const selectUserCommunityRefs = ({
+  author,
+  ...options
+}: SelectUserCommunityRefsOptions): ActiveUserCommunityRef[] =>
+  prepareUserCommunityRefSelection(options)(author)
 
 export const filterExcludedCommunityRefs = (
   refs: ActiveUserCommunityRef[],

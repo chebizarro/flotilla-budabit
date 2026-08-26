@@ -54,9 +54,16 @@ export type PeopleDiscoverySearchOptions = {
 }
 
 export type PeopleDiscoverySearch = {
+  prepare: (query: string, options?: PeopleDiscoverySearchOptions) => PreparedPeopleDiscoverySearch
   search: (query: string, options?: PeopleDiscoverySearchOptions) => PeopleSearchBatch
   searchResults: (query: string, options?: PeopleDiscoverySearchOptions) => PeopleSearchResult[]
   searchValues: (query: string, options?: PeopleDiscoverySearchOptions) => string[]
+}
+
+export type PreparedPeopleDiscoverySearch = {
+  search: (
+    options?: Pick<PeopleDiscoverySearchOptions, "cursor" | "scanLimit" | "resultLimit">,
+  ) => PeopleSearchBatch
 }
 
 type PeopleDiscoveryEvidence = {
@@ -166,10 +173,10 @@ export const peopleDiscoverySearch = derived(
     const directFollowPubkeys = viewerPubkey ? getFollows(viewerPubkey) : []
     const directMutePubkeys = viewerPubkey ? getMutes(viewerPubkey) : []
 
-    const search = (
+    const prepare = (
       query: string,
       options: PeopleDiscoverySearchOptions = {},
-    ): PeopleSearchBatch => {
+    ): PreparedPeopleDiscoverySearch => {
       const normalizedQuery = query.trim()
       const resolvedContext = resolvePeopleDiscoveryContext(options.context, evidence, viewerPubkey)
       const rawCommunityPubkeys = getContextCommunityPeoplePubkeys(
@@ -196,20 +203,24 @@ export const peopleDiscoverySearch = derived(
           ]
         : additionalProfileMatches
       const profileMatchSet = new Set(profileMatches.map(normalizePubkey).filter(Boolean))
-      const matchesQuery = (candidatePubkey: string) =>
-        !normalizedQuery ||
-        profileMatchSet.has(normalizePubkey(candidatePubkey)) ||
-        getPeopleSearchTextScore({
-          pubkey: candidatePubkey,
-          profile: getSearchProfile(candidatePubkey),
-          query: normalizedQuery,
-        }) > 0
-      const getTextScore = (candidatePubkey: string) =>
-        getPeopleSearchTextScore({
+      const textScores = new Map<string, number>()
+      const getTextScore = (candidatePubkey: string) => {
+        const normalizedPubkey = normalizePubkey(candidatePubkey)
+        const cached = textScores.get(normalizedPubkey)
+        if (cached !== undefined) return cached
+
+        const score = getPeopleSearchTextScore({
           pubkey: candidatePubkey,
           profile: getSearchProfile(candidatePubkey),
           query: normalizedQuery,
         })
+        textScores.set(normalizedPubkey, score)
+        return score
+      }
+      const matchesQuery = (candidatePubkey: string) =>
+        !normalizedQuery ||
+        profileMatchSet.has(normalizePubkey(candidatePubkey)) ||
+        getTextScore(candidatePubkey) > 0
       const matchingCommunityPubkeys = rawCommunityPubkeys.filter(matchesQuery)
       const communityAssessments = buildCommunityTrustAssessments({
         candidatePubkeys: matchingCommunityPubkeys,
@@ -250,20 +261,27 @@ export const peopleDiscoverySearch = derived(
         profileMatches,
       })
 
-      return searchPeopleCandidates({
-        query: normalizedQuery,
-        candidates,
-        excludePubkeys: options.excludePubkeys,
-        communityAssessments,
-        getProfile: getSearchProfile,
-        cursor: options.cursor,
-        scanLimit: options.scanLimit,
-        resultLimit: options.resultLimit,
-        allowEmptyQuery: options.allowEmptyQuery,
-      })
+      return {
+        search: pageOptions =>
+          searchPeopleCandidates({
+            query: normalizedQuery,
+            candidates,
+            excludePubkeys: options.excludePubkeys,
+            communityAssessments,
+            getProfile: getSearchProfile,
+            cursor: pageOptions?.cursor,
+            scanLimit: pageOptions?.scanLimit,
+            resultLimit: pageOptions?.resultLimit,
+            allowEmptyQuery: options.allowEmptyQuery,
+          }),
+      }
     }
 
+    const search = (query: string, options: PeopleDiscoverySearchOptions = {}) =>
+      prepare(query, options).search(options)
+
     return {
+      prepare,
       search,
       searchResults: (query, options) => search(query, options).results,
       searchValues: (query, options) => search(query, options).results.map(result => result.pubkey),

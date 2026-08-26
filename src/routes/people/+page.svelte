@@ -8,7 +8,7 @@
   import PeopleItem from "@app/components/PeopleItem.svelte"
   import {
     peopleDiscoverySearch,
-    type PeopleDiscoverySearch,
+    type PreparedPeopleDiscoverySearch,
   } from "@app/core/people-discovery-search"
   import {
     mergePeopleSearchResults,
@@ -28,10 +28,7 @@
   let peopleSearchLoading = $state(false)
   let peopleSearchExhausted = $state(true)
   let peopleSearchResults = $state<PeopleSearchResult[]>([])
-  let activeSearchSession: {
-    query: string
-    adapter: PeopleDiscoverySearch
-  } | null = null
+  let activeSearchSession: PreparedPeopleDiscoverySearch | null = null
 
   const normalizedSearchTerm = $derived(searchTerm.trim())
   const peopleResults = $derived(peopleSearchResults.slice(0, visibleLimit))
@@ -67,7 +64,7 @@
         scannedThisRun < maxCandidatesToScan
       ) {
         const remainingScanBudget = maxCandidatesToScan - scannedThisRun
-        const batch = session.adapter.search(session.query, {
+        const batch = session.search({
           cursor: searchCursor,
           scanLimit: Math.min(PEOPLE_SEARCH_SCAN_CHUNK_SIZE, remainingScanBudget),
         })
@@ -129,10 +126,7 @@
       return
     }
 
-    activeSearchSession = {
-      query,
-      adapter,
-    }
+    activeSearchSession = adapter.prepare(query)
 
     untrack(() => void scanPeopleSearch(PEOPLE_SEARCH_PAGE_SIZE))
   })
@@ -157,7 +151,7 @@
         {#if normalizedSearchTerm}
           {#if peopleResults.length > 0}
             {#each peopleResults as result (result.pubkey)}
-              <PeopleItem pubkey={result.pubkey} />
+              <PeopleItem pubkey={result.pubkey} evidenceLabels={result.evidenceLabels} />
             {/each}
           {:else if peopleSearchLoading}
             <div class="col-2 m-auto max-w-md items-center py-20 text-center opacity-70">
