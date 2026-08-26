@@ -97,6 +97,7 @@
     makeExactCommunityGoalPath,
     makeExactCommunityRoomPath,
     makeExactCommunityThreadPath,
+    makeExactGitCommunityEntryPath,
   } from "@app/util/routes"
 
   const communityPointer = $derived($activeExactCommunityPointer)
@@ -137,7 +138,9 @@
     communityPointer ? makeExactCommunityCalendarPath(communityPointer) : "",
   )
   const goalsPath = $derived(communityPointer ? makeExactCommunityGoalPath(communityPointer) : "")
-  const gitPath = "/git"
+  const gitPath = $derived(
+    communityPointer ? makeExactGitCommunityEntryPath(communityPointer) : "/git",
+  )
   const communityDefinitionReady = $derived(Boolean(communityPointer && routeCommunityDefinition))
   const expectedCommunityBootstrapKey = $derived(communityPointer?.address || "")
   const retryCommunityBootstrap = async () => {

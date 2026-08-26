@@ -57,7 +57,7 @@
     type RepoPublishTransport,
   } from "@app/core/git-commands"
   import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
-  import {goto} from "$app/navigation"
+  import {goto, replaceState} from "$app/navigation"
   import {getContext, onMount, onDestroy, untrack} from "svelte"
   import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
@@ -146,7 +146,14 @@
   import Git from "@assets/icons/git.svg?dataurl"
   import Magnifier from "@assets/icons/magnifier.svg?dataurl"
   import Download from "@assets/icons/download.svg?dataurl"
-  import {GIT_COMMUNITY_PARAM, makeGitCommunityPath, makeGitPath} from "@app/util/routes"
+  import {
+    GIT_COMMUNITY_ENTRY,
+    GIT_COMMUNITY_PARAM,
+    GIT_ENTRY_PARAM,
+    GIT_PERSONAL_ENTRY,
+    makeGitCommunityPath,
+    makeGitPath,
+  } from "@app/util/routes"
   import {makeRepoNaddrFromEvent} from "@app/util/repo-links"
   import {getEventShareRelayHints} from "@app/util/event-share"
   import {
@@ -450,18 +457,32 @@
   const requestedGitCommunityInput = $derived(
     $page.url.searchParams.get(GIT_COMMUNITY_PARAM)?.trim() || "",
   )
+  const requestedGitEntry = $derived($page.url.searchParams.get(GIT_ENTRY_PARAM)?.trim() || "")
+  const getInitialGitEntry = () =>
+    getStore(page).url.searchParams.get(GIT_ENTRY_PARAM)?.trim() || ""
   const getInitialGitCommunityInput = () =>
     getStore(page).url.searchParams.get(GIT_COMMUNITY_PARAM)?.trim() || ""
   const getInitialGitCommunityPointer = () =>
     parseCommunityNaddr(getInitialGitCommunityInput()) || getStore(activeExactCommunityPointer)
   const getInitialGitCommunityPubkey = () => getInitialGitCommunityPointer()?.ownerPubkey || ""
 
-  const getInitialGitModeForContext = (): GitMode =>
-    getInitialGitCommunityPointer() ? "community" : getInitialGitMode()
+  const getInitialGitModeForContext = (): GitMode => {
+    const entry = getInitialGitEntry()
+    if (entry === GIT_PERSONAL_ENTRY) return "personal"
+    if (entry === GIT_COMMUNITY_ENTRY || parseCommunityNaddr(getInitialGitCommunityInput())) {
+      return "community"
+    }
+    return getInitialGitMode()
+  }
+
+  const getInitialGitTabForContext = (): GitTab =>
+    getInitialGitEntry() === GIT_PERSONAL_ENTRY || getInitialGitEntry() === GIT_COMMUNITY_ENTRY
+      ? "my-repos"
+      : getInitialGitTab()
 
   let loading = $state(true)
   let activeMode = $state<GitMode>(getInitialGitModeForContext())
-  let activeTab = $state<GitTab>(getInitialGitTab())
+  let activeTab = $state<GitTab>(getInitialGitTabForContext())
   let selectedCommunityAddress = $state(getInitialGitCommunityPointer()?.address || "")
   let selectedCommunityPubkey = $state(getInitialGitCommunityPubkey())
   let gitTabHydrated = $state(false)
@@ -729,6 +750,29 @@
   })
 
   let appliedGitCommunityInput = $state("")
+
+  $effect(() => {
+    const entry = requestedGitEntry
+    if (entry !== GIT_PERSONAL_ENTRY && entry !== GIT_COMMUNITY_ENTRY) return
+
+    activeMode = entry
+    activeTab = "my-repos"
+
+    if (entry === GIT_COMMUNITY_ENTRY) {
+      const parsed = parseCommunityNaddr(requestedGitCommunityInput)
+      if (parsed) {
+        clearActiveExactCommunity()
+        setActiveExactCommunityPointer(parsed)
+        selectedCommunityAddress = parsed.address
+        selectedCommunityPubkey = parsed.ownerPubkey
+      }
+    }
+
+    const url = new URL($page.url)
+    url.searchParams.delete(GIT_ENTRY_PARAM)
+    if (entry === GIT_COMMUNITY_ENTRY) url.searchParams.delete(GIT_COMMUNITY_PARAM)
+    replaceState(`${url.pathname}${url.search}${url.hash}`, $page.state)
+  })
 
   $effect(() => {
     const communityInput = requestedGitCommunityInput

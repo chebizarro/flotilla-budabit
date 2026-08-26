@@ -22,12 +22,14 @@
     notificationUnreadHints,
   } from "@app/util/notification-center"
   import Git from "@assets/icons/git.svg?dataurl"
+  import {makePersonalGitEntryPath} from "@app/util/routes"
 
   type Props = {
     children?: Snippet
   }
 
   const {children}: Props = $props()
+  const gitPath = makePersonalGitEntryPath()
 
   const showSettingsMenu = () => pushModal(MenuSettings)
 
@@ -74,7 +76,7 @@
       <PrimaryNavItem title="Messages" onclick={openChat} class="tooltip-right">
         <ImageIcon alt="Messages" src={Letter} size={7} />
       </PrimaryNavItem>
-      <PrimaryNavItem title="Git" href="/git" prefix="/git" class="tooltip-right">
+      <PrimaryNavItem title="Git" href={gitPath} prefix="/git" class="tooltip-right">
         <ImageIcon alt="Git" src={Git} size={7} />
       </PrimaryNavItem>
       <PrimaryNavItem title="Search" href="/people" class="tooltip-right">
@@ -125,7 +127,7 @@
     <PrimaryNavItem compact title="Explore" href="/explore" prefix="/explore">
       <ImageIcon alt="Explore" src={Compass} size={5} />
     </PrimaryNavItem>
-    <PrimaryNavItem compact title="Git" href="/git" prefix="/git">
+    <PrimaryNavItem compact title="Git" href={gitPath} prefix="/git">
       <ImageIcon alt="Git" src={Git} size={5} />
     </PrimaryNavItem>
     <PrimaryNavItem compact title="Settings" onclick={showSettingsMenu}>

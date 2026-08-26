@@ -138,6 +138,22 @@ describe("routes", () => {
     }
   })
 
+  it("builds explicit one-shot git entry paths", async () => {
+    const {makeExactGitCommunityEntryPath, makePersonalGitEntryPath} = await import("./routes")
+    const community = {
+      naddr: "naddr1community",
+      address: `32222:${"1".repeat(64)}:community`,
+      ownerPubkey: "1".repeat(64),
+      communityId: "community",
+      relayHints: [],
+    } as unknown as Parameters<typeof makeExactGitCommunityEntryPath>[0]
+
+    expect(makePersonalGitEntryPath()).toBe("/git?entry=personal")
+    expect(makeExactGitCommunityEntryPath(community)).toBe(
+      "/git?entry=community&community=naddr1community",
+    )
+  })
+
   it("builds exact community paths only from kind-32222 definition pointers", async () => {
     const {
       makeExactCommunityCalendarPath,

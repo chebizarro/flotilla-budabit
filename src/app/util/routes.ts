@@ -94,6 +94,19 @@ export const makeExactGitCommunityPath = (community: CommunityPointer) => {
   return `${makeGitPath()}?${params}`
 }
 
+export const makeExactGitCommunityEntryPath = (community: CommunityPointer) => {
+  const params = new URLSearchParams({
+    [GIT_ENTRY_PARAM]: GIT_COMMUNITY_ENTRY,
+    [GIT_COMMUNITY_PARAM]: community.naddr,
+  })
+  return `${makeGitPath()}?${params}`
+}
+
+export const makePersonalGitEntryPath = () => {
+  const params = new URLSearchParams({[GIT_ENTRY_PARAM]: GIT_PERSONAL_ENTRY})
+  return `${makeGitPath()}?${params}`
+}
+
 const getCoherentCommunityPointer = (value: CommunityPointer | undefined) => {
   if (!value) return undefined
   const pointer = makeCommunityPointer({
@@ -182,6 +195,9 @@ export const getExactCommunityEventPath = (
 }
 
 export const GIT_COMMUNITY_PARAM = "community"
+export const GIT_ENTRY_PARAM = "entry"
+export const GIT_COMMUNITY_ENTRY = "community"
+export const GIT_PERSONAL_ENTRY = "personal"
 
 export const makeGitPath = (_url?: string, eventId?: string) =>
   `/git${eventId ? `/${encodeURIComponent(eventId)}` : ""}`
