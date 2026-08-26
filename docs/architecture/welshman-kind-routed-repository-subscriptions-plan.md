@@ -2,11 +2,12 @@
 
 ## Status
 
-- Phases 0-4 implemented in the worktree on 2026-08-26.
-- Focused and full-suite correctness validation completed; physical mobile performance validation
-  remains pending.
+- Phases 0-5 implemented on 2026-08-26.
+- Focused and full-suite correctness validation, deterministic root profiles, and physical desktop
+  and mobile validation are complete.
 - Implements lesson 1 from `welshman-performance-lessons-from-applesauce.md`.
-- Designed for incremental rollout with the existing global update path retained as fallback.
+- Phase 6 is not justified by the current measurements; kind-only routing remains the intended
+  stopping point.
 
 ## Implementation Record
 
@@ -23,18 +24,61 @@ The implemented scope includes:
 - Deliberate fallback delivery for the dynamic local-relay adapter, the all-kind topic index, and
   live feeds containing any OR branch without a kind constraint.
 - Regression coverage for delete-target routing and unrelated community profile-list deletes.
+- One ordered repository-owned registry for `onUpdate` fallback listeners and `onRoutedUpdate`
+  kind-routed listeners, with no duplicate EventEmitter delivery path.
+- Physical dispatch diagnostics, exact failed-update invocation counts, and multi-kind candidate
+  deduplication.
 
 Validation completed during implementation:
 
-- Full Welshman suite: 32 files, 497 passed, 1 skipped.
-- Focused Budabit suite: 6 files, 78 passed.
+- Full Welshman suite: 499 passed, 1 skipped.
+- Focused Budabit suite: 72 passed.
 - `@welshman/net` and `@welshman/store` TypeScript builds.
 - `pnpm check` with zero errors and warnings.
+- `pnpm e2e:check`.
+- Desktop and mobile-4x deterministic root performance profiles.
 - Prettier and `git diff --check` for changed files.
 
-This evidence establishes implementation correctness, not production performance. Phase 5 remains
-deferred until physical captures validate the routed path and establish whether removing the
-legacy EventEmitter delivery mechanism is justified.
+### Physical Validation
+
+Signed kind `30078` manifests and their Blossom artifacts were verified by event signature, exact
+author and d-tag, SHA-256, byte count, gzip integrity, and diagnostics schema. Phase 4 used build
+`dd63c37bc`; Phase 5 used build `ae3c0a42c`, whose repository dispatch implementation is commit
+`6b710f08d`.
+
+| Profile           | Phase 4 run         | Phase 5 run         |
+| ----------------- | ------------------- | ------------------- |
+| Desktop `/git`    | `mta6mc2x-6y9or57o` | `mtab3m0u-w647bvxb` |
+| Desktop Community | `mta6o4qj-3ft5w0v0` | `mtab5hrs-fe7yadmk` |
+| Mobile `/git`     | `mta6omtv-87by4nkw` | `mtab74iq-h58civv6` |
+| Mobile Community  | `mta6qjs1-4jzrst0v` | `mtab8mu2-f7ny3lp0` |
+
+For repository updates that crossed the diagnostics recording threshold, Phase 4 physically
+entered every globally registered EventEmitter wrapper even though its inner route check selected
+fewer logical callbacks. Phase 5 diagnostics measure the callbacks physically dispatched by the
+unified registry.
+
+| Community profile | Phase 4 physical callback entries | Phase 5 physical callbacks | Reduction |
+| ----------------- | --------------------------------: | -------------------------: | --------: |
+| Desktop           |                               502 |                         48 |     90.4% |
+| Mobile            |                               380 |                         47 |     87.6% |
+
+This directly validates the fan-out objective. It does not establish a general route-latency
+improvement. All captures were service-worker controlled with effectively warm assets, and the
+single-run settlement results were mixed:
+
+| Profile           | Phase 4 settled | Phase 5 settled | Observed change |
+| ----------------- | --------------: | --------------: | --------------: |
+| Desktop `/git`    |          855 ms |          662 ms |      23% faster |
+| Mobile `/git`     |          2.45 s |          2.72 s |      11% slower |
+| Desktop Community |         18.45 s |         20.18 s |       9% slower |
+| Mobile Community  |         34.55 s |         22.36 s |      35% faster |
+
+Community settlement remained dominated by asynchronous widget and relay completion. Both Phase 5
+`/git` captures exhausted the bounded background telemetry tail with community repository
+announcements still unsettled, and desktop captures recorded unrelated NIP-46 relay timeouts.
+These conditions make the wall-clock results unsuitable for a latency claim. At least three
+compatible runs per phase, route, and profile would be required for one.
 
 ## Problem
 
@@ -343,9 +387,10 @@ Exit criteria:
 
 - Every migrated listener documents or derives its safe kind route.
 - Fallback listeners are enumerated with a reason.
-- Physical Community and `/git` captures show lower invoked-listener counts and subscriber time.
+- Physical Community and `/git` captures show lower callback fan-out; subscriber and route timing
+  remain supporting evidence rather than a required improvement.
 
-### Phase 5: Consolidate The Legacy Path
+### Phase 5: Consolidate The Legacy Path (Complete)
 
 After routed delivery is validated, implement both public APIs on one internal ordered registry.
 `onUpdate` becomes an explicit fallback registration rather than an EventEmitter listener.
@@ -399,10 +444,10 @@ Compare:
 
 ## Rollback
 
-- Keep a runtime or build-time switch that makes `onRoutedUpdate` register as legacy fallback
-  during the first production validation.
 - A routing failure should degrade to invoking more listeners, never fewer.
-- Do not remove legacy `onUpdate` until routed physical captures and correctness tests settle.
+- `onUpdate` remains the supported explicit fallback API in the unified registry.
+- If a post-deployment correctness regression is found, revert the Phase 5 consolidation commit
+  independently before changing routing semantics.
 - Keep affected-kind diagnostics after rollout so future repository mutation paths cannot silently
   bypass routing metadata.
 
