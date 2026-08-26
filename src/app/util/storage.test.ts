@@ -69,11 +69,15 @@ describe("storage hydration", () => {
   it("notifies repository subscribers once for a persisted batch", () => {
     const first = makeEvent({id: "3".repeat(64), createdAt: 10, content: "first"})
     const second = makeEvent({id: "4".repeat(64), createdAt: 10, content: "second", kind: 1})
-    const emit = vi.spyOn(repository, "emit")
+    const listener = vi.fn()
+    const unsubscribe = repository.onUpdate({name: "storage-hydration-test"}, listener)
 
-    mergePersistedEvents([first, second])
-
-    expect(emit.mock.calls.filter(call => call[0] === "update")).toHaveLength(1)
+    try {
+      mergePersistedEvents([first, second])
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+    }
   })
 
   it("merges persisted provenance with relays learned after startup", () => {

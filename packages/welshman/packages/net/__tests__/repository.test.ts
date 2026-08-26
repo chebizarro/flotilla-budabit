@@ -58,7 +58,7 @@ describe("Repository", () => {
       const first = createEvent(1)
       const second = createEvent(1)
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "batch-update"}, updateHandler)
 
       repo.batch(() => {
         repo.publish(first)
@@ -72,7 +72,7 @@ describe("Repository", () => {
     it("should flush a batch when its callback throws", () => {
       const event = createEvent(1)
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "throwing-batch-update"}, updateHandler)
 
       expect(() =>
         repo.batch(() => {
@@ -127,7 +127,7 @@ describe("Repository", () => {
     it("finishes reporting when a subscriber removes the timing listener", () => {
       const timing = vi.fn()
       setRepositoryUpdateTimingListener(timing)
-      repo.on("update", () => setRepositoryUpdateTimingListener(undefined))
+      repo.onUpdate({name: "timing-remover"}, () => setRepositoryUpdateTimingListener(undefined))
 
       expect(() => repo.publish(createEvent(1))).not.toThrow()
       expect(timing).toHaveBeenCalledTimes(1)
@@ -166,17 +166,16 @@ describe("Repository", () => {
       )
     })
 
-    it("routes updates by affected kind while preserving fallback listener order", () => {
+    it("routes updates by affected kind while preserving typed registration order", () => {
       const received: string[] = []
-      repo.on("update", () => received.push("raw-before"))
+      repo.onUpdate({name: "fallback-before"}, () => received.push("fallback-before"))
       repo.onRoutedUpdate({name: "kind-1"}, {kinds: [1]}, () => received.push("kind-1"))
       repo.onRoutedUpdate({name: "kind-2"}, {kinds: [2]}, () => received.push("kind-2"))
-      repo.onUpdate({name: "fallback"}, () => received.push("fallback"))
-      repo.on("update", () => received.push("raw-after"))
+      repo.onUpdate({name: "fallback-after"}, () => received.push("fallback-after"))
 
       repo.publish(createEvent(1))
 
-      expect(received).toEqual(["raw-before", "kind-1", "fallback", "raw-after"])
+      expect(received).toEqual(["fallback-before", "kind-1", "fallback-after"])
     })
 
     it("keeps diagnostic filter summaries separate from routing behavior", () => {
@@ -225,6 +224,33 @@ describe("Repository", () => {
       expect(matching).toHaveBeenCalledTimes(1)
     })
 
+    it("reports the exact invocation count when a listener throws", () => {
+      const timing = vi.fn()
+      const received: string[] = []
+      setRepositoryUpdateTimingListener(timing)
+      repo.onRoutedUpdate({name: "matching"}, {kinds: [1]}, () => received.push("matching"))
+      repo.onUpdate({name: "failing"}, () => {
+        received.push("failing")
+        throw new Error("listener failed")
+      })
+      repo.onUpdate({name: "not-reached"}, () => received.push("not-reached"))
+
+      expect(() => repo.publish(createEvent(1))).toThrow("listener failed")
+      expect(received).toEqual(["matching", "failing"])
+      expect(timing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "failed",
+          registeredListeners: 3,
+          candidateListeners: 3,
+          invokedListeners: 2,
+          subscribers: [
+            expect.objectContaining({name: "matching"}),
+            expect.objectContaining({name: "failing"}),
+          ],
+        }),
+      )
+    })
+
     it("unions affected kinds across a nested batch", () => {
       const kind1 = vi.fn()
       const kind2 = vi.fn()
@@ -243,12 +269,24 @@ describe("Repository", () => {
       expect(kind3).not.toHaveBeenCalled()
     })
 
+    it("invokes a registration matching several affected kinds only once", () => {
+      const listener = vi.fn()
+      repo.onRoutedUpdate({name: "multi-kind"}, {kinds: [1, 2]}, listener)
+
+      repo.batch(() => {
+        repo.publish(createEvent(1))
+        repo.publish(createEvent(2))
+      })
+
+      expect(listener).toHaveBeenCalledTimes(1)
+    })
+
     it("publishes deferred events once per burst", () => {
       vi.useFakeTimers()
       const first = createEvent(1)
       const second = createEvent(2)
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "deferred-burst"}, updateHandler)
 
       repo.publish(first, {deferMs: 16})
       repo.publish(second, {deferMs: 16})
@@ -289,7 +327,7 @@ describe("Repository", () => {
       const second = createEvent(2)
       const third = createEvent(3)
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "bounded-deferred-burst"}, updateHandler)
 
       for (const event of [first, second, third]) {
         repo.publish(event, {deferMs: 16, maxBatchSize: 2})
@@ -317,7 +355,7 @@ describe("Repository", () => {
       const deferred = createEvent(1)
       const immediate = createEvent(2)
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "immediate-before-deferred"}, updateHandler)
 
       repo.publish(deferred, {deferMs: 16})
       repo.publish(immediate)
@@ -340,7 +378,7 @@ describe("Repository", () => {
       vi.useFakeTimers()
       const event = createEvent(1)
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "silent-event"}, updateHandler)
 
       repo.publish(event, {deferMs: 16, shouldNotify: false})
 
@@ -370,10 +408,12 @@ describe("Repository", () => {
       const first = createEvent(1)
       const nested = createEvent(2)
       const received: string[][] = []
-      repo.on("update", update => {
+      repo.onUpdate({name: "reentrant-publisher"}, update => {
         if (update.added[0]?.id === first.id) repo.publish(nested)
       })
-      repo.on("update", update => received.push(update.added.map(event => event.id)))
+      repo.onUpdate({name: "reentrant-recorder"}, update =>
+        received.push(update.added.map(event => event.id)),
+      )
 
       repo.publish(first)
 
@@ -389,22 +429,24 @@ describe("Repository", () => {
         repo.publish(nested)
       })
       repo.onRoutedUpdate({name: "nested"}, {kinds: [2]}, () => received.push("kind-2"))
-      repo.on("update", update => received.push(`raw-${update.added[0]?.kind}`))
+      repo.onUpdate({name: "fallback"}, update =>
+        received.push(`fallback-${update.added[0]?.kind}`),
+      )
 
       repo.publish(first)
 
-      expect(received).toEqual(["kind-1", "raw-1", "kind-2", "raw-2"])
+      expect(received).toEqual(["kind-1", "fallback-1", "kind-2", "fallback-2"])
     })
 
     it("yields during a long reentrant update chain", () => {
       vi.useFakeTimers()
       const events = Array.from({length: 20}, (_, kind) => createEvent(kind + 1))
       const received: string[] = []
-      repo.on("update", update => {
+      repo.onUpdate({name: "long-chain-publisher"}, update => {
         const index = events.findIndex(event => event.id === update.added[0]?.id)
         if (index >= 0 && events[index + 1]) repo.publish(events[index + 1])
       })
-      repo.on("update", update => received.push(update.added[0]?.id))
+      repo.onUpdate({name: "long-chain-recorder"}, update => received.push(update.added[0]?.id))
 
       repo.publish(events[0])
 
@@ -419,13 +461,15 @@ describe("Repository", () => {
       const first = createEvent(1)
       const nested = createEvent(2)
       const received: string[] = []
-      repo.on("update", update => {
+      repo.onUpdate({name: "throwing-reentrant-publisher"}, update => {
         if (update.added[0]?.id === first.id) {
           repo.publish(nested)
           throw new Error("listener failed")
         }
       })
-      repo.on("update", update => received.push(update.added[0]?.id))
+      repo.onUpdate({name: "throwing-reentrant-recorder"}, update =>
+        received.push(update.added[0]?.id),
+      )
 
       expect(() => repo.publish(first)).toThrow("listener failed")
       vi.runAllTimers()
@@ -439,7 +483,7 @@ describe("Repository", () => {
       const persisted = createEvent(1)
       const deferred = createEvent(2)
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "atomic-load"}, updateHandler)
 
       repo.publish(deferred, {deferMs: 16})
       repo.load([persisted])
@@ -461,7 +505,7 @@ describe("Repository", () => {
       const first = createEvent(MUTES, {pubkey, created_at: now() - 10})
       const replacement = createEvent(MUTES, {pubkey, created_at: now()})
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "atomic-replacement-load"}, updateHandler)
 
       repo.load([first, replacement])
 
@@ -498,7 +542,7 @@ describe("Repository", () => {
         tags: [["e", event.id]],
       })
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "deferred-deletion"}, updateHandler)
 
       repo.publish(event, {deferMs: 16})
       repo.publish(deletion, {deferMs: 16})
@@ -540,7 +584,7 @@ describe("Repository", () => {
       const first = createEvent(MUTES, {pubkey, created_at: now() - 10})
       const replacement = createEvent(MUTES, {pubkey, created_at: now()})
       const updateHandler = vi.fn()
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "deferred-replacement"}, updateHandler)
 
       repo.publish(first, {deferMs: 16})
       repo.publish(replacement, {deferMs: 16})
@@ -818,7 +862,7 @@ describe("Repository", () => {
       const event = createEvent(1)
       const updateHandler = vi.fn()
 
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "load-update"}, updateHandler)
       repo.load([event])
 
       expect(updateHandler).toHaveBeenCalledWith({
@@ -847,7 +891,7 @@ describe("Repository", () => {
       const event = createEvent(1)
       const updateHandler = vi.fn()
 
-      repo.on("update", updateHandler)
+      repo.onUpdate({name: "removal-update"}, updateHandler)
       repo.publish(event)
       repo.removeEvent(event.id)
 

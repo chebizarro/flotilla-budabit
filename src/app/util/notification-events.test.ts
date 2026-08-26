@@ -81,21 +81,29 @@ describe("NotificationEventStore", () => {
   it("coalesces a network burst while retaining relay provenance", async () => {
     vi.useFakeTimers()
     notificationEvents.clear()
-    const emit = vi.spyOn(notificationEventRepository, "emit")
+    const listener = vi.fn()
+    const unsubscribe = notificationEventRepository.onUpdate(
+      {name: "notification-burst-test"},
+      listener,
+    )
     const createdAt = Math.floor(Date.now() / 1000)
     const first = makeEvent("queued-first", createdAt)
     const second = makeEvent("queued-second", createdAt)
 
-    queueNotificationEvent(first, "wss://one.example")
-    queueNotificationEvent(first, "wss://two.example")
-    queueNotificationEvent(second, "wss://one.example")
-    await vi.advanceTimersByTimeAsync(16)
+    try {
+      queueNotificationEvent(first, "wss://one.example")
+      queueNotificationEvent(first, "wss://two.example")
+      queueNotificationEvent(second, "wss://one.example")
+      await vi.advanceTimersByTimeAsync(16)
 
-    expect(emit.mock.calls.filter(call => call[0] === "update")).toHaveLength(1)
-    expect(notificationEvents.getRelays(first.id)).toEqual([
-      "wss://one.example",
-      "wss://two.example",
-    ])
-    notificationEvents.clear()
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(notificationEvents.getRelays(first.id)).toEqual([
+        "wss://one.example",
+        "wss://two.example",
+      ])
+    } finally {
+      unsubscribe()
+      notificationEvents.clear()
+    }
   })
 })
