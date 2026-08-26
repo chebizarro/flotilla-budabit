@@ -6,6 +6,7 @@ import {
   PERFORMANCE_DIAGNOSTICS_RUN_D_TAG_PREFIX,
   publishPerformanceDiagnosticsArtifact,
   uploadPerformanceDiagnosticsArtifact,
+  verifyPerformanceDiagnosticsArtifactUpload,
 } from "./performance-diagnostics-publish"
 import type {PreparedPerformanceDiagnosticsArtifact} from "./performance-diagnostics"
 
@@ -79,11 +80,29 @@ describe("performance diagnostics publication", () => {
     ).rejects.toThrow("Blossom upload failed (500)")
   })
 
+  it("requires uploaded artifact readback to match the prepared bytes", async () => {
+    await expect(
+      verifyPerformanceDiagnosticsArtifactUpload(
+        artifact,
+        "https://blossom.example/blob",
+        async () => new Response(new Blob([artifact.bytes as BlobPart])),
+      ),
+    ).resolves.toBe(true)
+    await expect(
+      verifyPerformanceDiagnosticsArtifactUpload(
+        artifact,
+        "https://blossom.example/blob",
+        async () => new Response(new Blob([new Uint8Array([1, 2, 4]) as BlobPart])),
+      ),
+    ).resolves.toBe(false)
+  })
+
   it("signs and publishes both manifests with relay acknowledgement", async () => {
     const account = {pubkey: "b".repeat(64)}
     const signer = {sign: vi.fn(async template => signedEvent(template, account.pubkey))}
     const publish = vi.fn(async (_event: TrustedEvent, _relays: string[]) => 1)
     const verify = vi.fn(async (_event: TrustedEvent, _relays: string[]) => true)
+    const verifyUpload = vi.fn(async () => true)
     const upload = vi.fn(
       async (
         _artifact: PreparedPerformanceDiagnosticsArtifact,
@@ -103,6 +122,7 @@ describe("performance diagnostics publication", () => {
       dependencies: {
         getIdentity: () => ({...account, signer}),
         upload,
+        verifyUpload,
         publish,
         verify,
       },
@@ -110,6 +130,7 @@ describe("performance diagnostics publication", () => {
 
     expect(signer.sign).toHaveBeenCalledTimes(3)
     expect(upload.mock.calls[0][2]).toMatch(/^Nostr /)
+    expect(verifyUpload).toHaveBeenCalledWith(artifact, "https://blossom.example/blob")
     expect(publish).toHaveBeenCalledTimes(2)
     expect(verify).toHaveBeenCalledTimes(2)
     expect(publish.mock.calls.map(call => call[1])).toEqual([
@@ -125,6 +146,7 @@ describe("performance diagnostics publication", () => {
     expect(stages).toEqual([
       "signing-upload",
       "uploading",
+      "verifying-upload",
       "signing-run",
       "publishing-run",
       "verifying-run",
@@ -147,6 +169,7 @@ describe("performance diagnostics publication", () => {
         dependencies: {
           getIdentity: () => ({pubkey, signer: undefined}),
           upload,
+          verifyUpload: async () => true,
           publish: async () => 1,
           verify: async () => true,
         },
@@ -164,6 +187,7 @@ describe("performance diagnostics publication", () => {
             currentPubkey = "f".repeat(64)
             return result
           },
+          verifyUpload: async () => true,
           publish: async () => 1,
           verify: async () => true,
         },
@@ -176,6 +200,7 @@ describe("performance diagnostics publication", () => {
         dependencies: {
           getIdentity: () => ({pubkey, signer}),
           upload,
+          verifyUpload: async () => true,
           publish: async () => 0,
           verify: async () => true,
         },
@@ -198,10 +223,34 @@ describe("performance diagnostics publication", () => {
             url: "https://blossom.example/blob",
             sha256: artifact.sha256,
           }),
+          verifyUpload: async () => true,
           publish: async () => 1,
           verify: async () => false,
         },
       }),
     ).rejects.toThrow("acknowledged but not found")
+  })
+
+  it("rejects an uploaded artifact that cannot be read back exactly", async () => {
+    const pubkey = "b".repeat(64)
+    const signer = {sign: vi.fn(async template => signedEvent(template, pubkey))}
+
+    await expect(
+      publishPerformanceDiagnosticsArtifact({
+        artifact,
+        runId: "run-1",
+        routes: ["/git"],
+        dependencies: {
+          getIdentity: () => ({pubkey, signer}),
+          upload: async () => ({
+            url: "https://blossom.example/blob",
+            sha256: artifact.sha256,
+          }),
+          verifyUpload: async () => false,
+          publish: async () => 1,
+          verify: async () => true,
+        },
+      }),
+    ).rejects.toThrow("could not be read back exactly")
   })
 })

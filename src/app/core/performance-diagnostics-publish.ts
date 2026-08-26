@@ -18,6 +18,7 @@ export type PerformanceDiagnosticsPublishStage =
   | "preparing"
   | "signing-upload"
   | "uploading"
+  | "verifying-upload"
   | "signing-run"
   | "publishing-run"
   | "verifying-run"
@@ -51,6 +52,7 @@ type PublishDependencies = {
     server: string,
     authorization: string,
   ) => Promise<{url: string; sha256: string; size?: number}>
+  verifyUpload: (artifact: PreparedPerformanceDiagnosticsArtifact, url: string) => Promise<boolean>
   publish: (event: TrustedEvent, relays: string[]) => Promise<number>
   verify: (event: TrustedEvent, relays: string[]) => Promise<boolean>
 }
@@ -130,6 +132,19 @@ export const uploadPerformanceDiagnosticsArtifact = async (
   }
 }
 
+export const verifyPerformanceDiagnosticsArtifactUpload = async (
+  artifact: PreparedPerformanceDiagnosticsArtifact,
+  url: string,
+  fetcher: typeof fetch = fetch,
+) => {
+  const response = await fetcher(url, {cache: "no-store", redirect: "error"})
+  if (!response.ok) return false
+
+  const uploaded = new Uint8Array(await response.arrayBuffer())
+  if (uploaded.length !== artifact.bytes.length) return false
+  return uploaded.every((value, index) => value === artifact.bytes[index])
+}
+
 const defaultPublish = async (event: TrustedEvent, relays: string[]) => {
   const thunk = publishThunk({event, relays})
   await thunk.complete
@@ -153,6 +168,7 @@ const defaultDependencies: PublishDependencies = {
   }),
   upload: (artifact, server, authorization) =>
     uploadPerformanceDiagnosticsArtifact(artifact, server, fetch, authorization),
+  verifyUpload: (artifact, url) => verifyPerformanceDiagnosticsArtifactUpload(artifact, url, fetch),
   publish: defaultPublish,
   verify: defaultVerify,
 }
@@ -203,6 +219,14 @@ export const publishPerformanceDiagnosticsArtifact = async ({
     makeBudabitBlossomAuthHeader(uploadAuthEvent),
   )
   assertIdentity()
+  if (uploaded.size !== undefined && uploaded.size !== artifact.bytes.length) {
+    throw new Error("Blossom artifact size mismatch")
+  }
+
+  onStage?.("verifying-upload")
+  const uploadVerified = await dependencies.verifyUpload(artifact, uploaded.url)
+  assertIdentity()
+  if (!uploadVerified) throw new Error("Blossom artifact upload could not be read back exactly")
 
   const publishManifest = async (
     dTag: string,
