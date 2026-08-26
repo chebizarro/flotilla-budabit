@@ -59,6 +59,7 @@
   import {loadBoundedCommunityHistory, makeFeed} from "@app/core/requests"
   import {publicationOperations} from "@app/core/publication-operations"
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
+  import {makeCommunityTargetedPublicationSemanticKey} from "@app/core/community-targeting"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {setChecked} from "@app/util/notifications"
   import {makeExactCommunityGoalPath, parseExactCommunityRouteParam} from "@app/util/routes"
@@ -78,6 +79,7 @@
   let feedCleanup: (() => void) | undefined = $state()
   let feedInitialized = $state(false)
   let emptyStateSettleTimer: ReturnType<typeof setTimeout> | undefined
+  let emptyStateCompletionTimer: ReturnType<typeof setTimeout> | undefined
   let lastFeedKey = ""
   let historicalLoadRetryVersion = $state(0)
   let retryingCommunityAccess = $state(false)
@@ -327,6 +329,10 @@
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
       matches: event => matchFilters(goalFeedFilters, event),
+      matchesOperation: (event, operation) =>
+        event.kind === ZAP_GOAL &&
+        operation.semanticKey ===
+          makeCommunityTargetedPublicationSemanticKey(communityAddress, ZAP_GOAL),
     }),
   )
   const items = $derived.by(() => {
@@ -354,8 +360,16 @@
     emptyStateSettleTimer = undefined
   }
 
+  const clearEmptyStateCompletionTimer = () => {
+    if (!emptyStateCompletionTimer) return
+
+    clearTimeout(emptyStateCompletionTimer)
+    emptyStateCompletionTimer = undefined
+  }
+
   const startEmptyStateSettleTimer = () => {
     clearEmptyStateSettleTimer()
+    clearEmptyStateCompletionTimer()
     emptyStateSettled = false
     emptyStateSettleTimer = setTimeout(() => {
       emptyStateSettleTimer = undefined
@@ -370,6 +384,7 @@
     loadingEvents = false
     feedLoadStatus = "idle"
     emptyStateSettled = false
+    clearEmptyStateCompletionTimer()
     exhaustedEvents = false
     feedInitialized = false
     lastFeedKey = ""
@@ -409,8 +424,6 @@
         markCommunityHydrationCompleted(hydrationKey)
         loadingEvents = false
         feedLoadStatus = "complete"
-        emptyStateSettled = true
-        clearEmptyStateSettleTimer()
         exhaustedEvents = true
       },
     })
@@ -560,11 +573,36 @@
 
     emptyStateSettled = true
     clearEmptyStateSettleTimer()
+    clearEmptyStateCompletionTimer()
+  })
+
+  $effect(() => {
+    const discoveryComplete =
+      feedInitialized &&
+      items.length === 0 &&
+      !loadingTargets &&
+      !loadingHintedOriginals &&
+      !waitingForFeed &&
+      !loadingEvents &&
+      targetLoadStatus === "complete" &&
+      hintedOriginalLoadStatus === "complete" &&
+      feedLoadStatus === "complete"
+
+    clearEmptyStateCompletionTimer()
+    if (!discoveryComplete) return
+
+    // Let targeting events update the hinted-original plan before declaring the feed empty.
+    emptyStateCompletionTimer = setTimeout(() => {
+      emptyStateCompletionTimer = undefined
+      emptyStateSettled = true
+      clearEmptyStateSettleTimer()
+    }, 0)
   })
 
   onDestroy(() => {
     resetFeed()
     clearEmptyStateSettleTimer()
+    clearEmptyStateCompletionTimer()
     setChecked(goalsPath)
   })
 </script>
@@ -620,7 +658,7 @@
       <button class="btn btn-neutral btn-sm" type="button" onclick={retryHistoricalLoad}
         >Retry</button>
     </div>
-  {:else if loadingTargets || loadingHintedOriginals || waitingForFeed || loadingEvents || (!emptyStateSettled && items.length === 0 && targetLoadStatus !== "incomplete" && targetLoadStatus !== "failed" && hintedOriginalLoadStatus !== "incomplete" && hintedOriginalLoadStatus !== "failed" && feedLoadStatus !== "incomplete" && feedLoadStatus !== "failed") || (targetLoadStatus === "idle" && items.length === 0)}
+  {:else if loadingTargets || loadingHintedOriginals || waitingForFeed || loadingEvents || (!emptyStateSettled && items.length === 0) || (targetLoadStatus === "idle" && items.length === 0)}
     <p class="flex h-10 items-center justify-center py-20 text-center">
       <Spinner loading>Loading Goals</Spinner>
     </p>

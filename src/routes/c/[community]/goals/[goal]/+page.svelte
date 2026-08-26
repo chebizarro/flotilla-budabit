@@ -70,6 +70,7 @@
   import {publishEditedReply} from "@app/core/event-edit-publish"
   import {publicationOperations, startPublication} from "@app/core/publication-operations"
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
+  import {makeCommunityTargetedPublicationSemanticKey} from "@app/core/community-targeting"
   import {
     makeLegacyCommunityTargetingFilter,
     makeLegacyTargetedPublicationOriginalFilterPlan,
@@ -90,7 +91,6 @@
   let loadingHintedOriginals = $state(false)
   let hintedOriginalLoadStatus = $state<CommunityHydrationStatus>("idle")
   let loadingReplies = $state(false)
-  let replyLoadStatus = $state<CommunityHydrationStatus>("idle")
   let historicalLoadRetryVersion = $state(0)
   let showReply = $state(false)
   let showAllReplies = $state(false)
@@ -279,6 +279,11 @@
       ownerPubkey: $pubkey || "",
       matches: event =>
         event.kind === ZAP_GOAL && event.id === goalId && matchFilters(goalFilters, event),
+      matchesOperation: (event, operation) =>
+        event.kind === ZAP_GOAL &&
+        event.id === goalId &&
+        operation.semanticKey ===
+          makeCommunityTargetedPublicationSemanticKey(communityAddress, ZAP_GOAL),
     }),
   )
   const goal = $derived(goalProjection.events[0])
@@ -634,24 +639,20 @@
 
     if (!communityBootstrapReady) {
       loadingReplies = false
-      replyLoadStatus = "idle"
       return
     }
     if (replyRelayFilters.length === 0 || replyFilters.length === 0) {
       loadingReplies = false
-      replyLoadStatus = "complete"
       return
     }
     if (relays.length === 0) {
       loadingReplies = false
-      replyLoadStatus = "incomplete"
       return
     }
 
     const controller = new AbortController()
 
     loadingReplies = true
-    replyLoadStatus = "loading"
     void loadBoundedCommunityHistory({
       relays,
       relayFilters: replyRelayFilters,
@@ -663,12 +664,10 @@
     })
       .then(result => {
         if (controller.signal.aborted) return
-        replyLoadStatus = result.complete ? "complete" : "incomplete"
       })
       .catch(error => {
         if (controller.signal.aborted) return
         console.warn("[community-goal] Failed to load reply history", error)
-        replyLoadStatus = "failed"
       })
       .finally(() => {
         if (!controller.signal.aborted) loadingReplies = false

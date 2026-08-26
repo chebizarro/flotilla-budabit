@@ -34,6 +34,22 @@ describe("strict community publication source contracts", () => {
     )
   })
 
+  it("keeps linked goal and calendar publication centralized and community-only", () => {
+    for (const route of [
+      "../../routes/c/[community]/goals/create/+page.svelte",
+      "../../routes/c/[community]/calendar/create/+page.svelte",
+    ]) {
+      const source = readProjectFile(route)
+
+      expect(source, route).toContain("startLinkedPublication({")
+      expect(source, route).toContain("targetEvent:")
+      expect(source, route).toContain('preview: "retain-on-failure"')
+      expect(source, route).not.toContain("getUserOutboxRelays")
+      expect(source, route).not.toContain("publishThunk")
+      expect(source, route).not.toContain("publishLinkedOperation")
+    }
+  })
+
   it("keeps read relays separate from action relays on community social surfaces", () => {
     const routes = [
       "../../routes/c/[community]/threads/+page.svelte",

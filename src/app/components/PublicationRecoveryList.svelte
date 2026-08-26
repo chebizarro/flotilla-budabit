@@ -69,8 +69,12 @@
               <strong class="block text-sm [overflow-wrap:anywhere]">{operation.label}</strong>
               <span class="text-xs opacity-70">
                 Attempt {operation.attempt} · {operation.phase === "publishing"
-                  ? "Publishing"
-                  : "Not confirmed"}
+                  ? operation.stage === "target"
+                    ? "Publishing community target"
+                    : "Publishing"
+                  : operation.stage === "target"
+                    ? "Community target not confirmed"
+                    : "Not confirmed"}
               </span>
             </div>
             <span

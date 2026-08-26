@@ -99,14 +99,14 @@ There is no single authoritative event-level success/failure field.
 
 `PublishStatus` is defined in `packages/welshman/packages/net/src/publish.ts:6-13`.
 
-| Status | Meaning | Terminal for thunk state? |
-|---|---|---:|
-| `Sending` | Initial state. The thunk may be queued, signing, wrapping, calculating proof of work, or waiting through its configured delay. | No |
-| `Pending` | `publishOne()` has obtained an adapter and started the relay attempt. | No |
-| `Success` | The relay returned an exact-event-ID `OK true`. | Yes |
-| `Failure` | The relay returned `OK false`, or the thunk synthesized failure after signing, wrapping, setup, or transport errors. | Yes |
-| `Timeout` | The attempt remained pending until its timeout. The default is 10 seconds. | Yes |
-| `Aborted` | An active attempt was aborted, or the thunk controller replaced relay state with Aborted. | Yes |
+| Status    | Meaning                                                                                                                        | Terminal for thunk state? |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------: |
+| `Sending` | Initial state. The thunk may be queued, signing, wrapping, calculating proof of work, or waiting through its configured delay. |                        No |
+| `Pending` | `publishOne()` has obtained an adapter and started the relay attempt.                                                          |                        No |
+| `Success` | The relay returned an exact-event-ID `OK true`.                                                                                |                       Yes |
+| `Failure` | The relay returned `OK false`, or the thunk synthesized failure after signing, wrapping, setup, or transport errors.           |                       Yes |
+| `Timeout` | The attempt remained pending until its timeout. The default is 10 seconds.                                                     |                       Yes |
+| `Aborted` | An active attempt was aborted, or the thunk controller replaced relay state with Aborted.                                      |                       Yes |
 
 The normal transition is:
 
@@ -137,16 +137,16 @@ Consequences:
 
 ## Promise Contracts
 
-| API | Fulfills when | Fulfilled value | Rejects when |
-|---|---|---|---|
-| `publishThunk(options)` | Not a promise; returns after constructing and enqueueing the thunk. | `Thunk` | It can throw synchronously when construction requirements are not met, such as no signer or pubkey. |
-| `publishOne(options)` | One relay attempt terminates normally through ACK, NACK, timeout, or active abort. | `PublishResult` | Setup or execution code throws, such as adapter creation or send setup. |
-| `publish(options)` | Every mapped `publishOne()` fulfills. | `PublishResultsByRelay` | Any `publishOne()` rejects. Other already-started attempts are not automatically cancelled. |
-| `Thunk.publish()` | Normal publication returns, a pre-start internal abort is observed, or an unwrapped signing/PoW failure is caught. | `undefined` | Wrapping or underlying `_publish()` exceptions escape its limited catch. The queue catches them and calls `_fail()`. |
-| `thunk.complete` | `_publish()` successfully awaits aggregate `publish()`. | `undefined` | It has no internal rejection path. Several abnormal paths leave it pending. |
-| `waitForThunkCompletion(thunk)` | No result remains Sending or Pending. | `undefined` | Never rejects. |
-| `waitForThunkError(thunk)` | The first Failure appears, or state becomes complete without Failure. | Failure detail, or `""` when complete without Failure. | Never rejects. |
-| `waitForAnyRelayAck(thunk, targets)` | A selected target has Success. | That target's `PublishResult`. | Targets are empty, or every target is terminal/missing without Success. |
+| API                                  | Fulfills when                                                                                                      | Fulfilled value                                        | Rejects when                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `publishThunk(options)`              | Not a promise; returns after constructing and enqueueing the thunk.                                                | `Thunk`                                                | It can throw synchronously when construction requirements are not met, such as no signer or pubkey.                  |
+| `publishOne(options)`                | One relay attempt terminates normally through ACK, NACK, timeout, or active abort.                                 | `PublishResult`                                        | Setup or execution code throws, such as adapter creation or send setup.                                              |
+| `publish(options)`                   | Every mapped `publishOne()` fulfills.                                                                              | `PublishResultsByRelay`                                | Any `publishOne()` rejects. Other already-started attempts are not automatically cancelled.                          |
+| `Thunk.publish()`                    | Normal publication returns, a pre-start internal abort is observed, or an unwrapped signing/PoW failure is caught. | `undefined`                                            | Wrapping or underlying `_publish()` exceptions escape its limited catch. The queue catches them and calls `_fail()`. |
+| `thunk.complete`                     | `_publish()` successfully awaits aggregate `publish()`.                                                            | `undefined`                                            | It has no internal rejection path. Several abnormal paths leave it pending.                                          |
+| `waitForThunkCompletion(thunk)`      | No result remains Sending or Pending.                                                                              | `undefined`                                            | Never rejects.                                                                                                       |
+| `waitForThunkError(thunk)`           | The first Failure appears, or state becomes complete without Failure.                                              | Failure detail, or `""` when complete without Failure. | Never rejects.                                                                                                       |
+| `waitForAnyRelayAck(thunk, targets)` | A selected target has Success.                                                                                     | That target's `PublishResult`.                         | Targets are empty, or every target is terminal/missing without Success.                                              |
 
 ## The `complete` Contract Gap
 
@@ -228,9 +228,7 @@ The closest current mechanism for obtaining all terminal relay states is:
 await waitForThunkCompletion(thunk)
 
 const results = thunk.results
-const accepted = Object.values(results).filter(
-  result => result.status === PublishStatus.Success,
-)
+const accepted = Object.values(results).filter(result => result.status === PublishStatus.Success)
 ```
 
 This is still a snapshot of mutable current state, not immutable publication history.
@@ -304,7 +302,7 @@ Linked publication, event replacement, repository operations, and community writ
 `waitForAnyRelayAck()` before committing local state or starting a dependent publication stage.
 Some flows require the returned relay identity so the next event is sent to the same relay.
 
-Example: `src/app/core/linked-publish.ts:40-103`.
+Example: `src/app/core/publication-operations.ts` linked publication stages.
 
 ### All Attempts Terminal, Then Inspect
 
@@ -440,6 +438,6 @@ Relevant existing tests:
 
 - `packages/welshman/packages/net/__tests__/publish.test.ts`
 - `packages/welshman/packages/app/__tests__/thunk.test.ts`
-- `src/app/core/linked-publish.test.ts`
+- `src/app/core/publication-operations.test.ts`
 - `src/app/core/event-edit-publish.test.ts`
 - `src/app/core/git-commands.test.ts`

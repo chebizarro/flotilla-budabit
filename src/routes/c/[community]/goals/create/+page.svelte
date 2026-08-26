@@ -1,7 +1,7 @@
 <script lang="ts">
   import {goto} from "$app/navigation"
   import {page} from "$app/stores"
-  import {pubkey, publishThunk} from "@welshman/app"
+  import {pubkey} from "@welshman/app"
   import {randomId} from "@welshman/lib"
   import {ZAP_GOAL, makeEvent} from "@welshman/util"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
@@ -22,11 +22,11 @@
     activeCommunityProfileListEvents,
     activeExactCommunityRelays,
     activeCommunityReportState,
-    getUserOutboxRelays,
   } from "@app/core/community-state"
   import {TARGETED_PUBLICATION_KIND, normalizeRelays} from "@app/core/community"
   import {
     makeTargetedPublicationForCommunity,
+    makeCommunityTargetedPublicationSemanticKey,
     withPublicationTargetingId,
   } from "@app/core/community-targeting"
   import {
@@ -34,7 +34,7 @@
     canWriteCommunityTarget,
     getCommunityWriteTargetSectionName,
   } from "@app/core/community-permissions"
-  import {publishLinkedOperation, type LinkedPublishOperation} from "@app/core/linked-publish"
+  import {startLinkedPublication} from "@app/core/publication-operations"
   import {makeExactCommunityGoalPath, parseExactCommunityRouteParam} from "@app/util/routes"
 
   const routeCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
@@ -89,8 +89,6 @@
   let summary = $state("")
   let amount = $state(1000)
   let publishing = $state(false)
-  let publishError = $state("")
-  let publishOperation: LinkedPublishOperation = {}
 
   const createGoal = async () => {
     const trimmedTitle = title.trim()
@@ -105,16 +103,6 @@
     )
       return
 
-    const semanticInput = JSON.stringify({
-      pubkey: $pubkey,
-      communityId,
-      communityAddress,
-      communityRelays: $activeExactCommunityRelays,
-      outboxRelays: getUserOutboxRelays(),
-      title: trimmedTitle,
-      summary: trimmedSummary,
-      amount: String(amount),
-    })
     if (!communityReady) {
       pushToast({
         theme: "error",
@@ -136,65 +124,54 @@
       return
     }
 
-    let targetingId = ""
-    const originalRelays = normalizeRelays([...getUserOutboxRelays(), ...relays])
+    const targetingId = randomId()
+    const community = routeCommunity
 
     publishing = true
-    publishError = ""
 
     try {
-      await publishLinkedOperation({
-        operation: publishOperation,
-        semanticInput,
-        requiredRelays: relays,
-        originalFactory: () => {
-          targetingId = randomId()
-          const goalEvent = makeEvent(
-            ZAP_GOAL,
-            withPublicationTargetingId(
-              {
-                content: trimmedTitle,
-                tags: [
-                  ["summary", trimmedSummary],
-                  ["amount", String(amount)],
-                  ["relays", ...relays],
-                ],
-              },
+      startLinkedPublication({
+        event: makeEvent(
+          ZAP_GOAL,
+          withPublicationTargetingId(
+            {
+              content: trimmedTitle,
+              tags: [
+                ["summary", trimmedSummary],
+                ["amount", String(amount)],
+                ["relays", ...relays],
+              ],
+            },
+            targetingId,
+          ),
+        ),
+        relays,
+        targetEvent: () =>
+          makeEvent(
+            TARGETED_PUBLICATION_KIND,
+            makeTargetedPublicationForCommunity({
               targetingId,
-            ),
-          )
-
-          return publishThunk({
-            relays: originalRelays.length ? originalRelays : relays,
-            event: goalEvent,
-            optimistic: false,
-          })
-        },
-        targetFactory: originalAckRelay =>
-          publishThunk({
-            relays,
-            event: makeEvent(
-              TARGETED_PUBLICATION_KIND,
-              makeTargetedPublicationForCommunity({
-                targetingId,
-                originalKind: ZAP_GOAL,
-                originalRef: undefined,
-                community: routeCommunity,
-              }),
-            ),
-            optimistic: false,
-          }),
+              originalKind: ZAP_GOAL,
+              originalRef: undefined,
+              community,
+            }),
+          ),
+        label: "Community goal",
+        href: goalsPath,
+        semanticKey: makeCommunityTargetedPublicationSemanticKey(communityAddress, ZAP_GOAL),
+        preview: "retain-on-failure",
       })
     } catch (error) {
-      publishError = error instanceof Error ? error.message : "Publication failed. Retry."
-      pushToast({theme: "error", message: publishError})
+      pushToast({
+        theme: "error",
+        message: error instanceof Error ? error.message : "Failed to start goal publication.",
+      })
       return
     } finally {
       publishing = false
     }
 
-    publishOperation = {}
-    pushToast({message: "Goal published."})
+    pushToast({message: "Goal publication started."})
     if (goalsPath) await goto(goalsPath)
   }
 </script>
@@ -248,16 +225,13 @@
         <textarea bind:value={summary} class="textarea textarea-bordered" rows="8"></textarea>
       {/snippet}
     </Field>
-    {#if publishError}
-      <p class="text-sm text-error" role="alert">{publishError}</p>
-    {/if}
     <div class="flex justify-end">
       <PublishGate
         target={COMMUNITY_WRITE_TARGETS.goal}
         action="publish goals"
         submit
         disabled={publishing || !title.trim() || !summary.trim()}>
-        {publishing ? "Publishing..." : publishError ? "Retry publication" : "Create goal"}
+        {publishing ? "Publishing..." : "Create goal"}
       </PublishGate>
     </div>
   </form>

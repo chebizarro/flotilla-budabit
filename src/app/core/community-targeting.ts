@@ -16,6 +16,11 @@ import {
 
 export const TARGETING_TAG = "h"
 
+export const makeCommunityTargetedPublicationSemanticKey = (
+  communityAddress: string,
+  kind: number,
+) => `community-targeted:${communityAddress}:${kind}`
+
 export const shouldTargetPublicationKind = (kind: number) =>
   TARGETED_PUBLICATION_KINDS.includes(kind as (typeof TARGETED_PUBLICATION_KINDS)[number])
 

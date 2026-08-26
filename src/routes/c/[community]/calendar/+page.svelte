@@ -63,6 +63,7 @@
   import {loadBoundedCommunityHistory, makeCalendarFeed} from "@app/core/requests"
   import {publicationOperations} from "@app/core/publication-operations"
   import {projectAuthoredPublicationEvents} from "@app/core/authored-publication-operations"
+  import {makeCommunityTargetedPublicationSemanticKey} from "@app/core/community-targeting"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {setChecked} from "@app/util/notifications"
   import {makeExactCommunityCalendarPath, parseExactCommunityRouteParam} from "@app/util/routes"
@@ -352,6 +353,10 @@
       operations: $publicationOperations.values(),
       ownerPubkey: $pubkey || "",
       matches: event => isCalendarEventKind(event.kind) && matchFilters(calendarFeedFilters, event),
+      matchesOperation: (event, operation) =>
+        isCalendarEventKind(event.kind) &&
+        operation.semanticKey ===
+          makeCommunityTargetedPublicationSemanticKey(communityAddress, event.kind),
     }),
   )
   const projectedCalendarEvents = $derived.by(() =>

@@ -63,9 +63,15 @@
     {#if operation.phase === "confirmed"}
       <span class="text-xs opacity-75">Published</span>
     {:else if operation.phase === "publishing" || retrying}
-      <span class="text-xs opacity-75">Publishing...</span>
+      <span class="text-xs opacity-75">
+        {operation.stage === "target" ? "Publishing community target..." : "Publishing..."}
+      </span>
     {:else}
-      <span class="text-xs opacity-75">Publication was not confirmed by any relay.</span>
+      <span class="text-xs opacity-75">
+        {operation.stage === "target"
+          ? "Community targeting was not confirmed by its relay."
+          : "Publication was not confirmed by any relay."}
+      </span>
       <span class="text-xs opacity-75">
         Discard does not retract an event a relay may already have accepted.
       </span>

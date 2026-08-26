@@ -78,4 +78,25 @@ describe("authored publication operation projection", () => {
     expect(projection.events).toEqual([])
     expect(projection.operationIds.size).toBe(0)
   })
+
+  it("admits a linked primary through explicit operation metadata", () => {
+    const primary = makeEvent("linked-primary", 9041)
+    const operation = {
+      ...makeOperation(primary),
+      semanticKey: "community-targeted:34550:owner:community:9041",
+      stage: "target" as const,
+    }
+
+    const projection = projectAuthoredPublicationEvents({
+      events: [],
+      operations: [operation],
+      ownerPubkey,
+      matches: () => false,
+      matchesOperation: (event, candidate) =>
+        event.kind === 9041 && candidate.semanticKey === operation.semanticKey,
+    })
+
+    expect(projection.events).toEqual([primary])
+    expect(projection.operationIds.get(primary.id)).toBe(operation.operationId)
+  })
 })

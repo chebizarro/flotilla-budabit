@@ -44,6 +44,7 @@ vi.mock("@app/util/nip46", () => ({
   recoverActiveNip46Receiver: vi.fn(async () => true),
 }))
 
+import {recoverActiveNip46Receiver} from "@app/util/nip46"
 import {
   cancelPublication,
   clearPublicationOperations,
@@ -56,6 +57,7 @@ import {
   publicationOperationsNeedingAttention,
   recoverablePublicationOperations,
   retryPublication,
+  startLinkedPublication,
   startPublication,
   type PublicationSnapshot,
 } from "./publication-operations"
@@ -159,6 +161,7 @@ describe("single-event publication operations", () => {
     mocks.trackerListeners.add.clear()
     mocks.trackerListeners.load.clear()
     mocks.waitForAnyRelayAck.mockReset()
+    vi.mocked(recoverActiveNip46Receiver).mockClear()
 
     mocks.trackerOn.mockImplementation(
       (
@@ -708,5 +711,146 @@ describe("single-event publication operations", () => {
         preview: "retain-on-failure",
       }),
     ).toBe(false)
+  })
+
+  it("publishes and commits linked stages in order while retaining the primary preview", async () => {
+    const primary = makeEvent("5")
+    const target = makeEvent("6")
+    const primaryAck = deferred<typeof acknowledgement>()
+    const targetAck = deferred<typeof acknowledgement>()
+    const targetEvent = vi.fn(() => target)
+    mocks.publishThunk.mockImplementation(makeThunk)
+    mocks.waitForAnyRelayAck
+      .mockImplementationOnce(() => primaryAck.promise)
+      .mockImplementationOnce(() => targetAck.promise)
+
+    const operation = startLinkedPublication({
+      ...makeOptions(primary),
+      targetEvent,
+    })
+
+    expect(mocks.publishThunk).toHaveBeenCalledOnce()
+    expect(getOperation(operation.operationId)).toMatchObject({
+      event: primary,
+      stage: "primary",
+      phase: "publishing",
+    })
+
+    primaryAck.resolve(acknowledgement)
+    await vi.waitFor(() => expect(mocks.publishThunk).toHaveBeenCalledTimes(2))
+
+    const targetThunk = mocks.publishThunk.mock.results[1]?.value as TestThunk
+    expect(targetEvent).toHaveBeenCalledWith(relayOne)
+    expect(targetThunk.options).toMatchObject({
+      event: target,
+      relays: [relayOne, relayTwo],
+      optimistic: false,
+      presentation: "private",
+    })
+    expect(mocks.waitForAnyRelayAck).toHaveBeenNthCalledWith(
+      2,
+      targetThunk,
+      [relayOne],
+      expect.anything(),
+    )
+    expect(mocks.repositoryPublish).toHaveBeenCalledOnce()
+    expect(mocks.repositoryPublish).toHaveBeenCalledWith(primary)
+    expect(getOperation(operation.operationId)).toMatchObject({event: primary, stage: "target"})
+
+    targetAck.resolve(acknowledgement)
+    await expect(operation.settled).resolves.toMatchObject({
+      event: primary,
+      stage: "target",
+      phase: "confirmed",
+    })
+    expect(mocks.repositoryPublish).toHaveBeenNthCalledWith(2, target)
+  })
+
+  it("retries only the failed linked target", async () => {
+    const primary = makeEvent("7")
+    const target = makeEvent("8")
+    const targetEvent = vi.fn(() => target)
+    mocks.publishThunk.mockImplementation(makeThunk)
+    mocks.retryThunk.mockImplementation((thunk: TestThunk) => makeThunk(thunk.options))
+    mocks.waitForAnyRelayAck
+      .mockResolvedValueOnce(acknowledgement)
+      .mockRejectedValueOnce(new Error("target relay rejected event"))
+      .mockResolvedValueOnce(acknowledgement)
+
+    const operation = startLinkedPublication({...makeOptions(primary), targetEvent})
+    await expect(operation.settled).resolves.toMatchObject({
+      event: primary,
+      stage: "target",
+      phase: "unconfirmed",
+    })
+    const originalTargetThunk = mocks.publishThunk.mock.results[1]?.value as TestThunk
+
+    await expect(retryPublication(operation.operationId)).resolves.toMatchObject({
+      event: primary,
+      phase: "confirmed",
+    })
+
+    expect(targetEvent).toHaveBeenCalledOnce()
+    expect(mocks.publishThunk).toHaveBeenCalledTimes(2)
+    expect(mocks.retryThunk).toHaveBeenCalledOnce()
+    expect(mocks.retryThunk).toHaveBeenCalledWith(originalTargetThunk)
+    expect(recoverActiveNip46Receiver).toHaveBeenCalledOnce()
+    expect(mocks.repositoryPublish).toHaveBeenNthCalledWith(1, primary)
+    expect(mocks.repositoryPublish).toHaveBeenNthCalledWith(2, target)
+  })
+
+  it("recovers a target setup failure without republishing the primary", async () => {
+    const primary = makeEvent("9")
+    const target = makeEvent("a")
+    const targetEvent = vi
+      .fn<() => TrustedEvent>()
+      .mockImplementationOnce(() => {
+        throw new Error("target setup failed")
+      })
+      .mockReturnValueOnce(target)
+    mocks.publishThunk.mockImplementation(makeThunk)
+    mocks.waitForAnyRelayAck.mockResolvedValue(acknowledgement)
+
+    const operation = startLinkedPublication({...makeOptions(primary), targetEvent})
+    await expect(operation.settled).resolves.toMatchObject({
+      event: primary,
+      stage: "target",
+      phase: "unconfirmed",
+      error: "target setup failed",
+    })
+
+    await expect(retryPublication(operation.operationId)).resolves.toMatchObject({
+      event: primary,
+      phase: "confirmed",
+    })
+
+    expect(targetEvent).toHaveBeenCalledTimes(2)
+    expect(mocks.publishThunk).toHaveBeenCalledTimes(2)
+    expect(mocks.retryThunk).not.toHaveBeenCalled()
+    expect(mocks.repositoryPublish).toHaveBeenNthCalledWith(1, primary)
+    expect(mocks.repositoryPublish).toHaveBeenNthCalledWith(2, target)
+  })
+
+  it("advances both linked stages from qualifying tracker evidence", async () => {
+    const primary = makeEvent("c")
+    const target = makeEvent("d")
+    mocks.publishThunk.mockImplementation(makeThunk)
+    mocks.waitForAnyRelayAck.mockReturnValue(new Promise(() => undefined))
+
+    const operation = startLinkedPublication({
+      ...makeOptions(primary),
+      targetEvent: () => target,
+    })
+
+    emitTrackerAdd(primary.id, relayOne)
+    await vi.waitFor(() => expect(mocks.publishThunk).toHaveBeenCalledTimes(2))
+    emitTrackerAdd(target.id, relayOne)
+
+    await expect(operation.settled).resolves.toMatchObject({
+      event: primary,
+      phase: "confirmed",
+    })
+    expect(mocks.repositoryPublish).toHaveBeenNthCalledWith(1, primary)
+    expect(mocks.repositoryPublish).toHaveBeenNthCalledWith(2, target)
   })
 })

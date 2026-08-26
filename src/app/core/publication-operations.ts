@@ -37,12 +37,20 @@ export type StartPublicationOptions = {
   validateRetry?: (event: HashedEvent) => void | Promise<void>
 }
 
+export type StartLinkedPublicationOptions = Omit<
+  StartPublicationOptions,
+  "confirmRelays" | "delay" | "validateRetry"
+> & {
+  targetEvent: (primaryAckRelay: string) => EventTemplate
+}
+
 export type PublicationSnapshot = {
   readonly operationId: string
   readonly ownerPubkey: string
   readonly label: string
   readonly href?: string
   readonly semanticKey?: string
+  readonly stage?: "primary" | "target"
   readonly event: HashedEvent
   readonly phase: PublicationPhase
   readonly preview: PublicationPreviewPolicy
@@ -71,10 +79,28 @@ type PublicationRuntime = {
   validateRetry?: (event: HashedEvent) => void | Promise<void>
 }
 
+type LinkedPublicationRuntime = {
+  snapshot: PublicationSnapshot
+  primaryThunk: PublicationThunk
+  targetThunk?: PublicationThunk
+  targetEvent: (primaryAckRelay: string) => EventTemplate
+  relays: string[]
+  stage: "primary" | "target"
+  primaryAckRelay?: string
+  generation: number
+  primaryCommitted: boolean
+  targetCommitted: boolean
+  unsubscribeThunk?: () => void
+  ackWaitController?: AbortController
+  resolveAttempt?: (snapshot: PublicationSnapshot) => void
+  retryPromise?: Promise<PublicationSnapshot>
+}
+
 const CONFIRMED_HANDOFF_MS = 5_000
 export const MAX_PUBLICATION_OPERATIONS = 100
 const operationStore = writable<Map<string, PublicationSnapshot>>(new Map())
 const runtimes = new Map<string, PublicationRuntime>()
+const linkedRuntimes = new Map<string, LinkedPublicationRuntime>()
 const confirmedCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let reservedAdmissions = 0
 let trackerObserverAttached = false
@@ -130,7 +156,7 @@ const removeSnapshot = (operationId: string) => {
 }
 
 const updateSnapshot = (
-  runtime: PublicationRuntime,
+  runtime: {snapshot: PublicationSnapshot},
   patch: Partial<PublicationSnapshot>,
 ): PublicationSnapshot => {
   const snapshot = Object.freeze({
@@ -287,6 +313,10 @@ const onTrackerAdd = (eventId: string, relay: string) => {
       if (runtime.thunk.event.id !== eventId) continue
       reconcileTrackerEvidence(runtime, eventId, normalizedRelay)
     }
+    for (const runtime of linkedRuntimes.values()) {
+      if (getLinkedThunk(runtime)?.event.id !== eventId) continue
+      reconcileLinkedTrackerEvidence(runtime, eventId, normalizedRelay)
+    }
   })
 }
 
@@ -295,11 +325,13 @@ const onTrackerLoad = () => {
     for (const runtime of runtimes.values()) {
       reconcileTrackerEvidence(runtime)
     }
+    for (const runtime of linkedRuntimes.values()) reconcileLinkedTrackerEvidence(runtime)
   })
 }
 
 function syncTrackerObserver() {
-  const shouldAttach = runtimes.size > 0 && typeof tracker.on === "function"
+  const shouldAttach =
+    (runtimes.size > 0 || linkedRuntimes.size > 0) && typeof tracker.on === "function"
   if (shouldAttach === trackerObserverAttached) return
 
   if (shouldAttach) {
@@ -403,7 +435,7 @@ const validateRelaySets = (relays: string[], confirmRelays: string[]) => {
 }
 
 const reserveAdmission = () => {
-  if (runtimes.size + reservedAdmissions >= MAX_PUBLICATION_OPERATIONS) {
+  if (runtimes.size + linkedRuntimes.size + reservedAdmissions >= MAX_PUBLICATION_OPERATIONS) {
     throw new PublicationCapacityError()
   }
 
@@ -477,6 +509,276 @@ export const startPublication = (options: StartPublicationOptions): PublicationH
   }
 }
 
+const getLinkedThunk = (runtime: LinkedPublicationRuntime) =>
+  runtime.stage === "primary" ? runtime.primaryThunk : runtime.targetThunk
+
+const createLinkedTargetThunk = (runtime: LinkedPublicationRuntime) => {
+  if (!runtime.primaryAckRelay) throw new Error("Primary publication relay is unavailable")
+  if (pubkey.get() !== runtime.snapshot.ownerPubkey) {
+    throw new Error("Restore the account that published the original before linking it")
+  }
+
+  const targetThunk = publishThunk({
+    event: runtime.targetEvent(runtime.primaryAckRelay),
+    relays: runtime.relays,
+    optimistic: false,
+    presentation: "private",
+  })
+  if (targetThunk.pubkey !== runtime.snapshot.ownerPubkey) {
+    abortThunk(targetThunk)
+    throw new Error("Linked publication stages must use the same publishing account")
+  }
+
+  runtime.targetThunk = targetThunk
+  return targetThunk
+}
+
+const stopLinkedThunkSubscription = (runtime: LinkedPublicationRuntime) => {
+  runtime.unsubscribeThunk?.()
+  runtime.unsubscribeThunk = undefined
+}
+
+const stopLinkedAckWait = (runtime: LinkedPublicationRuntime) => {
+  const controller = runtime.ackWaitController
+  runtime.ackWaitController = undefined
+  controller?.abort()
+}
+
+const removeLinkedRuntime = (runtime: LinkedPublicationRuntime, removeOperationSnapshot = true) => {
+  runtime.generation += 1
+  stopLinkedThunkSubscription(runtime)
+  stopLinkedAckWait(runtime)
+  linkedRuntimes.delete(runtime.snapshot.operationId)
+  if (removeOperationSnapshot) removeSnapshot(runtime.snapshot.operationId)
+  syncTrackerObserver()
+}
+
+const settleLinkedAttempt = (runtime: LinkedPublicationRuntime, snapshot: PublicationSnapshot) => {
+  const resolve = runtime.resolveAttempt
+  runtime.resolveAttempt = undefined
+  resolve?.(snapshot)
+}
+
+const markLinkedUnconfirmed = (
+  runtime: LinkedPublicationRuntime,
+  generation: number,
+  error: unknown,
+) => {
+  if (linkedRuntimes.get(runtime.snapshot.operationId) !== runtime) return
+  if (runtime.generation !== generation || runtime.snapshot.phase !== "publishing") return
+
+  stopLinkedThunkSubscription(runtime)
+  const snapshot = updateSnapshot(runtime, {
+    phase: "unconfirmed",
+    error: getErrorMessage(error),
+  })
+  settleLinkedAttempt(runtime, snapshot)
+}
+
+const commitLinkedEvent = (event: HashedEvent) => {
+  if (!getRepositoryEvent(event.id)) repository.publish(event as TrustedEvent)
+}
+
+const confirmLinkedOperation = (runtime: LinkedPublicationRuntime, generation: number) => {
+  if (linkedRuntimes.get(runtime.snapshot.operationId) !== runtime) return
+  if (runtime.generation !== generation || runtime.snapshot.phase !== "publishing") return
+
+  const targetThunk = runtime.targetThunk
+  if (!targetThunk) return
+  if (!runtime.targetCommitted) {
+    runtime.targetCommitted = true
+    commitLinkedEvent(targetThunk.event)
+  }
+
+  stopLinkedThunkSubscription(runtime)
+  const snapshot = updateSnapshot(runtime, {
+    phase: "confirmed",
+    event: runtime.primaryThunk.event,
+    results: targetThunk.results,
+    error: undefined,
+  })
+  settleLinkedAttempt(runtime, snapshot)
+  removeLinkedRuntime(runtime, false)
+  scheduleConfirmedCleanup(snapshot.operationId)
+}
+
+const advanceLinkedStage = (
+  runtime: LinkedPublicationRuntime,
+  generation: number,
+  acknowledgementRelay: string,
+) => {
+  if (linkedRuntimes.get(runtime.snapshot.operationId) !== runtime) return
+  if (runtime.generation !== generation || runtime.snapshot.phase !== "publishing") return
+
+  if (runtime.stage === "target") {
+    confirmLinkedOperation(runtime, generation)
+    return
+  }
+
+  if (!runtime.primaryCommitted) {
+    runtime.primaryCommitted = true
+    commitLinkedEvent(runtime.primaryThunk.event)
+  }
+  runtime.primaryAckRelay = acknowledgementRelay
+  stopLinkedThunkSubscription(runtime)
+  runtime.stage = "target"
+  runtime.generation += 1
+  updateSnapshot(runtime, {stage: "target", event: runtime.primaryThunk.event})
+  let targetThunk: PublicationThunk
+  try {
+    targetThunk = createLinkedTargetThunk(runtime)
+  } catch (error) {
+    markLinkedUnconfirmed(runtime, runtime.generation, error)
+    return
+  }
+  updateSnapshot(runtime, {
+    results: targetThunk.results,
+  })
+  beginLinkedStage(runtime)
+}
+
+function reconcileLinkedTrackerEvidence(
+  runtime: LinkedPublicationRuntime,
+  eventId = getLinkedThunk(runtime)?.event.id,
+  relay?: string,
+) {
+  const thunk = getLinkedThunk(runtime)
+  if (!thunk || !eventId || thunk.event.id !== eventId) return
+  if (linkedRuntimes.get(runtime.snapshot.operationId) !== runtime) return
+  if (!["publishing", "unconfirmed"].includes(runtime.snapshot.phase)) return
+
+  const allowedRelays =
+    runtime.stage === "primary"
+      ? runtime.relays
+      : runtime.primaryAckRelay
+        ? [runtime.primaryAckRelay]
+        : []
+  const candidateRelays = relay
+    ? [normalizeTrackerRelay(relay)]
+    : Array.from(tracker.getRelays(eventId))
+  const acknowledgementRelay = candidateRelays
+    .map(normalizeTrackerRelay)
+    .find(candidate => candidate && allowedRelays.includes(candidate))
+  if (!acknowledgementRelay) return
+
+  const repositoryEvent = getRepositoryEvent(eventId)
+  if (!repositoryEvent && !isSignedEvent(thunk.event)) return
+  if (runtime.snapshot.phase === "unconfirmed") {
+    updateSnapshot(runtime, {phase: "publishing", error: undefined})
+  }
+  advanceLinkedStage(runtime, runtime.generation, acknowledgementRelay)
+}
+
+const beginLinkedStage = (runtime: LinkedPublicationRuntime) => {
+  const generation = runtime.generation
+  const thunk = getLinkedThunk(runtime)
+  if (!thunk) {
+    markLinkedUnconfirmed(
+      runtime,
+      generation,
+      new Error("Linked publication target is unavailable"),
+    )
+    return
+  }
+
+  stopLinkedAckWait(runtime)
+  stopLinkedThunkSubscription(runtime)
+  const ackWaitController = new AbortController()
+  runtime.ackWaitController = ackWaitController
+
+  if (typeof thunk.subscribe === "function") {
+    runtime.unsubscribeThunk = thunk.subscribe(current => {
+      if (linkedRuntimes.get(runtime.snapshot.operationId) !== runtime) return
+      if (runtime.generation !== generation) return
+
+      updateSnapshot(runtime, {
+        ...(runtime.stage === "primary" ? {event: current.event} : {}),
+        results: current.results,
+      })
+    })
+  }
+
+  const confirmRelays = runtime.stage === "primary" ? runtime.relays : [runtime.primaryAckRelay!]
+  void waitForAnyRelayAck(thunk, confirmRelays, {signal: ackWaitController.signal})
+    .then(acknowledgement => {
+      advanceLinkedStage(runtime, generation, acknowledgement.relay)
+    })
+    .catch(error => {
+      if (!ackWaitController.signal.aborted) markLinkedUnconfirmed(runtime, generation, error)
+    })
+    .finally(() => {
+      if (runtime.ackWaitController === ackWaitController) {
+        runtime.ackWaitController = undefined
+      }
+    })
+}
+
+const beginLinkedAttempt = (runtime: LinkedPublicationRuntime) => {
+  const settled = new Promise<PublicationSnapshot>(resolve => {
+    runtime.resolveAttempt = resolve
+  })
+  beginLinkedStage(runtime)
+  return settled
+}
+
+export const startLinkedPublication = (
+  options: StartLinkedPublicationOptions,
+): PublicationHandle => {
+  const relays = normalizePublicationRelays(options.relays)
+  validateRelaySets(relays, relays)
+  const releaseAdmission = reserveAdmission()
+  let primaryThunk: PublicationThunk | undefined
+  let runtime: LinkedPublicationRuntime | undefined
+
+  try {
+    primaryThunk = publishThunk({
+      event: options.event,
+      relays,
+      optimistic: false,
+      presentation: "private",
+    })
+    const operationId = randomId()
+    const snapshot: PublicationSnapshot = Object.freeze({
+      operationId,
+      ownerPubkey: primaryThunk.pubkey,
+      label: options.label,
+      href: options.href,
+      semanticKey: options.semanticKey,
+      stage: "primary",
+      event: primaryThunk.event,
+      phase: "publishing",
+      preview: options.preview,
+      attempt: 1,
+      results: copyResults(primaryThunk.results),
+    })
+    runtime = {
+      snapshot,
+      primaryThunk,
+      targetEvent: options.targetEvent,
+      relays,
+      stage: "primary",
+      generation: 1,
+      primaryCommitted: false,
+      targetCommitted: false,
+    }
+
+    linkedRuntimes.set(operationId, runtime)
+    releaseAdmission()
+    publishSnapshot(snapshot)
+    syncTrackerObserver()
+
+    return {operationId, settled: beginLinkedAttempt(runtime)}
+  } catch (error) {
+    if (runtime && linkedRuntimes.get(runtime.snapshot.operationId) === runtime) {
+      removeLinkedRuntime(runtime)
+    }
+    if (primaryThunk) abortThunk(primaryThunk)
+    throw error
+  } finally {
+    releaseAdmission()
+  }
+}
+
 const requireOwnedOperation = (operationId: string) => {
   const runtime = runtimes.get(operationId)
   if (!runtime) throw new Error("Publication operation is no longer available")
@@ -489,7 +791,71 @@ const requireOwnedOperation = (operationId: string) => {
   return runtime
 }
 
+const requireOwnedLinkedOperation = (operationId: string) => {
+  const runtime = linkedRuntimes.get(operationId)
+  if (!runtime) throw new Error("Publication operation is no longer available")
+  if (runtime.snapshot.phase !== "unconfirmed") {
+    throw new Error("Only unconfirmed publications can be retried")
+  }
+  if (pubkey.get() !== runtime.snapshot.ownerPubkey) {
+    throw new Error("Restore the account that created this publication")
+  }
+  return runtime
+}
+
+const retryLinkedPublication = (operationId: string): Promise<PublicationSnapshot> => {
+  let runtime: LinkedPublicationRuntime
+  try {
+    runtime = requireOwnedLinkedOperation(operationId)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+
+  if (runtime.retryPromise) return runtime.retryPromise
+
+  const generation = runtime.generation
+  const thunk = getLinkedThunk(runtime)
+
+  const retryPromise = (async () => {
+    await recoverActiveNip46Receiver().catch(() => false)
+
+    const current = requireOwnedLinkedOperation(operationId)
+    if (
+      current !== runtime ||
+      runtime.generation !== generation ||
+      getLinkedThunk(runtime) !== thunk
+    ) {
+      throw new Error("Publication operation changed before retry")
+    }
+
+    const retriedThunk = thunk
+      ? (retryThunk(thunk) as PublicationThunk)
+      : createLinkedTargetThunk(runtime)
+    stopLinkedThunkSubscription(runtime)
+    if (runtime.stage === "primary") runtime.primaryThunk = retriedThunk
+    else runtime.targetThunk = retriedThunk
+    runtime.generation += 1
+
+    updateSnapshot(runtime, {
+      event: runtime.primaryThunk.event,
+      phase: "publishing",
+      attempt: runtime.snapshot.attempt + 1,
+      results: retriedThunk.results,
+      error: undefined,
+    })
+
+    return beginLinkedAttempt(runtime)
+  })().finally(() => {
+    if (runtime.retryPromise === retryPromise) runtime.retryPromise = undefined
+  })
+
+  runtime.retryPromise = retryPromise
+  return retryPromise
+}
+
 export const retryPublication = (operationId: string): Promise<PublicationSnapshot> => {
+  if (linkedRuntimes.has(operationId)) return retryLinkedPublication(operationId)
+
   let runtime: PublicationRuntime
   try {
     runtime = requireOwnedOperation(operationId)
@@ -539,6 +905,19 @@ export const retryPublication = (operationId: string): Promise<PublicationSnapsh
 }
 
 export const cancelPublication = (operationId: string) => {
+  const linkedRuntime = linkedRuntimes.get(operationId)
+  if (linkedRuntime) {
+    if (linkedRuntime.snapshot.phase !== "publishing") return
+    const cancelled = Object.freeze({...linkedRuntime.snapshot, phase: "cancelled" as const})
+    const resolve = linkedRuntime.resolveAttempt
+    linkedRuntime.resolveAttempt = undefined
+    const thunk = getLinkedThunk(linkedRuntime)
+    removeLinkedRuntime(linkedRuntime)
+    if (thunk) abortThunk(thunk)
+    resolve?.(cancelled)
+    return
+  }
+
   const runtime = runtimes.get(operationId)
   if (!runtime || runtime.snapshot.phase !== "publishing") return
 
@@ -551,6 +930,13 @@ export const cancelPublication = (operationId: string) => {
 }
 
 export const discardPublication = (operationId: string) => {
+  const linkedRuntime = linkedRuntimes.get(operationId)
+  if (linkedRuntime) {
+    if (linkedRuntime.snapshot.phase !== "unconfirmed") return
+    removeLinkedRuntime(linkedRuntime)
+    return
+  }
+
   const runtime = runtimes.get(operationId)
   if (!runtime || runtime.snapshot.phase !== "unconfirmed") return
   removeRuntime(runtime)
@@ -564,6 +950,17 @@ export const clearPublicationOperations = () => {
     runtime.resolveAttempt = undefined
     removeRuntime(runtime)
     if (wasPublishing) abortThunk(runtime.thunk)
+    resolve?.(cancelled)
+  }
+
+  for (const runtime of Array.from(linkedRuntimes.values())) {
+    const wasPublishing = runtime.snapshot.phase === "publishing"
+    const cancelled = Object.freeze({...runtime.snapshot, phase: "cancelled" as const})
+    const resolve = runtime.resolveAttempt
+    runtime.resolveAttempt = undefined
+    const thunk = getLinkedThunk(runtime)
+    removeLinkedRuntime(runtime)
+    if (wasPublishing && thunk) abortThunk(thunk)
     resolve?.(cancelled)
   }
 

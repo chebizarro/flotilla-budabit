@@ -7,7 +7,8 @@ route-independent recovery are active; room messages, threads, comments, and saf
 use retained previews; reactions and community stars use rollback projections; and independent
 governance publications use exact operation recovery. Remaining default optimism is classified in
 the [phase 8 audit](./optimistic-publication-operations-audit.md), and changing Welshman's default is
-deferred to a [separate admission plan](./welshman-repository-admission-plan.md).
+deferred to a [separate admission plan](./welshman-repository-admission-plan.md). Linked goal and
+calendar creation now use one staged operation with a retained primary preview and global recovery.
 
 ## Objective
 
@@ -387,8 +388,6 @@ social content.
 These are non-related to the repository-optimism migration and should not receive duplicate global
 child-thunk handling:
 
-- Current linked goal creation.
-- Current linked calendar creation.
 - Event/message/comment edits.
 - Generic content deletion confirmations.
 - Report creation and report deletion.
@@ -638,7 +637,7 @@ Extend the room retain-on-failure pattern to safe authored content.
 - Pending roots/comments render without repository insertion.
 - Unconfirmed authored content remains visible and recoverable during the SPA session.
 - Confirmed content hands off without duplicate cards/messages.
-- Existing linked current goal/calendar creation remains unchanged.
+- Linked goal/calendar creation remains one logical, globally recoverable operation.
 
 ## Phase 7: Independent Governance Publications
 

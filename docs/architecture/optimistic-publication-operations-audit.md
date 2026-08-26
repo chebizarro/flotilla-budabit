@@ -73,7 +73,7 @@ the shared default.
 These paths either create non-optimistic thunks and commit after ACK/readback, or pass
 `optimistic: false` through a shared helper:
 
-- `src/app/core/linked-publish.ts`: linked goal/calendar stage ownership.
+- `src/app/core/publication-operations.ts`: single-event and linked goal/calendar stage ownership.
 - `src/app/core/event-edit-publish.ts`: edit replacement and delete stages.
 - `src/routes/c/[community]/access/+page.svelte`: access governance events.
 - `src/routes/c/[community]/badges/+page.svelte`: badge definitions/profile badges.
