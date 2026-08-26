@@ -61,7 +61,17 @@ const makeMessage = (content: string, createdAt: number) =>
     communitySecret,
   )
 
-const parent = makeMessage("Original parent message for navigation", messageFixtureStart)
+const parent = makeMessage(
+  [
+    "Original parent message for navigation",
+    "Parent preview line two",
+    "Parent preview line three",
+    "Parent preview line four",
+    "Parent preview line five",
+    "Parent preview line six",
+  ].join("\n"),
+  messageFixtureStart,
+)
 const fillerMessages = Array.from({length: 240}, (_, index) =>
   makeMessage(`Filler message ${index + 1}`, messageFixtureStart + index + 1),
 )
@@ -158,12 +168,15 @@ test("opens a quoted room parent without reloading the room", async ({page}) => 
 
   const parentMessage = page.locator(`[data-event="${parent.id}"]`).first()
   const replyMessage = page.locator(`[data-event="${reply.id}"]`).first()
-  const quoteButton = replyMessage.getByRole("button", {
-    name: "Original parent message for navigation",
-    exact: true,
+  const quoteButton = replyMessage.locator("button.my-2").filter({
+    hasText: "Original parent message for navigation",
   })
+  const quotePreview = quoteButton.locator("[data-quoted-event-preview]")
   await expect(replyMessage).toBeVisible({timeout: 10_000})
   await expect(quoteButton).toBeVisible({timeout: 10_000})
+  await expect
+    .poll(() => quotePreview.evaluate(element => element.getBoundingClientRect().height))
+    .toBeLessThanOrEqual(49)
   await expect(parentMessage).toHaveCount(0)
 
   await replyMessage.evaluate(element => {

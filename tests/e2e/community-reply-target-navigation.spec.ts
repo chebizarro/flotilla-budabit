@@ -122,7 +122,18 @@ const makeComment = ({
 }
 
 const makeReplyChain = (root: VerifiedEvent, label: string, createdAt: number) => {
-  const parent = makeComment({root, content: `Original ${label} parent`, createdAt})
+  const parent = makeComment({
+    root,
+    content: [
+      `Original ${label} parent`,
+      `${label} parent preview line two`,
+      `${label} parent preview line three`,
+      `${label} parent preview line four`,
+      `${label} parent preview line five`,
+      `${label} parent preview line six`,
+    ].join("\n"),
+    createdAt,
+  })
   const fillers = Array.from({length: 3}, (_, index) =>
     makeComment({
       root,
@@ -175,6 +186,13 @@ const openTarget = async ({
   })
   await expect(replyItem).toBeVisible({timeout: 10_000})
   await expect(quoteButton).toBeVisible({timeout: 10_000})
+  await expect
+    .poll(() =>
+      quoteButton
+        .locator("[data-quoted-event-preview]")
+        .evaluate(element => element.getBoundingClientRect().height),
+    )
+    .toBeLessThanOrEqual(49)
   await expect(page.locator(`[data-event="${parent.id}"]`)).toHaveCount(0)
 
   await quoteButton.click()

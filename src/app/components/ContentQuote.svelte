@@ -932,13 +932,13 @@
         <div
           class="border-l-2 border-solid border-l-primary py-1 pl-2 opacity-90"
           style="background-color: color-mix(in srgb, var(--primary) 10%, var(--base-300) 90%);">
-          <div class="line-clamp-3">
+          <div class="line-clamp-3 max-h-12 overflow-hidden" data-quoted-event-preview>
             <NoteContentMinimal trimParent {url} event={$quote} />
           </div>
         </div>
       {:else}
         <NoteCard event={$quote} {url} class="bg-alt rounded-box p-4">
-          <div class="line-clamp-3">
+          <div class="line-clamp-3 max-h-12 overflow-hidden" data-quoted-event-preview>
             <NoteContentMinimal {url} event={$quote} />
           </div>
         </NoteCard>

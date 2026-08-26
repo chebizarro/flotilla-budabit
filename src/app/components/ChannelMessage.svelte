@@ -247,7 +247,7 @@
           class="mt-2 block w-full rounded-none border-l-2 border-solid border-l-primary bg-base-300/60 py-1 pl-2 pr-3 text-left opacity-90 transition hover:bg-base-300"
           onclick={openReplyParent}
           data-stop-tap>
-          <div class="line-clamp-3">
+          <div class="line-clamp-3 max-h-12 overflow-hidden" data-quoted-event-preview>
             <NoteContentMinimal trimParent {url} event={replyParent} />
           </div>
         </Button>

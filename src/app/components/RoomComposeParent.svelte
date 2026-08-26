@@ -23,7 +23,7 @@
   transition:slide>
   <p class="text-xs text-primary">{verb} @{displayProfileByPubkey(event.pubkey)}</p>
   {#key event.id}
-    <div class="line-clamp-3">
+    <div class="line-clamp-3 max-h-12 overflow-hidden" data-quoted-event-preview>
       <NoteContentMinimal trimParent {event} />
     </div>
   {/key}
