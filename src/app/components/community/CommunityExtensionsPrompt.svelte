@@ -33,7 +33,8 @@
     relayHints?: string[]
   }
 
-  const {relayHints = []}: Props = $props()
+  const props: Props = $props()
+  void props.relayHints
 
   let widgets = $state<SmartWidgetEvent[]>([])
   let trustedAuthorPubkeys = $state<string[]>([])

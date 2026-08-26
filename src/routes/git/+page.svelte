@@ -65,7 +65,6 @@
   import {
     GIT_REPO_ANNOUNCEMENT,
     GIT_REPO_STATE,
-    parseRepoCommunityBinding,
     parseRepoAnnouncementEvent,
     type BookmarkAddress,
     type RepoAnnouncementEvent,
@@ -1209,8 +1208,7 @@
   let communityRepoLoadKey = ""
   let communityRepoLoadRequestId = 0
   let communityRepoAnnouncementsSettled = $state(false)
-  let directCommunityRepoHistoryIncomplete = $state(false)
-  let communityRepoRetryVersion = $state(0)
+  const communityRepoRetryVersion = $state(0)
   $effect(() => {
     void communityRepoRetryVersion
     if (
@@ -1223,8 +1221,6 @@
       communityRepoLoadRequestId += 1
       communityRepoLoadKey = ""
       communityRepoAnnouncementsSettled = true
-      directCommunityRepoHistoryIncomplete =
-        Boolean(selectedCommunityAddress) && communityRepoFilterPlan.relayFilters.length > 0
       return
     }
 
@@ -1240,7 +1236,6 @@
     if (key === communityRepoLoadKey) return
     communityRepoLoadKey = key
     communityRepoAnnouncementsSettled = false
-    directCommunityRepoHistoryIncomplete = false
     const requestId = ++communityRepoLoadRequestId
     const controller = new AbortController()
     const signal = AbortSignal.any([controller.signal, gitPageLoadController.signal])
@@ -1253,14 +1248,8 @@
       pageSize: repoResultsVisibleLimit,
       maxPages: 1,
       signal,
-    })
-      .then(result => {
+    }).catch(error => {
         if (signal.aborted || requestId !== communityRepoLoadRequestId) return
-        directCommunityRepoHistoryIncomplete = !result.complete
-      })
-      .catch(error => {
-        if (signal.aborted || requestId !== communityRepoLoadRequestId) return
-        directCommunityRepoHistoryIncomplete = true
         console.warn("[git/+page] Failed to load community repos", error)
       })
       .finally(() => {
@@ -1580,9 +1569,7 @@
   let communityTargetLoadKey = ""
   let communityTargetLoadRequestId = 0
   let communityTargetsSettled = $state(false)
-  let communityTargetHistoryIncomplete = $state(false)
-  let communityOriginalHistoryIncomplete = $state(false)
-  let communityCurationRetryVersion = $state(0)
+  const communityCurationRetryVersion = $state(0)
   const communityCurationSearchTab = $derived.by(() => {
     if (hasRepositoryTextSearchIntent) return "bookmarks" as const
     if (activeMode !== "community") return null
@@ -1598,7 +1585,6 @@
       communityTargetLoadRequestId += 1
       communityTargetLoadKey = ""
       communityTargetsSettled = true
-      communityTargetHistoryIncomplete = false
       return
     }
 
@@ -1610,7 +1596,6 @@
     const localFilters = filterPlan.localFilters
     if (relayFilters.length === 0 || localFilters.length === 0) {
       communityTargetsSettled = true
-      communityTargetHistoryIncomplete = false
       return
     }
 
@@ -1625,7 +1610,6 @@
     if (key === communityTargetLoadKey) return
     communityTargetLoadKey = key
     communityTargetsSettled = false
-    communityTargetHistoryIncomplete = false
     const requestId = ++communityTargetLoadRequestId
     const controller = new AbortController()
     const signal = AbortSignal.any([controller.signal, gitPageLoadController.signal])
@@ -1636,14 +1620,8 @@
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `global-git-community-curation-targets:${selectedCommunityAddress}`,
       signal,
-    })
-      .then(result => {
+    }).catch(error => {
         if (signal.aborted || requestId !== communityTargetLoadRequestId) return
-        communityTargetHistoryIncomplete = !result.complete
-      })
-      .catch(error => {
-        if (signal.aborted || requestId !== communityTargetLoadRequestId) return
-        communityTargetHistoryIncomplete = true
         console.warn("[git/+page] Failed to load community curation targets", error)
       })
       .finally(() => {
@@ -1708,7 +1686,6 @@
       communityOriginalLoadRequestId += 1
       communityOriginalLoadKey = ""
       communityOriginalsSettled = true
-      communityOriginalHistoryIncomplete = false
       return
     }
 
@@ -1722,7 +1699,6 @@
         : communitySnippetRelayHintPlans
     if (filterPlan.relayFilters.length === 0) {
       communityOriginalsSettled = true
-      communityOriginalHistoryIncomplete = false
       return
     }
     const plans = [
@@ -1735,14 +1711,12 @@
     ].filter(plan => plan.relays.length > 0)
     if (plans.length === 0) {
       communityOriginalsSettled = true
-      communityOriginalHistoryIncomplete = true
       return
     }
     const key = JSON.stringify({plans, retry: communityCurationRetryVersion})
     if (key === communityOriginalLoadKey) return
     communityOriginalLoadKey = key
     communityOriginalsSettled = false
-    communityOriginalHistoryIncomplete = false
     const requestId = ++communityOriginalLoadRequestId
     const controller = new AbortController()
     const signal = AbortSignal.any([controller.signal, gitPageLoadController.signal])
@@ -1755,14 +1729,8 @@
           signal,
         }),
       ),
-    )
-      .then(results => {
+    ).catch(error => {
         if (signal.aborted || requestId !== communityOriginalLoadRequestId) return
-        communityOriginalHistoryIncomplete = results.some(result => !result.complete)
-      })
-      .catch(error => {
-        if (signal.aborted || requestId !== communityOriginalLoadRequestId) return
-        communityOriginalHistoryIncomplete = true
         console.warn("[git/+page] Failed to load community curated originals", error)
       })
       .finally(() => {

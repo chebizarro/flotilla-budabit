@@ -1,5 +1,3 @@
-/* global clients */
-
 import {build, files, version} from "$service-worker"
 
 const APP_CACHE_PREFIX = "budabit-app-"

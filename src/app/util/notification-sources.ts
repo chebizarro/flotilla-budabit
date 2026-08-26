@@ -188,14 +188,12 @@ import {
   getNotificationEventRelays,
   notificationEventRepository,
   queueNotificationEvent,
-  receiveNotificationEvent,
 } from "@app/util/notification-events"
 import {
   createBoundedCommunityHistoryLoader,
   makeSameAuthorDeleteFilters,
   type BoundedCommunityHistoryResult,
 } from "@app/core/requests"
-import {deleteEventsDeleteTarget} from "@app/core/event-edits"
 
 export type BuildChatNotificationRowsOptions = {
   chats: Iterable<Chat>
@@ -3953,8 +3951,6 @@ const globalCommunityNotificationEvents = deriveLoadedNotificationEventGroups({
 
 const globalCommunityAdmissionFormSources = derived(notificationCommunityRefs, $refs =>
   $refs.map(ref => {
-    const community = parseCommunityDefinition(ref.definition.event)?.pointer
-
     return {
       communityAddress: ref.community.address,
       relays: getCommunityNotificationRelays(ref),

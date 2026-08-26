@@ -413,12 +413,11 @@ const normalizeRepoPath = (path: unknown) => {
       }
     }
 
-    if (
-      !segment ||
-      decoded === "." ||
-      decoded === ".." ||
-      /[\\/?#\u0000-\u001f\u007f]/.test(decoded)
-    ) {
+    const hasInvalidCharacter = Array.from(decoded).some(character => {
+      const code = character.charCodeAt(0)
+      return "\\/?#".includes(character) || code <= 0x1f || code === 0x7f
+    })
+    if (!segment || decoded === "." || decoded === ".." || hasInvalidCharacter) {
       throw new Error("Invalid repository path")
     }
   }

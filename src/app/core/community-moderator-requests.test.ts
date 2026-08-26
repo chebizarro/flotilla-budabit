@@ -28,7 +28,6 @@ const ownerPubkey = getPublicKey(secret(1))
 const otherOwnerPubkey = getPublicKey(secret(2))
 const communityId = getPublicKey(secret(3))
 const requesterPubkey = getPublicKey(secret(4))
-const existingModeratorPubkey = getPublicKey(secret(5))
 const community = makeCommunityPointer({
   ownerPubkey,
   communityId,

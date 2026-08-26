@@ -1,10 +1,6 @@
 import {describe, expect, it} from "vitest"
 import {REPORT, type TrustedEvent} from "@welshman/util"
-import {
-  getHiddenRepoEventIds,
-  getOwnerSpamReportTargetId,
-  getReportReason,
-} from "./git-moderation"
+import {getHiddenRepoEventIds, getOwnerSpamReportTargetId, getReportReason} from "./git-moderation"
 
 const owner = "a".repeat(64)
 const outsider = "b".repeat(64)
@@ -32,9 +28,9 @@ describe("repository spam moderation", () => {
     expect(getOwnerSpamReportTargetId(makeReport(owner, [["e", target, "spam"]]), owner)).toBe(
       target,
     )
-    expect(
-      getOwnerSpamReportTargetId(makeReport(outsider, [["e", target, "spam"]]), owner),
-    ).toBe("")
+    expect(getOwnerSpamReportTargetId(makeReport(outsider, [["e", target, "spam"]]), owner)).toBe(
+      "",
+    )
     expect(getOwnerSpamReportTargetId(makeReport(owner, [["e", target, "illegal"]]), owner)).toBe(
       "",
     )

@@ -300,9 +300,7 @@ describe("labels", () => {
       expect(
         extractRoleAssignments(events as any, "root1", new Set(["root-author"])).reviewers,
       ).toEqual(new Set())
-      expect(extractRoleAssignments(events as any, "root1", new Set()).reviewers).toEqual(
-        new Set(),
-      )
+      expect(extractRoleAssignments(events as any, "root1", new Set()).reviewers).toEqual(new Set())
     })
 
     it("does not interpret role removal operations as assignments", () => {

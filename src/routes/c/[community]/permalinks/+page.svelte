@@ -234,9 +234,6 @@
   let loadingTargets = $state(false)
   let targetLoadStatus = $state<"idle" | "loading" | "complete" | "incomplete" | "failed">("idle")
   let loadingHintedOriginals = $state(false)
-  let hintedOriginalLoadStatus = $state<"idle" | "loading" | "complete" | "incomplete" | "failed">(
-    "idle",
-  )
   let loadingPermalinks = $state(false)
   let permalinkLoadStatus = $state<"idle" | "loading" | "complete" | "incomplete" | "failed">(
     "idle",
@@ -319,18 +316,15 @@
 
     if (!communityBootstrapReady) {
       loadingHintedOriginals = false
-      hintedOriginalLoadStatus = "idle"
       return
     }
     if (plans.length === 0) {
       loadingHintedOriginals = false
-      hintedOriginalLoadStatus = "complete"
       return
     }
 
     const controller = new AbortController()
     loadingHintedOriginals = true
-    hintedOriginalLoadStatus = "loading"
     void Promise.all(
       plans.map(plan =>
         loadBoundedCommunityHistory({
@@ -340,17 +334,9 @@
           signal: controller.signal,
         }),
       ),
-    )
-      .then(results => {
-        if (controller.signal.aborted) return
-        hintedOriginalLoadStatus = results.every(result => result.complete)
-          ? "complete"
-          : "incomplete"
-      })
-      .catch(error => {
+    ).catch(error => {
         if (controller.signal.aborted) return
         console.warn("[community-permalinks] Failed to load hinted permalink originals", error)
-        hintedOriginalLoadStatus = "failed"
       })
       .finally(() => {
         if (!controller.signal.aborted) loadingHintedOriginals = false

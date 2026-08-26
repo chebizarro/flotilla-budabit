@@ -1,5 +1,5 @@
 <script lang="ts">
-  import {NewIssueForm, Button as GitButton, toast, pushRepoAlert} from "@nostr-git/ui"
+  import {NewIssueForm, Button as GitButton, pushRepoAlert} from "@nostr-git/ui"
   import {
     createStatusEvent,
     type CommentEvent,
@@ -10,10 +10,7 @@
   import {
     Address,
     getTagValue,
-    GIT_STATUS_COMPLETE,
-    GIT_STATUS_DRAFT,
     GIT_STATUS_OPEN,
-    GIT_STATUS_CLOSED,
     getTag,
     type TrustedEvent,
   } from "@welshman/util"

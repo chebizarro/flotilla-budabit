@@ -620,6 +620,7 @@ describe("repo watch notifications", () => {
     const {repoEvent: _repoEvent, ...repoWithoutAuthority} = makeRepo(
       watchOptions({issues: {...defaultRepoWatchOptions.issues, new: false}, assignments: true}),
     )
+    void _repoEvent
 
     expect(
       getRepoWatchNotificationCandidates({
@@ -741,6 +742,7 @@ describe("repo watch notifications", () => {
     })
     const allowedRepo = makeCommunityRepo()
     const {communityReportState: _reportState, ...repoWithoutReportState} = allowedRepo
+    void _reportState
 
     expect(
       getRepoWatchNotificationCandidates({

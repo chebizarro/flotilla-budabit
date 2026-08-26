@@ -4,7 +4,6 @@
   import {pubkey} from "@welshman/app"
   import Icon from "@lib/components/Icon.svelte"
   import Button from "@lib/components/Button.svelte"
-  import Link from "@lib/components/Link.svelte"
   import RoomName from "@app/components/RoomName.svelte"
   import ReactionSummary from "@app/components/ReactionSummary.svelte"
   import ThunkStatusOrDeleted from "@app/components/ThunkStatusOrDeleted.svelte"

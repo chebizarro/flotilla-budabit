@@ -84,7 +84,7 @@
       const current = getPerformanceDiagnosticsSnapshot()
       const artifact = await preparePerformanceDiagnosticsArtifact(current, {runId: latest.id})
       const url = URL.createObjectURL(
-        new Blob([artifact.bytes as BlobPart], {type: artifact.contentType}),
+        new Blob([new Uint8Array(artifact.bytes).buffer], {type: artifact.contentType}),
       )
       const anchor = document.createElement("a")
       anchor.href = url

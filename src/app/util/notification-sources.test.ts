@@ -44,7 +44,6 @@ import {
   COMMUNITY_REPORT_KIND,
   COMMUNITY_REPORT_REVIEW_LABEL_KIND,
   COMMUNITY_REPORT_REVIEW_NAMESPACE,
-  COMMUNITY_REPORT_REVIEWED_LABEL,
   makeCommunityEventReport,
   makeCommunityPersonReport,
   makeCommunityReportDelete,

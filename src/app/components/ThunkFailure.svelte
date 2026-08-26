@@ -35,14 +35,14 @@
       thunk = retryThunk(thunk)
       onRetry?.(thunk)
 
-      let unsubscribe: (() => void) | undefined
-      unsubscribe = thunk.subscribe($thunk => {
+      const subscription: {unsubscribe?: () => void} = {}
+      subscription.unsubscribe = thunk.subscribe($thunk => {
         if (!thunkIsComplete($thunk)) return
 
         retrying = false
-        unsubscribe?.()
+        subscription.unsubscribe?.()
       })
-      if (!retrying) unsubscribe()
+      if (!retrying) subscription.unsubscribe()
     } catch (error) {
       retrying = false
       console.error("Failed to retry publication", error)

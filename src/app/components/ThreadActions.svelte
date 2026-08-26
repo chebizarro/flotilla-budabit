@@ -1,7 +1,6 @@
 <script lang="ts">
   import type {TrustedEvent, EventContent} from "@welshman/util"
   import {getTagValue} from "@welshman/util"
-  import Link from "@lib/components/Link.svelte"
   import RoomName from "@app/components/RoomName.svelte"
   import ReactionSummary from "@app/components/ReactionSummary.svelte"
   import ThunkStatusOrDeleted from "@app/components/ThunkStatusOrDeleted.svelte"

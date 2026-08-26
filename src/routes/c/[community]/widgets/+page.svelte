@@ -70,7 +70,6 @@
     }
   })
   const communityPubkey = $derived(parsedCommunity?.ownerPubkey || "")
-  const communityId = $derived(parsedCommunity?.communityId || "")
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
@@ -423,14 +422,11 @@
   let targetSelectionKey = ""
   let loadingTargets = $state(false)
   let targetRequestSettled = $state(false)
-  let targetHistoryIncomplete = $state(false)
   let loadingTargetDeletes = $state(false)
   let targetDeleteRequestSettled = $state(false)
-  let targetDeleteHistoryIncomplete = $state(false)
   let loadingOriginalWidgets = $state(false)
   let originalWidgetRequestSettled = $state(false)
-  let originalWidgetHistoryIncomplete = $state(false)
-  let widgetHistoryRetryVersion = $state(0)
+  const widgetHistoryRetryVersion = $state(0)
   const widgetsLoading = $derived(
     !communityBootstrapFailed &&
       !communityAuthorityUnavailable &&
@@ -462,20 +458,17 @@
       loadingTargets = false
       targetRequestSettled =
         communityBootstrapReady && targetingFilterPlan.relayFilters.length === 0
-      targetHistoryIncomplete = false
       return
     }
     if ($activeExactCommunityRelays.length === 0) {
       loadingTargets = false
       targetRequestSettled = true
-      targetHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
     loadingTargets = true
     targetRequestSettled = false
-    targetHistoryIncomplete = false
     void loadBoundedCommunityHistory({
       relays: $activeExactCommunityRelays,
       relayFilters: targetingFilterPlan.relayFilters,
@@ -483,13 +476,8 @@
       signal: controller.signal,
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `community-widgets:${communityPubkey}:targets`,
-    })
-      .then(result => {
-        if (!controller.signal.aborted) targetHistoryIncomplete = !result.complete
-      })
-      .catch(error => {
+    }).catch(error => {
         if (controller.signal.aborted) return
-        targetHistoryIncomplete = true
         console.warn("[community-widgets] Failed to load targeting history", error)
       })
       .finally(() => {
@@ -510,26 +498,22 @@
     if (!communityBootstrapReady) {
       loadingTargetDeletes = false
       targetDeleteRequestSettled = false
-      targetDeleteHistoryIncomplete = false
       return
     }
     if (relayFilters.length === 0 || localFilters.length === 0) {
       loadingTargetDeletes = false
       targetDeleteRequestSettled = true
-      targetDeleteHistoryIncomplete = false
       return
     }
     if (relays.length === 0) {
       loadingTargetDeletes = false
       targetDeleteRequestSettled = true
-      targetDeleteHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
     loadingTargetDeletes = true
     targetDeleteRequestSettled = false
-    targetDeleteHistoryIncomplete = false
     void loadBoundedCommunityHistory({
       relays,
       relayFilters,
@@ -537,14 +521,8 @@
       signal: controller.signal,
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `community-widgets:${communityPubkey}:target-deletes`,
-    })
-      .then(result => {
+    }).catch(error => {
         if (controller.signal.aborted) return
-        targetDeleteHistoryIncomplete = !result.complete
-      })
-      .catch(error => {
-        if (controller.signal.aborted) return
-        targetDeleteHistoryIncomplete = true
         console.warn("[community-widgets] Failed to load targeting delete history", error)
       })
       .finally(() => {
@@ -564,17 +542,14 @@
     if (!communityBootstrapReady) {
       loadingOriginalWidgets = false
       originalWidgetRequestSettled = false
-      originalWidgetHistoryIncomplete = false
       return
     }
     if (relayFilters.length === 0 || localFilters.length === 0) {
       loadingOriginalWidgets = false
       originalWidgetRequestSettled = true
-      originalWidgetHistoryIncomplete = false
       return
     }
 
-    const communityRelaysMissing = $activeExactCommunityRelays.length === 0
     const plans = [
       ...($activeExactCommunityRelays.length
         ? [{relays: $activeExactCommunityRelays, relayFilters, localFilters}]
@@ -584,14 +559,12 @@
     if (plans.length === 0) {
       loadingOriginalWidgets = false
       originalWidgetRequestSettled = true
-      originalWidgetHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
     loadingOriginalWidgets = true
     originalWidgetRequestSettled = false
-    originalWidgetHistoryIncomplete = false
     void Promise.all(
       plans.map(plan =>
         loadBoundedCommunityHistory({
@@ -602,14 +575,8 @@
         }),
       ),
     )
-      .then(results => {
-        if (controller.signal.aborted) return
-        originalWidgetHistoryIncomplete =
-          communityRelaysMissing || results.some(result => !result.complete)
-      })
       .catch(error => {
         if (controller.signal.aborted) return
-        originalWidgetHistoryIncomplete = true
         console.warn("[community-widgets] Failed to load original widget history", error)
       })
       .finally(() => {

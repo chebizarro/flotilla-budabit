@@ -7,7 +7,7 @@ import {
   isRelayUrl,
   normalizeRelayUrl,
 } from "@welshman/util"
-import {TARGETED_PUBLICATION_KIND, parseOwnerPubkey} from "./community-protocol"
+import {parseOwnerPubkey} from "./community-protocol"
 
 export * from "./community-protocol"
 
@@ -133,7 +133,11 @@ export type CommunitySectionKindAssignment = {
 
 const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/i
 const GEOHASH_RE = /^[0123456789bcdefghjkmnpqrstuvwxyz]+$/i
-const COMMUNITY_SERVICE_CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/
+const hasCommunityServiceControlCharacter = (value: string) =>
+  Array.from(value).some(character => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
 const COMMUNITY_SERVICE_MAX_URL_LENGTH = 2048
 const COMMUNITY_SERVICE_MAX_ADDRESS_LENGTH = 350
 const COMMUNITY_SERVICE_MAX_IDENTIFIER_LENGTH = 200
@@ -177,7 +181,7 @@ export const normalizeCommunityServiceRelay = (value: string) => {
   if (
     value.length > COMMUNITY_SERVICE_MAX_URL_LENGTH ||
     !/^wss:\/\//i.test(trimmed) ||
-    COMMUNITY_SERVICE_CONTROL_CHAR_RE.test(trimmed)
+    hasCommunityServiceControlCharacter(trimmed)
   ) {
     return ""
   }
@@ -205,7 +209,7 @@ export const normalizeCommunityServiceHandlerAddress = (value: string) => {
   const trimmed = value.trim()
   if (
     value.length > COMMUNITY_SERVICE_MAX_ADDRESS_LENGTH ||
-    COMMUNITY_SERVICE_CONTROL_CHAR_RE.test(trimmed)
+    hasCommunityServiceControlCharacter(trimmed)
   ) {
     return ""
   }
@@ -218,7 +222,7 @@ export const normalizeCommunityServiceHandlerAddress = (value: string) => {
     !isHexPubkey(pubkey) ||
     !identifier ||
     identifier.length > COMMUNITY_SERVICE_MAX_IDENTIFIER_LENGTH ||
-    COMMUNITY_SERVICE_CONTROL_CHAR_RE.test(identifier)
+    hasCommunityServiceControlCharacter(identifier)
   ) {
     return ""
   }

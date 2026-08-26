@@ -56,7 +56,6 @@ export const waitForEmailDigestAuth = async (auth: EmailDigestAuthState, timeout
   if (terminal.has(auth.status)) return auth.status
 
   await new Promise<void>((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout>
     const cleanup = () => {
       clearTimeout(timeout)
       auth.off(AuthStateEvent.Status, onStatus)
@@ -69,7 +68,7 @@ export const waitForEmailDigestAuth = async (auth: EmailDigestAuthState, timeout
       if (terminal.has(status)) finish()
     }
 
-    timeout = setTimeout(() => {
+    const timeout = setTimeout(() => {
       cleanup()
       reject(new Error(`Email digest provider authentication timed out after ${timeoutMs}ms.`))
     }, timeoutMs)

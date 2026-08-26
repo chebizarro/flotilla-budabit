@@ -178,12 +178,7 @@ describe("event link utilities", () => {
           ],
           ["k", String(EVENT_TIME)],
           ["h", communityId],
-          [
-            "a",
-            `32222:${owner}:${communityId}`,
-            "wss://community-relay.example.com",
-            "community",
-          ],
+          ["a", `32222:${owner}:${communityId}`, "wss://community-relay.example.com", "community"],
         ],
       }),
     ])

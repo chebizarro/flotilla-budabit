@@ -46,9 +46,7 @@ describe("canonical community home contracts", () => {
 
   it("keeps the responsive menu in the home bar and community actions on the card", () => {
     expect(home).toContain("<CommunityMenuButton />")
-    expect(home).toMatch(
-      /<PageContent[\s\S]*<CommunityShareButton[\s\S]*<CommunityStarButton/,
-    )
+    expect(home).toMatch(/<PageContent[\s\S]*<CommunityShareButton[\s\S]*<CommunityStarButton/)
   })
 
   it("binds widget catalogs, modal context, and runtime authority to one exact pointer", () => {

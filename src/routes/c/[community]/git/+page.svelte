@@ -191,7 +191,6 @@
   let clone = $state("")
   let directRepoLoading = $state(false)
   let directRepoLoadSettled = $state(false)
-  let directRepoHistoryIncomplete = $state(false)
   let directRepoRetryVersion = $state(0)
   const retryDirectRepoHistory = () => {
     if (communityBootstrapFailed || communityAuthorityUnavailable) {
@@ -217,26 +216,22 @@
     if (!communityBootstrapReady) {
       directRepoLoading = false
       directRepoLoadSettled = false
-      directRepoHistoryIncomplete = false
       return
     }
     if (relayFilters.length === 0 || localFilters.length === 0) {
       directRepoLoading = false
       directRepoLoadSettled = true
-      directRepoHistoryIncomplete = false
       return
     }
     if (relays.length === 0) {
       directRepoLoading = false
       directRepoLoadSettled = true
-      directRepoHistoryIncomplete = true
       return
     }
 
     const controller = new AbortController()
     directRepoLoading = true
     directRepoLoadSettled = false
-    directRepoHistoryIncomplete = false
     void loadBoundedCommunityHistory({
       relays,
       relayFilters,
@@ -244,14 +239,8 @@
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `community-repositories:${communityPubkey}`,
       signal: controller.signal,
-    })
-      .then(result => {
+    }).catch(error => {
         if (controller.signal.aborted) return
-        directRepoHistoryIncomplete = !result.complete
-      })
-      .catch(error => {
-        if (controller.signal.aborted) return
-        directRepoHistoryIncomplete = true
         console.warn("[community-repositories] Failed to load direct repositories", error)
       })
       .finally(() => {

@@ -107,7 +107,11 @@ export const isEmailDigestVerificationPending = (status?: EmailDigestStatus) =>
 
 const LOCAL_TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/
 const REPOSITORY_ADDRESS_RE = /^30617:([0-9a-f]{64}):(.+)$/i
-const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/
+const hasControlCharacter = (value: string) =>
+  Array.from(value).some(character => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
 const statusValues = new Set<EmailDigestStatusValue>(["pending", "inactive", "ok", "error"])
 const stateValues = new Set<EmailDigestState>([
   "pending",
@@ -443,7 +447,7 @@ const parseRepositoryAddress = (address: string) => {
   const identifier = match[2]
   if (
     identifier.length > EMAIL_DIGEST_MAX_REPOSITORY_IDENTIFIER_LENGTH ||
-    CONTROL_CHAR_RE.test(identifier)
+    hasControlCharacter(identifier)
   ) {
     return undefined
   }
@@ -455,7 +459,7 @@ const normalizeRepositoryName = (name: string, fallback: string) => {
   const normalized = name.trim() || fallback
   if (
     normalized.length > EMAIL_DIGEST_MAX_REPOSITORY_NAME_LENGTH ||
-    CONTROL_CHAR_RE.test(normalized)
+    hasControlCharacter(normalized)
   ) {
     return ""
   }

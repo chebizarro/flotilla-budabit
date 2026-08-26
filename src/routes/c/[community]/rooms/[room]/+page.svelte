@@ -631,7 +631,11 @@
     hashTargetStabilizationUntil = 0
   }
 
-  const scrollToRoomTarget = (id: string, root: ParentNode, signal?: AbortSignal) =>
+  const scrollToRoomTarget = (
+    id: string,
+    root: NonNullable<Parameters<typeof waitAndScrollToEvent>[1]>["root"],
+    signal?: AbortSignal,
+  ) =>
     waitAndScrollToEvent(id, {root, signal, behavior: "auto"})
   const waitingForRoom = $derived(
     Boolean(

@@ -32,7 +32,6 @@ import {
   GIT_STATUS_DRAFT,
   GIT_STATUS_CLOSED,
   GIT_STATUS_COMPLETE,
-  isRelayUrl,
   isSignedEvent,
   normalizeRelayUrl,
   prep,
@@ -1000,10 +999,9 @@ export const deleteIssueWithLabels = async ({
   }
 
   const labelEvents = (
-    repository.query(
-      [{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}],
-      {shouldSort: false},
-    ) as TrustedEvent[]
+    repository.query([{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}], {
+      shouldSort: false,
+    }) as TrustedEvent[]
   ).filter(
     event =>
       event.kind === 1985 &&

@@ -49,7 +49,6 @@ export const waitForProviderRelayAuth = (
     let signing = false
     let settled = false
     let attemptedChallenge = ""
-    let timeout: ReturnType<typeof setTimeout>
     const cleanup = () => {
       clearTimeout(timeout)
       auth.off(AuthStateEvent.Status, onStatus)
@@ -89,7 +88,7 @@ export const waitForProviderRelayAuth = (
           if (auth.status === AuthStatus.Requested) onStatus(auth.status)
         })
     }
-    timeout = setTimeout(() => {
+    const timeout = setTimeout(() => {
       fail(new Error(`Provider relay authentication timed out after ${timeoutMs}ms.`))
     }, timeoutMs)
 

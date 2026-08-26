@@ -7,7 +7,6 @@ import {
   RepositoryCache,
   canonicalizeRepoCacheAddress,
   verifyPlainRepositoryEvent,
-  type CachedRepositoryEvent,
   type RepositoryCacheChanges,
   type RepositoryCachePolicy,
   type RepositoryCacheState,

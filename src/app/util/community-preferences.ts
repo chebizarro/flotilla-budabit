@@ -283,7 +283,7 @@ export const selectPreferredCommunities = ({
     })
   }
 
-  for (const [address, definition] of definitions) {
+  for (const [, definition] of definitions) {
     if (definition.ownerPubkey === normalizedAuthor) continue
 
     const latestAt = getModeratorEvidence({

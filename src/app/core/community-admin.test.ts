@@ -29,7 +29,6 @@ const memberPubkey = getPublicKey(new Uint8Array(32).fill(4))
 const otherPubkey = getPublicKey(new Uint8Array(32).fill(6))
 const v2Controller = getPublicKey(new Uint8Array(32).fill(1))
 const v2CommunityId = getPublicKey(new Uint8Array(32).fill(2))
-const v2ListController = getPublicKey(new Uint8Array(32).fill(3))
 const generalIdentifier = `${v2CommunityId}-general`
 
 const profileList = {

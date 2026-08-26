@@ -41,7 +41,6 @@
     ensureCommunityBootstrap,
     getCommunityBootstrapKey,
     hydrateCommunityEventsWithStatus,
-    loadCommunityEvents,
     makeExactCommunitySession,
     setActiveExactCommunityPointer,
     clearActiveExactCommunity,
@@ -155,7 +154,7 @@
   let communityDeleteLoadController: AbortController | null = null
   let communityDeleteRetryVersion = $state(0)
   let communityDeleteRetryTimer: ReturnType<typeof setTimeout> | null = null
-  let latestCommunityDeleteSeenByKey: Record<string, number> = {}
+  const latestCommunityDeleteSeenByKey: Record<string, number> = {}
   let communityDeleteCheckpointKey = ""
   let communityFollowUpLoadKey = ""
   let communityFollowUpLoadController: AbortController | null = null

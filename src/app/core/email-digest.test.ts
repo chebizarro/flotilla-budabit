@@ -690,6 +690,7 @@ describe("email digest event and status restrictions", () => {
     expect(parseEmailDigestStatus({...status, nextRunAt: "100"})).toBeUndefined()
     expect(parseEmailDigestStatus({...status, extra: true})).toBeUndefined()
     const {emailConfirmed: _emailConfirmed, ...missingField} = status
+    void _emailConfirmed
     expect(parseEmailDigestStatus(missingField)).toBeUndefined()
   })
 

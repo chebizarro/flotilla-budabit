@@ -70,9 +70,7 @@ const failedPublishOutcomes = (
   relays: string[],
   detail: string,
 ): Record<string, PublishRelayOutcome> =>
-  Object.fromEntries(
-    relays.map(relay => [relay, {relay, status: PublishStatus.Failure, detail}]),
-  )
+  Object.fromEntries(relays.map(relay => [relay, {relay, status: PublishStatus.Failure, detail}]))
 
 const parsePublishOutcomes = (
   value: unknown,
@@ -171,9 +169,7 @@ export function createEventIO(): EventIO {
             relays: [],
             outcomes: primaryOutcomes,
             error:
-              signed?.kind === 30617
-                ? NO_DECLARED_RELAY_ACCEPTED_ERROR
-                : NO_RELAY_ACCEPTED_ERROR,
+              signed?.kind === 30617 ? NO_DECLARED_RELAY_ACCEPTED_ERROR : NO_RELAY_ACCEPTED_ERROR,
           }
         }
 
