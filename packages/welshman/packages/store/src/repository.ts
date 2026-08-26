@@ -9,7 +9,12 @@ import {
   sortEventsDesc,
   getIdOrAddress,
 } from "@welshman/util"
-import {type Repository, type RepositoryUpdate, type Tracker} from "@welshman/net"
+import {
+  type Repository,
+  type RepositoryUpdate,
+  type RepositoryUpdateSubscriber,
+  type Tracker,
+} from "@welshman/net"
 import {deriveDeduplicated} from "./misc.js"
 
 // Events by id
@@ -40,6 +45,24 @@ const summarizeFilters = (filters: Filter[]) =>
     }
   })
 
+const getKindRoute = (filters: Filter[]) => {
+  if (filters.length === 0 || filters.some(filter => !filter.kinds?.length)) return
+
+  return {kinds: Array.from(new Set(filters.flatMap(filter => filter.kinds!)))}
+}
+
+const subscribeToRepositoryUpdates = (
+  repository: Repository,
+  subscriber: RepositoryUpdateSubscriber,
+  filters: Filter[],
+  listener: (update: RepositoryUpdate) => void,
+) => {
+  const route = getKindRoute(filters)
+  return route
+    ? repository.onRoutedUpdate(subscriber, route, listener)
+    : repository.onUpdate(subscriber, listener)
+}
+
 export const getEventsById = ({filters, repository, includeDeleted}: EventsByIdOptions) => {
   const eventsById = new Map<string, TrustedEvent>()
 
@@ -56,8 +79,10 @@ export const deriveEventsById = ({filters, repository, includeDeleted}: EventsBy
 
     set(eventsById)
 
-    return repository.onUpdate(
+    return subscribeToRepositoryUpdates(
+      repository,
       {name: "derive-events-by-id", filters: summarizeFilters(filters)},
+      filters,
       ({added, removed}: RepositoryUpdate) => {
         let dirty = false
 
@@ -109,8 +134,10 @@ export const makeDeriveEvent = ({repository, includeDeleted = false, onDerive}: 
 
       set(event)
 
-      return repository.onUpdate(
+      return subscribeToRepositoryUpdates(
+        repository,
         {name: "derive-event", filters: summarizeFilters(filters)},
+        filters,
         ({added, removed}: RepositoryUpdate) => {
           if (!includeDeleted) {
             for (const id of removed) {
@@ -210,8 +237,10 @@ export const deriveEventsByIdByUrl = ({
     set(eventsByIdByUrl)
 
     const unsubscribers = [
-      repository.onUpdate(
+      subscribeToRepositoryUpdates(
+        repository,
         {name: "derive-events-by-id-by-url", filters: summarizeFilters(filters)},
+        filters,
         ({added, removed}: RepositoryUpdate) => {
           let dirty = false
 
@@ -306,11 +335,13 @@ export const deriveEventsByIdForUrl = ({
     reset()
 
     const unsubscribers = [
-      repository.onUpdate(
+      subscribeToRepositoryUpdates(
+        repository,
         {
           name: "derive-events-by-id-for-url",
           filters: summarizeFilters(filters),
         },
+        filters,
         ({added, removed}: RepositoryUpdate) => {
           let dirty = false
 
@@ -417,8 +448,10 @@ export const deriveItemsByKey = <T>({
       addEvent(event)
     }
 
-    return repository.onUpdate(
+    return subscribeToRepositoryUpdates(
+      repository,
       {name: "derive-items-by-key", filters: summarizeFilters(filters)},
+      filters,
       ({added, removed}: RepositoryUpdate) => {
         for (const event of added) {
           if (matchFilters(filters, event)) {
@@ -551,15 +584,19 @@ export const deriveIsDeleted = (repository: Repository, event: TrustedEvent) =>
 
     set(repository.isDeleted(event))
 
-    return repository.onUpdate({name: "derive-is-deleted"}, ({removed, added}) => {
-      if (removed.has(event.id)) {
-        set(true)
-      }
-
-      for (const event of added) {
-        if (getIdOrAddress(event) === idOrAddress) {
-          set(false)
+    return repository.onRoutedUpdate(
+      {name: "derive-is-deleted"},
+      {kinds: [event.kind]},
+      ({removed, added}) => {
+        if (removed.has(event.id)) {
+          set(true)
         }
-      }
-    })
+
+        for (const event of added) {
+          if (getIdOrAddress(event) === idOrAddress) {
+            set(false)
+          }
+        }
+      },
+    )
   })
