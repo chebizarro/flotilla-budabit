@@ -468,6 +468,13 @@ export const makeFeed = ({
   const relaysSet = new Set(relays)
   const liveFilters = subscriptionFilters || feedFilters
   const networkFilters = relayFilters || feedFilters
+  // The controller applies its own page limit; limits are not part of the structural feed AST.
+  const networkFeedFilters = networkFilters.map(filter => {
+    const {limit, ...feedFilter} = filter
+    void limit
+
+    return feedFilter
+  })
   let admittedEventCount = 0
   let receivedEventCount = 0
 
@@ -589,7 +596,7 @@ export const makeFeed = ({
       tracker: feedTracker,
       priority,
       owner,
-      feed: makeIntersectionFeed(makeRelayFeed(url), feedFromFilters(networkFilters)),
+      feed: makeIntersectionFeed(makeRelayFeed(url), feedFromFilters(networkFeedFilters)),
       onEvent: event => {
         receivedEventCount += 1
         if (matchFilters(feedFilters, event)) insertEvent(event)

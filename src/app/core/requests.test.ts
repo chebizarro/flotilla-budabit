@@ -253,6 +253,34 @@ describe("requests", () => {
     }
   })
 
+  it("removes per-request limits before building a paginated feed", async () => {
+    vi.useFakeTimers()
+
+    const {makeFeed} = await import("./requests")
+    const {makeFeedController} = await import("@welshman/app")
+    const controllerMock = vi.mocked(makeFeedController)
+    const limitedFilter: Filter = {kinds: [9041], ids: ["a".repeat(64)], limit: 1}
+    controllerMock.mockClear()
+
+    const feed = makeFeed({
+      element: document.createElement("div"),
+      relays: ["wss://goal-feed.test"],
+      feedFilters: [{kinds: [9041]}, limitedFilter],
+      relayFilters: [{kinds: [9041], "#h": ["community"]}, limitedFilter],
+    })
+
+    try {
+      const controllerFeed = controllerMock.mock.calls[0][0].feed
+
+      expect(JSON.stringify(controllerFeed)).toContain("a".repeat(64))
+      expect(JSON.stringify(controllerFeed)).not.toContain('"limit"')
+      expect(limitedFilter).toHaveProperty("limit", 1)
+    } finally {
+      feed.cleanup()
+      vi.useRealTimers()
+    }
+  })
+
   it("uses broad relay filters while admitting only current writers locally", async () => {
     vi.useFakeTimers()
 
