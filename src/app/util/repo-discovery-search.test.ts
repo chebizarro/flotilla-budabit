@@ -156,6 +156,118 @@ describe("repo discovery search helpers", () => {
     ])
   })
 
+  it("keeps active-scope matches ahead of stronger matches from other scopes", () => {
+    const communityMatch = toLoadedRepoSearchItem(
+      makeRepoEvent({
+        pubkey: "c".repeat(64),
+        identifier: "community-project",
+        description: "nostr collaboration tools",
+      }),
+    )
+    const personalMatch = toLoadedRepoSearchItem(
+      makeRepoEvent({
+        pubkey: "a".repeat(64),
+        identifier: "nostr",
+        name: "nostr",
+      }),
+    )
+
+    const sorted = sortRepoSearchResults({
+      items: [personalMatch!, communityMatch!],
+      query: "nostr",
+      viewerPubkey: personalMatch!.event.pubkey,
+      scopeAddressGroups: [[communityMatch!.address], [personalMatch!.address]],
+    })
+
+    expect(sorted.map(item => item.address)).toEqual([
+      communityMatch!.address,
+      personalMatch!.address,
+    ])
+  })
+
+  it("orders all community, personal, repo, and star scope tiers", () => {
+    const items = ["community-repo", "community-star", "personal-repo", "personal-star"].map(
+      (identifier, index) =>
+        toLoadedRepoSearchItem(
+          makeRepoEvent({
+            pubkey: String(index + 1).repeat(64),
+            identifier,
+            description: "nostr project",
+          }),
+        )!,
+    )
+    const byId = new Map(
+      items.map(item => [item.event.tags.find(tag => tag[0] === "d")?.[1], item]),
+    )
+    const expected = ["personal-star", "personal-repo", "community-star", "community-repo"]
+
+    const sorted = sortRepoSearchResults({
+      items: [...items].reverse(),
+      query: "nostr",
+      scopeAddressGroups: expected.map(identifier => [byId.get(identifier)!.address]),
+    })
+
+    expect(sorted.map(item => item.address)).toEqual(
+      expected.map(identifier => byId.get(identifier)!.address),
+    )
+  })
+
+  it("uses discovery priority before relevance outside the active scope", () => {
+    const trustedDescriptionMatch = toLoadedRepoSearchItem(
+      makeRepoEvent({
+        pubkey: "b".repeat(64),
+        identifier: "community-tools",
+        description: "nostr collaboration tools",
+      }),
+    )
+    const exactFallbackMatch = toLoadedRepoSearchItem(
+      makeRepoEvent({
+        pubkey: "c".repeat(64),
+        identifier: "nostr",
+        name: "nostr",
+      }),
+    )
+
+    const sorted = sortRepoSearchResults({
+      items: [exactFallbackMatch!, trustedDescriptionMatch!],
+      query: "nostr",
+      priorityPubkeyGroups: [[trustedDescriptionMatch!.event.pubkey]],
+    })
+
+    expect(sorted.map(item => item.address)).toEqual([
+      trustedDescriptionMatch!.address,
+      exactFallbackMatch!.address,
+    ])
+  })
+
+  it("uses relevance within the same discovery priority bucket", () => {
+    const descriptionMatch = toLoadedRepoSearchItem(
+      makeRepoEvent({
+        pubkey: "b".repeat(64),
+        identifier: "community-tools",
+        description: "nostr collaboration tools",
+      }),
+    )
+    const exactMatch = toLoadedRepoSearchItem(
+      makeRepoEvent({
+        pubkey: "c".repeat(64),
+        identifier: "nostr",
+        name: "nostr",
+      }),
+    )
+
+    const sorted = sortRepoSearchResults({
+      items: [descriptionMatch!, exactMatch!],
+      query: "nostr",
+      priorityPubkeyGroups: [[descriptionMatch!.event.pubkey, exactMatch!.event.pubkey]],
+    })
+
+    expect(sorted.map(item => item.address)).toEqual([
+      exactMatch!.address,
+      descriptionMatch!.address,
+    ])
+  })
+
   it("prioritizes owned, starred, community, direct follow, and known buckets", () => {
     const candidates = buildRepoDiscoveryCandidatePubkeys({
       settings: getDefaultRepoDiscoveryPrioritySettings(),

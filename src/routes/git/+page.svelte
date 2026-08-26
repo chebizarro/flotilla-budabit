@@ -505,6 +505,12 @@
   let repoDiscoveryDebounceTimer: ReturnType<typeof setTimeout> | null = null
   let snippetsLoadedFor = $state<string | null>(null)
 
+  const hasRepositoryTextSearchIntent = $derived.by(() => {
+    if (activeTab === "snippets") return false
+    const query = searchQuery.trim().replace(/^nostr:/, "")
+    return Boolean(query && !query.startsWith("npub1") && !query.startsWith("naddr1"))
+  })
+
   const hasActiveCommunityContext = $derived(Boolean($activeExactCommunityPointer))
   const gitPageWidthClass = $derived(hasActiveCommunityContext ? "" : "cw-full")
 
@@ -560,7 +566,7 @@
   let personalRepoLoadRequestId = 0
   let personalRepoAnnouncementsSettled = $state(false)
   $effect(() => {
-    if (activeMode !== "personal" || activeTab !== "my-repos") {
+    if ((activeMode !== "personal" || activeTab !== "my-repos") && !hasRepositoryTextSearchIntent) {
       personalRepoLoadRequestId += 1
       personalRepoAnnouncementsSettled = true
       lastLoadedPersonalRepoKey = ""
@@ -995,7 +1001,10 @@
 
   let selectedCommunityAuthorityLoadKey = ""
   $effect(() => {
-    if (activeMode !== "community" || selectedCommunityRelays.length === 0) {
+    if (
+      (activeMode !== "community" && !hasRepositoryTextSearchIntent) ||
+      selectedCommunityRelays.length === 0
+    ) {
       selectedCommunityAuthorityLoadKey = ""
       return
     }
@@ -1014,7 +1023,7 @@
   let selectedCommunityReportDeleteLoadKey = ""
   $effect(() => {
     if (
-      activeMode !== "community" ||
+      (activeMode !== "community" && !hasRepositoryTextSearchIntent) ||
       selectedCommunityRelays.length === 0 ||
       selectedCommunityReportDeleteFilters.length === 0
     ) {
@@ -1063,7 +1072,10 @@
   let repoStarsHydrationSettled = $state(false)
 
   $effect(() => {
-    if (!$pubkey || activeMode !== "personal" || activeTab !== "bookmarks") {
+    if (
+      !$pubkey ||
+      ((activeMode !== "personal" || activeTab !== "bookmarks") && !hasRepositoryTextSearchIntent)
+    ) {
       repoStarsHydrationRequestId += 1
       repoStarsHydrationSettled = true
       return
@@ -1090,7 +1102,8 @@
   let settledStarredRepoLoadKey = $state("")
 
   const repos = $derived.by(() => {
-    if (activeMode !== "personal" || activeTab !== "bookmarks") return undefined
+    if ((activeMode !== "personal" || activeTab !== "bookmarks") && !hasRepositoryTextSearchIntent)
+      return undefined
     if (!hasRepoStarAddresses) return undefined
 
     const addresses = renderedRepoStarAddresses
@@ -1201,8 +1214,8 @@
   $effect(() => {
     void communityRepoRetryVersion
     if (
-      activeMode !== "community" ||
-      activeTab !== "my-repos" ||
+      ((activeMode !== "community" || activeTab !== "my-repos") &&
+        !hasRepositoryTextSearchIntent) ||
       !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0 ||
       communityRepoFilterPlan.relayFilters.length === 0
@@ -1570,11 +1583,15 @@
   let communityTargetHistoryIncomplete = $state(false)
   let communityOriginalHistoryIncomplete = $state(false)
   let communityCurationRetryVersion = $state(0)
+  const communityCurationSearchTab = $derived.by(() => {
+    if (hasRepositoryTextSearchIntent) return "bookmarks" as const
+    if (activeMode !== "community") return null
+    return activeTab === "bookmarks" || activeTab === "snippets" ? activeTab : null
+  })
   $effect(() => {
     void communityCurationRetryVersion
     if (
-      activeMode !== "community" ||
-      (activeTab !== "bookmarks" && activeTab !== "snippets") ||
+      !communityCurationSearchTab ||
       !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0
     ) {
@@ -1586,7 +1603,9 @@
     }
 
     const filterPlan =
-      activeTab === "bookmarks" ? communityStarTargetFilterPlan : communitySnippetTargetFilterPlan
+      communityCurationSearchTab === "bookmarks"
+        ? communityStarTargetFilterPlan
+        : communitySnippetTargetFilterPlan
     const relayFilters = filterPlan.relayFilters
     const localFilters = filterPlan.localFilters
     if (relayFilters.length === 0 || localFilters.length === 0) {
@@ -1596,7 +1615,7 @@
     }
 
     const key = JSON.stringify({
-      tab: activeTab,
+      tab: communityCurationSearchTab,
       community: selectedCommunityAddress,
       relays: selectedCommunityListRelays,
       relayFilters,
@@ -1642,8 +1661,7 @@
   let communityTargetDeletesSettled = $state(false)
   $effect(() => {
     if (
-      activeMode !== "community" ||
-      (activeTab !== "bookmarks" && activeTab !== "snippets") ||
+      !communityCurationSearchTab ||
       !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0
     ) {
@@ -1654,7 +1672,7 @@
     }
 
     const filters =
-      activeTab === "bookmarks"
+      communityCurationSearchTab === "bookmarks"
         ? communityStarTargetDeleteFilters
         : communitySnippetTargetDeleteFilters
     if (filters.length === 0) {
@@ -1683,8 +1701,7 @@
   $effect(() => {
     void communityCurationRetryVersion
     if (
-      activeMode !== "community" ||
-      (activeTab !== "bookmarks" && activeTab !== "snippets") ||
+      !communityCurationSearchTab ||
       !selectedCommunityAddress ||
       selectedCommunityListRelays.length === 0
     ) {
@@ -1696,9 +1713,11 @@
     }
 
     const filterPlan =
-      activeTab === "bookmarks" ? communityStarReactionFilterPlan : communitySnippetFilterPlan
+      communityCurationSearchTab === "bookmarks"
+        ? communityStarReactionFilterPlan
+        : communitySnippetFilterPlan
     const relayHintPlans =
-      activeTab === "bookmarks"
+      communityCurationSearchTab === "bookmarks"
         ? communityStarReactionRelayHintPlans
         : communitySnippetRelayHintPlans
     if (filterPlan.relayFilters.length === 0) {
@@ -1761,8 +1780,8 @@
   let communityStarReposSettled = $state(false)
   $effect(() => {
     if (
-      activeMode !== "community" ||
-      activeTab !== "bookmarks" ||
+      ((activeMode !== "community" || activeTab !== "bookmarks") &&
+        !hasRepositoryTextSearchIntent) ||
       communityRepoStarAddresses.length === 0
     ) {
       communityStarRepoLoadRequestId += 1
@@ -2446,25 +2465,25 @@
   })
 
   const buildDiscoveryCommunityTrustScores = (candidatePubkeys: string[]) => {
-    if (
-      activeMode !== "community" ||
-      !selectedCommunityDefinition ||
-      candidatePubkeys.length === 0
-    ) {
+    if (!selectedCommunityDefinition || candidatePubkeys.length === 0) {
       return new Map<string, number>()
     }
 
     const assessments = buildCommunityTrustAssessments({
       viewerPubkey: $pubkey || "",
       candidatePubkeys,
-      context: {scope: "active_community", communityPubkey: selectedCommunityPubkey},
+      context: {
+        scope: "active_community",
+        communityPubkey: selectedCommunityPubkey,
+        communityAddress: selectedCommunityAddress,
+      },
       definitions: [selectedCommunityDefinition],
       profileListEvents: $selectedCommunityProfileListEvents
         ? ($selectedCommunityProfileListEvents as TrustedEvent[])
         : [],
       reportStates:
-        selectedCommunityPubkey && selectedCommunityReportState
-          ? new Map([[selectedCommunityPubkey, selectedCommunityReportState]])
+        selectedCommunityAddress && selectedCommunityReportState
+          ? new Map([[selectedCommunityAddress, selectedCommunityReportState]])
           : undefined,
       renouncedCommunityAddresses: $userRenouncedCommunityAddresses,
     })
@@ -2618,11 +2637,37 @@
     return () => clearTimeout(timeout)
   })
 
+  const loadedRepoSearchCandidates = $derived.by(() => {
+    if (activeTab === "snippets") return []
+
+    return mergeLoadedRepoSearchItems(
+      mergeLoadedRepoSearchItems(latestCommunityRepos, loadedCommunityStarRepos),
+      mergeLoadedRepoSearchItems(latestMyRepos, loadedStarredRepos),
+    )
+  })
+
+  const repoSearchScopeAddressGroups = $derived.by(() => {
+    const communityRepos = latestCommunityRepos.map(repo => repo.address)
+    const communityStars = loadedCommunityStarRepos.map(repo => repo.address)
+    const personalRepos = latestMyRepos.map(repo => repo.address)
+    const personalStars = loadedStarredRepos.map(repo => repo.address)
+
+    if (activeMode === "community") {
+      return activeTab === "bookmarks"
+        ? [communityStars, communityRepos, personalStars, personalRepos]
+        : [communityRepos, communityStars, personalRepos, personalStars]
+    }
+
+    return activeTab === "bookmarks"
+      ? [personalStars, personalRepos, communityStars, communityRepos]
+      : [personalRepos, personalStars, communityRepos, communityStars]
+  })
+
   const localSearchFilteredRepos = $derived.by(() => {
     const query = trimmedActiveRepoSearchQuery
     if (activeTab === "snippets" || isAccountSearch || !query) return []
 
-    return filteredRepos.filter(repo =>
+    return loadedRepoSearchCandidates.filter(repo =>
       repoMatchesSearchQuery({
         repo,
         query,
@@ -2775,10 +2820,8 @@
 
     const discoveryInputs = untrack(() => {
       const profileMatches = getRepositoryOwnerProfileMatches(query)
-      const activeCommunityPubkeys =
-        activeMode === "community" ? [...selectedCommunityRepoWriterPubkeys] : []
-      const communityAssociatedPubkeys =
-        activeMode === "community" ? latestCommunityRepos.map(repo => repo.event.pubkey) : []
+      const activeCommunityPubkeys = [...selectedCommunityRepoWriterPubkeys]
+      const communityAssociatedPubkeys = latestCommunityRepos.map(repo => repo.event.pubkey)
       const communityTrustCandidates = Array.from(
         new Set(
           [
@@ -3142,7 +3185,7 @@
     }
   })
 
-  // Filter repos based on search query (from current tab)
+  // Search spans community and personal sources; the active scope remains the first priority.
   const searchFilteredRepos = $derived.by(() => {
     const repos = filteredRepos
     const query = trimmedActiveRepoSearchQuery
@@ -3156,6 +3199,11 @@
       viewerPubkey: $pubkey,
       starredOwners: [...starredRepoOwners],
       starredAddresses: repoStarAddresses.map(star => star.address),
+      scopeAddressGroups: repoSearchScopeAddressGroups,
+      priorityPubkeyGroups:
+        repoDiscoverySnapshot?.query === activeTextSearchQuery
+          ? repoDiscoverySnapshot.buckets.map(bucket => bucket.pubkeys)
+          : [],
       getProfile: getSearchProfile,
     })
   })

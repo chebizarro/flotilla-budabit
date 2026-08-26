@@ -310,6 +310,8 @@ export const sortRepoSearchResults = <
   viewerPubkey,
   starredOwners = [],
   starredAddresses = [],
+  scopeAddressGroups = [],
+  priorityPubkeyGroups = [],
   getProfile,
 }: {
   items: T[]
@@ -317,18 +319,41 @@ export const sortRepoSearchResults = <
   viewerPubkey?: string | null
   starredOwners?: string[]
   starredAddresses?: string[]
+  scopeAddressGroups?: string[][]
+  priorityPubkeyGroups?: string[][]
   getProfile?: (pubkey: string) => RepoSearchProfile | null
 }): T[] => {
   const normalizedQuery = normalizeSearchValue(query)
   if (!normalizedQuery) return items
 
+  const scopeByAddress = new Map<string, number>()
+  scopeAddressGroups.forEach((addresses, groupIndex) => {
+    for (const address of addresses) {
+      if (!scopeByAddress.has(address)) scopeByAddress.set(address, groupIndex)
+    }
+  })
+  const priorityByPubkey = new Map<string, number>()
+  priorityPubkeyGroups.forEach((pubkeys, groupIndex) => {
+    for (const pubkey of pubkeys) {
+      if (!priorityByPubkey.has(pubkey)) priorityByPubkey.set(pubkey, groupIndex)
+    }
+  })
+
   return items
     .map((item, index) => {
       const event = getRepoSearchEvent(item)
+      const metadata = event ? getRepoSearchMetadata(event) : null
+      const address =
+        (item as LoadedRepoSearchItem)?.address ||
+        (item as {address?: string})?.address ||
+        metadata?.address ||
+        ""
       return {
         item,
         index,
         createdAt: event?.created_at || 0,
+        scope: scopeByAddress.get(address),
+        priority: event ? priorityByPubkey.get(event.pubkey) : undefined,
         score: getRepoSearchRelevanceScore({
           repo: item,
           query: normalizedQuery,
@@ -339,7 +364,14 @@ export const sortRepoSearchResults = <
         }),
       }
     })
-    .sort((a, b) => b.score - a.score || b.createdAt - a.createdAt || a.index - b.index)
+    .sort(
+      (a, b) =>
+        (a.scope ?? Number.POSITIVE_INFINITY) - (b.scope ?? Number.POSITIVE_INFINITY) ||
+        (a.priority ?? Number.POSITIVE_INFINITY) - (b.priority ?? Number.POSITIVE_INFINITY) ||
+        b.score - a.score ||
+        b.createdAt - a.createdAt ||
+        a.index - b.index,
+    )
     .map(({item}) => item)
 }
 
