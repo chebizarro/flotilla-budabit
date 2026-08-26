@@ -42,8 +42,8 @@
     info?: Snippet
   }
 
-  const INITIAL_MESSAGE_COUNT = 120
-  const MESSAGE_BATCH_SIZE = 120
+  const INITIAL_MESSAGE_COUNT = 20
+  const MESSAGE_BATCH_SIZE = 20
   const INITIAL_THREAD_LOAD_TIMEOUT = 3000
 
   const {pubkeys, info}: Props = $props()
@@ -280,7 +280,7 @@
     try {
       const events = await load({relays, filters})
       visibleMessageCount += MESSAGE_BATCH_SIZE
-      olderMessagesExhausted = events.length === 0
+      olderMessagesExhausted = events.length < MESSAGE_BATCH_SIZE
     } catch {
       pushToast({theme: "error", message: "Failed to load older messages."})
     } finally {
@@ -430,6 +430,11 @@
       filters: makeConversationFilters(selfPubkey, recipient, {limit: MESSAGE_BATCH_SIZE}),
       signal: controller.signal,
     })
+      .then(events => {
+        if (loadId === initialThreadLoadId && !controller.signal.aborted) {
+          olderMessagesExhausted = events.length < MESSAGE_BATCH_SIZE
+        }
+      })
       .catch(() => undefined)
       .finally(() => {
         clearTimeout(timeout)
@@ -627,12 +632,18 @@
     {#if canLoadOlderMessages}
       {#if olderMessagesLoading}
         <Spinner loading>Loading older messages...</Spinner>
+      {:else if initialThreadLoading && !hasOlderMessages}
+        <Spinner loading>Checking for older messages...</Spinner>
       {:else}
         <Button class="btn btn-neutral btn-sm" onclick={loadOlderMessages}
           >Load older messages</Button>
       {/if}
       <span class="text-xs opacity-70">
-        Showing {visibleMessages.length} of {sortedMessages.length} loaded messages
+        {#if hasOlderMessages}
+          Showing {visibleMessages.length} of {sortedMessages.length} loaded messages
+        {:else}
+          {sortedMessages.length} {sortedMessages.length === 1 ? "message" : "messages"} loaded
+        {/if}
       </span>
     {:else}
       <Spinner loading={loading || initialThreadLoading}>
