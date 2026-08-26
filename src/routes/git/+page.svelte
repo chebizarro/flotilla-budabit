@@ -4784,7 +4784,7 @@
                 type="text"
                 placeholder={activeTab === "snippets"
                   ? "Search snippets..."
-                  : "Search repo, owner, npub, or naddr"} />
+                  : "Repo, owner, npub, or naddr"} />
               {#if searchQuery}
                 <button
                   type="button"
