@@ -50,6 +50,7 @@ type TestThunk = {
 
 const relayOne = "wss://relay-one.example/"
 const relayTwo = "wss://relay-two.example/"
+const unnormalizedRelay = "wss://relay-one.example"
 const pubkey = "a".repeat(64)
 
 const makeOriginal = (id: string): TrustedEvent =>
@@ -91,18 +92,23 @@ describe("replacement-first event edit publication", () => {
 
     mocks.publishThunk.mockImplementation(
       (options: TestThunk["options"] & {event: TrustedEvent}) => {
+        const phase = options.event.kind === 5 ? "delete" : "replacement"
         const thunk: TestThunk = {
-          phase: "replacement",
+          phase,
           pubkey,
-          event: {...options.event, id: "replacement-id", pubkey, sig: "replacement-sig"},
+          event:
+            phase === "delete"
+              ? options.event
+              : {...options.event, id: "replacement-id", pubkey, sig: "replacement-sig"},
           options,
         }
-        mocks.actions.push("publish:replacement")
+        mocks.actions.push(`publish:${phase}`)
         return thunk
       },
     )
     mocks.publishSocialDelete.mockImplementation(
       (options: {relays: string[]; optimistic: boolean}) => {
+        const relays = options.relays.map(relay => (relay.endsWith("/") ? relay : `${relay}/`))
         const thunk: TestThunk = {
           phase: "delete",
           pubkey,
@@ -115,7 +121,7 @@ describe("replacement-first event edit publication", () => {
             content: "",
             sig: "delete-sig",
           } as TrustedEvent,
-          options,
+          options: {...options, relays},
         }
         mocks.actions.push("publish:delete")
         return thunk
@@ -168,6 +174,24 @@ describe("replacement-first event edit publication", () => {
       2,
       expect.objectContaining({phase: "delete"}),
       [relayTwo],
+    )
+  })
+
+  it("waits for the delete using its normalized relay URL", async () => {
+    mocks.waitForAnyRelayAck.mockImplementation(async (thunk: TestThunk, relays: string[]) => ({
+      relay: relays[0],
+    }))
+    const {publishEditedReply} = await import("./event-edit-publish")
+
+    await publishEditedReply({
+      ...makeParams(makeOriginal("normalized-delete-relay")),
+      relays: [unnormalizedRelay],
+    })
+
+    expect(mocks.waitForAnyRelayAck).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({phase: "delete"}),
+      [relayOne],
     )
   })
 
@@ -229,7 +253,10 @@ describe("replacement-first event edit publication", () => {
 
   it("retries only the retained exact delete after delete publication fails", async () => {
     let deleteAttempt = 0
-    mocks.waitForAnyRelayAck.mockImplementation(async (thunk: TestThunk) => {
+    mocks.waitForAnyRelayAck.mockImplementation(async (thunk: TestThunk, relays: string[]) => {
+      if (thunk.phase === "replacement" && relays[0] === relayTwo) {
+        throw new Error("replacement rejected")
+      }
       if (thunk.phase === "replacement") return {relay: relayOne}
       deleteAttempt += 1
       if (deleteAttempt === 1) throw new Error("delete rejected")
@@ -250,6 +277,54 @@ describe("replacement-first event edit publication", () => {
       expect.objectContaining({phase: "delete", event: exactDelete}),
     )
     expect((mocks.retryThunk.mock.results[0]?.value as TestThunk).event).toBe(exactDelete)
+  })
+
+  it("falls back to another relay that acknowledged the replacement", async () => {
+    mocks.waitForAnyRelayAck.mockImplementation(async (thunk: TestThunk, relays: string[]) => {
+      const relay = relays[0]
+      if (thunk.phase === "delete" && relay === relayOne) {
+        throw new Error("delete rejected")
+      }
+      return {relay}
+    })
+    const {publishEditedReply} = await import("./event-edit-publish")
+
+    await publishEditedReply(makeParams(makeOriginal("delete-relay-fallback")))
+
+    expect(mocks.publishSocialDelete).toHaveBeenCalledWith(
+      expect.objectContaining({relays: [relayOne]}),
+    )
+    expect(mocks.publishThunk).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        relays: [relayTwo],
+        event: expect.objectContaining({id: "delete-id"}),
+        optimistic: false,
+      }),
+    )
+    expect(mocks.repositoryPublish).toHaveBeenCalledWith(expect.objectContaining({id: "delete-id"}))
+    expect(mocks.suppressEventAfterEdit).toHaveBeenCalledWith(
+      expect.objectContaining({id: "delete-relay-fallback"}),
+    )
+  })
+
+  it("does not send a fallback delete to a relay that rejected the replacement", async () => {
+    mocks.waitForAnyRelayAck.mockImplementation(async (thunk: TestThunk, relays: string[]) => {
+      const relay = relays[0]
+      if (thunk.phase === "delete" || relay === relayTwo) throw new Error("relay rejected")
+      return {relay}
+    })
+    const {publishEditedReply} = await import("./event-edit-publish")
+
+    await expect(
+      publishEditedReply(makeParams(makeOriginal("unsafe-delete-fallback"))),
+    ).rejects.toThrow("deletion was not acknowledged")
+
+    expect(mocks.publishThunk).toHaveBeenCalledTimes(1)
+    expect(mocks.repositoryPublish).not.toHaveBeenCalledWith(
+      expect.objectContaining({id: "delete-id"}),
+    )
+    expect(mocks.suppressEventAfterEdit).not.toHaveBeenCalled()
   })
 
   it("publishes the acknowledged delete locally before suppressing the original", async () => {

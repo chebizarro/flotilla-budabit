@@ -87,14 +87,49 @@ const runEditOperation = async (operation: EditOperation) => {
     const thunk = operation.deleteAttempted
       ? (retryThunk(operation.deleteThunk) as EditThunk)
       : operation.deleteThunk
+    const deleteRelay = thunk.options.relays[0]
     operation.deleteAttempted = true
     operation.deleteThunk = thunk
 
     try {
-      await waitForAnyRelayAck(thunk, [operation.replacementAckRelay])
+      await waitForAnyRelayAck(thunk, [deleteRelay])
       operation.deleteAcked = true
     } catch {
-      throw new Error("Replacement published, but deletion was not acknowledged. Retry the edit.")
+      for (const relay of operation.replacementThunk.options.relays) {
+        if (relay === operation.replacementAckRelay) continue
+
+        try {
+          await waitForAnyRelayAck(operation.replacementThunk, [relay])
+        } catch {
+          continue
+        }
+
+        if (pubkey.get() !== operation.replacementThunk.pubkey) {
+          throw new Error(
+            "Restore the account that started this edit before deleting the original.",
+          )
+        }
+
+        operation.replacementAckRelay = relay
+        operation.deleteThunk = publishThunk({
+          ...operation.deleteThunk.options,
+          relays: [relay],
+          event: operation.deleteThunk.event,
+          optimistic: false,
+        })
+
+        try {
+          await waitForAnyRelayAck(operation.deleteThunk, operation.deleteThunk.options.relays)
+          operation.deleteAcked = true
+          break
+        } catch {
+          // Try the next relay that accepted the replacement.
+        }
+      }
+
+      if (!operation.deleteAcked) {
+        throw new Error("Replacement published, but deletion was not acknowledged. Retry the edit.")
+      }
     }
   }
 
