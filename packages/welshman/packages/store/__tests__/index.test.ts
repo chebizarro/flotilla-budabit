@@ -1,8 +1,9 @@
 import {get} from "svelte/store"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {Repository, Tracker} from "@welshman/net"
-import type {TrustedEvent} from "@welshman/util"
+import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
+  deriveEventsById,
   deriveEventsByIdByUrl,
   getter,
   synced,
@@ -173,6 +174,71 @@ describe("Store utilities", () => {
 
       expect(current.get(relay)?.get(reaction.id)).toBe(reaction)
       expect(updates).toHaveLength(updatesBeforeTracking + 1)
+      unsubscribe()
+    })
+  })
+
+  describe("deriveEventsById", () => {
+    it("does not propagate an unrelated delete to a kind-routed store", () => {
+      const repository = new Repository()
+      const pubkey = "a".repeat(64)
+      const profileList = {
+        id: "profile-list",
+        pubkey,
+        kind: 30000,
+        created_at: 1,
+        content: "",
+        tags: [["d", "moderator-list"]],
+        sig: "",
+      } as TrustedEvent
+      const unrelatedDeletion = {
+        id: "unrelated-deletion",
+        pubkey,
+        kind: DELETE,
+        created_at: 2,
+        content: "",
+        tags: [["a", `30000:${pubkey}:unrelated-list`]],
+        sig: "",
+      } as TrustedEvent
+      const store = deriveEventsById({
+        repository,
+        filters: [{kinds: [30000], authors: [pubkey]}],
+      })
+      const updates: Array<Map<string, TrustedEvent>> = []
+      const unsubscribe = store.subscribe(value => updates.push(new Map(value)))
+
+      repository.publish(profileList)
+      const updatesBeforeDeletion = updates.length
+      repository.publish(unrelatedDeletion)
+
+      expect(updates.at(-1)?.get(profileList.id)).toBe(profileList)
+      expect(updates.at(-1)?.has(unrelatedDeletion.id)).toBe(false)
+      expect(updates).toHaveLength(updatesBeforeDeletion)
+      unsubscribe()
+    })
+
+    it("keeps an OR filter with an unconstrained branch on fallback delivery", () => {
+      const repository = new Repository()
+      const pubkey = "b".repeat(64)
+      const event = {
+        id: "author-match",
+        pubkey,
+        kind: 2,
+        created_at: 1,
+        content: "",
+        tags: [],
+        sig: "",
+      } as TrustedEvent
+      const store = deriveEventsById({
+        repository,
+        filters: [{kinds: [1]}, {authors: [pubkey]}],
+      })
+      let current = new Map<string, TrustedEvent>()
+      const unsubscribe = store.subscribe(value => (current = value))
+
+      repository.publish(event)
+
+      expect(current.get(event.id)).toBe(event)
       unsubscribe()
     })
   })

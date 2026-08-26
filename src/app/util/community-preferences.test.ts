@@ -328,6 +328,13 @@ describe("community preferences", () => {
       tags: [["a", address]],
     })
     const recreated = {...list, id: "recreated-moderator-list", created_at: 3}
+    const unrelatedDeletion = makeEvent({
+      id: "delete-unrelated-list",
+      pubkey: userPubkey,
+      created_at: 3,
+      kind: DELETE,
+      tags: [["a", `${PROFILE_LIST_KIND}:${userPubkey}:unrelated-list`]],
+    })
     const select = (events: TrustedEvent[]) =>
       selectPreferredCommunities({
         moderatorProfileListEvents: events,
@@ -337,6 +344,7 @@ describe("community preferences", () => {
 
     expect(select([list, deletion])).toEqual([])
     expect(select([list, deletion, recreated])).toHaveLength(1)
+    expect(select([list, unrelatedDeletion])).toHaveLength(1)
     expect(select([list, {...deletion, pubkey: otherCommunityPubkey}])).toHaveLength(1)
     expect(
       select([
