@@ -2025,6 +2025,36 @@ the screenshot's acknowledged desktop Community event is absent, publication
 now requires exact-event-ID relay readback before reporting completion. A relay
 acknowledgement without readback becomes a retryable failure.
 
+Physical drawer validation recorded 2026-08-26 for deployed build
+`ab2b590b3-20260826083149`. Status: `Git drawer fix validated`.
+Mobile `/git` run `mt9v5q8k-vvbn4d14` was present as both an immutable and latest
+manifest and passed signature, exact signed-URL, SHA-256, compressed-size, gzip,
+and schema validation. This also confirms that the new publication readback path
+completed successfully. The standard Blossom hash download still returned 404.
+
+The run began on the empty Community stars/bookmarks tab. The user switched to
+`my-repos` at about 9.67 s; 11 repository cards were available 1.44 s later and
+painted 1.73 s after the tab-state change. The interaction began during a 236 ms
+long task, and Browser Event Timing measured about 244 ms of pointer-down input
+delay. The resulting 11.41 s foreground milestone is therefore interaction- and
+tab-selection-dependent and is not comparable to captures that started directly
+on `my-repos`.
+
+The Git Community drawer was opened after foreground paint. The dedicated probe
+recorded a 0.5 ms handler, 59.7 ms from handler completion to the next observed
+paint, and 174.8 ms from pointer-down to paint. Browser Event Timing attributed
+54.8 ms to click processing, which includes the asynchronous hash navigation and
+drawer mount work after `pushDrawer` returned. The drawer rendered and the
+capture completed, physically validating the corrected `CommunityPointer` prop.
+
+The full run recorded 114 long tasks totaling 15.40 s with a 540 ms maximum.
+Measured repository listener work was 1.10 s, repo-watch flushes were 627 ms,
+and IndexedDB event merging was 498 ms, so the previously dominant Community
+preference propagation is no longer the main aggregate source. The capture
+expired its 10-second background tail at 21.41 s even though the warning snapshot
+reported every listed source settled; that terminal-race inconsistency remains a
+diagnostics issue rather than evidence of unfinished source loading.
+
 ## Related Historical Record
 
 Cross-reference recorded 2026-08-23 at `217e23abb`.
