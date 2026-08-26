@@ -57,7 +57,7 @@
     type RepoPublishTransport,
   } from "@app/core/git-commands"
   import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
-  import {goto, replaceState} from "$app/navigation"
+  import {afterNavigate, goto, replaceState} from "$app/navigation"
   import {getContext, onMount, onDestroy, untrack} from "svelte"
   import {derived as _derived, get as getStore, type Readable} from "svelte/store"
   import {nip19, type NostrEvent} from "nostr-tools"
@@ -457,7 +457,6 @@
   const requestedGitCommunityInput = $derived(
     $page.url.searchParams.get(GIT_COMMUNITY_PARAM)?.trim() || "",
   )
-  const requestedGitEntry = $derived($page.url.searchParams.get(GIT_ENTRY_PARAM)?.trim() || "")
   const getInitialGitEntry = () =>
     getStore(page).url.searchParams.get(GIT_ENTRY_PARAM)?.trim() || ""
   const getInitialGitCommunityInput = () =>
@@ -751,15 +750,17 @@
 
   let appliedGitCommunityInput = $state("")
 
-  $effect(() => {
-    const entry = requestedGitEntry
+  afterNavigate(() => {
+    const currentPage = getStore(page)
+    const entry = currentPage.url.searchParams.get(GIT_ENTRY_PARAM)?.trim() || ""
     if (entry !== GIT_PERSONAL_ENTRY && entry !== GIT_COMMUNITY_ENTRY) return
 
     activeMode = entry
     activeTab = "my-repos"
 
     if (entry === GIT_COMMUNITY_ENTRY) {
-      const parsed = parseCommunityNaddr(requestedGitCommunityInput)
+      const communityInput = currentPage.url.searchParams.get(GIT_COMMUNITY_PARAM)?.trim() || ""
+      const parsed = parseCommunityNaddr(communityInput)
       if (parsed) {
         clearActiveExactCommunity()
         setActiveExactCommunityPointer(parsed)
@@ -768,10 +769,10 @@
       }
     }
 
-    const url = new URL($page.url)
+    const url = new URL(currentPage.url)
     url.searchParams.delete(GIT_ENTRY_PARAM)
     if (entry === GIT_COMMUNITY_ENTRY) url.searchParams.delete(GIT_COMMUNITY_PARAM)
-    replaceState(`${url.pathname}${url.search}${url.hash}`, $page.state)
+    replaceState(`${url.pathname}${url.search}${url.hash}`, currentPage.state)
   })
 
   $effect(() => {
