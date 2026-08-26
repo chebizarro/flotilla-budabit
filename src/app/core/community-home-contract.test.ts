@@ -21,6 +21,12 @@ describe("canonical community home contracts", () => {
     expect(topMenu).toContain("$activeExactCommunityPointer")
   })
 
+  it("synchronizes the route pointer before rendering community content", () => {
+    expect(communityLayout).toMatch(
+      /\$effect\.pre\(\(\) => \{[\s\S]*setActiveExactCommunityPointer\(pointer\)/,
+    )
+  })
+
   it("keeps navigation and home catalog ownership on the exact address", () => {
     expect(home).toContain("makeExactCommunityThreadPath(communityPointer)")
     expect(home).toMatch(/makeExactCommunityRoomPath\(communityPointer!?, room\.id\)/)

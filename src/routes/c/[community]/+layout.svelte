@@ -300,7 +300,7 @@
     }
   })
 
-  $effect(() => {
+  $effect.pre(() => {
     const pointer = exactCommunity
     if (!pointer) {
       clearActiveExactCommunity()
