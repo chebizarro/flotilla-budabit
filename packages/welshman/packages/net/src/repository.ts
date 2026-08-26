@@ -33,6 +33,11 @@ export type RepositoryUpdate = {
   removed: Set<string>
 }
 
+type RepositoryUpdateEnvelope = {
+  update: RepositoryUpdate
+  affectedKinds: Set<number>
+}
+
 export type RepositoryUpdateTiming = {
   owner: "singleton" | "repository"
   status: "complete" | "failed"
@@ -42,6 +47,12 @@ export type RepositoryUpdateTiming = {
   removed: number
   kinds: number[]
   listeners: number
+  registeredListeners: number
+  candidateListeners: number
+  invokedListeners: number
+  fallbackListeners: number
+  routedListeners: number
+  routingStatus: "known"
   subscribers: RepositoryUpdateSubscriberTiming[]
 }
 
@@ -97,6 +108,13 @@ export const mergeRepositoryUpdates = (updates: RepositoryUpdate[]): RepositoryU
   return {added: Array.from(added.values()), removed}
 }
 
+const mergeRepositoryUpdateEnvelopes = (
+  envelopes: RepositoryUpdateEnvelope[],
+): RepositoryUpdateEnvelope => ({
+  update: mergeRepositoryUpdates(envelopes.map(envelope => envelope.update)),
+  affectedKinds: new Set(envelopes.flatMap(envelope => Array.from(envelope.affectedKinds))),
+})
+
 export class Repository extends Emitter {
   eventsById = new Map<string, TrustedEvent>()
   eventsByAddress = new Map<string, TrustedEvent>()
@@ -108,8 +126,8 @@ export class Repository extends Emitter {
   replaced = new Set<string>()
   expired = new Map<string, number>()
   private batchDepth = 0
-  private batchedUpdates: RepositoryUpdate[] = []
-  private pendingUpdates: RepositoryUpdate[] = []
+  private batchedUpdates: RepositoryUpdateEnvelope[] = []
+  private pendingUpdates: RepositoryUpdateEnvelope[] = []
   private emittingUpdate = false
   private pendingUpdateTimer: ReturnType<typeof setTimeout> | undefined
   private updateSubscriberSequence = 0
@@ -160,16 +178,21 @@ export class Repository extends Emitter {
     return () => this.off("update", wrapped)
   }
 
-  private emitUpdate = (update: RepositoryUpdate) => {
+  private emitUpdate = (update: RepositoryUpdate, affectedKinds: Iterable<number>) => {
+    const envelope = {update, affectedKinds: new Set(affectedKinds)}
     if (this.batchDepth > 0) {
-      this.batchedUpdates.push(update)
+      this.batchedUpdates.push(envelope)
       return
     }
 
-    this.pendingUpdates.push(update)
+    this.pendingUpdates.push(envelope)
     if (this.emittingUpdate || this.pendingUpdateTimer !== undefined) return
 
     this.drainPendingUpdates()
+  }
+
+  private broadcastUpdate = (envelope: RepositoryUpdateEnvelope) => {
+    this.emit("update", envelope.update)
   }
 
   private drainPendingUpdates = () => {
@@ -178,23 +201,23 @@ export class Repository extends Emitter {
 
     this.emittingUpdate = true
     try {
-      let pending: RepositoryUpdate | undefined
+      let pending: RepositoryUpdateEnvelope | undefined
       while (processed < maxUpdates && (pending = this.pendingUpdates.shift())) {
         processed++
         const timingListener = repositoryUpdateTimingListener
         if (!timingListener || typeof performance === "undefined") {
-          this.emit("update", pending)
+          this.broadcastUpdate(pending)
           continue
         }
 
         const startTime = performance.now()
-        const listeners = this.listenerCount("update")
+        const registeredListeners = this.listenerCount("update")
         const subscribers: RepositoryUpdateSubscriberTiming[] = []
         this.updateSubscriberTimings = subscribers
         let emissionError: unknown
         let emissionFailed = false
         try {
-          this.emit("update", pending)
+          this.broadcastUpdate(pending)
         } catch (error) {
           emissionError = error
           emissionFailed = true
@@ -208,10 +231,16 @@ export class Repository extends Emitter {
             status: emissionFailed ? "failed" : "complete",
             startTime,
             durationMs,
-            added: pending.added.length,
-            removed: pending.removed.size,
-            kinds: Array.from(new Set(pending.added.map(event => event.kind))).slice(0, 20),
-            listeners,
+            added: pending.update.added.length,
+            removed: pending.update.removed.size,
+            kinds: Array.from(pending.affectedKinds).slice(0, 20),
+            listeners: registeredListeners,
+            registeredListeners,
+            candidateListeners: registeredListeners,
+            invokedListeners: emissionFailed ? subscribers.length : registeredListeners,
+            fallbackListeners: registeredListeners,
+            routedListeners: 0,
+            routingStatus: "known",
             subscribers,
           })
         } catch (error) {
@@ -385,7 +414,13 @@ export class Repository extends Emitter {
 
     // Notify, but only if the event hasn't been deleted
     if (shouldNotify && !this.isDeleted(event)) {
-      this.emitUpdate({added: [event], removed})
+      const affectedKinds = new Set([event.kind])
+      if (duplicate && removed.has(duplicate.id)) affectedKinds.add(duplicate.kind)
+      for (const id of removed) {
+        const removedEvent = this.eventsById.get(id)
+        if (removedEvent) affectedKinds.add(removedEvent.kind)
+      }
+      this.emitUpdate({added: [event], removed}, affectedKinds)
     }
 
     return true
@@ -398,9 +433,9 @@ export class Repository extends Emitter {
     } finally {
       this.batchDepth--
       if (this.batchDepth === 0 && this.batchedUpdates.length > 0) {
-        const update = mergeRepositoryUpdates(this.batchedUpdates)
+        const envelope = mergeRepositoryUpdateEnvelopes(this.batchedUpdates)
         this.batchedUpdates = []
-        this.emitUpdate(update)
+        this.emitUpdate(envelope.update, envelope.affectedKinds)
       }
     }
   }
@@ -414,6 +449,9 @@ export class Repository extends Emitter {
   load = (events: TrustedEvent[]) => {
     const eventsWithDeferred = [...events, ...this.takeDeferredEvents()]
     const stale = new Set(this.eventsById.keys())
+    const staleKindsById = new Map(
+      Array.from(this.eventsById, ([id, event]) => [id, event.kind] as const),
+    )
 
     this.eventsById.clear()
     this.eventsByAddress.clear()
@@ -459,7 +497,15 @@ export class Repository extends Emitter {
       removed.add(id)
     }
 
-    this.emitUpdate(mergeRepositoryUpdates([{added, removed}]))
+    const update = mergeRepositoryUpdates([{added, removed}])
+    const affectedKinds = new Set(update.added.map(event => event.kind))
+    for (const id of update.removed) {
+      const currentKind = this.eventsById.get(id)?.kind
+      const staleKind = staleKindsById.get(id)
+      if (currentKind !== undefined) affectedKinds.add(currentKind)
+      if (staleKind !== undefined) affectedKinds.add(staleKind)
+    }
+    this.emitUpdate(update, affectedKinds)
   }
 
   // API
@@ -496,7 +542,7 @@ export class Repository extends Emitter {
       this._updateIndex(this.eventsByAuthor, event.pubkey, undefined, event)
       this._updateIndex(this.eventsByKind, event.kind, undefined, event)
 
-      this.emitUpdate({added: [], removed: new Set([event.id])})
+      this.emitUpdate({added: [], removed: new Set([event.id])}, [event.kind])
     }
   }
 
