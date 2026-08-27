@@ -186,7 +186,7 @@ appContext.dufflepudUrl = DUFFLEPUD_URL
 routerContext.getIndexerRelays = always(INDEXER_RELAYS)
 
 netContext.isEventValid = (event: TrustedEvent, url: string) =>
-  getSetting<string[]>("trusted_relays").includes(url) || verifyEvent(event)
+  isTrustedRelay(url, getSetting<string[]>("trusted_relays")) || verifyEvent(event)
 
 // Filters
 
@@ -245,6 +245,23 @@ export const normalizeSettingsValues = (
   return Object.fromEntries(
     settingValueKeys.map(key => [key, source[key] ?? defaultSettings[key]]),
   ) as SettingsValues
+}
+
+export const isTrustedRelay = (url: string, trustedRelays: string[]) => {
+  let key: string
+  try {
+    key = normalizeRelayUrl(url)
+  } catch {
+    return false
+  }
+
+  return trustedRelays.some(relay => {
+    try {
+      return normalizeRelayUrl(relay) === key
+    } catch {
+      return false
+    }
+  })
 }
 
 export const settingsByPubkey = deriveItemsByKey({

@@ -290,15 +290,10 @@ function initialTargetCleanup(createdRemote = false): RepoCreationCleanupState {
 }
 
 function relayUrlKey(value: string): string {
-  const trimmed = normalizeGraspOrigins(value).wsOrigin.trim();
-  try {
-    const url = new URL(trimmed);
-    url.hash = "";
-    url.search = "";
-    return url.pathname === "/" ? url.origin : url.toString();
-  } catch {
-    return trimmed;
-  }
+  const trimmed = value.trim();
+  return /^wss?:\/\//i.test(trimmed)
+    ? normalizeRelayUrl(trimmed)
+    : normalizeGraspOrigins(trimmed).wsOrigin;
 }
 
 function sanitizeTargets(

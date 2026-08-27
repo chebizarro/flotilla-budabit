@@ -1,8 +1,22 @@
-import {writable, type Subscriber} from "svelte/store"
+import {writable, readable, type Subscriber} from "svelte/store"
 import {getter, makeDeriveItem} from "@welshman/store"
 import {groupBy, batch, now, ago, DAY, HOUR, MINUTE} from "@welshman/lib"
-import {isOnionUrl, isLocalUrl, isIPAddress, isRelayUrl, getRelaysFromList} from "@welshman/util"
-import {Pool, type Socket, SocketStatus, SocketEvent, type ClientMessage, type RelayMessage} from "@welshman/net"
+import {
+  isOnionUrl,
+  isLocalUrl,
+  isIPAddress,
+  getRelaysFromList,
+  normalizeRelayUrl,
+  sanitizeRelayUrls,
+} from "@welshman/util"
+import {
+  Pool,
+  type Socket,
+  SocketStatus,
+  SocketEvent,
+  type ClientMessage,
+  type RelayMessage,
+} from "@welshman/net"
 import {getBlockedRelayList} from "./blockedRelayLists.js"
 import {pubkey} from "./session.js"
 
@@ -54,7 +68,13 @@ export const relayStatsByUrl = writable(new Map<string, RelayStats>())
 
 export const getRelayStatsByUrl = getter(relayStatsByUrl)
 
-export const getRelayStats = (url: string) => getRelayStatsByUrl().get(url)
+export const getRelayStats = (url: string) => {
+  try {
+    return getRelayStatsByUrl().get(normalizeRelayUrl(url))
+  } catch {
+    return undefined
+  }
+}
 
 export const relayStatsSubscribers: Subscriber<RelayStats>[] = []
 
@@ -71,15 +91,28 @@ export const onRelayStats = (sub: (relayStats: RelayStats) => void) => {
     )
 }
 
-export const deriveRelayStats = makeDeriveItem(relayStatsByUrl)
+const deriveRelayStatsByUrl = makeDeriveItem(relayStatsByUrl)
+
+export const deriveRelayStats = (url: string) => {
+  try {
+    return deriveRelayStatsByUrl(normalizeRelayUrl(url))
+  } catch {
+    return readable<RelayStats | undefined>(undefined)
+  }
+}
 
 export const getRelayQuality = (url: string) => {
-  // Skip non-relays entirely
-  if (!isRelayUrl(url)) return 0
+  try {
+    url = normalizeRelayUrl(url)
+  } catch {
+    return 0
+  }
 
   const $pubkey = pubkey.get()
 
-  if ($pubkey && getRelaysFromList(getBlockedRelayList($pubkey)).includes(url)) return 0
+  if ($pubkey && sanitizeRelayUrls(getRelaysFromList(getBlockedRelayList($pubkey))).includes(url)) {
+    return 0
+  }
 
   const relayStats = getRelayStats(url)
 
@@ -110,13 +143,18 @@ export const getRelayQuality = (url: string) => {
 type RelayStatsUpdate = [string, (stats: RelayStats) => void]
 
 const updateRelayStats = batch(1000, (updates: RelayStatsUpdate[]) => {
-  relayStatsByUrl.update($relayStatsByUrl => {
-    for (const [url, items] of groupBy(([url]) => url, updates)) {
-      if (!url || !isRelayUrl(url)) {
-        console.warn(`Attempted to update stats for an invalid relay url: ${url}`)
-        continue
-      }
+  const normalizedUpdates: RelayStatsUpdate[] = []
 
+  for (const [url, update] of updates) {
+    try {
+      normalizedUpdates.push([normalizeRelayUrl(url), update])
+    } catch {
+      console.warn("Attempted to update stats for an invalid relay URL")
+    }
+  }
+
+  relayStatsByUrl.update($relayStatsByUrl => {
+    for (const [url, items] of groupBy(([url]) => url, normalizedUpdates)) {
       const $relayStatsItem: RelayStats = $relayStatsByUrl.get(url) || makeRelayStats(url)
 
       for (const [_, update] of items) {

@@ -21,6 +21,7 @@ import {Nip01Signer} from "@welshman/signer"
 import {
   userSettingsValues,
   getSetting,
+  isTrustedRelay,
   relaysPendingTrust,
   relaysMostlyRestricted,
   INDEXER_RELAYS,
@@ -233,7 +234,7 @@ export const trustPolicy = (socket: Socket) => {
   const unsubscribers = [
     // When the socket goes from untrusted to trusted, receive all buffered messages
     userSettingsValues.subscribe($settings => {
-      if ($settings.trusted_relays.includes(socket.url)) {
+      if (isTrustedRelay(socket.url, $settings.trusted_relays)) {
         for (const message of buffer.splice(0)) {
           socket._recvQueue.push(message)
         }
@@ -243,7 +244,7 @@ export const trustPolicy = (socket: Socket) => {
     // the receive queue. If trust status is undefined, buffer it for later.
     on(socket, SocketEvent.Receiving, (message: RelayMessage) => {
       if (isRelayEvent(message) && !message[2]?.sig) {
-        const isTrusted = getSetting<string[]>("trusted_relays").includes(socket.url)
+        const isTrusted = isTrustedRelay(socket.url, getSetting<string[]>("trusted_relays"))
 
         if (!isTrusted) {
           buffer.push(message)

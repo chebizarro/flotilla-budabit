@@ -143,6 +143,13 @@ describe("state", () => {
     expect(defaultSettings.font_size).toBe(1.1)
   })
 
+  it("matches trusted relays by canonical identity", async () => {
+    const {isTrustedRelay} = await import("./state")
+
+    expect(isTrustedRelay("wss://relay.example/", ["WSS://Relay.Example:443"])).toBe(true)
+    expect(isTrustedRelay("wss://relay.example/Path", ["wss://relay.example/path"])).toBe(false)
+  })
+
   it("ROOM constant is defined for Nostr h-tag compatibility", async () => {
     const {ROOM} = await import("./state")
     expect(ROOM).toBe("h")

@@ -19,6 +19,7 @@ import {
   getMandatoryGraspRelayUrls,
   getRepoSettingsRelayState,
   getSuccessfulGraspRelayUrls,
+  normalizeGraspOrigins,
   publishGraspEventWithRetry,
   publishGraspRepoStateAndWait,
   publishGraspRepoStateForPush,
@@ -39,6 +40,14 @@ function signedEvent(event: any, id = "signed-event") {
 }
 
 describe("grasp-pipeline", () => {
+  it("preserves case-sensitive relay paths and queries in GRASP origins", () => {
+    expect(normalizeGraspOrigins("WSS://Relay.Example/GRASP/?token=AbC%2F123#ignored")).toEqual({
+      wsOrigin: "wss://relay.example/GRASP/?token=AbC%2F123",
+      httpOrigin: "https://relay.example/GRASP/?token=AbC%2F123",
+    });
+    expect(() => normalizeGraspOrigins("wss://user:secret@relay.example/GRASP")).toThrow();
+  });
+
   it("builds clone URLs for every selected GRASP server", () => {
     const result = buildGraspRepoUrls({
       relayUrls: ["wss://relay.one/", "https://relay.two", "wss://relay.one/"],

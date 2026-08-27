@@ -2,6 +2,7 @@
   import { commonHashtags } from "../../stores/hashtags";
   import { PeoplePicker } from "@nostr-git/ui";
   import { Plus, Trash2, X, Hash, Globe, Users, ChevronUp, ChevronDown } from "@lucide/svelte";
+  import { sanitizeRelays } from "@nostr-git/core/utils";
   import type {
     ProfileSearchContext,
     ProfileSearchUpdateSignal,
@@ -116,7 +117,7 @@
   let relaySearchTimeout: ReturnType<typeof setTimeout> | null = null;
 
   function normalizeRelayValue(value: string): string {
-    return (value || "").trim().replace(/\/+$/, "");
+    return sanitizeRelays([(value || "").trim()])[0] || "";
   }
 
   function hasRelay(relayUrl: string): boolean {
@@ -691,7 +692,7 @@
                         }}
                         onclick={() => {
                           if (!hasRelay(relayUrl)) {
-                            onRelaysChange([...relays, relayUrl]);
+                            onRelaysChange([...relays, normalizeRelayValue(relayUrl)]);
                           }
                           relaySearchQuery = "";
                           showRelayAutocomplete = false;

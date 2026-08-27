@@ -1069,6 +1069,21 @@ describe("commands", () => {
     }
   })
 
+  it("mutates trusted relay settings by canonical identity", async () => {
+    const {setTrustedRelayMembership} = await import("./commands")
+    const existing = ["WSS://Relay.Example:443", "not-a-relay", "wss://other.example/"]
+
+    expect(setTrustedRelayMembership(existing, "wss://RELAY.example/", true)).toEqual([
+      "not-a-relay",
+      "wss://other.example/",
+      "wss://relay.example/",
+    ])
+    expect(setTrustedRelayMembership(existing, "wss://relay.example/", false)).toEqual([
+      "not-a-relay",
+      "wss://other.example/",
+    ])
+  })
+
   it("registers reaction additions and exact deletes as rollback operations", async () => {
     const startSpy = vi
       .spyOn(publicationOperationModule, "startPublication")

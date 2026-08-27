@@ -3,6 +3,7 @@
   import { normalizeGraspServerUrls } from "../../stores/graspServers.js";
   import { tokens as tokensStore, type Token } from "../../stores/tokens.js";
   import { ACCESS_TOKEN_SETTINGS_PATH } from "../../utils/tokenManagement";
+  import { sanitizeRelays } from "@nostr-git/core/utils";
   import { onMount } from "svelte";
 
   const { Card, CardContent } = useRegistry();
@@ -141,7 +142,16 @@
   }
 
   function updateRelayUrls(next: string[]) {
-    const normalized = next.map((u) => (u || "").trim().replace(/\/$/, "")).filter(Boolean);
+    const normalized = Array.from(
+      new Set(
+        next
+          .map((url) => {
+            const trimmed = (url || "").trim();
+            return sanitizeRelays([trimmed])[0] || trimmed;
+          })
+          .filter(Boolean)
+      )
+    );
     graspRelayUrls = normalized;
     onRelayUrlsChange?.(normalized);
   }
@@ -153,7 +163,8 @@
   }
 
   function addRelayUrl(value?: string) {
-    const v = (value || "").trim().replace(/\/$/, "");
+    const raw = (value || "").trim();
+    const v = sanitizeRelays([raw])[0] || raw;
     const next = [...graspRelayUrls];
     next.push(v);
     updateRelayUrls(next);
@@ -162,7 +173,8 @@
   function commitNewRelayUrl() {
     const v = (newGraspRelayUrl || "").trim();
     if (!v) return;
-    if (!graspRelayUrls.includes(v.replace(/\/$/, ""))) {
+    const normalized = sanitizeRelays([v])[0] || v;
+    if (!graspRelayUrls.includes(normalized)) {
       addRelayUrl(v);
     }
     newGraspRelayUrl = "";
@@ -304,15 +316,17 @@
 
                   {#if recommendedGraspServerOptions.length > 0}
                     <div class="flex flex-wrap gap-1 mt-2">
-                      {#each recommendedGraspServerOptions.filter((opt) => !graspRelayUrls.includes(opt
-                              .trim()
-                              .replace(/\/$/, ""))) as opt}
+                      {#each recommendedGraspServerOptions.filter((opt) => {
+                        const trimmed = opt.trim();
+                        return !graspRelayUrls.includes(sanitizeRelays([trimmed])[0] || trimmed);
+                      }) as opt}
                         <button
                           type="button"
                           class="max-w-full break-all rounded-full border border-dashed border-muted-foreground/50 px-2 py-1 text-left text-xs text-muted-foreground hover:border-border hover:text-foreground"
                           onclick={(e) => {
                             e.stopPropagation();
-                            const trimmed = (opt || "").trim().replace(/\/$/, "");
+                            const raw = (opt || "").trim();
+                            const trimmed = sanitizeRelays([raw])[0] || raw;
                             if (trimmed && !graspRelayUrls.includes(trimmed)) {
                               updateRelayUrls([...graspRelayUrls, trimmed]);
                             }

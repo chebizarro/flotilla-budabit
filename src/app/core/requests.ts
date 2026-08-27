@@ -208,7 +208,7 @@ export const createBoundedCommunityHistoryLoader = (
       return {events: [], complete: true, timedOut: false, saturated: false}
     }
 
-    const loadRelays = Array.from(new Set(relays.filter(Boolean)))
+    const loadRelays = sanitizeRelayUrls(relays)
     if (loadRelays.length === 0 || signal?.aborted) {
       return {events: [], complete: false, timedOut: false, saturated: false}
     }

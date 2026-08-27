@@ -635,6 +635,47 @@ describe("RepoCreationTransactionJournal", () => {
     expect(getPendingRepoCreationTransactions()).toHaveLength(0);
   });
 
+  it("keeps query-distinct GRASP announcement evidence scoped to its target", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: new MemoryStorage(),
+    });
+    const journal = new RepoCreationTransactionJournal({
+      id: "import:owner:repo:query-scope",
+      operation: "import",
+      ownerPubkey: "f".repeat(64),
+      repoName: "repo",
+    });
+    journal.setTargets([
+      {
+        id: "grasp:a",
+        label: "GRASP A",
+        provider: "grasp",
+        relayUrl: "wss://relay.example/GRASP?tenant=a",
+      },
+      {
+        id: "grasp:b",
+        label: "GRASP B",
+        provider: "grasp",
+        relayUrl: "wss://relay.example/GRASP?tenant=b",
+      },
+    ]);
+    const announcement = {
+      id: "announcement-id",
+      sig: "signature",
+      pubkey: "f".repeat(64),
+      kind: 30617,
+      created_at: 2,
+      tags: [["d", "repo"]],
+      content: "",
+    };
+
+    journal.recordGraspAnnouncementEvidence("WSS://RELAY.EXAMPLE/GRASP?tenant=a", announcement);
+
+    expect(journal.record.targets[0].announcementEvent).toEqual(announcement);
+    expect(journal.record.targets[1].announcementEvent).toBeUndefined();
+  });
+
   it("recovers metadata through the relay subset that ACKs both exact events", async () => {
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,

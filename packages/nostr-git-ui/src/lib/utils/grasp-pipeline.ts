@@ -232,8 +232,8 @@ export function extractPublishRelayAck(result: unknown): GraspPublishRelayAck {
 }
 
 function intersectRelays(a: string[], b: string[]): string[] {
-  const setB = new Set(b);
-  return a.filter((relay) => setB.has(relay));
+  const setB = new Set(sanitizeRelays(b));
+  return sanitizeRelays(a).filter((relay) => setB.has(relay));
 }
 
 function sameRelaySet(a: string[], b: string[]): boolean {
@@ -258,7 +258,9 @@ function describeRelayFailures(ack: GraspPublishRelayAck): string {
 }
 
 function normalizeRelayOrigin(relayUrl: string): string {
-  return normalizeRelayUrl(normalizeGraspOrigins(relayUrl).wsOrigin);
+  return /^wss?:\/\//i.test(relayUrl.trim())
+    ? normalizeRelayUrl(relayUrl.trim())
+    : normalizeGraspOrigins(relayUrl).wsOrigin;
 }
 
 function dedupeStrings(values: string[]): string[] {
@@ -1175,17 +1177,31 @@ export async function fetchLatestGraspRepoStateEvent({
 export function normalizeGraspOrigins(input: string): { wsOrigin: string; httpOrigin: string } {
   try {
     const url = new URL(input);
+    if (url.username || url.password)
+      throw new TypeError("GRASP URLs must not contain credentials");
     const host = url.host;
     const isSecure = url.protocol === "wss:" || url.protocol === "https:";
     const pathSegments = url.pathname.split("/").filter(Boolean);
     const ownerIndex = pathSegments.findIndex((segment) => segment.startsWith("npub1"));
-    const baseSegments = ownerIndex >= 0 ? pathSegments.slice(0, ownerIndex) : pathSegments;
+    if (ownerIndex < 0) {
+      const wsOrigin = normalizeRelayUrl(input.replace(/^https?:/i, isSecure ? "wss:" : "ws:"));
+      return {
+        wsOrigin,
+        httpOrigin: wsOrigin.replace(/^wss?:/, isSecure ? "https:" : "http:"),
+      };
+    }
+
+    const baseSegments = pathSegments.slice(0, ownerIndex);
     const basePath = baseSegments.length > 0 ? `/${baseSegments.join("/")}` : "";
+    const wsOrigin = normalizeRelayUrl(`${isSecure ? "wss" : "ws"}://${host}${basePath}`);
     return {
-      wsOrigin: normalizeRelayUrl(`${isSecure ? "wss" : "ws"}://${host}${basePath}`),
-      httpOrigin: `${isSecure ? "https" : "http"}://${host}${basePath}`,
+      wsOrigin,
+      httpOrigin: wsOrigin.replace(/^wss?:/, isSecure ? "https:" : "http:"),
     };
   } catch {
+    if (/^[a-z][a-z\d+.-]*:\/\/[^/]*@/i.test(input)) {
+      throw new TypeError("GRASP URLs must not contain credentials");
+    }
     const hostMatch = input.match(/(?:ws|wss|http|https):\/\/([^/]+)/);
     if (hostMatch) {
       const host = hostMatch[1];
@@ -1202,6 +1218,13 @@ export function normalizeGraspOrigins(input: string): { wsOrigin: string; httpOr
       httpOrigin: `https://${host}`,
     };
   }
+}
+
+function appendGraspUrlPath(base: string, path: string): string {
+  const queryIndex = base.indexOf("?");
+  const endpoint = queryIndex === -1 ? base : base.slice(0, queryIndex);
+  const query = queryIndex === -1 ? "" : base.slice(queryIndex);
+  return `${endpoint.replace(/\/$/, "")}/${path}${query}`;
 }
 
 export function toNpubOrSelf(value: string): string {
@@ -1227,7 +1250,7 @@ export function buildGraspRepoUrls(params: {
     if (!trimmed) continue;
 
     const { httpOrigin } = normalizeGraspOrigins(trimmed);
-    const webUrl = `${httpOrigin}/${ownerNpub}/${encodedRepoName}`;
+    const webUrl = appendGraspUrlPath(httpOrigin, `${ownerNpub}/${encodedRepoName}`);
     const cloneUrl = `${webUrl}.git`;
 
     if (!seenWebUrls.has(webUrl)) {

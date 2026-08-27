@@ -1,6 +1,6 @@
-import {writable, derived, type Subscriber} from "svelte/store"
+import {writable, derived, readable, type Subscriber} from "svelte/store"
 import {fetchJson, type Maybe} from "@welshman/lib"
-import {type RelayProfile} from "@welshman/util"
+import {normalizeRelayUrl, type RelayProfile} from "@welshman/util"
 import {displayRelayUrl, displayRelayProfile} from "@welshman/util"
 import {getter, deriveItems, makeForceLoadItem, makeLoadItem, makeDeriveItem} from "@welshman/store"
 
@@ -12,7 +12,13 @@ export const getRelaysByUrl = getter(relaysByUrl)
 
 export const getRelays = getter(relays)
 
-export const getRelay = (url: string) => getRelaysByUrl().get(url)
+export const getRelay = (url: string) => {
+  try {
+    return getRelaysByUrl().get(normalizeRelayUrl(url))
+  } catch {
+    return undefined
+  }
+}
 
 export const relaySubscribers: Subscriber<RelayProfile>[] = []
 
@@ -30,6 +36,7 @@ export const onRelay = (sub: (relay: RelayProfile) => void) => {
 
 export const fetchRelay = async (url: string): Promise<Maybe<RelayProfile>> => {
   try {
+    url = normalizeRelayUrl(url)
     const json = await fetchJson(url.replace(/^ws/, "http"), {
       headers: {
         Accept: "application/nostr+json",
@@ -64,7 +71,15 @@ export const forceLoadRelay = makeForceLoadItem(fetchRelay, getRelay)
 
 export const loadRelay = makeLoadItem(fetchRelay, getRelay)
 
-export const deriveRelay = makeDeriveItem(relaysByUrl, loadRelay)
+const deriveRelayByUrl = makeDeriveItem(relaysByUrl, loadRelay)
+
+export const deriveRelay = (url: string) => {
+  try {
+    return deriveRelayByUrl(normalizeRelayUrl(url))
+  } catch {
+    return readable<RelayProfile | undefined>(undefined)
+  }
+}
 
 export const displayRelayByPubkey = (url: string) =>
   displayRelayProfile(getRelay(url), displayRelayUrl(url))

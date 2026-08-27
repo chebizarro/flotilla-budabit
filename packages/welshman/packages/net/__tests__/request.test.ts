@@ -15,13 +15,14 @@ describe("requestOne", () => {
   })
 
   it("everything basically works", async () => {
+    const relay = "wss://relay.example/"
     let id
     const sendSpy = vi.fn(m => {
       if (m[0] === "REQ") {
         id = m[1]
       }
     })
-    const adapter = new MockAdapter("1", sendSpy)
+    const adapter = new MockAdapter(relay, sendSpy)
     const ctrl = new AbortController()
     const duplicateSpy = vi.fn()
     const invalidSpy = vi.fn()
@@ -31,7 +32,7 @@ describe("requestOne", () => {
     const closeSpy = vi.fn()
 
     requestOne({
-      relay: "whatever",
+      relay,
       filters: [{kinds: [1]}],
       context: {getAdapter: () => adapter},
       signal: ctrl.signal,
@@ -59,10 +60,10 @@ describe("requestOne", () => {
 
     await vi.runAllTimersAsync()
 
-    expect(duplicateSpy).toHaveBeenCalledWith(event1, "1")
-    expect(filteredSpy).toHaveBeenCalledWith(event2, "1")
-    expect(invalidSpy).toHaveBeenCalledWith(event3, "1")
-    expect(eventSpy).toHaveBeenCalledWith(event1, "1")
+    expect(duplicateSpy).toHaveBeenCalledWith(event1, relay)
+    expect(filteredSpy).toHaveBeenCalledWith(event2, relay)
+    expect(invalidSpy).toHaveBeenCalledWith(event3, relay)
+    expect(eventSpy).toHaveBeenCalledWith(event1, relay)
     expect(eoseSpy).toHaveBeenCalledTimes(0)
 
     adapter.receive(["EOSE", id])
@@ -85,19 +86,21 @@ describe("request", () => {
   })
 
   it("everything basically works", async () => {
+    const relay1 = "wss://one.example/"
+    const relay2 = "wss://two.example/"
     let id1, id2
     const send1Spy = vi.fn(m => {
       if (m[0] === "REQ") {
         id1 = m[1]
       }
     })
-    const adapter1 = new MockAdapter("1", send1Spy)
+    const adapter1 = new MockAdapter(relay1, send1Spy)
     const send2Spy = vi.fn(m => {
       if (m[0] === "REQ") {
         id2 = m[1]
       }
     })
-    const adapter2 = new MockAdapter("2", send2Spy)
+    const adapter2 = new MockAdapter(relay2, send2Spy)
     const ctrl = new AbortController()
     const duplicateSpy = vi.fn()
     const invalidSpy = vi.fn()
@@ -107,11 +110,11 @@ describe("request", () => {
     const closeSpy = vi.fn()
 
     request({
-      relays: ["1", "2"],
+      relays: [relay1, relay2],
       filters: [{kinds: [1]}],
       signal: ctrl.signal,
       context: {
-        getAdapter: (url: string) => (url === "1" ? adapter1 : adapter2),
+        getAdapter: (url: string) => (url === relay1 ? adapter1 : adapter2),
       },
       onDuplicate: duplicateSpy,
       onInvalid: invalidSpy,
@@ -140,10 +143,10 @@ describe("request", () => {
 
     await vi.runAllTimersAsync()
 
-    expect(duplicateSpy).toHaveBeenCalledWith(event1, "2")
-    expect(filteredSpy).toHaveBeenCalledWith(event2, "1")
-    expect(invalidSpy).toHaveBeenCalledWith(event3, "1")
-    expect(eventSpy).toHaveBeenCalledWith(event1, "1")
+    expect(duplicateSpy).toHaveBeenCalledWith(event1, relay2)
+    expect(filteredSpy).toHaveBeenCalledWith(event2, relay1)
+    expect(invalidSpy).toHaveBeenCalledWith(event3, relay1)
+    expect(eventSpy).toHaveBeenCalledWith(event1, relay1)
     expect(eoseSpy).toHaveBeenCalledTimes(0)
 
     adapter1.receive(["EOSE", id1])
@@ -156,5 +159,26 @@ describe("request", () => {
     // Fork divergence: request() fires onClose per successful relay once the
     // threshold is met, so both relays trigger it here
     expect(closeSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it("deduplicates equivalent relay spellings before creating transport work", async () => {
+    const relay = "wss://relay.example/"
+    const adapter = new MockAdapter(relay, vi.fn())
+    const getAdapter = vi.fn(() => adapter)
+    const ctrl = new AbortController()
+
+    const pending = request({
+      relays: ["WSS://RELAY.EXAMPLE", relay],
+      filters: [{kinds: [1]}],
+      signal: ctrl.signal,
+      context: {getAdapter},
+    })
+
+    await vi.runAllTimersAsync()
+    expect(getAdapter).toHaveBeenCalledOnce()
+    expect(getAdapter).toHaveBeenCalledWith(relay, expect.any(Object))
+
+    ctrl.abort()
+    await pending
   })
 })

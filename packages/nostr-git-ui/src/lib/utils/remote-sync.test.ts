@@ -434,7 +434,7 @@ describe("publishRepoSyncAnnouncement", () => {
       tags: [
         ["d", "repo"],
         ["clone", cloneUrl],
-        ["relays", "wss://events.example//GRASP//"],
+        ["relays", "wss://events.example/GRASP"],
       ],
     });
 

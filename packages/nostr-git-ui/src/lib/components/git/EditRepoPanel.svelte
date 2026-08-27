@@ -326,9 +326,7 @@
   });
 
   function normalizeRelayValue(value: string): string {
-    return String(value || "")
-      .trim()
-      .replace(/\/+$/, "");
+    return sanitizeRelays([String(value || "").trim()])[0] || "";
   }
 
   function hasRelay(relayUrl: string): boolean {
@@ -1444,7 +1442,7 @@
                         type="button"
                         onclick={() => {
                           if (!hasRelay(relayUrl)) {
-                            formData.relays = [...formData.relays, relayUrl];
+                            formData.relays = [...formData.relays, normalizeRelayValue(relayUrl)];
                           }
                           relaySearchQuery = "";
                           showRelayAutocomplete = false;

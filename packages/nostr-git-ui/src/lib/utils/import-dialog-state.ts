@@ -1,3 +1,5 @@
+import { normalizeRelayUrl } from "@nostr-git/core/utils";
+
 export interface ImportStep2TargetState {
   id: string;
   status: string;
@@ -10,15 +12,11 @@ function relayKey(value: string): string {
   if (!trimmed) return "";
 
   try {
-    const url = new URL(trimmed);
-    const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
-    return `${url.host.toLowerCase()}${path}`;
+    return normalizeRelayUrl(
+      trimmed.replace(/^https?:/i, (scheme) => (scheme.toLowerCase() === "https:" ? "wss:" : "ws:"))
+    );
   } catch {
-    return trimmed
-      .replace(/^https?:\/\//i, "")
-      .replace(/^wss?:\/\//i, "")
-      .replace(/\/+$/, "")
-      .toLowerCase();
+    return "";
   }
 }
 

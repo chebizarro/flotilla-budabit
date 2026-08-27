@@ -91,6 +91,39 @@ describe("import-dialog-state", () => {
     ).toEqual([]);
   });
 
+  it("keeps path and query relay identity when coupling GRASP targets", () => {
+    expect(
+      getUnbackedGraspRelayUrls({
+        repoRelayUrls: [
+          "wss://relay.example/GRASP/?tenant=a",
+          "wss://relay.example/GRASP?tenant=a",
+          "wss://relay.example/GRASP/?tenant=b",
+        ],
+        selectedImportTargetIds: ["grasp:a"],
+        importTargets: [
+          {
+            id: "grasp:a",
+            status: "ready",
+            provider: "grasp",
+            relayUrl: "https://RELAY.EXAMPLE/GRASP/?tenant=a",
+          },
+          {
+            id: "grasp:path",
+            status: "ready",
+            provider: "grasp",
+            relayUrl: "wss://relay.example/GRASP?tenant=a",
+          },
+          {
+            id: "grasp:b",
+            status: "ready",
+            provider: "grasp",
+            relayUrl: "wss://relay.example/GRASP/?tenant=b",
+          },
+        ],
+      })
+    ).toEqual(["wss://relay.example/GRASP?tenant=a", "wss://relay.example/GRASP/?tenant=b"]);
+  });
+
   it("blocks step 2 when a selected GRASP relay has no matching target", () => {
     expect(
       canProceedImportStep2({

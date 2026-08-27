@@ -991,11 +991,28 @@ export const publishSettings = async (params: Partial<SettingsValues>) =>
     relays: getUserDataPublishRelays(Router.get().FromUser().getUrls()),
   })
 
+export const setTrustedRelayMembership = (relays: string[], url: string, enabled: boolean) => {
+  const key = normalizeRelayUrl(url)
+  const next = relays.filter(relay => {
+    try {
+      return normalizeRelayUrl(relay) !== key
+    } catch {
+      return true
+    }
+  })
+
+  return enabled ? [...next, key] : next
+}
+
 export const addTrustedRelay = async (url: string) =>
-  publishSettings({trusted_relays: append(url, getSetting<string[]>("trusted_relays"))})
+  publishSettings({
+    trusted_relays: setTrustedRelayMembership(getSetting<string[]>("trusted_relays"), url, true),
+  })
 
 export const removeTrustedRelay = async (url: string) =>
-  publishSettings({trusted_relays: remove(url, getSetting<string[]>("trusted_relays"))})
+  publishSettings({
+    trusted_relays: setTrustedRelayMembership(getSetting<string[]>("trusted_relays"), url, false),
+  })
 
 // Lightning
 

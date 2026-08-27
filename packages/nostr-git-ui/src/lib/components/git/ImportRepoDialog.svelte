@@ -27,6 +27,7 @@
   import { tokens } from "../../stores/tokens.js";
   import { graspServersStore, normalizeGraspServerUrls } from "../../stores/graspServers.js";
   import { parseRepoUrl, checkRepoOwnership, getGitServiceApiFromUrl } from "@nostr-git/core";
+  import { sanitizeRelays } from "@nostr-git/core/utils";
   import { tryTokensForHost } from "../../utils/tokenHelpers.js";
   import { matchesHost } from "../../utils/tokenMatcher.js";
   import { AllTokensFailedError, TokenNotFoundError } from "../../utils/tokenErrors.js";
@@ -298,12 +299,8 @@
     };
   });
 
-  function normalizeRelayUrl(value: string): string {
-    return (value || "").trim().replace(/\/+$/, "");
-  }
-
   function appendRelay(relayUrl: string) {
-    const normalized = normalizeRelayUrl(relayUrl);
+    const normalized = sanitizeRelays([relayUrl])[0];
     if (!normalized) return;
 
     if (!effectiveSelectedRelays.includes(normalized)) {

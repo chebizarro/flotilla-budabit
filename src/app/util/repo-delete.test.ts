@@ -60,7 +60,7 @@ describe("repo delete helpers", () => {
         identifier: "repo",
       }),
     ).toEqual({
-      relay: "wss://grasp.example",
+      relay: "wss://grasp.example/",
       ownerNpub,
       identifier: "repo",
     })
@@ -77,7 +77,7 @@ describe("repo delete helpers", () => {
         identifier: "repo",
         relayHints: ["wss://grasp.example/git/"],
       }),
-    ).toEqual({relay: "wss://grasp.example/git", ownerNpub, identifier: "repo"})
+    ).toEqual({relay: "wss://grasp.example/git/", ownerNpub, identifier: "repo"})
     expect(
       getGraspRepoDeleteTarget({
         cloneUrl: `https://grasp.example/${ownerNpub}/repo.git`,
@@ -157,18 +157,55 @@ describe("repo delete helpers", () => {
     expect(tags).not.toContainEqual(["e", "announcement-id"])
   })
 
-  it("keeps GRASP hosts out of broad metadata deletion even when target validation fails", () => {
+  it("only excludes the exact canonical GRASP relay from metadata deletion", () => {
     expect(
       getMetadataDeleteRelays({
-        relays: ["wss://grasp.example", "wss://metadata.example"],
+        relays: [
+          "WSS://GRASP.EXAMPLE/GRASP?tenant=a",
+          "wss://grasp.example/GRASP?tenant=b",
+          "wss://grasp.example/community",
+          "wss://metadata.example",
+        ],
         remoteTargets: [
           {
             vendor: "grasp",
-            url: "https://grasp.example/invalid/repo.git",
+            url: "https://grasp.example/GRASP/npub1invalid/repo.git",
+            graspRelay: "wss://grasp.example/GRASP?tenant=a",
           },
         ],
       }),
-    ).toEqual(["wss://metadata.example"])
+    ).toEqual([
+      "wss://grasp.example/GRASP?tenant=b",
+      "wss://grasp.example/community",
+      "wss://metadata.example/",
+    ])
+  })
+
+  it("preserves relay hint identity and rejects credentials for GRASP deletion", () => {
+    const ownerPubkey = "a".repeat(64)
+    const ownerNpub = nip19.npubEncode(ownerPubkey)
+    const cloneUrl = `https://grasp.example/git/${ownerNpub}/repo.git`
+
+    expect(
+      getGraspRepoDeleteTarget({
+        cloneUrl,
+        ownerPubkey,
+        identifier: "repo",
+        relayHints: ["WSS://GRASP.EXAMPLE/git/?token=AbC%2F123"],
+      }),
+    ).toEqual({
+      relay: "wss://grasp.example/git/?token=AbC%2F123",
+      ownerNpub,
+      identifier: "repo",
+    })
+    expect(
+      getGraspRepoDeleteTarget({
+        cloneUrl,
+        ownerPubkey,
+        identifier: "repo",
+        relayHints: ["wss://user:secret@grasp.example/git"],
+      }),
+    ).toBeNull()
   })
 
   it("preserves the local clone after partial metadata or selected remote failure", () => {

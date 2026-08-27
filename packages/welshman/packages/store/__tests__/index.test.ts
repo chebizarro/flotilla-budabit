@@ -5,6 +5,7 @@ import {DELETE, type TrustedEvent} from "@welshman/util"
 import {
   deriveEventsById,
   deriveEventsByIdByUrl,
+  deriveEventsByIdForUrl,
   getter,
   synced,
   localStorageProvider,
@@ -239,6 +240,42 @@ describe("Store utilities", () => {
       repository.publish(event)
 
       expect(current.get(event.id)).toBe(event)
+      unsubscribe()
+    })
+  })
+
+  describe("deriveEventsByIdForUrl", () => {
+    it("matches canonical Tracker updates for a noncanonical subscription URL", () => {
+      const repository = new Repository()
+      const tracker = new Tracker()
+      const relay = "wss://relay.example/"
+      const event = {
+        id: "event",
+        pubkey: "a".repeat(64),
+        kind: 1,
+        created_at: 1,
+        content: "",
+        tags: [],
+        sig: "",
+      } as TrustedEvent
+      repository.publish(event)
+
+      const store = deriveEventsByIdForUrl({
+        url: "WSS://RELAY.EXAMPLE",
+        repository,
+        tracker,
+        filters: [{kinds: [1]}],
+      })
+      let current = new Map<string, TrustedEvent>()
+      const unsubscribe = store.subscribe(value => {
+        current = value
+      })
+
+      tracker.track(event.id, relay)
+      expect(current.get(event.id)).toBe(event)
+
+      tracker.removeRelay(event.id, relay)
+      expect(current.has(event.id)).toBe(false)
       unsubscribe()
     })
   })

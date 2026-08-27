@@ -314,8 +314,9 @@ export class RouterScenario {
     const {allowOnion, allowLocal, allowInsecure} = this.options
 
     for (const {weight, relays} of this.selections) {
-      for (const relay of relays) {
-        if (!isRelayUrl(relay)) continue
+      for (const rawRelay of relays) {
+        const relay = sanitizeRelayUrls([rawRelay])[0]
+        if (!relay || !isRelayUrl(relay)) continue
         if (!allowOnion && isOnionUrl(relay)) continue
         if (!allowLocal && isLocalUrl(relay)) continue
         if (!allowInsecure && relay.startsWith("ws://") && !isOnionUrl(relay)) continue
@@ -341,7 +342,9 @@ export class RouterScenario {
 
     const fallbacksNeeded = fallbackPolicy(relays.length, limit)
     const allFallbackRelays: string[] = this.router.options.getDefaultRelays?.() || []
-    const fallbackRelays = shuffle(allFallbackRelays).slice(0, fallbacksNeeded)
+    const fallbackRelays = shuffle(
+      sanitizeRelayUrls(allFallbackRelays).filter(relay => !relayWeights.has(relay)),
+    ).slice(0, fallbacksNeeded)
 
     for (const fallbackRelay of fallbackRelays) {
       relays.push(fallbackRelay)

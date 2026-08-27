@@ -8,6 +8,7 @@ import {
   sortEventsAsc,
   sortEventsDesc,
   getIdOrAddress,
+  normalizeRelayUrl,
 } from "@welshman/util"
 import {
   type Repository,
@@ -306,6 +307,7 @@ export const getEventsByIdForUrl = ({
   repository,
   includeDeleted,
 }: EventsByIdForUrlOptions) => {
+  url = normalizeRelayUrl(url)
   const initialIds = Array.from(tracker.getIds(url))
   const initialFilters = filters.map(filter => ({ids: initialIds, ...filter}))
   const eventsById: EventsById = new Map()
@@ -324,6 +326,7 @@ export const deriveEventsByIdForUrl = ({
   repository,
   includeDeleted,
 }: EventsByIdForUrlOptions) => {
+  url = normalizeRelayUrl(url)
   let eventsById = getEventsByIdForUrl({url, filters, tracker, repository, includeDeleted})
 
   return readable(eventsById, set => {

@@ -2,6 +2,8 @@ import {
   getAddress,
   getTagValue,
   isReplaceable,
+  normalizeRelayUrl,
+  sanitizeRelayUrls,
   type Filter,
   type TrustedEvent,
 } from "@welshman/util"
@@ -77,12 +79,14 @@ export const getGraspRepoDeleteTarget = ({
 const normalizeGraspBase = (value: string): {http: string; ws: string} | null => {
   try {
     const url = new URL(value)
+    if (url.username || url.password) return null
     const secure = url.protocol === "https:" || url.protocol === "wss:"
     if (!secure && url.protocol !== "http:" && url.protocol !== "ws:") return null
     const path = url.pathname.replace(/\/+$/, "")
+    const ws = normalizeRelayUrl(value.replace(/^https?:/i, secure ? "wss:" : "ws:"))
     return {
       http: `${secure ? "https" : "http"}://${url.host}${path}`,
-      ws: `${secure ? "wss" : "ws"}://${url.host}${path}`,
+      ws,
     }
   } catch {
     return null
@@ -139,32 +143,21 @@ export const getMetadataDeleteRelays = ({
   relays: string[]
   remoteTargets: Array<{vendor: string; url: string; graspRelay?: string}>
 }): string[] => {
-  const graspRelayKeys = new Set(
-    remoteTargets
-      .map(target => target.graspRelay?.replace(/\/+$/, ""))
-      .filter((relay): relay is string => Boolean(relay)),
-  )
-  const graspHosts = new Set(
-    remoteTargets
-      .filter(target => target.vendor === "grasp" || target.vendor === "grasp-rest")
-      .map(target => {
-        try {
-          return new URL(target.url).host.toLowerCase()
-        } catch {
-          return ""
-        }
-      })
-      .filter(Boolean),
-  )
-
-  return relays.filter(relay => {
-    if (graspRelayKeys.has(relay.replace(/\/+$/, ""))) return false
-    try {
-      return !graspHosts.has(new URL(relay).host.toLowerCase())
-    } catch {
-      return false
+  const graspRelayKeys = new Set<string>()
+  for (const target of remoteTargets) {
+    if (target.graspRelay) {
+      const relay = sanitizeRelayUrls([target.graspRelay])[0]
+      if (relay) graspRelayKeys.add(relay)
     }
-  })
+
+    if (target.vendor === "grasp" || target.vendor === "grasp-rest") {
+      const parsed = parseGraspRepoHttpUrl(target.url)
+      const relay = parsed ? normalizeGraspBase(parsed.httpBase)?.ws : undefined
+      if (relay) graspRelayKeys.add(relay)
+    }
+  }
+
+  return sanitizeRelayUrls(relays).filter(relay => !graspRelayKeys.has(relay))
 }
 
 export const canDeleteLocalRepoAfterRemoteResults = ({

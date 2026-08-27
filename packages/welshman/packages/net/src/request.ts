@@ -17,6 +17,8 @@ import {
   type TrustedEvent,
   deduplicateEvents,
   getFilterResultCardinality,
+  normalizeRelayUrl,
+  sanitizeRelayUrls,
 } from "@welshman/util"
 import {
   type RelayMessage,
@@ -87,8 +89,7 @@ type RequestPolicyRegistration = {
 
 const requestPolicyResolvers: RequestPolicyRegistration[] = []
 
-const resolveRequestPolicy = (relay: string) =>
-  requestPolicyResolvers.at(-1)?.resolver(relay) || {}
+const resolveRequestPolicy = (relay: string) => requestPolicyResolvers.at(-1)?.resolver(relay) || {}
 
 export const setRequestPolicy = (resolver: RequestPolicyResolver) => {
   const registration: RequestPolicyRegistration = {resolver}
@@ -663,7 +664,8 @@ type RequestTask = {
 }
 
 export const requestOne = (options: RequestOneOptions) => {
-  const relayPolicy = resolveRequestPolicy(options.relay) || {}
+  const relay = normalizeRelayUrl(options.relay)
+  const relayPolicy = resolveRequestPolicy(relay) || {}
 
   validateLimit("maxFiltersPerSubscription", options.maxFiltersPerSubscription)
   validateLimit("maxFiltersPerSubscription", relayPolicy.maxFiltersPerSubscription)
@@ -758,7 +760,7 @@ export const requestOne = (options: RequestOneOptions) => {
   const events: TrustedEvent[] = []
   const deferred = defer<TrustedEvent[]>()
   const tracker = options.tracker || new Tracker()
-  const adapter = getAdapter(options.relay, options.context)
+  const adapter = getAdapter(relay, options.context)
   const isEventValid = options.isEventValid || netContext.isEventValid
   const isEventDeleted = options.isEventDeleted || netContext.isEventDeleted
 
@@ -796,7 +798,7 @@ export const requestOne = (options: RequestOneOptions) => {
   const sendTask = (task: RequestTask) => {
     if (closed) return
 
-    options.onStart?.(options.relay)
+    options.onStart?.(relay)
 
     task.sent = true
     adapter.send([ClientMessageType.Req, task.id, ...task.filters])
@@ -840,8 +842,8 @@ export const requestOne = (options: RequestOneOptions) => {
     finishTask(task, false)
 
     const maxRetryFilters = Math.max(1, Math.floor(task.filters.length / 2))
-    const replacements = chunkFilters(task.filters, maxRetryFilters, maxMessageBytes).map(
-      filters => makeTask(filters, false),
+    const replacements = chunkFilters(task.filters, maxRetryFilters, maxMessageBytes).map(filters =>
+      makeTask(filters, false),
     )
 
     tasks.splice(tasks.indexOf(task), 1, ...replacements)
@@ -1008,13 +1010,13 @@ export const request = async (options: RequestOptions) => {
   const successful = new Set<string>()
   const failed = new Set<string>()
   const ctrl = new AbortController()
-  const relays = new Set(options.relays)
+  const relays = new Set(sanitizeRelayUrls(options.relays))
   const tracker = options.tracker || new Tracker()
   const signal = options.signal ? AbortSignal.any([options.signal, ctrl.signal]) : ctrl.signal
   const threshold = options.threshold || 1
 
   if (relays.size !== options.relays.length) {
-    console.warn("Non-unique relays passed to request")
+    console.warn("Invalid or non-unique relays passed to request")
   }
 
   return flatten(
@@ -1102,7 +1104,10 @@ export const makeLoader = (options: LoaderOptions) =>
     const signalsByRelay = new Map<string, AbortSignal>()
     const closedRequestsByRelay = new Map<string, Set<LoadOptions>>()
     const closedRelaysByRequest = new Map<LoadOptions, Set<string>>()
-    const relays = uniq(allRequests.flatMap(r => r.relays))
+    const relaysByRequest = new Map(
+      allRequests.map(request => [request, sanitizeRelayUrls(request.relays)]),
+    )
+    const relays = uniq(Array.from(relaysByRequest.values()).flat())
     const threshold = options.threshold || 1
     const tracker = new Tracker()
 
@@ -1116,7 +1121,7 @@ export const makeLoader = (options: LoaderOptions) =>
       const closedRelays = closedRelaysByRequest.get(request)?.size || 0
       if (
         !resolvedRequests.has(request) &&
-        closedRelays >= uniq(request.relays).length * threshold
+        closedRelays >= (relaysByRequest.get(request)?.length || 0) * threshold
       ) {
         resolvedRequests.add(request)
 
@@ -1139,7 +1144,7 @@ export const makeLoader = (options: LoaderOptions) =>
     }
 
     for (const request of allRequests) {
-      const requestRelays = uniq(request.relays)
+      const requestRelays = relaysByRequest.get(request) || []
 
       resultsByRequest.set(request, defer())
 
@@ -1196,7 +1201,10 @@ export const makeLoader = (options: LoaderOptions) =>
           maxBackgroundLiveSubscriptions: options.maxBackgroundLiveSubscriptions,
           maxMessageBytes: options.maxMessageBytes,
           criticalLivePriority: options.criticalLivePriority,
-          priority: Math.max(options.priority ?? 0, ...requests.map(request => request.priority ?? 0)),
+          priority: Math.max(
+            options.priority ?? 0,
+            ...requests.map(request => request.priority ?? 0),
+          ),
           owner:
             Array.from(
               new Set([options.owner, ...requests.map(request => request.owner)].filter(Boolean)),
