@@ -12,7 +12,7 @@
   import {call} from "@welshman/lib"
   import {authPolicy, trustPolicy, mostlyRestrictedPolicy} from "@app/util/policies"
   import {installRelayRequestPolicy, relayPolicyRefreshPolicy} from "@app/core/relay-policy"
-  import {installRelayDiagnostics} from "@app/core/relay-diagnostics"
+  import {installRelayDebugDiagnostics, installRelayDiagnostics} from "@app/core/relay-diagnostics"
   import {defaultSocketPolicies} from "@welshman/net"
   import {pubkey, sessions, signerLog, shouldUnwrap, userRelayList} from "@welshman/app"
   import {ConfigProvider} from "@nostr-git/ui"
@@ -55,7 +55,12 @@
     scheduleNotificationBackgroundStages,
     setNotificationBackgroundEnabled,
   } from "@app/util/notification-background"
-  import {CASHU_WALLET_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {
+    CASHU_WALLET_ENABLED,
+    DIAGNOSTICS_ENABLED,
+    PERFORMANCE_DIAGNOSTICS_ENABLED,
+  } from "@app/core/feature-flags"
+  import {refreshDebugDiagnosticsSettings} from "@app/core/debug-diagnostics"
   import {
     consumeArmedPerformanceDiagnosticsCapture,
     measurePerformanceDiagnosticsWork,
@@ -92,6 +97,7 @@
   if (browser && PERFORMANCE_DIAGNOSTICS_ENABLED) {
     consumeArmedPerformanceDiagnosticsCapture(window.location.pathname)
   }
+  if (browser && DIAGNOSTICS_ENABLED) refreshDebugDiagnosticsSettings()
   const nostrGitProviderProps = /** @type {any} */ ({
     components: {
       AvatarImage,
@@ -110,6 +116,10 @@
   const policies = [relayPolicyRefreshPolicy, authPolicy, trustPolicy, mostlyRestrictedPolicy]
   const uninstallRelayRequestPolicy = installRelayRequestPolicy()
   const uninstallRelayDiagnostics = installRelayDiagnostics({enabled: browser && dev})
+  const uninstallRelayDebugDiagnostics = installRelayDebugDiagnostics({
+    enabled: browser && DIAGNOSTICS_ENABLED,
+  })
+  onDestroy(uninstallRelayDebugDiagnostics)
   let socketPoliciesInstalled = false
 
   const installSocketPolicies = () => {
@@ -1257,6 +1267,7 @@
     uninstallSocketPolicies()
     uninstallRelayRequestPolicy()
     uninstallRelayDiagnostics()
+    uninstallRelayDebugDiagnostics()
 
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval)

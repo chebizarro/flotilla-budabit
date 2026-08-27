@@ -69,23 +69,115 @@ export const isIPAddress = (url: string) => Boolean(url.match(/\d+\.\d+\.\d+\.\d
 
 export const isShareableRelayUrl = (url: string) => Boolean(isRelayUrl(url) && !isLocalUrl(url))
 
+export type RelayNormalizationObservation = {
+  source: "welshman.normalizeRelayUrl"
+  outcome: "normalized" | "rejected"
+  classification: "equivalent-spelling" | "invalid"
+  changed: boolean
+  inputShape: {
+    hadProtocol: boolean
+    hadCredentials: boolean
+    hadQuery: boolean
+    hadFragment: boolean
+    hadTrailingSlash: boolean
+    hadUppercase: boolean
+  }
+  inputEndpoint: string
+  canonicalEndpoint?: string
+}
+
+const relayNormalizationListeners = new Set<(event: RelayNormalizationObservation) => void>()
+
+export const subscribeRelayNormalization = (
+  listener: (event: RelayNormalizationObservation) => void,
+) => {
+  relayNormalizationListeners.add(listener)
+  return () => relayNormalizationListeners.delete(listener)
+}
+
+const getSafeRelayEndpoint = (value: string) => {
+  try {
+    const candidate = value.includes("://") ? value : `wss://${value}`
+    const parsed = new URL(candidate)
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname || "/"}`
+  } catch {
+    return "[invalid-relay]"
+  }
+}
+
+const getRelayInputShape = (value: string) => {
+  let hadCredentials = false
+  try {
+    const parsed = new URL(value.includes("://") ? value : `wss://${value}`)
+    hadCredentials = Boolean(parsed.username || parsed.password)
+  } catch {
+    hadCredentials = /\/\/[^/\s]*@/.test(value)
+  }
+
+  return {
+    hadProtocol: /^wss?:\/\//i.test(value),
+    hadCredentials,
+    hadQuery: value.includes("?"),
+    hadFragment: value.includes("#"),
+    hadTrailingSlash: value.endsWith("/"),
+    hadUppercase: value !== value.toLowerCase(),
+  }
+}
+
+const emitRelayNormalization = (event: RelayNormalizationObservation) => {
+  for (const listener of relayNormalizationListeners) {
+    try {
+      listener(event)
+    } catch {
+      // Diagnostics must never affect relay normalization.
+    }
+  }
+}
+
 export const normalizeRelayUrl = (url: string) => {
   if (url === LOCAL_RELAY_URL) return url
 
-  const prefix = url.match(/^wss?:\/\//)?.[0] || (isOnionUrl(url) ? "ws://" : "wss://")
+  const original = url
+  const inputShape = getRelayInputShape(original)
 
-  // Use our library to normalize
-  url = normalizeUrl(url, {stripHash: true, stripAuthentication: false})
+  try {
+    const prefix = url.match(/^wss?:\/\//)?.[0] || (isOnionUrl(url) ? "ws://" : "wss://")
 
-  // Strip the protocol, lowercase
-  url = stripProtocol(url).toLowerCase()
+    // Use our library to normalize
+    url = normalizeUrl(url, {stripHash: true, stripAuthentication: false})
 
-  // Urls without pathnames are supposed to have a trailing slash
-  if (!url.includes("/")) {
-    url += "/"
+    // Strip the protocol, lowercase
+    url = stripProtocol(url).toLowerCase()
+
+    // Urls without pathnames are supposed to have a trailing slash
+    if (!url.includes("/")) {
+      url += "/"
+    }
+
+    const normalized = prefix + url
+    if (normalized !== original) {
+      emitRelayNormalization({
+        source: "welshman.normalizeRelayUrl",
+        outcome: "normalized",
+        classification: "equivalent-spelling",
+        changed: true,
+        inputShape,
+        inputEndpoint: getSafeRelayEndpoint(original),
+        canonicalEndpoint: getSafeRelayEndpoint(normalized),
+      })
+    }
+    return normalized
+  } catch (error) {
+    emitRelayNormalization({
+      source: "welshman.normalizeRelayUrl",
+      outcome: "rejected",
+      classification: "invalid",
+      changed: false,
+      inputShape,
+      inputEndpoint: getSafeRelayEndpoint(original),
+    })
+    throw error
   }
-
-  return prefix + url
 }
 
 export const displayRelayUrl = (url: string) => last(url.split("://")).replace(/\/$/, "")

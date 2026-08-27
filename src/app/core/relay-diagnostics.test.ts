@@ -1,6 +1,13 @@
-import {describe, expect, it, vi} from "vitest"
+import {writable} from "svelte/store"
+import {afterEach, describe, expect, it, vi} from "vitest"
 import type {RequestSchedulerSnapshot} from "@welshman/net"
-import {aggregateRelayDiagnostics, createRelayDiagnosticMonitor} from "./relay-diagnostics"
+import type {RelayNormalizationObservation} from "@welshman/util"
+import {defaultDebugDiagnosticsSettings} from "./debug-diagnostics"
+import {
+  aggregateRelayDiagnostics,
+  createRelayDiagnosticMonitor,
+  installRelayDebugDiagnostics,
+} from "./relay-diagnostics"
 
 const makeSnapshot = (
   overrides: Partial<RequestSchedulerSnapshot> = {},
@@ -23,6 +30,8 @@ const makeSnapshot = (
 })
 
 describe("relay diagnostics", () => {
+  afterEach(() => vi.useRealTimers())
+
   it("aggregates duplicate socket snapshots by relay and owner", () => {
     const snapshots = aggregateRelayDiagnostics([
       makeSnapshot({
@@ -172,5 +181,110 @@ describe("relay diagnostics", () => {
     monitor.inspect([snapshot])
 
     expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  it("installs category-controlled normalization and scheduler recording", () => {
+    vi.useFakeTimers()
+    const settings = writable(defaultDebugDiagnosticsSettings())
+    const record = vi.fn(() => true)
+    const read = vi.fn(() => [makeSnapshot()])
+    let normalizationListener: ((event: RelayNormalizationObservation) => void) | undefined
+    const unsubscribeNormalization = vi.fn()
+    const subscribeNormalization = vi.fn(listener => {
+      normalizationListener = listener
+      return unsubscribeNormalization
+    })
+    const uninstall = installRelayDebugDiagnostics({
+      enabled: true,
+      pollIntervalMs: 100,
+      settings,
+      read,
+      record,
+      subscribeNormalization,
+    })
+
+    vi.advanceTimersByTime(200)
+    expect(read).not.toHaveBeenCalled()
+    expect(subscribeNormalization).not.toHaveBeenCalled()
+
+    settings.update(current => ({
+      ...current,
+      categories: {...current.categories, "relay-normalization": true},
+    }))
+    expect(subscribeNormalization).toHaveBeenCalledOnce()
+    normalizationListener?.({
+      source: "welshman.normalizeRelayUrl",
+      outcome: "normalized",
+      classification: "equivalent-spelling",
+      changed: true,
+      inputShape: {
+        hadProtocol: false,
+        hadCredentials: false,
+        hadQuery: false,
+        hadFragment: false,
+        hadTrailingSlash: false,
+        hadUppercase: false,
+      },
+      inputEndpoint: "wss://relay.example/",
+      canonicalEndpoint: "wss://relay.example/",
+    })
+    expect(record).toHaveBeenCalledWith(
+      "relay-normalization",
+      "normalized",
+      expect.objectContaining({classification: "equivalent-spelling"}),
+    )
+
+    settings.update(current => ({
+      ...current,
+      categories: {...current.categories, "relay-scheduler": true},
+    }))
+    vi.advanceTimersByTime(250)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(record).toHaveBeenCalledWith("relay-scheduler", "snapshot", {
+      snapshots: [makeSnapshot()],
+    })
+
+    settings.update(current => ({
+      ...current,
+      categories: {...current.categories, "relay-normalization": false},
+    }))
+    expect(unsubscribeNormalization).toHaveBeenCalledOnce()
+    uninstall()
+    vi.advanceTimersByTime(200)
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps disabled and failing debug installers isolated", () => {
+    vi.useFakeTimers()
+    const settings = writable({
+      ...defaultDebugDiagnosticsSettings(),
+      categories: {
+        ...defaultDebugDiagnosticsSettings().categories,
+        "relay-scheduler": true,
+      },
+    })
+    const read = vi.fn(() => {
+      throw new Error("diagnostic read failed")
+    })
+    const record = vi.fn(() => {
+      throw new Error("diagnostic record failed")
+    })
+
+    const disabled = installRelayDebugDiagnostics({enabled: false, settings, read, record})
+    vi.advanceTimersByTime(1_000)
+    expect(read).not.toHaveBeenCalled()
+    disabled()
+
+    const uninstall = installRelayDebugDiagnostics({
+      enabled: true,
+      pollIntervalMs: 100,
+      settings,
+      read,
+      record,
+    })
+    expect(() => vi.advanceTimersByTime(100)).not.toThrow()
+    expect(read).toHaveBeenCalledOnce()
+    expect(() => uninstall()).not.toThrow()
+    expect(() => uninstall()).not.toThrow()
   })
 })

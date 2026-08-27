@@ -3,6 +3,14 @@ import {
   subscribeRequestScheduler,
   type RequestSchedulerSnapshot,
 } from "@welshman/net"
+import {subscribeRelayNormalization, type RelayNormalizationObservation} from "@welshman/util"
+import type {Readable} from "svelte/store"
+import {
+  debugDiagnosticsSettings,
+  recordDebugDiagnostic,
+  type DebugDiagnosticCategory,
+  type DebugDiagnosticsSettings,
+} from "@app/core/debug-diagnostics"
 
 export type RelayDiagnosticWarningKind = "saturation" | "priority-queue" | "live-growth"
 
@@ -189,5 +197,83 @@ export const installRelayDiagnostics = ({
   return () => {
     clearInterval(interval)
     unsubscribe()
+  }
+}
+
+export const installRelayDebugDiagnostics = ({
+  enabled,
+  pollIntervalMs = 1_000,
+  settings = debugDiagnosticsSettings,
+  read = readRelayDiagnostics,
+  record = recordDebugDiagnostic,
+  subscribeNormalization = subscribeRelayNormalization,
+}: {
+  enabled: boolean
+  pollIntervalMs?: number
+  settings?: Readable<DebugDiagnosticsSettings>
+  read?: () => RequestSchedulerSnapshot[]
+  record?: (category: DebugDiagnosticCategory, type: string, detail?: unknown) => boolean
+  subscribeNormalization?: (listener: (event: RelayNormalizationObservation) => void) => () => void
+}) => {
+  if (!enabled) return () => {}
+
+  let normalizationUnsubscribe: (() => void) | undefined
+  let schedulerInterval: ReturnType<typeof setInterval> | undefined
+  let schedulerMonitor: ReturnType<typeof createRelayDiagnosticMonitor> | undefined
+
+  const recordSafely = (category: DebugDiagnosticCategory, type: string, detail: unknown) => {
+    try {
+      record(category, type, detail)
+    } catch {
+      // Diagnostics must never affect relay scheduling or normalization.
+    }
+  }
+  const stopNormalization = () => {
+    normalizationUnsubscribe?.()
+    normalizationUnsubscribe = undefined
+  }
+  const stopScheduler = () => {
+    if (schedulerInterval !== undefined) clearInterval(schedulerInterval)
+    schedulerInterval = undefined
+    schedulerMonitor = undefined
+  }
+  const startNormalization = () => {
+    if (normalizationUnsubscribe) return
+    normalizationUnsubscribe = subscribeNormalization(event =>
+      recordSafely("relay-normalization", event.outcome, event),
+    )
+  }
+  const startScheduler = () => {
+    if (schedulerInterval !== undefined) return
+    schedulerMonitor = createRelayDiagnosticMonitor({
+      enabled: true,
+      warn: (_message, warning) => recordSafely("relay-scheduler", "warning", warning),
+    })
+    schedulerInterval = setInterval(() => {
+      try {
+        const snapshots = read()
+        recordSafely("relay-scheduler", "snapshot", {snapshots})
+        schedulerMonitor?.inspect(snapshots)
+      } catch {
+        // A diagnostic read failure must not affect the scheduler.
+      }
+    }, pollIntervalMs)
+  }
+
+  const unsubscribeSettings = settings.subscribe(current => {
+    if (current.categories["relay-normalization"]) startNormalization()
+    else stopNormalization()
+
+    if (current.categories["relay-scheduler"]) startScheduler()
+    else stopScheduler()
+  })
+
+  let stopped = false
+  return () => {
+    if (stopped) return
+    stopped = true
+    unsubscribeSettings()
+    stopNormalization()
+    stopScheduler()
   }
 }

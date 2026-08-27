@@ -1,0 +1,17 @@
+import {readFileSync} from "node:fs"
+import {describe, expect, it} from "vitest"
+
+describe("root debug diagnostics lifecycle", () => {
+  it("loads settings before installing gated diagnostics with synchronous cleanup", () => {
+    const source = readFileSync("src/routes/+layout.svelte", "utf8")
+    const refresh = source.indexOf("refreshDebugDiagnosticsSettings()")
+    const install = source.indexOf("installRelayDebugDiagnostics({")
+
+    expect(refresh).toBeGreaterThan(-1)
+    expect(install).toBeGreaterThan(refresh)
+    expect(source).toContain("enabled: browser && DIAGNOSTICS_ENABLED")
+    expect(source).toContain("installRelayDiagnostics({enabled: browser && dev})")
+    expect(source).toContain("onDestroy(uninstallRelayDebugDiagnostics)")
+    expect(source).toContain("uninstallRelayDebugDiagnostics()")
+  })
+})
