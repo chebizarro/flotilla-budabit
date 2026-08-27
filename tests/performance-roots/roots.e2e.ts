@@ -272,7 +272,7 @@ const captureDiagnosticArtifact = async (page: Page, profile: string, route: str
     }>
   }
 
-  expect(artifact.schema).toBe("budabit-performance-run-v1")
+  expect(artifact.schema).toBe("budabit-performance-run-v2")
   expect(artifact.schemaVersion).toBe(1)
   const run = artifact.runs?.find(candidate => candidate.route === route)
   expect(run?.preset).toBe(route === "/git" ? "git-root" : "community-home")

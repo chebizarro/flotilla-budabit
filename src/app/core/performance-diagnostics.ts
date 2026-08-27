@@ -1,10 +1,14 @@
 import {get, writable} from "svelte/store"
 import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 import {readRelayDiagnostics} from "@app/core/relay-diagnostics"
-import {setRepositoryUpdateTimingListener} from "@welshman/net"
+import {
+  setRepositoryUpdateTimingListener,
+  subscribeRequestSchedulerMetrics,
+  type RequestSchedulerMetric,
+} from "@welshman/net"
 
-export const PERFORMANCE_DIAGNOSTICS_SCHEMA_VERSION = 1
-export const PERFORMANCE_DIAGNOSTICS_SCHEMA = "budabit-performance-run-v1"
+export const PERFORMANCE_DIAGNOSTICS_SCHEMA_VERSION = 2
+export const PERFORMANCE_DIAGNOSTICS_SCHEMA = "budabit-performance-run-v2"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
 export const PERFORMANCE_DIAGNOSTICS_DEFAULT_RELAY = "wss://relay.budabit.club"
 export const PERFORMANCE_DIAGNOSTICS_ARM_STORAGE_KEY = "budabit/performance-diagnostics/armed:v1"
@@ -31,6 +35,7 @@ const SECRET_VALUE_PATTERNS = [
   /nostrconnect:\/\/[^\s"']+/gi,
   /Authorization:\s*(?:Nostr|Bearer)\s+[^\s"']+/gi,
 ]
+const RELAY_ENDPOINT_KEY_PATTERN = /^(relay|relayUrl|inputEndpoint|canonicalEndpoint)$/i
 
 export type PerformanceDiagnosticValue =
   | null
@@ -84,8 +89,8 @@ export type PerformanceDiagnosticRun = {
 }
 
 export type PerformanceDiagnosticsSnapshot = {
-  schema: "budabit-performance-run-v1"
-  schemaVersion: 1
+  schema: "budabit-performance-run-v2"
+  schemaVersion: 2
   generatedAt: number
   build: {id: string; hash: string}
   environment: PerformanceDiagnosticsEnvironment
@@ -93,7 +98,7 @@ export type PerformanceDiagnosticsSnapshot = {
 }
 
 export type PreparedPerformanceDiagnosticsArtifact = {
-  schemaVersion: 1
+  schemaVersion: 2
   filename: string
   encoding: "gzip" | "identity"
   contentType: "application/gzip" | "application/json"
@@ -233,7 +238,9 @@ export const sanitizePerformanceDiagnosticValue = (
   )) {
     result[key] = SECRET_KEY_PATTERN.test(key)
       ? "[redacted]"
-      : sanitizePerformanceDiagnosticValue(item, depth + 1)
+      : RELAY_ENDPOINT_KEY_PATTERN.test(key) && typeof item === "string"
+        ? sanitizePerformanceDiagnosticsUrl(item).replace(/^(wss?:\/\/[^/]+).*$/i, "$1")
+        : sanitizePerformanceDiagnosticValue(item, depth + 1)
   }
 
   return result
@@ -838,7 +845,15 @@ export const stopPerformanceDiagnosticsCapture = (
 
 export const startPerformanceDiagnosticsObservers = (
   runId: string,
-  {schedulerIntervalMs = 1_000}: {schedulerIntervalMs?: number} = {},
+  {
+    schedulerIntervalMs = 10_000,
+    readScheduler = readRelayDiagnostics,
+    subscribeSchedulerMetrics = subscribeRequestSchedulerMetrics,
+  }: {
+    schedulerIntervalMs?: number
+    readScheduler?: typeof readRelayDiagnostics
+    subscribeSchedulerMetrics?: (listener: (metric: RequestSchedulerMetric) => void) => () => void
+  } = {},
 ) => {
   const run = getRun(runId)
   if (typeof window === "undefined" || !run) return () => {}
@@ -995,12 +1010,41 @@ export const startPerformanceDiagnosticsObservers = (
   if (document.readyState === "complete") queueMicrotask(recordNavigationTiming)
   else window.addEventListener("load", onLoad, {once: true})
 
-  const schedulerInterval = window.setInterval(
-    () => {
-      recordPerformanceDiagnostics(runId, "relay-scheduler", readRelayDiagnostics(), "scheduler")
-    },
-    Math.max(100, schedulerIntervalMs),
-  )
+  const schedulerCapture = {
+    noticeCount: 0,
+    queueStartCount: 0,
+    queueStartDelayTotalMs: 0,
+    maxQueueStartDelayMs: 0,
+  }
+  const stopSchedulerMetrics = subscribeSchedulerMetrics(metric => {
+    if (metric.type === "notice") schedulerCapture.noticeCount += 1
+    else {
+      schedulerCapture.queueStartCount += 1
+      schedulerCapture.queueStartDelayTotalMs += metric.delayMs
+      schedulerCapture.maxQueueStartDelayMs = Math.max(
+        schedulerCapture.maxQueueStartDelayMs,
+        metric.delayMs,
+      )
+    }
+  })
+  const recordScheduler = () =>
+    recordPerformanceDiagnostics(
+      runId,
+      "relay-scheduler",
+      {
+        snapshots: readScheduler(),
+        capture: {
+          ...schedulerCapture,
+          averageQueueStartDelayMs:
+            schedulerCapture.queueStartCount === 0
+              ? 0
+              : schedulerCapture.queueStartDelayTotalMs / schedulerCapture.queueStartCount,
+        },
+      },
+      "scheduler",
+    )
+  recordScheduler()
+  const schedulerInterval = window.setInterval(recordScheduler, Math.max(100, schedulerIntervalMs))
   const onError = (event: ErrorEvent) =>
     recordPerformanceDiagnostics(
       runId,
@@ -1026,6 +1070,8 @@ export const startPerformanceDiagnosticsObservers = (
       observer.disconnect()
     }
     recordNavigationTiming()
+    recordScheduler()
+    stopSchedulerMetrics()
     window.clearInterval(schedulerInterval)
     window.removeEventListener("error", onError)
     window.removeEventListener("unhandledrejection", onRejection)

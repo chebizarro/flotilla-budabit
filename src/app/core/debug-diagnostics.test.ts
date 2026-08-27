@@ -197,7 +197,7 @@ describe("debug diagnostics", () => {
       token: "[redacted]",
       content: "[redacted]",
       message: "[redacted] [redacted]",
-      relay: "wss://relay.example/Path?[redacted]",
+      relay: "wss://relay.example",
     })
   })
 
@@ -212,17 +212,18 @@ describe("debug diagnostics", () => {
 
     const parsed = JSON.parse(serializeDebugDiagnostics(recorder.snapshot()))
     expect(parsed).toMatchObject({
-      schema: "budabit-debug-run-v1",
-      schemaVersion: 1,
+      schema: "budabit-debug-run-v2",
+      schemaVersion: 2,
       capture: {id: "run-1", enabledCategories: ["relay-normalization"]},
       records: [
         {
-          detail: {token: "[redacted]", relay: "wss://relay.example/path?[redacted]"},
+          detail: {token: "[redacted]", relay: "wss://relay.example"},
         },
       ],
     })
     expect(parsed).toHaveProperty("build")
     expect(parsed).toHaveProperty("environment")
+    expect(JSON.stringify(parsed)).not.toContain("/path")
   })
 
   it("prepares deterministic identity and gzip artifacts", async () => {
@@ -236,7 +237,7 @@ describe("debug diagnostics", () => {
       hash,
     })
     expect(identity).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       filename: "budabit-debug-run-unsafe.json",
       encoding: "identity",
       contentType: "application/json",

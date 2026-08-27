@@ -74,41 +74,84 @@ export const isShareableRelayUrl = (url: string) => Boolean(isRelayUrl(url) && !
 
 export type RelayNormalizationObservation = {
   source: "welshman.normalizeRelayUrl"
-  outcome: "normalized" | "rejected"
-  classification: "equivalent-spelling" | "invalid"
+  outcome: "unchanged" | "normalized" | "rejected"
+  classification: "canonical" | "equivalent-spelling" | "invalid"
   changed: boolean
+  inputType: string
   inputShape: {
     hadProtocol: boolean
     hadCredentials: boolean
     hadQuery: boolean
     hadFragment: boolean
     hadTrailingSlash: boolean
-    hadUppercase: boolean
+    pathHadUppercase: boolean
+    queryHadUppercase: boolean
+  }
+  reasons: {
+    schemeCaseChanged: boolean
+    hostnameCaseChanged: boolean
+    defaultPortRemoved: boolean
+    rootSlashAdded: boolean
+    fragmentRemoved: boolean
   }
   inputEndpoint: string
   canonicalEndpoint?: string
 }
 
-const relayNormalizationListeners = new Set<(event: RelayNormalizationObservation) => void>()
+export type RelayNormalizationContext = {
+  inputPath: string
+  canonicalPath?: string
+}
 
-export const subscribeRelayNormalization = (
-  listener: (event: RelayNormalizationObservation) => void,
-) => {
+type RelayNormalizationListener = (
+  event: RelayNormalizationObservation,
+  context: RelayNormalizationContext,
+) => void
+
+const relayNormalizationListeners = new Set<RelayNormalizationListener>()
+
+export const subscribeRelayNormalization = (listener: RelayNormalizationListener) => {
   relayNormalizationListeners.add(listener)
   return () => relayNormalizationListeners.delete(listener)
 }
 
-const getSafeRelayEndpoint = (value: string) => {
+const getRelayParts = (value: unknown) => {
   try {
+    if (typeof value !== "string") throw new TypeError("Invalid relay URL")
     const candidate = value.includes("://") ? value : `wss://${value}`
     const parsed = new URL(candidate)
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname || "/"}`
+    const authority = candidate.slice(candidate.indexOf("://") + 3).split(/[/?#]/, 1)[0]
+    const afterAuthority = candidate.slice(candidate.indexOf("://") + 3 + authority.length)
+    const rawPath = afterAuthority.split(/[?#]/, 1)[0]
+    const rawHost = authority.slice(authority.lastIndexOf("@") + 1)
+    const rawHostname = rawHost.startsWith("[")
+      ? rawHost.slice(0, rawHost.indexOf("]") + 1)
+      : rawHost.split(":", 1)[0]
+    return {
+      endpoint: `${parsed.protocol}//${parsed.host}`,
+      path: rawPath || "/",
+      scheme: candidate.slice(0, candidate.indexOf(":")),
+      hostname: rawHostname,
+      explicitPort: candidate.match(/^[a-z][a-z\d+.-]*:\/\/[^/?#]*:(\d+)/i)?.[1],
+    }
   } catch {
-    return "[invalid-relay]"
+    return {endpoint: "[invalid-relay]", path: ""}
   }
 }
 
-const getRelayInputShape = (value: string) => {
+const getRelayInputShape = (value: unknown) => {
+  if (typeof value !== "string") {
+    return {
+      hadProtocol: false,
+      hadCredentials: false,
+      hadQuery: false,
+      hadFragment: false,
+      hadTrailingSlash: false,
+      pathHadUppercase: false,
+      queryHadUppercase: false,
+    }
+  }
+
   let hadCredentials = false
   try {
     const parsed = new URL(value.includes("://") ? value : `wss://${value}`)
@@ -117,20 +160,31 @@ const getRelayInputShape = (value: string) => {
     hadCredentials = /\/\/[^/\s]*@/.test(value)
   }
 
+  const withoutFragment = value.split("#", 1)[0]
+  const queryStart = withoutFragment.indexOf("?")
+  const beforeQuery = queryStart === -1 ? withoutFragment : withoutFragment.slice(0, queryStart)
+  const pathStart = beforeQuery.indexOf("/", beforeQuery.indexOf("://") + 3)
+  const path = pathStart === -1 ? "" : beforeQuery.slice(pathStart)
+  const query = queryStart === -1 ? "" : withoutFragment.slice(queryStart + 1)
+
   return {
     hadProtocol: /^wss?:\/\//i.test(value),
     hadCredentials,
     hadQuery: value.includes("?"),
     hadFragment: value.includes("#"),
     hadTrailingSlash: value.endsWith("/"),
-    hadUppercase: value !== value.toLowerCase(),
+    pathHadUppercase: path !== path.toLowerCase(),
+    queryHadUppercase: query !== query.toLowerCase(),
   }
 }
 
-const emitRelayNormalization = (event: RelayNormalizationObservation) => {
+const emitRelayNormalization = (
+  event: RelayNormalizationObservation,
+  context: RelayNormalizationContext,
+) => {
   for (const listener of relayNormalizationListeners) {
     try {
-      listener(event)
+      listener(event, context)
     } catch {
       // Diagnostics must never affect relay normalization.
     }
@@ -140,8 +194,9 @@ const emitRelayNormalization = (event: RelayNormalizationObservation) => {
 export const normalizeRelayUrl = (url: string) => {
   if (url === LOCAL_RELAY_URL) return url
 
-  const original = url
+  const original: unknown = url
   const inputShape = getRelayInputShape(original)
+  const inputParts = getRelayParts(original)
 
   try {
     if (typeof url !== "string" || !url) throw new TypeError("Invalid relay URL")
@@ -171,27 +226,63 @@ export const normalizeRelayUrl = (url: string) => {
         ? `/${suffixWithoutFragment}`
         : suffixWithoutFragment
     const normalized = `${parsed.protocol}//${parsed.host}${pathAndQuery}`
-    if (normalized !== original) {
-      emitRelayNormalization({
-        source: "welshman.normalizeRelayUrl",
-        outcome: "normalized",
-        classification: "equivalent-spelling",
-        changed: true,
-        inputShape,
-        inputEndpoint: getSafeRelayEndpoint(original),
-        canonicalEndpoint: getSafeRelayEndpoint(normalized),
-      })
+    if (relayNormalizationListeners.size > 0) {
+      const canonicalParts = getRelayParts(normalized)
+      const changed = normalized !== original
+      const originalScheme = schemeMatch?.[1]
+      const reasons = {
+        schemeCaseChanged: Boolean(
+          originalScheme && originalScheme !== parsed.protocol.slice(0, -1),
+        ),
+        hostnameCaseChanged:
+          inputParts.hostname !== undefined && inputParts.hostname !== parsed.hostname,
+        defaultPortRemoved:
+          (parsed.protocol === "wss:" && inputParts.explicitPort === "443") ||
+          (parsed.protocol === "ws:" && inputParts.explicitPort === "80"),
+        rootSlashAdded: !rawSuffix || rawSuffix.startsWith("?") || rawSuffix.startsWith("#"),
+        fragmentRemoved: inputShape.hadFragment,
+      }
+      emitRelayNormalization(
+        {
+          source: "welshman.normalizeRelayUrl",
+          outcome: changed ? "normalized" : "unchanged",
+          classification: changed ? "equivalent-spelling" : "canonical",
+          changed,
+          inputType: typeof original,
+          inputShape,
+          reasons,
+          inputEndpoint: inputParts.endpoint,
+          canonicalEndpoint: canonicalParts.endpoint,
+        },
+        {
+          inputPath: inputParts.path,
+          canonicalPath: canonicalParts.path,
+        },
+      )
     }
     return normalized
   } catch (error) {
-    emitRelayNormalization({
-      source: "welshman.normalizeRelayUrl",
-      outcome: "rejected",
-      classification: "invalid",
-      changed: false,
-      inputShape,
-      inputEndpoint: getSafeRelayEndpoint(original),
-    })
+    if (relayNormalizationListeners.size > 0) {
+      emitRelayNormalization(
+        {
+          source: "welshman.normalizeRelayUrl",
+          outcome: "rejected",
+          classification: "invalid",
+          changed: false,
+          inputType: typeof original,
+          inputShape,
+          reasons: {
+            schemeCaseChanged: false,
+            hostnameCaseChanged: false,
+            defaultPortRemoved: false,
+            rootSlashAdded: false,
+            fragmentRemoved: inputShape.hadFragment,
+          },
+          inputEndpoint: inputParts.endpoint,
+        },
+        {inputPath: inputParts.path},
+      )
+    }
     throw error
   }
 }

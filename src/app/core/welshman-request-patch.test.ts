@@ -15,6 +15,7 @@ import {
   setRequestPolicy,
   socketPolicyCloseInactive,
   subscribeRequestScheduler,
+  subscribeRequestSchedulerMetrics,
   type ClientMessage,
 } from "@welshman/net"
 import type {Filter} from "@welshman/util"
@@ -678,6 +679,8 @@ describe("Welshman request patch", () => {
     const context = {getAdapter: () => new SocketAdapter(socket)}
     const snapshots = vi.fn()
     const unsubscribeSnapshots = subscribeRequestScheduler(snapshots)
+    const metrics = vi.fn()
+    const unsubscribeMetrics = subscribeRequestSchedulerMetrics(metrics)
     const liveController = new AbortController()
     const live = requestOne({
       relay: diagnosticRelay,
@@ -705,11 +708,17 @@ describe("Welshman request patch", () => {
       configuredMaxBackgroundLiveSubscriptions: 1,
       learnedMaxSubscriptions: null,
       effectiveMaxSubscriptions: 1,
+      effectiveMaxLiveSubscriptions: 1,
+      effectiveMaxBackgroundLiveSubscriptions: 1,
+      blockingReasonsByClass: {finite: ["max-subscriptions"]},
+      pausedForMs: 0,
       active: {total: 1, finite: 0, live: 1, criticalLive: 0, backgroundLive: 1},
       queued: {total: 1, finite: 1, live: 0, criticalLive: 0, backgroundLive: 0},
       oldestQueuedAgeMs: 1_500,
       oldestQueuedAgeMsByClass: {finite: 1_500},
       noticeCount: 1,
+      queueStartCount: 1,
+      queueStartDelayTotalMs: 0,
       owners: [
         {
           owner: "extension:test",
@@ -733,8 +742,14 @@ describe("Welshman request patch", () => {
     const started = getRequestSchedulerSnapshots().find(item => item.relay === diagnosticRelay)
     expect(started?.lastQueueStartDelayMs).toBe(1_500)
     expect(started?.maxQueueStartDelayMs).toBe(1_500)
+    expect(started?.queueStartCount).toBe(2)
+    expect(started?.queueStartDelayTotalMs).toBe(1_500)
     expect(started?.active).toMatchObject({total: 1, finite: 1, live: 0})
     expect(snapshots).toHaveBeenCalled()
+    expect(metrics).toHaveBeenCalledWith(expect.objectContaining({type: "notice", overflow: false}))
+    expect(metrics).toHaveBeenCalledWith(
+      expect.objectContaining({type: "queue-start", delayMs: 1_500}),
+    )
 
     const finiteReq = getReqs(send).at(-1)!
     socket.emit(SocketEvent.Receive, [RelayMessageType.Eose, finiteReq[1]], diagnosticRelay)
@@ -761,6 +776,7 @@ describe("Welshman request patch", () => {
     await next
     expect(getRequestSchedulerSnapshots().some(item => item.relay === diagnosticRelay)).toBe(false)
     unsubscribeSnapshots()
+    unsubscribeMetrics()
   })
 
   it("retains a live slot after EOSE and releases it on abort", async () => {
@@ -808,12 +824,20 @@ describe("Welshman request patch", () => {
       [RelayMessageType.Notice, "ERROR: too many concurrent REQs"],
       relay,
     )
+    const paused = getRequestSchedulerSnapshots()[0]
+    expect(paused).toMatchObject({
+      learnedMaxSubscriptions: 2,
+      effectiveMaxSubscriptions: 2,
+      pausedForMs: 250,
+    })
+    expect(Object.values(paused.blockingReasonsByClass).flat()).toContain("paused")
     controllers[0].abort()
     controllers[1].abort()
     expect(getReqs(send)).toHaveLength(3)
 
     await vi.advanceTimersByTimeAsync(250)
     expect(getReqs(send)).toHaveLength(4)
+    expect(getRequestSchedulerSnapshots()[0]?.pausedForMs).toBe(0)
 
     controllers[2].abort()
     controllers[3].abort()

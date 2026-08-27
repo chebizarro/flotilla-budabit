@@ -1,8 +1,8 @@
 import {get, writable} from "svelte/store"
 import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 
-export const DEBUG_DIAGNOSTICS_SCHEMA_VERSION = 1
-export const DEBUG_DIAGNOSTICS_SCHEMA = "budabit-debug-run-v1"
+export const DEBUG_DIAGNOSTICS_SCHEMA_VERSION = 2
+export const DEBUG_DIAGNOSTICS_SCHEMA = "budabit-debug-run-v2"
 export const DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY = "budabit/debug-diagnostics/settings:v1"
 export const DEBUG_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
 export const DEBUG_DIAGNOSTICS_DEFAULT_RELAY = "wss://relay.budabit.club"
@@ -71,7 +71,7 @@ export type DebugDiagnosticsSnapshot = {
 }
 
 export type PreparedDebugDiagnosticsArtifact = {
-  schemaVersion: 1
+  schemaVersion: 2
   filename: string
   encoding: "gzip" | "identity"
   contentType: "application/gzip" | "application/json"
@@ -91,6 +91,7 @@ const SECRET_VALUE_PATTERNS = [
   /nostrconnect:\/\/[^\s"']+/gi,
   /Authorization:\s*(?:Nostr|Bearer)\s+[^\s"']+/gi,
 ]
+const RELAY_ENDPOINT_KEY_PATTERN = /^(relay|relayUrl|inputEndpoint|canonicalEndpoint)$/i
 
 export const defaultDebugDiagnosticsSettings = (): DebugDiagnosticsSettings => ({
   version: 1,
@@ -122,6 +123,16 @@ const sanitizeString = (value: string) => {
   return next
 }
 
+const sanitizeRelayEndpoint = (value: unknown) => {
+  if (typeof value !== "string") return "[invalid-relay]"
+  try {
+    const url = new URL(value)
+    return `${url.protocol}//${url.host}`
+  } catch {
+    return sanitizeString(value)
+  }
+}
+
 export const sanitizeDebugDiagnosticValue = (value: unknown, depth = 0): DebugDiagnosticValue => {
   if (depth >= MAX_DETAIL_DEPTH) return "[max-depth]"
   if (value === null || typeof value === "boolean") return value
@@ -142,7 +153,9 @@ export const sanitizeDebugDiagnosticValue = (value: unknown, depth = 0): DebugDi
     for (const [key, item] of Object.entries(value).slice(0, 200)) {
       result[key] = SECRET_KEY_PATTERN.test(key)
         ? "[redacted]"
-        : sanitizeDebugDiagnosticValue(item, depth + 1)
+        : RELAY_ENDPOINT_KEY_PATTERN.test(key)
+          ? sanitizeRelayEndpoint(item)
+          : sanitizeDebugDiagnosticValue(item, depth + 1)
     }
     return result
   }

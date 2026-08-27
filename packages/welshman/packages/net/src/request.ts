@@ -53,6 +53,17 @@ export type RequestSchedulerOwnerSnapshot = {
   queuedFilters: number
 }
 
+export type RequestSchedulerBlockingReason =
+  | "paused"
+  | "max-subscriptions"
+  | "max-live-subscriptions"
+  | "max-background-live-subscriptions"
+  | "job-policy"
+
+export type RequestSchedulerMetric =
+  | {type: "queue-start"; schedulerId: number; relay: string; delayMs: number}
+  | {type: "notice"; schedulerId: number; relay: string; overflow: boolean}
+
 export type RequestSchedulerSnapshot = {
   schedulerId: number
   relay: string
@@ -61,6 +72,10 @@ export type RequestSchedulerSnapshot = {
   configuredMaxBackgroundLiveSubscriptions: number
   learnedMaxSubscriptions: number | null
   effectiveMaxSubscriptions: number
+  effectiveMaxLiveSubscriptions: number
+  effectiveMaxBackgroundLiveSubscriptions: number
+  blockingReasonsByClass: Record<RequestClass, RequestSchedulerBlockingReason[]>
+  pausedForMs: number
   active: RequestClassCounts
   queued: RequestClassCounts
   oldestQueuedAgeMs: number
@@ -69,6 +84,8 @@ export type RequestSchedulerSnapshot = {
   noticeCount: number
   lastQueueStartDelayMs: number
   maxQueueStartDelayMs: number
+  queueStartCount: number
+  queueStartDelayTotalMs: number
 }
 
 export type RelayRequestPolicy = {
@@ -151,6 +168,8 @@ type SubscriptionScheduler = {
   noticeCount: number
   pausedUntil: number
   queue: SchedulerJob[]
+  queueStartCount: number
+  queueStartDelayTotalMs: number
   relay: string
   resumeTimer?: ReturnType<typeof setTimeout>
 }
@@ -160,6 +179,7 @@ const subscriptionSchedulers = new WeakMap<Socket, SubscriptionScheduler>()
 const trackedSubscriptionSchedulers = new Set<SubscriptionScheduler>()
 
 const schedulerSubscribers = new Set<(snapshots: RequestSchedulerSnapshot[]) => void>()
+const schedulerMetricSubscribers = new Set<(metric: RequestSchedulerMetric) => void>()
 
 let subscriptionSequence = 0
 let schedulerSequence = 0
@@ -222,11 +242,66 @@ const getOwnerSnapshots = (scheduler: SubscriptionScheduler) => {
   return Array.from(owners.values()).sort((a, b) => a.owner.localeCompare(b.owner))
 }
 
+const getJobBlockingReasons = (
+  scheduler: SubscriptionScheduler,
+  job: SchedulerJob,
+  timestamp: number,
+) => {
+  const reasons = new Set<RequestSchedulerBlockingReason>()
+  if (scheduler.pausedUntil > timestamp) reasons.add("paused")
+
+  const totalLimit = Math.min(scheduler.maxSubscriptions, job.maxSubscriptions)
+  if (scheduler.active.total + job.weight > totalLimit) {
+    reasons.add(
+      job.maxSubscriptions < scheduler.maxSubscriptions ? "job-policy" : "max-subscriptions",
+    )
+  }
+
+  if (job.requestClass !== "finite") {
+    const liveLimit = Math.min(scheduler.maxLiveSubscriptions, job.maxLiveSubscriptions)
+    if (scheduler.active.live + job.weight > liveLimit) {
+      reasons.add(
+        job.maxLiveSubscriptions < scheduler.maxLiveSubscriptions
+          ? "job-policy"
+          : "max-live-subscriptions",
+      )
+    }
+  }
+
+  if (job.requestClass === "background-live") {
+    const backgroundLimit = Math.min(
+      scheduler.maxBackgroundLiveSubscriptions,
+      job.maxBackgroundLiveSubscriptions,
+    )
+    if (scheduler.active.backgroundLive + job.weight > backgroundLimit) {
+      reasons.add(
+        job.maxBackgroundLiveSubscriptions < scheduler.maxBackgroundLiveSubscriptions
+          ? "job-policy"
+          : "max-background-live-subscriptions",
+      )
+    }
+  }
+
+  return Array.from(reasons)
+}
+
 const getSchedulerSnapshot = (
   scheduler: SubscriptionScheduler,
   timestamp: number,
 ): RequestSchedulerSnapshot => {
   const queuedJobs = scheduler.queue.filter(job => !job.cancelled)
+  const blockingReasonsByClass = Object.fromEntries(
+    (["finite", "critical-live", "background-live"] as const).map(requestClass => [
+      requestClass,
+      Array.from(
+        new Set(
+          queuedJobs
+            .filter(job => job.requestClass === requestClass)
+            .flatMap(job => getJobBlockingReasons(scheduler, job, timestamp)),
+        ),
+      ).sort(),
+    ]),
+  ) as Record<RequestClass, RequestSchedulerBlockingReason[]>
 
   const getOldestAge = (requestClass: RequestClass) => {
     const queuedAt = queuedJobs
@@ -246,6 +321,17 @@ const getSchedulerSnapshot = (
       ? scheduler.learnedMaxSubscriptions
       : null,
     effectiveMaxSubscriptions: scheduler.maxSubscriptions,
+    effectiveMaxLiveSubscriptions: Math.min(
+      scheduler.maxSubscriptions,
+      scheduler.maxLiveSubscriptions,
+    ),
+    effectiveMaxBackgroundLiveSubscriptions: Math.min(
+      scheduler.maxSubscriptions,
+      scheduler.maxLiveSubscriptions,
+      scheduler.maxBackgroundLiveSubscriptions,
+    ),
+    blockingReasonsByClass,
+    pausedForMs: Math.max(0, scheduler.pausedUntil - timestamp),
     active: getClassCounts(scheduler.activeJobs),
     queued: getClassCounts(queuedJobs),
     oldestQueuedAgeMs:
@@ -261,6 +347,8 @@ const getSchedulerSnapshot = (
     noticeCount: scheduler.noticeCount,
     lastQueueStartDelayMs: scheduler.lastQueueStartDelayMs,
     maxQueueStartDelayMs: scheduler.maxQueueStartDelayMs,
+    queueStartCount: scheduler.queueStartCount,
+    queueStartDelayTotalMs: scheduler.queueStartDelayTotalMs,
   }
 }
 
@@ -297,27 +385,25 @@ export const subscribeRequestScheduler = (
   }
 }
 
-const canStartJob = (scheduler: SubscriptionScheduler, job: SchedulerJob) => {
-  if (
-    scheduler.active.total + job.weight >
-    Math.min(scheduler.maxSubscriptions, job.maxSubscriptions)
-  )
-    return false
-
-  if (job.requestClass === "finite") return true
-
-  if (
-    scheduler.active.live + job.weight >
-    Math.min(scheduler.maxLiveSubscriptions, job.maxLiveSubscriptions)
-  )
-    return false
-
-  return (
-    job.requestClass !== "background-live" ||
-    scheduler.active.backgroundLive + job.weight <=
-      Math.min(scheduler.maxBackgroundLiveSubscriptions, job.maxBackgroundLiveSubscriptions)
-  )
+export const subscribeRequestSchedulerMetrics = (
+  listener: (metric: RequestSchedulerMetric) => void,
+) => {
+  schedulerMetricSubscribers.add(listener)
+  return () => schedulerMetricSubscribers.delete(listener)
 }
+
+const emitSchedulerMetric = (metric: RequestSchedulerMetric) => {
+  schedulerMetricSubscribers.forEach(listener => {
+    try {
+      listener(metric)
+    } catch {
+      // Diagnostics must not interfere with request scheduling.
+    }
+  })
+}
+
+const canStartJob = (scheduler: SubscriptionScheduler, job: SchedulerJob, timestamp: number) =>
+  getJobBlockingReasons(scheduler, job, timestamp).length === 0
 
 const updateTrackedScheduler = (scheduler: SubscriptionScheduler) => {
   if (scheduler.active.total > 0 || scheduler.queue.some(job => !job.cancelled)) {
@@ -377,7 +463,7 @@ const drainScheduler = (scheduler: SubscriptionScheduler) => {
   )
 
   while (scheduler.queue.length > 0) {
-    const index = scheduler.queue.findIndex(job => canStartJob(scheduler, job))
+    const index = scheduler.queue.findIndex(job => canStartJob(scheduler, job, timestamp))
 
     if (index < 0) break
 
@@ -389,6 +475,14 @@ const drainScheduler = (scheduler: SubscriptionScheduler) => {
 
     scheduler.lastQueueStartDelayMs = queueDelay
     scheduler.maxQueueStartDelayMs = Math.max(scheduler.maxQueueStartDelayMs, queueDelay)
+    scheduler.queueStartCount += 1
+    scheduler.queueStartDelayTotalMs += queueDelay
+    emitSchedulerMetric({
+      type: "queue-start",
+      schedulerId: scheduler.schedulerId,
+      relay: scheduler.relay,
+      delayMs: queueDelay,
+    })
     scheduler.activeJobs.add(job)
     scheduler.active.total += job.weight
 
@@ -434,6 +528,8 @@ const getSubscriptionScheduler = (socket: Socket, policy: SchedulerPolicy) => {
       noticeCount: 0,
       pausedUntil: 0,
       queue: [],
+      queueStartCount: 0,
+      queueStartDelayTotalMs: 0,
       relay: socket.url,
     }
 
@@ -444,7 +540,12 @@ const getSubscriptionScheduler = (socket: Socket, policy: SchedulerPolicy) => {
     on(socket, SocketEvent.Receive, (message: RelayMessage) => {
       if (isRelayNotice(message)) {
         created.noticeCount += 1
-        emitSchedulerState()
+        emitSchedulerMetric({
+          type: "notice",
+          schedulerId: created.schedulerId,
+          relay: created.relay,
+          overflow: /too many concurrent reqs/i.test(message[1] || ""),
+        })
       }
 
       if (isRelayNotice(message) && /too many concurrent reqs/i.test(message[1] || "")) {
@@ -459,6 +560,8 @@ const getSubscriptionScheduler = (socket: Socket, policy: SchedulerPolicy) => {
         created.pausedUntil = Date.now() + 250
 
         drainScheduler(created)
+      } else if (isRelayNotice(message)) {
+        emitSchedulerState()
       }
     })
 

@@ -1,5 +1,6 @@
 import {get} from "svelte/store"
 import {beforeEach, describe, expect, it, vi} from "vitest"
+import type {RequestSchedulerMetric} from "@welshman/net"
 import {
   activePerformanceDiagnosticsRun,
   armPerformanceDiagnosticsCapture,
@@ -183,7 +184,7 @@ describe("performance diagnostics", () => {
 
   it("redacts hard secret patterns while retaining diagnostic structure", () => {
     const sanitized = sanitizePerformanceDiagnosticValue({
-      relay: "wss://relay.example/path",
+      relay: "wss://relay.example",
       resource: "https://user:pass@example.test/app.js?token=secret#fragment",
       authorization: "Nostr signed-value",
       nested: {
@@ -193,7 +194,7 @@ describe("performance diagnostics", () => {
     })
 
     expect(sanitized).toEqual({
-      relay: "wss://relay.example/path",
+      relay: "wss://relay.example",
       resource: "https://example.test/app.js?[redacted]",
       authorization: "[redacted]",
       nested: {
@@ -300,7 +301,28 @@ describe("performance diagnostics", () => {
       route: "/git",
       clock: {now: () => 100, wallTime: () => 1_000},
     })
-    const stopObservers = startPerformanceDiagnosticsObservers(runId)
+    const readScheduler = vi.fn(() => [])
+    let schedulerMetricListener: ((metric: RequestSchedulerMetric) => void) | undefined
+    const stopSchedulerMetrics = vi.fn()
+    const stopObservers = startPerformanceDiagnosticsObservers(runId, {
+      readScheduler,
+      subscribeSchedulerMetrics: listener => {
+        schedulerMetricListener = listener
+        return stopSchedulerMetrics
+      },
+    })
+    schedulerMetricListener?.({
+      type: "notice",
+      schedulerId: 1,
+      relay: "wss://relay.example/",
+      overflow: false,
+    })
+    schedulerMetricListener?.({
+      type: "queue-start",
+      schedulerId: 1,
+      relay: "wss://relay.example/",
+      delayMs: 25,
+    })
     instances[0].queued.push(
       {name: "old", entryType: "longtask", startTime: 90, duration: 20, toJSON: () => ({})},
       {name: "new", entryType: "longtask", startTime: 110, duration: 30, toJSON: () => ({})},
@@ -310,6 +332,26 @@ describe("performance diagnostics", () => {
 
     expect(instances[0].takeRecords).toHaveBeenCalledOnce()
     expect(instances[0].disconnect).toHaveBeenCalledOnce()
+    expect(readScheduler).toHaveBeenCalledTimes(2)
+    expect(stopSchedulerMetrics).toHaveBeenCalledOnce()
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.scheduler).toEqual([
+      expect.objectContaining({
+        detail: expect.objectContaining({
+          capture: expect.objectContaining({noticeCount: 0, queueStartCount: 0}),
+        }),
+      }),
+      expect.objectContaining({
+        detail: expect.objectContaining({
+          capture: expect.objectContaining({
+            noticeCount: 1,
+            queueStartCount: 1,
+            queueStartDelayTotalMs: 25,
+            averageQueueStartDelayMs: 25,
+            maxQueueStartDelayMs: 25,
+          }),
+        }),
+      }),
+    ])
     expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.longTasks).toEqual([
       expect.objectContaining({
         at: 110,

@@ -11,7 +11,7 @@ import {
 import type {PreparedPerformanceDiagnosticsArtifact} from "./performance-diagnostics"
 
 const artifact: PreparedPerformanceDiagnosticsArtifact = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   filename: "diagnostics.json.gz",
   encoding: "gzip",
   contentType: "application/gzip",

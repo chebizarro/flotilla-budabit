@@ -1,7 +1,7 @@
 import {writable} from "svelte/store"
 import {afterEach, describe, expect, it, vi} from "vitest"
 import type {RequestSchedulerSnapshot} from "@welshman/net"
-import type {RelayNormalizationObservation} from "@welshman/util"
+import type {RelayNormalizationContext, RelayNormalizationObservation} from "@welshman/util"
 import {defaultDebugDiagnosticsSettings} from "./debug-diagnostics"
 import {
   aggregateRelayDiagnostics,
@@ -19,6 +19,10 @@ const makeSnapshot = (
   configuredMaxBackgroundLiveSubscriptions: 18,
   learnedMaxSubscriptions: null,
   effectiveMaxSubscriptions: 28,
+  effectiveMaxLiveSubscriptions: 24,
+  effectiveMaxBackgroundLiveSubscriptions: 18,
+  blockingReasonsByClass: {finite: [], "critical-live": [], "background-live": []},
+  pausedForMs: 0,
   active: {total: 0, finite: 0, live: 0, criticalLive: 0, backgroundLive: 0},
   queued: {total: 0, finite: 0, live: 0, criticalLive: 0, backgroundLive: 0},
   oldestQueuedAgeMs: 0,
@@ -27,6 +31,8 @@ const makeSnapshot = (
   noticeCount: 0,
   lastQueueStartDelayMs: 0,
   maxQueueStartDelayMs: 0,
+  queueStartCount: 0,
+  queueStartDelayTotalMs: 0,
   ...overrides,
 })
 
@@ -75,6 +81,9 @@ describe("relay diagnostics", () => {
       expect.objectContaining({
         relay: "wss://relay.example/",
         schedulerId: 0,
+        socketCount: 2,
+        configuredCapacityTotal: 56,
+        learnedCapacity: {knownCount: 1, unknownCount: 1, min: 20, max: 20, total: 20},
         configuredMaxSubscriptions: 56,
         effectiveMaxSubscriptions: 56,
         learnedMaxSubscriptions: null,
@@ -138,6 +147,11 @@ describe("relay diagnostics", () => {
         "critical-live": 6_000,
         "background-live": 0,
       },
+      blockingReasonsByClass: {
+        finite: ["max-subscriptions"],
+        "critical-live": ["max-live-subscriptions"],
+        "background-live": [],
+      },
       owners: [
         {
           owner: "community-core",
@@ -187,6 +201,34 @@ describe("relay diagnostics", () => {
     expect(warn).not.toHaveBeenCalled()
   })
 
+  it("warns for class-limited queues but not adaptive pauses alone", () => {
+    const warn = vi.fn()
+    const monitor = createRelayDiagnosticMonitor({enabled: true, warn})
+
+    monitor.inspect([
+      makeSnapshot({
+        active: {total: 18, finite: 0, live: 18, criticalLive: 0, backgroundLive: 18},
+        queued: {total: 1, finite: 0, live: 1, criticalLive: 0, backgroundLive: 1},
+        blockingReasonsByClass: {
+          finite: [],
+          "critical-live": [],
+          "background-live": ["max-background-live-subscriptions"],
+        },
+      }),
+    ])
+    expect(warn.mock.calls.map(([, warning]) => warning.kind)).toContain("saturation")
+
+    warn.mockClear()
+    monitor.inspect([
+      makeSnapshot({
+        queued: {total: 1, finite: 1, live: 0, criticalLive: 0, backgroundLive: 0},
+        blockingReasonsByClass: {finite: ["paused"], "critical-live": [], "background-live": []},
+        pausedForMs: 200,
+      }),
+    ])
+    expect(warn).not.toHaveBeenCalled()
+  })
+
   it("bounds warnings emitted by one inspection", () => {
     const warn = vi.fn()
     const monitor = createRelayDiagnosticMonitor({
@@ -199,6 +241,11 @@ describe("relay diagnostics", () => {
       active: {total: 28, finite: 10, live: 18, criticalLive: 0, backgroundLive: 18},
       queued: {total: 1, finite: 1, live: 0, criticalLive: 0, backgroundLive: 0},
       oldestQueuedAgeMsByClass: {finite: 10, "critical-live": 0, "background-live": 0},
+      blockingReasonsByClass: {
+        finite: ["max-subscriptions"],
+        "critical-live": [],
+        "background-live": [],
+      },
     })
 
     monitor.inspect([snapshot])
@@ -206,12 +253,19 @@ describe("relay diagnostics", () => {
     expect(warn).toHaveBeenCalledTimes(1)
   })
 
-  it("installs category-controlled normalization and scheduler recording", () => {
+  it("gates and aggregates normalization and scheduler recording by active capture", async () => {
     vi.useFakeTimers()
     const settings = writable(defaultDebugDiagnosticsSettings())
+    let currentSettings = defaultDebugDiagnosticsSettings()
+    settings.subscribe(value => (currentSettings = value))
+    const active = writable(false)
+    const revision = writable(0)
+    const overview = {active: false, captureId: ""}
     const record = vi.fn(() => true)
     const read = vi.fn(() => [makeSnapshot()])
-    let normalizationListener: ((event: RelayNormalizationObservation) => void) | undefined
+    let normalizationListener:
+      | ((event: RelayNormalizationObservation, context: RelayNormalizationContext) => void)
+      | undefined
     const unsubscribeNormalization = vi.fn()
     const subscribeNormalization = vi.fn(listener => {
       normalizationListener = listener
@@ -221,9 +275,16 @@ describe("relay diagnostics", () => {
       enabled: true,
       pollIntervalMs: 100,
       settings,
+      active,
+      revision,
+      getOverview: () => overview,
+      isCategoryEnabled: category => currentSettings.categories[category],
       read,
       record,
       subscribeNormalization,
+      subscribeMetrics: () => () => {},
+      createSalt: () => new Uint8Array([1]),
+      hashPath: async (_salt, path) => `hash:${path}`,
     })
 
     vi.advanceTimersByTime(200)
@@ -234,27 +295,48 @@ describe("relay diagnostics", () => {
       ...current,
       categories: {...current.categories, "relay-normalization": true},
     }))
+    expect(subscribeNormalization).not.toHaveBeenCalled()
+    overview.active = true
+    overview.captureId = "capture-1"
+    active.set(true)
     expect(subscribeNormalization).toHaveBeenCalledOnce()
-    normalizationListener?.({
-      source: "welshman.normalizeRelayUrl",
-      outcome: "normalized",
-      classification: "equivalent-spelling",
-      changed: true,
-      inputShape: {
-        hadProtocol: false,
-        hadCredentials: false,
-        hadQuery: false,
-        hadFragment: false,
-        hadTrailingSlash: false,
-        hadUppercase: false,
+    normalizationListener?.(
+      {
+        source: "welshman.normalizeRelayUrl",
+        outcome: "normalized",
+        classification: "equivalent-spelling",
+        changed: true,
+        inputType: "string",
+        inputShape: {
+          hadProtocol: false,
+          hadCredentials: false,
+          hadQuery: false,
+          hadFragment: false,
+          hadTrailingSlash: false,
+          pathHadUppercase: false,
+          queryHadUppercase: false,
+        },
+        reasons: {
+          schemeCaseChanged: false,
+          hostnameCaseChanged: false,
+          defaultPortRemoved: false,
+          rootSlashAdded: true,
+          fragmentRemoved: false,
+        },
+        inputEndpoint: "wss://relay.example",
+        canonicalEndpoint: "wss://relay.example",
       },
-      inputEndpoint: "wss://relay.example/",
-      canonicalEndpoint: "wss://relay.example/",
-    })
+      {inputPath: "", canonicalPath: "/"},
+    )
+    expect(record).not.toHaveBeenCalledWith("relay-normalization", "normalized", expect.anything())
+    await vi.advanceTimersByTimeAsync(100)
     expect(record).toHaveBeenCalledWith(
       "relay-normalization",
-      "normalized",
-      expect.objectContaining({classification: "equivalent-spelling"}),
+      "aggregate",
+      expect.objectContaining({
+        calls: {total: 1, unchanged: 0, normalized: 1, rejected: 0},
+        samples: [expect.objectContaining({endpoint: "wss://relay.example", pathHash: "hash:"})],
+      }),
     )
 
     settings.update(current => ({
@@ -262,10 +344,14 @@ describe("relay diagnostics", () => {
       categories: {...current.categories, "relay-scheduler": true},
     }))
     vi.advanceTimersByTime(250)
-    expect(read).toHaveBeenCalledTimes(2)
-    expect(record).toHaveBeenCalledWith("relay-scheduler", "snapshot", {
-      snapshots: [makeSnapshot({schedulerId: 0})],
-    })
+    expect(read).toHaveBeenCalledTimes(3)
+    expect(record).toHaveBeenCalledWith(
+      "relay-scheduler",
+      "heartbeat",
+      expect.objectContaining({
+        snapshots: [expect.objectContaining({schedulerId: 0, socketCount: 1})],
+      }),
+    )
 
     settings.update(current => ({
       ...current,
@@ -274,7 +360,7 @@ describe("relay diagnostics", () => {
     expect(unsubscribeNormalization).toHaveBeenCalledOnce()
     uninstall()
     vi.advanceTimersByTime(200)
-    expect(read).toHaveBeenCalledTimes(2)
+    expect(read).toHaveBeenCalledTimes(3)
   })
 
   it("keeps disabled and failing debug installers isolated", () => {
@@ -302,11 +388,16 @@ describe("relay diagnostics", () => {
       enabled: true,
       pollIntervalMs: 100,
       settings,
+      active: writable(true),
+      revision: writable(0),
+      getOverview: () => ({active: true, captureId: "capture"}),
+      isCategoryEnabled: category => category === "relay-scheduler",
       read,
       record,
+      subscribeMetrics: () => () => {},
     })
     expect(() => vi.advanceTimersByTime(100)).not.toThrow()
-    expect(read).toHaveBeenCalledOnce()
+    expect(read).toHaveBeenCalledTimes(2)
     expect(() => uninstall()).not.toThrow()
     expect(() => uninstall()).not.toThrow()
   })

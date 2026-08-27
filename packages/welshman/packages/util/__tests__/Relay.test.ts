@@ -71,31 +71,78 @@ describe("relay normalization observations", () => {
     expect(normalizeRelayUrl("WSS://Relay.Example/Path?token=secret#private")).toBe(
       "wss://relay.example/Path?token=secret",
     )
-    expect(listener).toHaveBeenCalledWith({
-      source: "welshman.normalizeRelayUrl",
-      outcome: "normalized",
-      classification: "equivalent-spelling",
-      changed: true,
-      inputShape: {
-        hadProtocol: true,
-        hadCredentials: false,
-        hadQuery: true,
-        hadFragment: true,
-        hadTrailingSlash: false,
-        hadUppercase: true,
+    expect(listener).toHaveBeenCalledWith(
+      {
+        source: "welshman.normalizeRelayUrl",
+        outcome: "normalized",
+        classification: "equivalent-spelling",
+        changed: true,
+        inputType: "string",
+        inputShape: {
+          hadProtocol: true,
+          hadCredentials: false,
+          hadQuery: true,
+          hadFragment: true,
+          hadTrailingSlash: false,
+          pathHadUppercase: true,
+          queryHadUppercase: false,
+        },
+        reasons: {
+          schemeCaseChanged: true,
+          hostnameCaseChanged: true,
+          defaultPortRemoved: false,
+          rootSlashAdded: false,
+          fragmentRemoved: true,
+        },
+        inputEndpoint: "wss://relay.example",
+        canonicalEndpoint: "wss://relay.example",
       },
-      inputEndpoint: "wss://relay.example/Path",
-      canonicalEndpoint: "wss://relay.example/Path",
-    })
+      {inputPath: "/Path", canonicalPath: "/Path"},
+    )
     expect(JSON.stringify(listener.mock.calls)).not.toContain("secret")
   })
 
-  it("does not report unchanged routine calls", () => {
+  it("reports unchanged routine calls as the denominator", () => {
     const listener = vi.fn()
     unsubscribers.push(subscribeRelayNormalization(listener))
 
     expect(normalizeRelayUrl("wss://relay.example/")).toBe("wss://relay.example/")
-    expect(listener).not.toHaveBeenCalled()
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({outcome: "unchanged", classification: "canonical", changed: false}),
+      {inputPath: "/", canonicalPath: "/"},
+    )
+  })
+
+  it("separates authority normalization reasons from significant path and query case", () => {
+    const listener = vi.fn()
+    unsubscribers.push(subscribeRelayNormalization(listener))
+
+    normalizeRelayUrl("wss://relay.example/GRASP?token=AbC")
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "unchanged",
+        inputShape: expect.objectContaining({pathHadUppercase: true, queryHadUppercase: true}),
+        reasons: {
+          schemeCaseChanged: false,
+          hostnameCaseChanged: false,
+          defaultPortRemoved: false,
+          rootSlashAdded: false,
+          fragmentRemoved: false,
+        },
+      }),
+      expect.anything(),
+    )
+  })
+
+  it("safely reports non-string runtime inputs", () => {
+    const listener = vi.fn()
+    unsubscribers.push(subscribeRelayNormalization(listener))
+
+    expect(() => normalizeRelayUrl(undefined as unknown as string)).toThrow()
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({outcome: "rejected", inputType: "undefined"}),
+      {inputPath: ""},
+    )
   })
 
   it("isolates listeners and unsubscribes without changing normalization", () => {

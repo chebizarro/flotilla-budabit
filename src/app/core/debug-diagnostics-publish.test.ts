@@ -10,7 +10,7 @@ import {
 } from "./debug-diagnostics-publish"
 
 const artifact: PreparedDebugDiagnosticsArtifact = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   filename: "budabit-debug-run-1.json.gz",
   encoding: "gzip",
   contentType: "application/gzip",
