@@ -474,6 +474,27 @@ describe("ExtensionBridge", () => {
     expect(response.result.successCount).toBe(2)
   })
 
+  it("redacts relay queries from publication logs and responses", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const relay = "wss://relay.example.com/GRASP?token=AbC%2F123"
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined)
+    mocks.publishThunk.mockReturnValue({
+      complete: Promise.resolve(),
+      results: {[relay]: {status: "success"}},
+      event: {id: "event-id"},
+    })
+    const extension = makeExtension({widget: {permissions: ["nostr:publish"]}})
+    const bridge = new ExtensionBridge(extension as any)
+
+    const response = await sendBridgeRequest(bridge, extension, "nostr:publish", {
+      event: {kind: 30311, created_at: 1, content: "", tags: []},
+      relays: [relay],
+    })
+
+    expect(response.result.relays).toEqual(["wss://relay.example.com/GRASP"])
+    expect(JSON.stringify(log.mock.calls)).not.toContain("AbC%2F123")
+  })
+
   it("rejects community-scoped events from generic nostr publishing", async () => {
     const {ExtensionBridge} = await import("./bridge")
     const extension = makeExtension({widget: {permissions: ["nostr:publish"]}})
@@ -3137,5 +3158,22 @@ describe("ExtensionBridge", () => {
       },
       extension.origin,
     )
+  })
+
+  it("does not log or return relay query credentials", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const relay = "wss://relay.example.com/GRASP?token=AbC%2F123"
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined)
+    mocks.load.mockResolvedValue([])
+    const extension = makeExtension({widget: {permissions: ["nostr:query"]}})
+    const bridge = new ExtensionBridge(extension as any)
+
+    await sendBridgeRequest(bridge, extension, "nostr:query", {
+      relays: [relay],
+      filter: {kinds: [30301], "#d": ["widget-1"], limit: 1},
+    })
+
+    expect(JSON.stringify(log.mock.calls)).not.toContain("AbC%2F123")
+    expect(mocks.load).toHaveBeenCalledWith(expect.objectContaining({relays: [relay]}))
   })
 })

@@ -89,10 +89,12 @@ export class Tracker extends Emitter {
   }
 
   load = (relaysById: Tracker["relaysById"]) => {
+    const entries = Array.from(relaysById, ([id, relays]) => [id, Array.from(relays)] as const)
+
     this.relaysById.clear()
     this.idsByRelay.clear()
 
-    for (const [id, relays] of relaysById.entries()) {
+    for (const [id, relays] of entries) {
       for (const relay of relays) {
         const key = getRelayKey(relay)
         if (!key) continue
@@ -106,9 +108,11 @@ export class Tracker extends Emitter {
   }
 
   clear = () => {
+    const eventIds = Array.from(this.relaysById.keys())
+
     this.relaysById.clear()
     this.idsByRelay.clear()
 
-    this.emit("clear")
+    this.emit("clear", eventIds)
   }
 }

@@ -6,6 +6,7 @@ import {
   eventsAdapter,
   mergePersistedEvents,
   mergePersistedRelayProvenance,
+  migratePersistedRelayRecords,
   trackerAdapter,
   type TrackerItem,
 } from "./storage"
@@ -118,6 +119,17 @@ describe("storage hydration", () => {
     )
   })
 
+  it("migrates relay-keyed records and prefers an existing canonical row", () => {
+    const migrated = migratePersistedRelayRecords([
+      {url: "WSS://RELAY.EXAMPLE", name: "legacy"},
+      {url: "wss://relay.example/", name: "canonical"},
+      {url: "invalid", name: "invalid"},
+    ])
+
+    expect(migrated.records).toEqual([{url: "wss://relay.example/", name: "canonical"}])
+    expect(migrated.staleKeys).toEqual(["WSS://RELAY.EXAMPLE", "invalid"])
+  })
+
   it("loads persisted provenance as one tracker update", () => {
     const load = vi.spyOn(tracker, "load")
 
@@ -165,6 +177,55 @@ describe("storage hydration", () => {
       expect(table.bulkPut).toHaveBeenCalledWith([{id: event.id, relays: ["wss://repo.example/"]}])
       expect(table.bulkDelete).toHaveBeenCalledWith(["invalid-only"])
       expect(event.id).toBe("9".repeat(64))
+    } finally {
+      stop()
+    }
+  })
+
+  it("writes migrated provenance even when the event is not currently loaded", async () => {
+    const id = "8".repeat(64)
+    const table = makeTable<TrackerItem>([{id, relays: ["WSS://REPO.EXAMPLE"]}])
+
+    const stop = await trackerAdapter.init(table)
+
+    try {
+      expect(table.bulkPut).toHaveBeenCalledWith([{id, relays: ["wss://repo.example/"]}])
+    } finally {
+      stop()
+    }
+  })
+
+  it("updates persisted provenance when one relay is removed", async () => {
+    const event = makeEvent({id: "7".repeat(64), createdAt: 30, content: "profile"})
+    const table = makeTable<TrackerItem>()
+    repository.publish(event)
+    tracker.addRelay(event.id, "wss://one.example")
+    tracker.addRelay(event.id, "wss://two.example")
+    const stop = await trackerAdapter.init(table)
+    vi.mocked(table.bulkPut).mockClear()
+
+    try {
+      tracker.removeRelay(event.id, "wss://one.example")
+      await vi.waitFor(() =>
+        expect(table.bulkPut).toHaveBeenCalledWith([
+          {id: event.id, relays: ["wss://two.example/"]},
+        ]),
+      )
+      expect(table.bulkDelete).not.toHaveBeenCalledWith([event.id])
+    } finally {
+      stop()
+    }
+  })
+
+  it("deletes persisted provenance when the tracker is cleared", async () => {
+    const id = "6".repeat(64)
+    tracker.addRelay(id, "wss://one.example")
+    const table = makeTable<TrackerItem>()
+    const stop = await trackerAdapter.init(table)
+
+    try {
+      tracker.clear()
+      await vi.waitFor(() => expect(table.bulkDelete).toHaveBeenCalledWith([id]))
     } finally {
       stop()
     }

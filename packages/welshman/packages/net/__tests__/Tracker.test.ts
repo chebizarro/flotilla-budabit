@@ -144,6 +144,16 @@ describe("Tracker", () => {
 
       expect(updateSpy).toHaveBeenCalled()
     })
+
+    it("can rebuild from its own public map", () => {
+      tracker.addRelay("event1", relay1)
+      tracker.addRelay("event1", relay2)
+
+      tracker.load(tracker.relaysById)
+
+      expect(tracker.getRelays("event1")).toEqual(new Set([relay1, relay2]))
+      expect(tracker.getIds(relay1)).toEqual(new Set(["event1"]))
+    })
   })
 
   describe("clear", () => {

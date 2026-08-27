@@ -174,10 +174,14 @@ export function buildRemoteTargetOptions(params: {
   graspRelayUrls.forEach((relayUrl, index) => {
     const normalized = normalizeRelayUrl(relayUrl);
     if (!normalized) return;
+    const displayUrl = normalized
+      .replace(/^wss?:\/\//, "")
+      .split("?", 1)[0]
+      .replace(/\/$/, "");
 
     targetMap.set(`grasp:${normalized}`, {
       id: `grasp:${normalized}`,
-      label: `GRASP (${normalized.replace(/^wss?:\/\//, "")})`,
+      label: `GRASP (${displayUrl})`,
       provider: "grasp",
       relayUrl: normalized,
       status: "checking",

@@ -23,11 +23,22 @@ describe("remote target helpers", () => {
       expect.objectContaining({ id: "git:github.com", provider: "github", status: "checking" }),
       expect.objectContaining({ id: "git:gitlab.com", provider: "gitlab", status: "checking" }),
       expect.objectContaining({
-        id: "grasp:wss://relay.example",
+        id: "grasp:wss://relay.example/",
         provider: "grasp",
         status: "checking",
       }),
     ]);
+  });
+
+  it("does not expose GRASP relay queries in visible labels", () => {
+    const [target] = buildRemoteTargetOptions({
+      tokenList: [],
+      graspRelayUrls: ["wss://relay.example/GRASP?token=AbC%2F123"],
+    });
+
+    expect(target.id).toContain("?token=AbC%2F123");
+    expect(target.label).toBe("GRASP (relay.example/GRASP)");
+    expect(target.label).not.toContain("token");
   });
 
   it("defaults to all ready GRASP targets before falling back to git targets", () => {

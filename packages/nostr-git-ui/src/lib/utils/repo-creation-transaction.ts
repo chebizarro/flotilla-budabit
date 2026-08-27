@@ -237,6 +237,25 @@ function sanitizeUrl(value: string | undefined, secrets: Iterable<string>): stri
   }
 }
 
+const SENSITIVE_QUERY_KEY = /token|auth|password|secret|api[-_]?key/i;
+
+function persistableRelayUrl(value: string, secrets: Iterable<string> = []): string {
+  const url = new URL(value);
+  if (
+    url.username ||
+    url.password ||
+    Array.from(url.searchParams.keys()).some((key) => SENSITIVE_QUERY_KEY.test(key))
+  ) {
+    throw new Error("Relay URLs used for repository recovery cannot contain credentials");
+  }
+  for (const secret of secrets) {
+    if (secret && (value.includes(secret) || value.includes(encodeURIComponent(secret)))) {
+      throw new Error("Relay URLs used for repository recovery cannot contain credentials");
+    }
+  }
+  return relayUrlKey(value);
+}
+
 function sanitizePersistedValue(value: unknown, secrets: Iterable<string>, key = ""): unknown {
   if (/token|password|secret|authorization|api[-_]?key/i.test(key)) return "[REDACTED]";
   if (typeof value === "string") {
@@ -312,7 +331,7 @@ function sanitizeTargets(
         label,
         provider,
         ...(host ? { host } : {}),
-        ...(relayUrl ? { relayUrl: sanitizeUrl(relayUrl, secrets) } : {}),
+        ...(relayUrl ? { relayUrl: persistableRelayUrl(relayUrl, secrets) } : {}),
         stage: existing?.stage || (remoteUrl ? "created" : "planned"),
         ...(remoteUrl ? { remoteUrl } : {}),
         ...(webUrl ? { webUrl } : {}),
@@ -371,7 +390,7 @@ function sanitizeResults(
       ...(outcome ? { outcome } : {}),
       ...(error ? { error: redactSecrets(error, secrets) } : {}),
       ...(cleanup ? { cleanup: sanitizeCleanup(cleanup, secrets) } : {}),
-      ...(relayUrl ? { relayUrl: sanitizeUrl(relayUrl, secrets) } : {}),
+      ...(relayUrl ? { relayUrl: persistableRelayUrl(relayUrl, secrets) } : {}),
       ...(pushedRefs ? { pushedRefs: [...pushedRefs] } : {}),
       ...(failedRefs
         ? {
@@ -457,9 +476,7 @@ export class RepoCreationTransactionJournal {
       ...(params.repositoryRelayUrls
         ? {
             repositoryRelayUrls: sanitizeRelays(
-              params.repositoryRelayUrls
-                .map((relay) => sanitizeUrl(relay, []))
-                .filter((relay): relay is string => Boolean(relay))
+              params.repositoryRelayUrls.map((relay) => persistableRelayUrl(relay))
             ),
           }
         : {}),
@@ -612,6 +629,9 @@ export class RepoCreationTransactionJournal {
     const error = this.#sanitizeError(checkpoint.error);
     const remoteUrl = sanitizeUrl(checkpoint.remoteUrl || target.remoteUrl, this.#secrets);
     const webUrl = sanitizeUrl(checkpoint.webUrl || target.webUrl, this.#secrets);
+    const relayUrl = checkpoint.target.relayUrl
+      ? persistableRelayUrl(checkpoint.target.relayUrl, this.#secrets)
+      : target.relayUrl;
     let cleanup = target.cleanup;
     if (checkpoint.createdRemote && checkpoint.stage !== "verified") {
       cleanup = { stage: "pending", manualAttention: true };
@@ -637,6 +657,7 @@ export class RepoCreationTransactionJournal {
     const nextTarget: RepoCreationTargetRecord = {
       ...target,
       ...checkpoint.target,
+      ...(relayUrl ? { relayUrl } : {}),
       stage: checkpoint.stage,
       ...(remoteUrl ? { remoteUrl } : {}),
       ...(webUrl ? { webUrl } : {}),
@@ -697,11 +718,7 @@ export class RepoCreationTransactionJournal {
 
     const ack = extractPublishRelayAck(result);
     const sanitizeDestinations = (relays: string[]) =>
-      sanitizeRelays(
-        relays
-          .map((relay) => sanitizeUrl(relay, this.#secrets))
-          .filter((relay): relay is string => Boolean(relay))
-      );
+      sanitizeRelays(relays.map((relay) => persistableRelayUrl(relay, this.#secrets)));
     const requestedRelayUrls = sanitizeDestinations(relayUrls);
     const ackedRelays = sanitizeDestinations(ack.ackedRelays);
     const failedRelays = sanitizeDestinations(ack.failedRelays);
@@ -738,7 +755,7 @@ export class RepoCreationTransactionJournal {
       successCount: ack.successCount,
       hasRelayOutcomes: ack.hasRelayOutcomes,
       relayOutcomes: (ack.relayOutcomes || []).map((outcome) => ({
-        relay: sanitizeUrl(outcome.relay, this.#secrets) || outcome.relay,
+        relay: persistableRelayUrl(outcome.relay, this.#secrets),
         status: redactSecrets(outcome.status, this.#secrets) || "unknown",
         detail: redactSecrets(outcome.detail, this.#secrets) || "",
       })),
@@ -750,9 +767,9 @@ export class RepoCreationTransactionJournal {
   setPendingCompensations(failures: RepoCreationRecoveryRecord["pendingCompensations"]): void {
     const pendingCompensations = failures.map((failure) => ({
       ...failure,
-      relayUrls: failure.relayUrls
-        .map((relay) => sanitizeUrl(relay, this.#secrets))
-        .filter((relay): relay is string => Boolean(relay)),
+      relayUrls: sanitizeRelays(
+        failure.relayUrls.map((relay) => persistableRelayUrl(relay, this.#secrets))
+      ),
       error: redactSecrets(failure.error, this.#secrets) || "Cleanup failed",
     }));
     this.#update({

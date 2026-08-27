@@ -313,6 +313,8 @@ export class Thunk {
 
     // If we're sending it privately, wrap the event using nip 59
     if (recipient) {
+      if (this.wrap) return this._publish(this.wrap)
+
       const wrapper = Nip01Signer.ephemeral()
       const nip59 = new Nip59(this.signer, wrapper)
 
@@ -677,6 +679,10 @@ const retrySingleThunk = (thunk: Thunk) => {
     {...thunk.options, event: thunk.event},
     {attempt: thunk.diagnosticAttempt + 1, previousPublicationId: thunk.diagnosticId},
   )
+
+  // Recipient publications must retry the exact signed wrapper rather than
+  // creating a new gift wrap with a different event ID.
+  retry.wrap = thunk.wrap
 
   emitPublicationLifecycle({
     type: "retry",

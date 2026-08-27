@@ -212,6 +212,35 @@ describe("thunk", () => {
       abortThunk(retry)
     })
 
+    it("reuses the exact NIP-59 wrapper on retry", async () => {
+      const relay = "wss://wrapped-retry.example/"
+      const send = vi.fn()
+      const adapter = new MockAdapter(relay, send)
+      const thunk = new Thunk({
+        event: makeEvent(DIRECT_MESSAGE, {content: "private"}),
+        recipient: pubkey,
+        relays: [relay],
+        optimistic: false,
+        context: {getAdapter: () => adapter},
+      })
+
+      const initialPublish = thunk.publish()
+      await vi.advanceTimersByTimeAsync(0)
+      const initialWrapper = send.mock.calls[0][0][1]
+      adapter.receive(["OK", initialWrapper.id, true, "accepted"])
+      await initialPublish
+
+      send.mockClear()
+      const retry = retryThunk(thunk) as Thunk
+      await vi.advanceTimersByTimeAsync(100)
+      const retriedWrapper = send.mock.calls[0][0][1]
+
+      expect(retriedWrapper).toBe(initialWrapper)
+      expect(retry.wrap).toBe(initialWrapper)
+      adapter.receive(["OK", retriedWrapper.id, true, "accepted"])
+      await retry.complete
+    })
+
     it("observes sanitized lifecycle results and retry correlation without event data", () => {
       const events: unknown[] = []
       const unsubscribeThrowing = subscribePublicationLifecycle(() => {

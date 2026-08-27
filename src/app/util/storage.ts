@@ -248,6 +248,40 @@ export const eventsAdapter = {
 
 export type TrackerItem = {id: string; relays: string[]}
 
+export const migratePersistedRelayRecords = <T extends {url: string}>(items: T[]) => {
+  const records = new Map<string, {record: T; canonicalSource: boolean; hadLegacy: boolean}>()
+  const staleKeys = new Set<string>()
+
+  for (const item of items) {
+    const canonicalUrl = sanitizeRelayUrls([item.url])[0]
+    if (!canonicalUrl) {
+      staleKeys.add(item.url)
+      continue
+    }
+
+    const canonicalSource = item.url === canonicalUrl
+    const existing = records.get(canonicalUrl)
+    if (!existing || canonicalSource || !existing.canonicalSource) {
+      records.set(canonicalUrl, {
+        record: {...item, url: canonicalUrl},
+        canonicalSource,
+        hadLegacy: !canonicalSource || existing?.hadLegacy || false,
+      })
+    } else if (!canonicalSource) {
+      existing.hadLegacy = true
+    }
+    if (!canonicalSource) staleKeys.add(item.url)
+  }
+
+  return {
+    records: Array.from(records.values(), ({record}) => record),
+    writeRecords: Array.from(records.values())
+      .filter(({canonicalSource, hadLegacy}) => hadLegacy && !canonicalSource)
+      .map(({record}) => record),
+    staleKeys: Array.from(staleKeys),
+  }
+}
+
 export const trackerAdapter = {
   name: "tracker",
   keyPath: "id",
@@ -279,11 +313,18 @@ export const trackerAdapter = {
 
     const onAdd = batch(3000, _onAdd)
 
-    const onRemove = batch(3000, _onRemove)
+    const onRemove = batch(3000, async (ids: string[]) => {
+      const uniqueIds = Array.from(new Set(ids))
+      const populatedIds = uniqueIds.filter(id => tracker.getRelays(id).size > 0)
+      const emptyIds = uniqueIds.filter(id => tracker.getRelays(id).size === 0)
+
+      if (populatedIds.length > 0) await _onAdd(populatedIds)
+      if (emptyIds.length > 0) await _onRemove(emptyIds)
+    })
 
     const onLoad = () => _onAdd(tracker.relaysById.keys())
 
-    const onClear = () => _onRemove(tracker.relaysById.keys())
+    const onClear = (ids: Iterable<string>) => _onRemove(ids)
 
     // Relay intake records provenance before publishing to the repository.
     // Persist again from repository evidence so a short batch cannot observe
@@ -305,7 +346,9 @@ export const trackerAdapter = {
     const migratedIds = mergePersistedRelayProvenance(persistedItems)
     const populatedIds = Array.from(migratedIds).filter(id => tracker.getRelays(id).size > 0)
     const emptyIds = Array.from(migratedIds).filter(id => tracker.getRelays(id).size === 0)
-    if (populatedIds.length > 0) await _onAdd(populatedIds)
+    if (populatedIds.length > 0) {
+      await table.bulkPut(populatedIds.map(id => ({id, relays: Array.from(tracker.getRelays(id))})))
+    }
     if (emptyIds.length > 0) await _onRemove(emptyIds)
 
     return () => {
@@ -322,7 +365,10 @@ const relaysAdapter = {
   name: "relays",
   keyPath: "url",
   init: async (table: IDBTable<RelayProfile>) => {
-    relaysByUrl.set(indexBy(r => r.url, await table.getAll()))
+    const {records, writeRecords, staleKeys} = migratePersistedRelayRecords(await table.getAll())
+    relaysByUrl.set(indexBy(r => r.url, records))
+    if (writeRecords.length > 0) await table.bulkPut(writeRecords)
+    if (staleKeys.length > 0) await table.bulkDelete(staleKeys)
 
     return onRelay(batch(1000, table.bulkPut))
   },
@@ -332,7 +378,10 @@ const relayStatsAdapter = {
   name: "relayStats",
   keyPath: "url",
   init: async (table: IDBTable<RelayStats>) => {
-    relayStatsByUrl.set(indexBy(r => r.url, await table.getAll()))
+    const {records, writeRecords, staleKeys} = migratePersistedRelayRecords(await table.getAll())
+    relayStatsByUrl.set(indexBy(r => r.url, records))
+    if (writeRecords.length > 0) await table.bulkPut(writeRecords)
+    if (staleKeys.length > 0) await table.bulkDelete(staleKeys)
 
     return onRelayStats(batch(1000, table.bulkPut))
   },

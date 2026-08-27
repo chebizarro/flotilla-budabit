@@ -602,8 +602,10 @@ export class ExtensionBridge {
   }
 }
 
+const safeRelayEndpoint = (relay: string) => relay.split("?", 1)[0].split("#", 1)[0]
+
 registerBridgeHandler("nostr:publish", async (payload, ext) => {
-  if (ext) console.log(`[bridge] nostr:publish from ${ext.id}`, payload)
+  if (ext) console.log(`[bridge] nostr:publish from ${ext.id}`)
   try {
     const {event, relays} = parseNostrPublishPayload(payload)
     if (!relays?.length) throw new Error("No valid publish relays provided")
@@ -640,7 +642,7 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
         `[bridge] nostr:publish signed event completed: ${successCount}/${relays.length} relays accepted`,
       )
       const sanitizedResult = Object.entries(results).map(([relay, r]: [string, any]) => ({
-        relay,
+        relay: safeRelayEndpoint(relay),
         status: r?.status === PublishStatus.Success ? "fulfilled" : "rejected",
         reason: r?.detail || r?.message,
       }))
@@ -651,7 +653,7 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
         status: "ok",
         result: {
           published: true,
-          relays: [...relays],
+          relays: relays.map(safeRelayEndpoint),
           publishResult: sanitizedResult,
           successCount,
           eventId: event.id,
@@ -659,10 +661,7 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
       }
     }
 
-    console.log(
-      `[bridge] nostr:publish using publishThunk to sign and publish, event:`,
-      JSON.stringify(event),
-    )
+    console.log(`[bridge] nostr:publish using publishThunk to sign and publish`)
     const thunk = (publishThunk as any)({event, relays})
     await thunk.complete
     const successCount = Object.values(thunk.results || {}).filter(
@@ -673,7 +672,12 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
     const signedEventId = thunk.event?.id || null
     return {
       status: "ok",
-      result: {published: true, relays: [...relays], successCount, eventId: signedEventId},
+      result: {
+        published: true,
+        relays: relays.map(safeRelayEndpoint),
+        successCount,
+        eventId: signedEventId,
+      },
     }
   } catch (err: any) {
     console.error("Error in nostr:publish bridge handler:", err)
@@ -682,13 +686,12 @@ registerBridgeHandler("nostr:publish", async (payload, ext) => {
 })
 
 registerBridgeHandler("nostr:query", async (payload, ext) => {
-  if (ext) console.log(`[bridge] nostr:query from ${ext.id}`, payload)
+  if (ext) console.log(`[bridge] nostr:query from ${ext.id}`)
   try {
     const {relays, filter} = parseNostrQueryPayload(payload, getDeclaredNostrKinds(ext))
     console.log(
       `[bridge] nostr:query querying ${relays.length} relays:`,
-      relays,
-      JSON.stringify(filter),
+      relays.map(safeRelayEndpoint),
     )
 
     // Use @welshman/net load() for better relay connection management

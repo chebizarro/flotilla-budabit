@@ -58,6 +58,43 @@ afterEach(() => {
 });
 
 describe("RepoCreationTransactionJournal", () => {
+  it("rejects credential-bearing relay identities before persisting recovery state", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: new MemoryStorage(),
+    });
+
+    expect(
+      () =>
+        new RepoCreationTransactionJournal({
+          id: "new:owner/repo:unsafe-relay",
+          operation: "new",
+          ownerPubkey: "f".repeat(64),
+          repoName: "repo",
+          repositoryRelayUrls: ["wss://relay.example/GRASP?token=secret"],
+        })
+    ).toThrow("cannot contain credentials");
+    expect(globalThis.localStorage.length).toBe(0);
+  });
+
+  it("preserves non-sensitive query identity in recovery state", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: new MemoryStorage(),
+    });
+    const relay = "wss://relay.example/GRASP?tenant=One%2FTwo";
+
+    const journal = new RepoCreationTransactionJournal({
+      id: "new:owner/repo:query-relay",
+      operation: "new",
+      ownerPubkey: "f".repeat(64),
+      repoName: "repo",
+      repositoryRelayUrls: [relay],
+    });
+
+    expect(journal.record.repositoryRelayUrls).toEqual([relay]);
+  });
+
   it("persists recovery identifiers and exact signed repository events without tokens", async () => {
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
