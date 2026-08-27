@@ -218,6 +218,7 @@ describe("single-event publication operations", () => {
     expect(mocks.publishThunk).toHaveBeenCalledWith({
       event,
       relays: [relayOne, relayTwo],
+      operationId: operation.operationId,
       optimistic: false,
       presentation: "private",
     })
@@ -254,6 +255,7 @@ describe("single-event publication operations", () => {
     expect(mocks.publishThunk).toHaveBeenCalledWith({
       event,
       relays: [relayOne, relayTwo],
+      operationId: operation.operationId,
       optimistic: false,
       presentation: "private",
     })
@@ -275,6 +277,7 @@ describe("single-event publication operations", () => {
     expect(mocks.publishThunk).toHaveBeenCalledWith({
       event,
       relays: [relayOne, relayTwo],
+      operationId: operation.operationId,
       optimistic: false,
       presentation: "private",
       delay: 750,
@@ -324,6 +327,7 @@ describe("single-event publication operations", () => {
     expect(mocks.publishThunk).toHaveBeenCalledWith({
       event,
       relays: [relayOne],
+      operationId: operation.operationId,
       optimistic: false,
       presentation: "private",
     })

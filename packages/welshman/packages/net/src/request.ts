@@ -52,6 +52,7 @@ export type RequestSchedulerOwnerSnapshot = {
 }
 
 export type RequestSchedulerSnapshot = {
+  schedulerId: number
   relay: string
   configuredMaxSubscriptions: number
   configuredMaxLiveSubscriptions: number
@@ -127,6 +128,7 @@ type SchedulerPolicy = {
 }
 
 type SubscriptionScheduler = {
+  schedulerId: number
   activeJobs: Set<SchedulerJob>
   active: {
     backgroundLive: number
@@ -159,6 +161,7 @@ const trackedSubscriptionSchedulers = new Set<SubscriptionScheduler>()
 const schedulerSubscribers = new Set<(snapshots: RequestSchedulerSnapshot[]) => void>()
 
 let subscriptionSequence = 0
+let schedulerSequence = 0
 
 const finiteAgeInterval = 1000
 
@@ -233,6 +236,7 @@ const getSchedulerSnapshot = (
   }
 
   return {
+    schedulerId: scheduler.schedulerId,
     relay: scheduler.relay,
     configuredMaxSubscriptions: scheduler.configuredMaxSubscriptions,
     configuredMaxLiveSubscriptions: scheduler.configuredMaxLiveSubscriptions,
@@ -407,6 +411,7 @@ const getSubscriptionScheduler = (socket: Socket, policy: SchedulerPolicy) => {
 
   if (!scheduler) {
     const created: SubscriptionScheduler = {
+      schedulerId: ++schedulerSequence,
       activeJobs: new Set(),
       active: {
         backgroundLive: 0,

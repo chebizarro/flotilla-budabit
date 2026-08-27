@@ -65,7 +65,29 @@ describe("debug diagnostics", () => {
     })
   })
 
-  it("persists presets and trims immediately when limits shrink", () => {
+  it("keeps storage failures isolated from settings and bootstrap", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new DOMException("blocked", "SecurityError")
+      },
+      removeItem: () => {
+        throw new DOMException("blocked", "SecurityError")
+      },
+      setItem: () => {
+        throw new DOMException("full", "QuotaExceededError")
+      },
+    })
+
+    expect(() => refreshDebugDiagnosticsSettings()).not.toThrow()
+    expect(() => setDebugDiagnosticCategoryEnabled("relay-normalization", true)).not.toThrow()
+    expect(() => setDebugDiagnosticsPreset("quick")).not.toThrow()
+    expect(get(debugDiagnosticsSettings)).toMatchObject({
+      preset: "quick",
+      categories: {"relay-normalization": true},
+    })
+  })
+
+  it("persists presets and applies changed limits to the next capture", () => {
     setDebugDiagnosticsPreset("extended")
     expect(get(debugDiagnosticsSettings).preset).toBe("extended")
     expect(JSON.parse(localStorage.getItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY)!).preset).toBe(
@@ -88,21 +110,27 @@ describe("debug diagnostics", () => {
     recorder.setPreset("quick")
     expect(recorder.snapshot()).toMatchObject({
       capture: {
+        preset: "standard",
+        limits: {maxRecords: 5_000, maxRecordsPerCategory: 2_500},
+      },
+    })
+    expect(recorder.snapshot().records).toHaveLength(501)
+
+    recorder.start("next-capture")
+    expect(recorder.snapshot()).toMatchObject({
+      capture: {
         preset: "quick",
         limits: {maxRecords: 1_000, maxRecordsPerCategory: 500},
       },
     })
-    expect(recorder.snapshot().records).toHaveLength(500)
-    expect(recorder.snapshot().records[0].type).toBe("record-1")
   })
 
   it("records only while active and enabled", () => {
     let now = 100
     const recorder = createDebugDiagnosticsRecorder({now: () => now})
+    recorder.setCategoryEnabled("relay-normalization", true)
     recorder.start("capture")
 
-    expect(recorder.record("relay-normalization", "ignored")).toBe(false)
-    recorder.setCategoryEnabled("relay-normalization", true)
     now = 125
     expect(recorder.record("relay-normalization", "normalized", {valid: true})).toBe(true)
     recorder.stop()
@@ -112,6 +140,22 @@ describe("debug diagnostics", () => {
       capture: {id: "capture", startedAt: 100, finishedAt: 125, active: false},
       records: [{category: "relay-normalization", type: "normalized", elapsedMs: 25}],
     })
+  })
+
+  it("keeps capture categories immutable until the next capture", () => {
+    const recorder = createDebugDiagnosticsRecorder()
+    recorder.setCategoryEnabled("relay-normalization", true)
+    recorder.start("first")
+    recorder.setCategoryEnabled("relay-normalization", false)
+    recorder.setCategoryEnabled("relay-scheduler", true)
+
+    expect(recorder.record("relay-normalization", "retained")).toBe(true)
+    expect(recorder.record("relay-scheduler", "next-only")).toBe(false)
+    recorder.stop()
+    expect(recorder.snapshot().capture.enabledCategories).toEqual(["relay-normalization"])
+
+    recorder.start("second")
+    expect(recorder.snapshot().capture.enabledCategories).toEqual(["relay-scheduler"])
   })
 
   it("enforces global and per-category bounds", () => {

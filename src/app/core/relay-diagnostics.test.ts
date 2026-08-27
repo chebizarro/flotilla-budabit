@@ -12,6 +12,7 @@ import {
 const makeSnapshot = (
   overrides: Partial<RequestSchedulerSnapshot> = {},
 ): RequestSchedulerSnapshot => ({
+  schedulerId: 1,
   relay: "wss://relay.example/",
   configuredMaxSubscriptions: 28,
   configuredMaxLiveSubscriptions: 24,
@@ -73,7 +74,10 @@ describe("relay diagnostics", () => {
     expect(snapshots).toEqual([
       expect.objectContaining({
         relay: "wss://relay.example/",
-        learnedMaxSubscriptions: 20,
+        schedulerId: 0,
+        configuredMaxSubscriptions: 56,
+        effectiveMaxSubscriptions: 56,
+        learnedMaxSubscriptions: null,
         active: {total: 2, finite: 1, live: 1, criticalLive: 0, backgroundLive: 1},
         queued: {total: 1, finite: 0, live: 1, criticalLive: 1, backgroundLive: 0},
         oldestQueuedAgeMs: 2_000,
@@ -164,6 +168,25 @@ describe("relay diagnostics", () => {
     ])
   })
 
+  it("does not treat combined same-relay socket load as one socket's saturation", () => {
+    const warn = vi.fn()
+    const monitor = createRelayDiagnosticMonitor({enabled: true, warn})
+
+    monitor.inspect([
+      makeSnapshot({
+        schedulerId: 1,
+        active: {total: 15, finite: 0, live: 15, criticalLive: 0, backgroundLive: 0},
+      }),
+      makeSnapshot({
+        schedulerId: 2,
+        active: {total: 15, finite: 0, live: 15, criticalLive: 0, backgroundLive: 0},
+        queued: {total: 1, finite: 1, live: 0, criticalLive: 0, backgroundLive: 0},
+      }),
+    ])
+
+    expect(warn).not.toHaveBeenCalled()
+  })
+
   it("bounds warnings emitted by one inspection", () => {
     const warn = vi.fn()
     const monitor = createRelayDiagnosticMonitor({
@@ -241,7 +264,7 @@ describe("relay diagnostics", () => {
     vi.advanceTimersByTime(250)
     expect(read).toHaveBeenCalledTimes(2)
     expect(record).toHaveBeenCalledWith("relay-scheduler", "snapshot", {
-      snapshots: [makeSnapshot()],
+      snapshots: [makeSnapshot({schedulerId: 0})],
     })
 
     settings.update(current => ({

@@ -19,8 +19,10 @@ import {
   preparePerformanceDiagnosticsArtifact,
   recordPerformanceDiagnosticsInteractionPaint,
   recordPerformanceDiagnostics,
+  sanitizePerformanceDiagnosticsUrl,
   sanitizePerformanceDiagnosticValue,
   serializePerformanceDiagnostics,
+  startPerformanceDiagnosticsObservers,
   startPerformanceDiagnosticsCapture,
   stopPerformanceDiagnosticsCapture,
 } from "./performance-diagnostics"
@@ -101,6 +103,32 @@ describe("performance diagnostics", () => {
     expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.status).toBe("complete")
   })
 
+  it("retains the measured environment when export happens from another route", () => {
+    const location = {href: "https://example.test/git?token=secret"}
+    vi.stubGlobal("window", {
+      location,
+      innerWidth: 1280,
+      innerHeight: 720,
+      devicePixelRatio: 2,
+    })
+    vi.stubGlobal("navigator", {
+      userAgent: "test-browser",
+      language: "en",
+      hardwareConcurrency: 8,
+      serviceWorker: {controller: {}},
+    })
+
+    beginPerformanceDiagnosticsRun({route: "/git", preset: "git-root"})
+    location.href = "https://example.test/settings/performance"
+
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.environment).toMatchObject({
+      href: "https://example.test/git",
+      viewport: {width: 1280, height: 720, devicePixelRatio: 2},
+      serviceWorkerControlled: true,
+    })
+    vi.unstubAllGlobals()
+  })
+
   it("consumes an exact one-shot route arm and completes only automatic captures", () => {
     armPerformanceDiagnosticsCapture({route: "/git", preset: "git-root"})
 
@@ -156,6 +184,7 @@ describe("performance diagnostics", () => {
   it("redacts hard secret patterns while retaining diagnostic structure", () => {
     const sanitized = sanitizePerformanceDiagnosticValue({
       relay: "wss://relay.example/path",
+      resource: "https://user:pass@example.test/app.js?token=secret#fragment",
       authorization: "Nostr signed-value",
       nested: {
         message: "failed bunker://example?secret=value and nsec1qqqqqqqqqqqqqqqqqqqqqqqqqq",
@@ -165,17 +194,23 @@ describe("performance diagnostics", () => {
 
     expect(sanitized).toEqual({
       relay: "wss://relay.example/path",
+      resource: "https://example.test/app.js?[redacted]",
       authorization: "[redacted]",
       nested: {
         message: "failed [redacted] and [redacted]",
         filter: {kinds: [1, 30078], authors: ["a".repeat(64)]},
       },
     })
+    expect(
+      sanitizePerformanceDiagnosticsUrl(
+        "https://user:pass@example.test/app.js?token=secret#fragment",
+      ),
+    ).toBe("https://example.test/app.js")
   })
 
   it("derives bounded navigation and interaction timing details", () => {
     const navigation = getPerformanceNavigationTimingDetail({
-      name: "https://example.test/git",
+      name: "https://user:pass@example.test/git?token=secret#fragment",
       type: "navigate",
       nextHopProtocol: "h2",
       workerStart: 2,
@@ -195,7 +230,14 @@ describe("performance diagnostics", () => {
       encodedBodySize: 80,
       decodedBodySize: 120,
     } as PerformanceNavigationTiming)
-    expect(navigation).toMatchObject({dnsMs: 3, connectMs: 6, tlsMs: 4, ttfbMs: 10, responseMs: 15})
+    expect(navigation).toMatchObject({
+      name: "https://example.test/git",
+      dnsMs: 3,
+      connectMs: 6,
+      tlsMs: 4,
+      ttfbMs: 10,
+      responseMs: 15,
+    })
 
     const interaction = getPerformanceInteractionTimingDetail({
       name: "click",
@@ -223,6 +265,59 @@ describe("performance diagnostics", () => {
 
     expect(detail.attribution).toHaveLength(10)
     expect(detail.attribution[0]).toMatchObject({name: "task-0", containerType: "iframe"})
+  })
+
+  it("flushes queued observer entries, excludes pre-run history, and uses event time", () => {
+    const instances: Array<{
+      queued: PerformanceEntry[]
+      takeRecords: ReturnType<typeof vi.fn>
+      disconnect: ReturnType<typeof vi.fn>
+    }> = []
+    class TestPerformanceObserver {
+      queued: PerformanceEntry[] = []
+      takeRecords = vi.fn(() => this.queued.splice(0))
+      disconnect = vi.fn()
+      observe = vi.fn()
+
+      constructor(_callback: PerformanceObserverCallback) {
+        instances.push(this)
+      }
+    }
+    vi.stubGlobal("PerformanceObserver", TestPerformanceObserver)
+    vi.stubGlobal("document", {readyState: "loading"})
+    vi.stubGlobal("window", {
+      location: {href: "https://example.test/git"},
+      innerWidth: 1280,
+      innerHeight: 720,
+      devicePixelRatio: 1,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+    })
+    vi.spyOn(performance, "getEntriesByType").mockReturnValue([])
+    const runId = beginPerformanceDiagnosticsRun({
+      route: "/git",
+      clock: {now: () => 100, wallTime: () => 1_000},
+    })
+    const stopObservers = startPerformanceDiagnosticsObservers(runId)
+    instances[0].queued.push(
+      {name: "old", entryType: "longtask", startTime: 90, duration: 20, toJSON: () => ({})},
+      {name: "new", entryType: "longtask", startTime: 110, duration: 30, toJSON: () => ({})},
+    )
+
+    stopObservers()
+
+    expect(instances[0].takeRecords).toHaveBeenCalledOnce()
+    expect(instances[0].disconnect).toHaveBeenCalledOnce()
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.longTasks).toEqual([
+      expect.objectContaining({
+        at: 110,
+        elapsedMs: 10,
+        detail: expect.objectContaining({name: "new"}),
+      }),
+    ])
+    vi.unstubAllGlobals()
   })
 
   it("records bounded work spans and interaction paint only during an active capture", () => {
@@ -287,30 +382,46 @@ describe("performance diagnostics", () => {
     expect(runId).toBeTypeOf("string")
   })
 
-  it("retains work attribution when capture completion precedes paint", () => {
+  it("waits for pending paint attribution before automatic completion", () => {
     let now = 100
+    const frames: FrameRequestCallback[] = []
     vi.spyOn(performance, "now").mockImplementation(() => now)
-    vi.stubGlobal("window", {requestAnimationFrame: vi.fn(() => 1)})
+    vi.stubGlobal("window", {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frames.push(callback)
+        return frames.length
+      },
+    })
     const runId = beginPerformanceDiagnosticsRun({route: "/git", preset: "git-root"})
     activePerformanceDiagnosticsRun.set({
       id: runId,
       route: "/git",
       preset: "git-root",
-      automatic: false,
+      automatic: true,
     })
 
     measurePerformanceDiagnosticsWork({owner: "repository", phase: "publish"}, () => {
       now += 20
     })
-    stopPerformanceDiagnosticsCapture()
+    expect(completeAutomaticPerformanceDiagnosticsCapture(runId)).toBe(true)
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.status).toBe("running")
+
+    now = 140
+    frames.shift()?.(now)
+    now = 156
+    frames.shift()?.(now)
     vi.unstubAllGlobals()
 
-    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)?.records).toEqual([
-      expect.objectContaining({
-        type: "work-span",
-        detail: expect.objectContaining({owner: "repository", phase: "publish", durationMs: 20}),
-      }),
-    ])
+    expect(getPerformanceDiagnosticsSnapshot().runs.at(-1)).toMatchObject({
+      status: "complete",
+      records: [
+        expect.objectContaining({
+          type: "work-span",
+          detail: expect.objectContaining({owner: "repository", phase: "publish", durationMs: 20}),
+        }),
+        expect.objectContaining({type: "work-span-paint", at: 156}),
+      ],
+    })
   })
 
   it("serializes object keys deterministically", () => {

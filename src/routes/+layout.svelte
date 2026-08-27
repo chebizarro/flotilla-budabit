@@ -63,8 +63,10 @@
   import {refreshDebugDiagnosticsSettings} from "@app/core/debug-diagnostics"
   import {installPublicationDebugDiagnostics} from "@app/core/publication-diagnostics"
   import {
+    activePerformanceDiagnosticsRun,
     consumeArmedPerformanceDiagnosticsCapture,
     measurePerformanceDiagnosticsWork,
+    stopPerformanceDiagnosticsCapture,
   } from "@app/core/performance-diagnostics"
   import {initializeCashuWallet} from "@app/core/cashu"
   import {registerCashuBridgeHandlers} from "@app/core/cashu-bridge"
@@ -318,6 +320,10 @@
   if (browser) {
     onNavigate(navigation => {
       if (navigation.from?.url.pathname === navigation.to?.url.pathname) return
+      const activePerformanceRun = get(activePerformanceDiagnosticsRun)
+      if (activePerformanceRun?.route === navigation.from?.url.pathname) {
+        stopPerformanceDiagnosticsCapture("cancelled")
+      }
       stopNotificationBackground()
       return () => {
         notificationNavigationGeneration += 1

@@ -41,6 +41,7 @@ export const aggregateRelayDiagnostics = (snapshots: RequestSchedulerSnapshot[])
     if (!current) {
       byRelay.set(snapshot.relay, {
         ...snapshot,
+        schedulerId: 0,
         active: {...snapshot.active},
         queued: {...snapshot.queued},
         oldestQueuedAgeMsByClass: {...snapshot.oldestQueuedAgeMsByClass},
@@ -53,28 +54,15 @@ export const aggregateRelayDiagnostics = (snapshots: RequestSchedulerSnapshot[])
       current.active[key] += snapshot.active[key]
       current.queued[key] += snapshot.queued[key]
     }
-    current.configuredMaxSubscriptions = Math.min(
-      current.configuredMaxSubscriptions,
-      snapshot.configuredMaxSubscriptions,
-    )
-    current.configuredMaxLiveSubscriptions = Math.min(
-      current.configuredMaxLiveSubscriptions,
-      snapshot.configuredMaxLiveSubscriptions,
-    )
-    current.configuredMaxBackgroundLiveSubscriptions = Math.min(
-      current.configuredMaxBackgroundLiveSubscriptions,
-      snapshot.configuredMaxBackgroundLiveSubscriptions,
-    )
-    current.effectiveMaxSubscriptions = Math.min(
-      current.effectiveMaxSubscriptions,
-      snapshot.effectiveMaxSubscriptions,
-    )
-    if (snapshot.learnedMaxSubscriptions !== null) {
-      current.learnedMaxSubscriptions =
-        current.learnedMaxSubscriptions === null
-          ? snapshot.learnedMaxSubscriptions
-          : Math.min(current.learnedMaxSubscriptions, snapshot.learnedMaxSubscriptions)
-    }
+    current.configuredMaxSubscriptions += snapshot.configuredMaxSubscriptions
+    current.configuredMaxLiveSubscriptions += snapshot.configuredMaxLiveSubscriptions
+    current.configuredMaxBackgroundLiveSubscriptions +=
+      snapshot.configuredMaxBackgroundLiveSubscriptions
+    current.effectiveMaxSubscriptions += snapshot.effectiveMaxSubscriptions
+    current.learnedMaxSubscriptions =
+      current.learnedMaxSubscriptions === null || snapshot.learnedMaxSubscriptions === null
+        ? null
+        : current.learnedMaxSubscriptions + snapshot.learnedMaxSubscriptions
     current.oldestQueuedAgeMs = Math.max(current.oldestQueuedAgeMs, snapshot.oldestQueuedAgeMs)
     for (const requestClass of ["finite", "critical-live", "background-live"] as const) {
       current.oldestQueuedAgeMsByClass[requestClass] = Math.max(
@@ -124,7 +112,7 @@ export const createRelayDiagnosticMonitor = ({
   maxWarningsPerInspection = DEFAULT_MAX_WARNINGS_PER_INSPECTION,
 }: RelayDiagnosticMonitorOptions) => {
   const lastWarningAt = new Map<string, number>()
-  const previousLiveByRelay = new Map<string, number>()
+  const previousLiveByScheduler = new Map<string, number>()
 
   const inspect = (snapshots: RequestSchedulerSnapshot[]) => {
     if (!enabled) return
@@ -132,8 +120,9 @@ export const createRelayDiagnosticMonitor = ({
     const timestamp = now()
     const warnings: RelayDiagnosticWarning[] = []
     for (const snapshot of snapshots) {
-      const previousLive = previousLiveByRelay.get(snapshot.relay)
-      previousLiveByRelay.set(snapshot.relay, snapshot.active.live)
+      const schedulerKey = `${snapshot.relay}:${snapshot.schedulerId}`
+      const previousLive = previousLiveByScheduler.get(schedulerKey)
+      previousLiveByScheduler.set(schedulerKey, snapshot.active.live)
 
       if (
         snapshot.queued.total > 0 &&
@@ -166,7 +155,7 @@ export const createRelayDiagnosticMonitor = ({
     let emitted = 0
     for (const warning of warnings) {
       if (emitted >= maxWarningsPerInspection) break
-      const key = `${warning.kind}:${warning.relay}`
+      const key = `${warning.kind}:${warning.relay}:${warning.snapshot.schedulerId}`
       const previousWarningAt = lastWarningAt.get(key)
       if (previousWarningAt !== undefined && timestamp - previousWarningAt < warningIntervalMs) {
         continue
@@ -191,8 +180,11 @@ export const installRelayDiagnostics = ({
   if (!enabled) return () => {}
 
   const monitor = createRelayDiagnosticMonitor({enabled})
-  const unsubscribe = subscribeRelayDiagnostics(monitor.inspect)
-  const interval = setInterval(() => monitor.inspect(readRelayDiagnostics()), pollIntervalMs)
+  const unsubscribe = subscribeRequestScheduler(monitor.inspect)
+  const interval = setInterval(
+    () => monitor.inspect(getRequestSchedulerSnapshots()),
+    pollIntervalMs,
+  )
 
   return () => {
     clearInterval(interval)
@@ -204,7 +196,7 @@ export const installRelayDebugDiagnostics = ({
   enabled,
   pollIntervalMs = 1_000,
   settings = debugDiagnosticsSettings,
-  read = readRelayDiagnostics,
+  read = getRequestSchedulerSnapshots,
   record = recordDebugDiagnostic,
   subscribeNormalization = subscribeRelayNormalization,
 }: {
@@ -252,7 +244,9 @@ export const installRelayDebugDiagnostics = ({
     schedulerInterval = setInterval(() => {
       try {
         const snapshots = read()
-        recordSafely("relay-scheduler", "snapshot", {snapshots})
+        recordSafely("relay-scheduler", "snapshot", {
+          snapshots: aggregateRelayDiagnostics(snapshots),
+        })
         schedulerMonitor?.inspect(snapshots)
       } catch {
         // A diagnostic read failure must not affect the scheduler.

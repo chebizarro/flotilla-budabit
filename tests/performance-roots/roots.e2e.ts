@@ -164,7 +164,16 @@ const measure = async (
     await expect(root).toHaveAttribute("data-perf-rooms", "3")
     await expect(root).toHaveAttribute("data-perf-extensions-ready", "true")
     await expect(root).toHaveAttribute("data-perf-widgets", "1")
+    await expect(root).toHaveAttribute("data-perf-widgets-terminal", "true")
   }
+  await page.evaluate(
+    () =>
+      new Promise<void>(resolve =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  )
+  if (route === "/git") await expect(root).toHaveAttribute("data-perf-loading", "false")
+  else await expect(root).toHaveAttribute("data-perf-widgets-terminal", "true")
 
   const browser = await page.evaluate(() => {
     const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming
@@ -187,14 +196,19 @@ const measure = async (
         : {},
     }
   })
-  const longTasks = await page.evaluate(
-    () =>
-      (
-        window as unknown as {
-          __performanceRootLongTasks?: Array<{startTime: number; duration: number}>
-        }
-      ).__performanceRootLongTasks || [],
-  )
+  const longTasks = await page.evaluate(() => {
+    const diagnostics = window as unknown as {
+      __performanceRootLongTasks?: Array<{startTime: number; duration: number}>
+      __performanceRootLongTaskObserver?: PerformanceObserver
+    }
+    for (const entry of diagnostics.__performanceRootLongTaskObserver?.takeRecords() || []) {
+      diagnostics.__performanceRootLongTasks?.push({
+        startTime: entry.startTime,
+        duration: entry.duration,
+      })
+    }
+    return diagnostics.__performanceRootLongTasks || []
+  })
   const server = await page.request.get("/__perf/state").then(response => response.json())
   const relayTelemetry = await mockRelay.getTelemetry()
   return {
@@ -262,10 +276,11 @@ const captureDiagnosticArtifact = async (page: Page, profile: string, route: str
   expect(artifact.schemaVersion).toBe(1)
   const run = artifact.runs?.find(candidate => candidate.route === route)
   expect(run?.preset).toBe(route === "/git" ? "git-root" : "community-home")
-  expect(run?.milestones?.some(item => item.name === "settled")).toBe(true)
   if (route === "/git") {
+    expect(run?.milestones?.some(item => item.name === "foreground-settled")).toBe(true)
+    expect(run?.milestones?.some(item => item.name === "capture-complete")).toBe(true)
     expect(run?.milestones?.some(item => item.name === "foreground-painted")).toBe(true)
-    const settled = run?.milestones?.find(item => item.name === "settled")
+    const settled = run?.milestones?.find(item => item.name === "foreground-settled")
     if (settled?.detail?.foreground === "stable-rendered-cards") {
       expect(run?.milestones?.some(item => item.name === "cards-painted")).toBe(true)
     }
@@ -274,6 +289,8 @@ const captureDiagnosticArtifact = async (page: Page, profile: string, route: str
         ["git-background-terminal", "git-background-tail-expired"].includes(item.type || ""),
       ),
     ).toBe(true)
+  } else {
+    expect(run?.milestones?.some(item => item.name === "settled")).toBe(true)
   }
   const output = path.resolve("test-results/performance-roots")
   await mkdir(output, {recursive: true})
@@ -322,11 +339,17 @@ test("measures Community Home and git with cold data and warm atomic assets", as
       }
     ).__performanceRootLongTasks = entries
     try {
-      new PerformanceObserver(list => {
+      const observer = new PerformanceObserver(list => {
         for (const entry of list.getEntries()) {
           entries.push({startTime: entry.startTime, duration: entry.duration})
         }
-      }).observe({type: "longtask", buffered: true} as PerformanceObserverInit)
+      })
+      ;(
+        window as unknown as {
+          __performanceRootLongTaskObserver: PerformanceObserver
+        }
+      ).__performanceRootLongTaskObserver = observer
+      observer.observe({type: "longtask", buffered: true} as PerformanceObserverInit)
     } catch {
       // Long Task API is unavailable outside Chromium.
     }

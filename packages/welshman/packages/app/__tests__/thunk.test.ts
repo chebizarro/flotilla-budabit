@@ -196,6 +196,8 @@ describe("thunk", () => {
           tags: [["secret", "private tag"]],
         }),
         relays: ["wss://user:pass@relay.example/path?token=private#fragment"],
+        operationId: "operation-1",
+        publicationStage: "primary",
       })
 
       expect(() =>
@@ -229,6 +231,8 @@ describe("thunk", () => {
           eventKind: NOTE,
           attempt: 1,
           destinations: ["wss://relay.example/path"],
+          operationId: "operation-1",
+          publicationStage: "primary",
         }),
       )
       expect(events).toContainEqual(
@@ -237,6 +241,8 @@ describe("thunk", () => {
           publicationId: retry.diagnosticId,
           previousPublicationId: thunk.diagnosticId,
           attempt: 2,
+          operationId: "operation-1",
+          publicationStage: "primary",
         }),
       )
       expect(
@@ -345,6 +351,8 @@ describe("thunk", () => {
 
     it("settles relay ACK waiters when transport setup throws", async () => {
       const relay = "broken-relay"
+      const lifecycle: any[] = []
+      const unsubscribe = subscribePublicationLifecycle(event => lifecycle.push(event))
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined)
       const thunk = publishThunk({
         event: prep(makeEvent(NOTE, {tags: [["test", "transport-failure"]]}), pubkey),
@@ -360,12 +368,19 @@ describe("thunk", () => {
 
       await vi.runAllTimersAsync()
       await ack
+      await thunk.complete
 
       expect(thunk.results[relay].status).toBe(PublishStatus.Failure)
+      expect(lifecycle.filter(event => event.type === "completed")).toEqual([
+        expect.objectContaining({terminalReason: "transport-exception"}),
+      ])
+      unsubscribe()
       consoleErrorSpy.mockRestore()
     })
 
     it("should handle abort", () => {
+      const lifecycle: any[] = []
+      const unsubscribe = subscribePublicationLifecycle(event => lifecycle.push(event))
       const removeEventSpy = vi.spyOn(repository, "removeEvent")
       const thunk = publishThunk({
         ...mockRequest,
@@ -375,6 +390,10 @@ describe("thunk", () => {
       abortThunk(thunk)
 
       expect(removeEventSpy).toHaveBeenCalledWith(thunk.event.id)
+      expect(lifecycle.filter(event => event.type === "completed")).toEqual([
+        expect.objectContaining({terminalReason: "aborted"}),
+      ])
+      unsubscribe()
     })
 
     it("keeps a signing failure visible and replaces it on retry", async () => {
@@ -382,6 +401,8 @@ describe("thunk", () => {
       const removeEventSpy = vi.spyOn(repository, "removeEvent")
       const trackSpy = vi.spyOn(tracker, "track")
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined)
+      const lifecycle: any[] = []
+      const unsubscribe = subscribePublicationLifecycle(observation => lifecycle.push(observation))
       const thunk = publishThunk({event, relays: [LOCAL_RELAY_URL]})
       const optimisticEventId = thunk.event.id
 
@@ -392,11 +413,15 @@ describe("thunk", () => {
 
       await vi.runAllTimersAsync()
       await ack
+      await thunk.complete
 
       expect(removeEventSpy).not.toHaveBeenCalled()
       expect(repository.getEvent(optimisticEventId)).toBe(thunk.event)
       expect(thunk.results[LOCAL_RELAY_URL].status).toEqual(PublishStatus.Failure)
       expect(trackSpy).not.toHaveBeenCalled()
+      expect(lifecycle.filter(item => item.publicationId === thunk.diagnosticId)).toContainEqual(
+        expect.objectContaining({type: "completed", terminalReason: "signing-failure"}),
+      )
 
       const retry = retryThunk(thunk)
       expect(thunk._optimisticEventId).toBeUndefined()
@@ -409,6 +434,7 @@ describe("thunk", () => {
       expect(repository.getEvent(optimisticEventId)).toBe(retry.event)
       expect(retry.event).toHaveProperty("sig")
       expect(retry.results[LOCAL_RELAY_URL].status).toEqual(PublishStatus.Success)
+      unsubscribe()
       consoleErrorSpy.mockRestore()
     })
   })

@@ -3412,6 +3412,7 @@
         getPerformanceBackgroundDetail(),
       )
       markPerformanceMilestone("background-data-terminal")
+      markPerformanceMilestone("capture-complete", {background: "terminal"})
       completeAutomaticPerformanceDiagnosticsCapture(runId)
       return
     }
@@ -3425,6 +3426,7 @@
         {tailMs: PERFORMANCE_BACKGROUND_TAIL_MS, ...getPerformanceBackgroundDetail()},
         "warnings",
       )
+      markPerformanceMilestone("capture-complete", {background: "tail-expired"})
       completeAutomaticPerformanceDiagnosticsCapture(runId)
     }, PERFORMANCE_BACKGROUND_TAIL_MS)
   }
@@ -3491,7 +3493,7 @@
           markPerformanceMilestone("cards-painted", {cards: repoCardModelsForEnrichment.length})
         }
         markPerformanceMilestone("loading-settled")
-        markPerformanceMilestone("settled", {
+        markPerformanceMilestone("foreground-settled", {
           mode: activeMode,
           tab: activeTab,
           cards: repoCardModelsForEnrichment.length,

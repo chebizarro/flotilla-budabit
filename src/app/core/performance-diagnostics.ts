@@ -54,6 +54,16 @@ export type PerformanceDiagnosticRecord = {
   detail?: PerformanceDiagnosticValue
 }
 
+export type PerformanceDiagnosticsEnvironment = {
+  href: string
+  userAgent: string
+  language: string
+  viewport: {width: number; height: number; devicePixelRatio: number}
+  hardwareConcurrency: number
+  deviceMemory?: number
+  serviceWorkerControlled: boolean
+}
+
 export type PerformanceDiagnosticRun = {
   id: string
   route: string
@@ -61,6 +71,7 @@ export type PerformanceDiagnosticRun = {
   context?: PerformanceDiagnosticValue
   startedAt: number
   startedWallTime: number
+  environment: PerformanceDiagnosticsEnvironment
   finishedAt?: number
   durationMs?: number
   status: "running" | "complete" | "failed" | "cancelled"
@@ -77,15 +88,7 @@ export type PerformanceDiagnosticsSnapshot = {
   schemaVersion: 1
   generatedAt: number
   build: {id: string; hash: string}
-  environment: {
-    href: string
-    userAgent: string
-    language: string
-    viewport: {width: number; height: number; devicePixelRatio: number}
-    hardwareConcurrency: number
-    deviceMemory?: number
-    serviceWorkerControlled: boolean
-  }
+  environment: PerformanceDiagnosticsEnvironment
   runs: PerformanceDiagnosticRun[]
 }
 
@@ -149,6 +152,8 @@ export const armedPerformanceDiagnosticsCapture =
 
 let stopActiveObservers: (() => void) | undefined
 let automaticCaptureTimer: ReturnType<typeof setTimeout> | undefined
+const pendingPaintRecords = new Map<string, number>()
+const completionRequested = new Set<string>()
 
 const notify = () => performanceDiagnosticsRevision.update(value => value + 1)
 
@@ -158,11 +163,42 @@ const boundedPush = <T>(items: T[], value: T, limit: number) => {
 }
 
 const replaceSecrets = (value: string) => {
-  let next = value.slice(0, MAX_STRING_LENGTH)
+  let next = value
+    .slice(0, MAX_STRING_LENGTH)
+    .replace(
+      /\b((?:https?|wss?):\/\/)([^\s/]+)([^\s]*)/gi,
+      (_match, protocol, authority, suffix) => {
+        let host = authority
+        try {
+          host = new URL(`${protocol}${authority}`).host
+        } catch {
+          host = authority.includes("@")
+            ? authority.slice(authority.lastIndexOf("@") + 1)
+            : authority
+        }
+        const safeSuffix = String(suffix)
+          .replace(/\?.*?(?=[\s"']|$)/, "?[redacted]")
+          .replace(/#.*$/, "")
+        return `${protocol}${host}${safeSuffix}`
+      },
+    )
 
   for (const pattern of SECRET_VALUE_PATTERNS) next = next.replace(pattern, "[redacted]")
 
   return next
+}
+
+export const sanitizePerformanceDiagnosticsUrl = (value: string) => {
+  try {
+    const url = new URL(value)
+    url.username = ""
+    url.password = ""
+    url.search = ""
+    url.hash = ""
+    return url.href
+  } catch {
+    return value.replace(/[?#].*$/, "")
+  }
 }
 
 export const sanitizePerformanceDiagnosticValue = (
@@ -250,6 +286,7 @@ export const beginPerformanceDiagnosticsRun = ({
     context: context === undefined ? undefined : sanitizePerformanceDiagnosticValue(context),
     startedAt,
     startedWallTime,
+    environment: getEnvironment(),
     status: "running",
     milestones: [],
     records: [],
@@ -301,6 +338,16 @@ export const recordPerformanceDiagnostics = (
   const run = getRun(runId)
   if (!run || run.status !== "running") return false
   const {at} = getElapsed(run)
+  return appendPerformanceDiagnosticsRecord(run, type, detail, target, at)
+}
+
+const appendPerformanceDiagnosticsRecord = (
+  run: PerformanceDiagnosticRun,
+  type: string,
+  detail: unknown,
+  target: "records" | "longTasks" | "resources" | "scheduler" | "warnings",
+  at: number,
+) => {
   const limits = {
     records: MAX_RECORDS,
     longTasks: MAX_LONG_TASKS,
@@ -321,6 +368,18 @@ export const recordPerformanceDiagnostics = (
   )
   notify()
   return true
+}
+
+const recordPerformanceDiagnosticsAt = (
+  runId: string,
+  type: string,
+  detail: unknown,
+  target: "records" | "longTasks" | "resources" | "scheduler" | "warnings",
+  at: number,
+) => {
+  const run = getRun(runId)
+  if (!run || run.status !== "running") return false
+  return appendPerformanceDiagnosticsRecord(run, type, detail, target, at)
 }
 
 export const recordActivePerformanceDiagnostics = (
@@ -345,25 +404,62 @@ const recordWorkAfterPaint = (
   detail: Record<string, unknown>,
   finishedAt: number,
 ) => {
-  recordPerformanceDiagnostics(runId, "work-span", detail)
+  recordPerformanceDiagnosticsAt(runId, "work-span", detail, "records", Number(detail.startTime))
   if (typeof window === "undefined") {
     return
   }
 
-  let firstFrameAt = 0
-  window.requestAnimationFrame(() => {
-    firstFrameAt = performance.now()
-    window.requestAnimationFrame(() => {
-      const paintedAt = performance.now()
-      recordPerformanceDiagnostics(runId, "work-span-paint", {
+  schedulePerformanceDiagnosticsPaint(runId, (firstFrameAt, paintedAt) => {
+    recordPerformanceDiagnosticsAt(
+      runId,
+      "work-span-paint",
+      {
         owner: detail.owner,
         phase: detail.phase,
         startTime: detail.startTime,
         nextFrameMs: Math.max(0, firstFrameAt - finishedAt),
         nextPaintMs: Math.max(0, paintedAt - finishedAt),
+      },
+      "records",
+      paintedAt,
+    )
+  })
+}
+
+const finishPerformanceDiagnosticsPaint = (runId: string) => {
+  const remaining = Math.max(0, (pendingPaintRecords.get(runId) || 1) - 1)
+  if (remaining > 0) {
+    pendingPaintRecords.set(runId, remaining)
+    return
+  }
+
+  pendingPaintRecords.delete(runId)
+  if (!completionRequested.delete(runId)) return
+  const active = get(activePerformanceDiagnosticsRun)
+  if (active?.id === runId && active.automatic) stopPerformanceDiagnosticsCapture("complete")
+}
+
+const schedulePerformanceDiagnosticsPaint = (
+  runId: string,
+  record: (firstFrameAt: number, paintedAt: number) => void,
+) => {
+  pendingPaintRecords.set(runId, (pendingPaintRecords.get(runId) || 0) + 1)
+  try {
+    window.requestAnimationFrame(() => {
+      const firstFrameAt = performance.now()
+      window.requestAnimationFrame(() => {
+        const paintedAt = performance.now()
+        try {
+          record(firstFrameAt, paintedAt)
+        } finally {
+          finishPerformanceDiagnosticsPaint(runId)
+        }
       })
     })
-  })
+  } catch (error) {
+    finishPerformanceDiagnosticsPaint(runId)
+    throw error
+  }
 }
 
 export const measurePerformanceDiagnosticsWork = <T>(
@@ -409,26 +505,34 @@ export const recordPerformanceDiagnosticsInteractionPaint = ({
   const active = get(activePerformanceDiagnosticsRun)
   if (!active || typeof window === "undefined") return false
 
-  recordPerformanceDiagnostics(active.id, "interaction-paint", {
-    owner,
+  recordPerformanceDiagnosticsAt(
+    active.id,
+    "interaction-paint",
+    {
+      owner,
+      inputStartedAt,
+      inputDelayMs: Math.max(0, handlerStartedAt - inputStartedAt),
+      handlerMs: Math.max(0, stateChangedAt - handlerStartedAt),
+      ...detail,
+    },
+    "records",
     inputStartedAt,
-    inputDelayMs: Math.max(0, handlerStartedAt - inputStartedAt),
-    handlerMs: Math.max(0, stateChangedAt - handlerStartedAt),
-    ...detail,
-  })
+  )
 
-  window.requestAnimationFrame(() => {
-    const frameAt = performance.now()
-    window.requestAnimationFrame(() => {
-      const paintedAt = performance.now()
-      recordPerformanceDiagnostics(active.id, "interaction-paint-frame", {
+  schedulePerformanceDiagnosticsPaint(active.id, (frameAt, paintedAt) => {
+    recordPerformanceDiagnosticsAt(
+      active.id,
+      "interaction-paint-frame",
+      {
         owner,
         inputStartedAt,
         nextFrameMs: Math.max(0, frameAt - stateChangedAt),
         nextPaintMs: Math.max(0, paintedAt - stateChangedAt),
         totalMs: Math.max(0, paintedAt - inputStartedAt),
-      })
-    })
+      },
+      "records",
+      paintedAt,
+    )
   })
   return true
 }
@@ -449,7 +553,7 @@ export const finishPerformanceDiagnosticsRun = (
   return true
 }
 
-const getEnvironment = (): PerformanceDiagnosticsSnapshot["environment"] => {
+const getEnvironment = (): PerformanceDiagnosticsEnvironment => {
   if (typeof window === "undefined") {
     return {
       href: "",
@@ -464,7 +568,7 @@ const getEnvironment = (): PerformanceDiagnosticsSnapshot["environment"] => {
   const nav = navigator as Navigator & {deviceMemory?: number}
 
   return {
-    href: window.location.href,
+    href: sanitizePerformanceDiagnosticsUrl(window.location?.href || ""),
     userAgent: navigator.userAgent,
     language: navigator.language,
     viewport: {
@@ -516,6 +620,8 @@ export const clearPerformanceDiagnostics = () => {
   activePerformanceDiagnosticsRun.set(null)
   runs = []
   clockByRun.clear()
+  pendingPaintRecords.clear()
+  completionRequested.clear()
   notify()
 }
 
@@ -638,6 +744,10 @@ export const consumeArmedPerformanceDiagnosticsCapture = (pathname: string) => {
 export const completeAutomaticPerformanceDiagnosticsCapture = (runId: string) => {
   const active = get(activePerformanceDiagnosticsRun)
   if (!active || active.id !== runId || !active.automatic) return false
+  if ((pendingPaintRecords.get(runId) || 0) > 0) {
+    completionRequested.add(runId)
+    return true
+  }
   return stopPerformanceDiagnosticsCapture("complete")
 }
 
@@ -645,7 +755,7 @@ const nonNegativeDuration = (end: number, start: number) =>
   end > 0 && start > 0 ? Math.max(0, end - start) : 0
 
 export const getPerformanceNavigationTimingDetail = (navigation: PerformanceNavigationTiming) => ({
-  name: navigation.name,
+  name: sanitizePerformanceDiagnosticsUrl(navigation.name),
   type: navigation.type,
   protocol: navigation.nextHopProtocol,
   workerStart: navigation.workerStart,
@@ -690,7 +800,7 @@ export const getPerformanceLongTaskDetail = (entry: PerformanceEntry) => {
       containerType: item.containerType || "",
       containerName: item.containerName || "",
       containerId: item.containerId || "",
-      containerSrc: item.containerSrc || "",
+      containerSrc: sanitizePerformanceDiagnosticsUrl(item.containerSrc || ""),
     })),
   }
 }
@@ -720,6 +830,8 @@ export const stopPerformanceDiagnosticsCapture = (
   stopActiveObservers = undefined
   if (automaticCaptureTimer) clearTimeout(automaticCaptureTimer)
   automaticCaptureTimer = undefined
+  pendingPaintRecords.delete(active.id)
+  completionRequested.delete(active.id)
   activePerformanceDiagnosticsRun.set(null)
   return finishPerformanceDiagnosticsRun(active.id, status)
 }
@@ -728,8 +840,13 @@ export const startPerformanceDiagnosticsObservers = (
   runId: string,
   {schedulerIntervalMs = 1_000}: {schedulerIntervalMs?: number} = {},
 ) => {
-  if (typeof window === "undefined" || !getRun(runId)) return () => {}
-  const observers: PerformanceObserver[] = []
+  const run = getRun(runId)
+  if (typeof window === "undefined" || !run) return () => {}
+  const observers: Array<{
+    observer: PerformanceObserver
+    record: (entries: PerformanceEntry[]) => void
+  }> = []
+  const acceptsEntry = (entry: PerformanceEntry) => entry.startTime >= run.startedAt
   const stopRepositoryTiming = setRepositoryUpdateTimingListener(timing => {
     if (timing.durationMs < DEFAULT_WORK_SPAN_THRESHOLD_MS) return
     const measuredSubscriberMs = timing.subscribers.reduce(
@@ -770,31 +887,35 @@ export const startPerformanceDiagnosticsObservers = (
 
   if (typeof PerformanceObserver !== "undefined") {
     try {
-      const longTaskObserver = new PerformanceObserver(list => {
-        for (const entry of list.getEntries()) {
-          recordPerformanceDiagnostics(
+      const recordLongTasks = (entries: PerformanceEntry[]) => {
+        for (const entry of entries) {
+          if (!acceptsEntry(entry)) continue
+          recordPerformanceDiagnosticsAt(
             runId,
             "long-task",
             getPerformanceLongTaskDetail(entry),
             "longTasks",
+            entry.startTime,
           )
         }
-      })
+      }
+      const longTaskObserver = new PerformanceObserver(list => recordLongTasks(list.getEntries()))
       longTaskObserver.observe({type: "longtask", buffered: true} as PerformanceObserverInit)
-      observers.push(longTaskObserver)
+      observers.push({observer: longTaskObserver, record: recordLongTasks})
     } catch {
       // Long Task API is not available in every browser.
     }
 
     try {
-      const resourceObserver = new PerformanceObserver(list => {
-        for (const entry of list.getEntries()) {
+      const recordResources = (entries: PerformanceEntry[]) => {
+        for (const entry of entries) {
+          if (!acceptsEntry(entry)) continue
           const resource = entry as PerformanceResourceTiming
-          recordPerformanceDiagnostics(
+          recordPerformanceDiagnosticsAt(
             runId,
             "resource",
             {
-              name: resource.name,
+              name: sanitizePerformanceDiagnosticsUrl(resource.name),
               initiatorType: resource.initiatorType,
               startTime: resource.startTime,
               duration: resource.duration,
@@ -803,11 +924,13 @@ export const startPerformanceDiagnosticsObservers = (
               decodedBodySize: resource.decodedBodySize,
             },
             "resources",
+            resource.startTime,
           )
         }
-      })
+      }
+      const resourceObserver = new PerformanceObserver(list => recordResources(list.getEntries()))
       resourceObserver.observe({type: "resource", buffered: true} as PerformanceObserverInit)
-      observers.push(resourceObserver)
+      observers.push({observer: resourceObserver, record: recordResources})
     } catch {
       // Resource Timing observation is best effort.
     }
@@ -815,22 +938,30 @@ export const startPerformanceDiagnosticsObservers = (
     const recordedInteractions = new Set<string>()
     const observeInteractions = (type: "event" | "first-input") => {
       try {
-        const observer = new PerformanceObserver(list => {
-          for (const rawEntry of list.getEntries()) {
+        const recordInteractions = (entries: PerformanceEntry[]) => {
+          for (const rawEntry of entries) {
+            if (!acceptsEntry(rawEntry)) continue
             const entry = rawEntry as PerformanceEventTiming
             const detail = getPerformanceInteractionTimingDetail(entry)
             const key = `${detail.name}:${detail.startTime}:${detail.interactionId}`
             if (recordedInteractions.has(key)) continue
             recordedInteractions.add(key)
-            recordPerformanceDiagnostics(runId, "interaction-timing", detail)
+            recordPerformanceDiagnosticsAt(
+              runId,
+              "interaction-timing",
+              detail,
+              "records",
+              entry.startTime,
+            )
           }
-        })
+        }
+        const observer = new PerformanceObserver(list => recordInteractions(list.getEntries()))
         observer.observe(
           type === "event"
             ? ({type, buffered: true, durationThreshold: 16} as PerformanceObserverInit)
             : ({type, buffered: true} as PerformanceObserverInit),
         )
-        observers.push(observer)
+        observers.push({observer, record: recordInteractions})
       } catch {
         // Event Timing is not available in every browser.
       }
@@ -839,16 +970,25 @@ export const startPerformanceDiagnosticsObservers = (
     observeInteractions("first-input")
   }
 
+  let navigationTimingRecorded = false
   const recordNavigationTiming = () => {
+    if (navigationTimingRecorded) return
     const navigation = performance.getEntriesByType("navigation")[0] as
       | PerformanceNavigationTiming
       | undefined
-    if (navigation) {
-      recordPerformanceDiagnostics(
-        runId,
-        "navigation-timing",
-        getPerformanceNavigationTimingDetail(navigation),
-      )
+    if (navigation && acceptsEntry(navigation)) {
+      const at = navigation.loadEventEnd || navigation.responseEnd || navigation.startTime
+      if (
+        recordPerformanceDiagnosticsAt(
+          runId,
+          "navigation-timing",
+          getPerformanceNavigationTimingDetail(navigation),
+          "records",
+          at,
+        )
+      ) {
+        navigationTimingRecorded = true
+      }
     }
   }
   const onLoad = () => recordNavigationTiming()
@@ -865,7 +1005,12 @@ export const startPerformanceDiagnosticsObservers = (
     recordPerformanceDiagnostics(
       runId,
       "window-error",
-      {message: event.message, filename: event.filename, lineno: event.lineno, error: event.error},
+      {
+        message: event.message,
+        filename: sanitizePerformanceDiagnosticsUrl(event.filename),
+        lineno: event.lineno,
+        error: event.error,
+      },
       "warnings",
     )
   const onRejection = (event: PromiseRejectionEvent) =>
@@ -876,7 +1021,11 @@ export const startPerformanceDiagnosticsObservers = (
 
   return () => {
     stopRepositoryTiming()
-    observers.forEach(observer => observer.disconnect())
+    for (const {observer, record} of observers) {
+      record(observer.takeRecords())
+      observer.disconnect()
+    }
+    recordNavigationTiming()
     window.clearInterval(schedulerInterval)
     window.removeEventListener("error", onError)
     window.removeEventListener("unhandledrejection", onRejection)

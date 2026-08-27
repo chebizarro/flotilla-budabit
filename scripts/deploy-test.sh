@@ -14,6 +14,7 @@ cd "$repo_root"
 
 VITE_PLATFORM_URL='https://test.budabit.club' \
 VITE_APP_URL='https://test.budabit.club' \
+VITE_DIAGNOSTICS=1 \
 VITE_PERFORMANCE_DIAGNOSTICS=1 \
 pnpm run build-in-production
 

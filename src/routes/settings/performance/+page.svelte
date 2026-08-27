@@ -127,7 +127,9 @@
     preparing = true
     error = ""
     try {
-      if (!latest) throw new Error("Complete a capture before downloading")
+      if (!latest || latest.status === "running") {
+        throw new Error("Complete a capture before downloading")
+      }
       const current = getPerformanceDiagnosticsSnapshot()
       const artifact = await preparePerformanceDiagnosticsArtifact(current, {runId: latest.id})
       const url = URL.createObjectURL(
@@ -354,7 +356,10 @@
       {/if}
 
       <div class="flex flex-wrap gap-2">
-        <Button class="btn btn-neutral btn-sm" disabled={!latest || preparing} onclick={download}>
+        <Button
+          class="btn btn-neutral btn-sm"
+          disabled={!latest || latest.status === "running" || preparing}
+          onclick={download}>
           {preparing ? "Preparing..." : "Download"}
         </Button>
         <Button class="btn btn-secondary btn-sm" disabled={!latest || preparing} onclick={publish}>
@@ -388,6 +393,7 @@
         <span class="font-medium">Capture capacity</span>
         <select
           class="select select-bordered w-full sm:max-w-xs"
+          disabled={$debugDiagnosticsActive}
           value={$debugDiagnosticsSettings.preset}
           onchange={event => selectDebugPreset(event.currentTarget.value as DebugDiagnosticPreset)}>
           {#each DEBUG_DIAGNOSTIC_PRESET_IDS as preset}
@@ -416,6 +422,7 @@
             <input
               type="checkbox"
               class="toggle toggle-primary mt-1"
+              disabled={$debugDiagnosticsActive}
               checked={$debugDiagnosticsSettings.categories[category]}
               onchange={event => toggleDebugCategory(category, event.currentTarget.checked)} />
           </label>

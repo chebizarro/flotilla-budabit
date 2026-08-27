@@ -218,12 +218,20 @@ export const createDebugDiagnosticsRecorder = ({
   let startedAt = 0
   let finishedAt: number | undefined
   let records: DebugDiagnosticRecord[] = []
+  let capturePreset: DebugDiagnosticPreset = "standard"
+  let captureCategories = {...defaultDebugDiagnosticsSettings().categories}
+  let captureLimits = {
+    maxRecords: maxRecords ?? DEBUG_DIAGNOSTIC_PRESETS.standard.maxRecords,
+    maxRecordsPerCategory:
+      maxRecordsPerCategory ?? DEBUG_DIAGNOSTIC_PRESETS.standard.maxRecordsPerCategory,
+  }
   let counts = Object.fromEntries(
     DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
   ) as Record<DebugDiagnosticCategory, number>
 
   const notify = () => revision.update(value => value + 1)
   const getLimits = () => {
+    if (captureId) return captureLimits
     const preset = DEBUG_DIAGNOSTIC_PRESETS[get(settings).preset]
     return {
       maxRecords: maxRecords ?? preset.maxRecords,
@@ -269,13 +277,21 @@ export const createDebugDiagnosticsRecorder = ({
     notify()
   }
   const isCategoryEnabled = (category: DebugDiagnosticCategory) =>
-    get(settings).categories[category]
+    captureId ? captureCategories[category] : get(settings).categories[category]
   const start = (id = `debug-${now().toString(36)}`) => {
+    const currentSettings = get(settings)
+    const presetLimits = DEBUG_DIAGNOSTIC_PRESETS[currentSettings.preset]
     records = []
     counts = Object.fromEntries(
       DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
     ) as Record<DebugDiagnosticCategory, number>
     captureId = id
+    capturePreset = currentSettings.preset
+    captureCategories = {...currentSettings.categories}
+    captureLimits = {
+      maxRecords: maxRecords ?? presetLimits.maxRecords,
+      maxRecordsPerCategory: maxRecordsPerCategory ?? presetLimits.maxRecordsPerCategory,
+    }
     startedAt = now()
     finishedAt = undefined
     active.set(true)
@@ -295,6 +311,8 @@ export const createDebugDiagnosticsRecorder = ({
       DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
     ) as Record<DebugDiagnosticCategory, number>
     captureId = ""
+    capturePreset = "standard"
+    captureCategories = {...defaultDebugDiagnosticsSettings().categories}
     startedAt = 0
     finishedAt = undefined
     active.set(false)
@@ -339,10 +357,10 @@ export const createDebugDiagnosticsRecorder = ({
         startedAt,
         ...(finishedAt === undefined ? {} : {finishedAt}),
         active: get(active),
-        preset: currentSettings.preset,
+        preset: captureId ? capturePreset : currentSettings.preset,
         limits,
-        enabledCategories: DEBUG_DIAGNOSTIC_CATEGORIES.filter(
-          category => currentSettings.categories[category],
+        enabledCategories: DEBUG_DIAGNOSTIC_CATEGORIES.filter(category =>
+          captureId ? captureCategories[category] : currentSettings.categories[category],
         ),
       },
       records,
@@ -356,7 +374,7 @@ export const createDebugDiagnosticsRecorder = ({
       startedAt,
       finishedAt,
       recordCount: records.length,
-      preset: currentSettings.preset,
+      preset: captureId ? capturePreset : currentSettings.preset,
       limits: getLimits(),
       counts: {...counts},
     }
@@ -399,8 +417,21 @@ export const refreshDebugDiagnosticsSettings = () => {
       JSON.parse(localStorage.getItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY) || "null"),
     )
   } catch {
-    localStorage.removeItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY)
+    try {
+      localStorage.removeItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY)
+    } catch {
+      // Storage is optional and may be blocked even when the API exists.
+    }
     return recorder.setSettings(null)
+  }
+}
+
+const persistDebugDiagnosticsSettings = (settings: DebugDiagnosticsSettings) => {
+  if (typeof localStorage === "undefined") return
+  try {
+    localStorage.setItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  } catch {
+    // Keep the in-memory selection when storage is unavailable or full.
   }
 }
 
@@ -410,18 +441,14 @@ export const setDebugDiagnosticCategoryEnabled = (
 ) => {
   recorder.setCategoryEnabled(category, enabled)
   const settings = get(debugDiagnosticsSettings)
-  if (typeof localStorage !== "undefined") {
-    localStorage.setItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
-  }
+  persistDebugDiagnosticsSettings(settings)
   return settings
 }
 
 export const setDebugDiagnosticsPreset = (preset: DebugDiagnosticPreset) => {
   recorder.setPreset(preset)
   const settings = get(debugDiagnosticsSettings)
-  if (typeof localStorage !== "undefined") {
-    localStorage.setItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
-  }
+  persistDebugDiagnosticsSettings(settings)
   return settings
 }
 

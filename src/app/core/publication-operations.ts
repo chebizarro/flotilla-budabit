@@ -474,14 +474,15 @@ export const startPublication = (options: StartPublicationOptions): PublicationH
   let runtime: PublicationRuntime | undefined
 
   try {
+    const operationId = randomId()
     thunk = publishThunk({
       event: options.event,
       relays,
+      operationId,
       optimistic: false,
       presentation: "private",
       ...(options.delay ? {delay: options.delay} : {}),
     })
-    const operationId = randomId()
     const snapshot: PublicationSnapshot = Object.freeze({
       operationId,
       ownerPubkey: thunk.pubkey,
@@ -535,6 +536,8 @@ const createLinkedTargetThunk = (runtime: LinkedPublicationRuntime) => {
   const targetThunk = publishThunk({
     event: runtime.targetEvent(runtime.primaryAckRelay),
     relays: runtime.relays,
+    operationId: runtime.snapshot.operationId,
+    publicationStage: "target",
     optimistic: false,
     presentation: "private",
   })
@@ -745,13 +748,15 @@ export const startLinkedPublication = (
   let runtime: LinkedPublicationRuntime | undefined
 
   try {
+    const operationId = randomId()
     primaryThunk = publishThunk({
       event: options.event,
       relays,
+      operationId,
+      publicationStage: "primary",
       optimistic: false,
       presentation: "private",
     })
-    const operationId = randomId()
     const snapshot: PublicationSnapshot = Object.freeze({
       operationId,
       ownerPubkey: primaryThunk.pubkey,
