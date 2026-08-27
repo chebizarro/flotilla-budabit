@@ -1,4 +1,4 @@
-import {last, normalizeUrl, stripProtocol} from "@welshman/lib"
+import {last, stripProtocol} from "@welshman/lib"
 
 // Constants and types
 
@@ -53,6 +53,9 @@ export const isRelayUrl = (url: unknown): url is string => {
 
   // Host is required (rejects local file paths like /home/foo/bar.png)
   if (!parsed.hostname) return false
+
+  // Relay credentials are not part of the supported transport identity contract
+  if (parsed.username || parsed.password) return false
 
   // Skip non-localhost hosts without a dot (checks host, not path)
   if (!parsed.hostname.includes(".") && parsed.hostname !== "localhost") return false
@@ -141,20 +144,33 @@ export const normalizeRelayUrl = (url: string) => {
   const inputShape = getRelayInputShape(original)
 
   try {
-    const prefix = url.match(/^wss?:\/\//)?.[0] || (isOnionUrl(url) ? "ws://" : "wss://")
+    if (typeof url !== "string" || !url) throw new TypeError("Invalid relay URL")
 
-    // Use our library to normalize
-    url = normalizeUrl(url, {stripHash: true, stripAuthentication: false})
+    const schemeMatch = url.match(/^([a-z][a-z\d+.-]*):\/\//i)
+    const candidate = schemeMatch ? url : `${isOnionUrl(url.toLowerCase()) ? "ws" : "wss"}://${url}`
+    const parsed = new URL(candidate)
 
-    // Strip the protocol, lowercase
-    url = stripProtocol(url).toLowerCase()
-
-    // Urls without pathnames are supposed to have a trailing slash
-    if (!url.includes("/")) {
-      url += "/"
+    if (
+      !/^wss?:$/.test(parsed.protocol) ||
+      !parsed.hostname ||
+      (!parsed.hostname.includes(".") && parsed.hostname !== "localhost") ||
+      parsed.username ||
+      parsed.password
+    ) {
+      throw new TypeError("Invalid relay URL")
     }
 
-    const normalized = prefix + url
+    // URL canonicalizes the scheme, hostname, and default port. Preserve the
+    // caller's path and query byte-for-byte because they may identify distinct endpoints.
+    const rawAfterScheme = candidate.slice(candidate.indexOf("://") + 3)
+    const suffixStart = rawAfterScheme.search(/[/?#]/)
+    const rawSuffix = suffixStart === -1 ? "" : rawAfterScheme.slice(suffixStart)
+    const suffixWithoutFragment = rawSuffix.split("#", 1)[0]
+    const pathAndQuery =
+      !suffixWithoutFragment || suffixWithoutFragment.startsWith("?")
+        ? `/${suffixWithoutFragment}`
+        : suffixWithoutFragment
+    const normalized = `${parsed.protocol}//${parsed.host}${pathAndQuery}`
     if (normalized !== original) {
       emitRelayNormalization({
         source: "welshman.normalizeRelayUrl",
@@ -178,6 +194,27 @@ export const normalizeRelayUrl = (url: string) => {
     })
     throw error
   }
+}
+
+export const sanitizeRelayUrls = (urls: Iterable<unknown>): string[] => {
+  const relays: string[] = []
+  const seen = new Set<string>()
+
+  for (const value of urls) {
+    if (typeof value !== "string" || !isRelayUrl(value)) continue
+
+    try {
+      const relay = normalizeRelayUrl(value)
+      if (!seen.has(relay)) {
+        seen.add(relay)
+        relays.push(relay)
+      }
+    } catch {
+      // Invalid collection entries are omitted rather than invalidating the collection.
+    }
+  }
+
+  return relays
 }
 
 export const displayRelayUrl = (url: string) => last(url.split("://")).replace(/\/$/, "")
