@@ -29,6 +29,27 @@ import {
   setActiveExactCommunityPointer,
 } from "./community-state"
 
+vi.hoisted(() => {
+  const values = new Map<string, string>()
+  Object.defineProperties(Storage.prototype, {
+    clear: {configurable: true, value: () => values.clear()},
+    getItem: {configurable: true, value: (key: string) => values.get(key) ?? null},
+    key: {
+      configurable: true,
+      value: (index: number) => Array.from(values.keys())[index] ?? null,
+    },
+    removeItem: {configurable: true, value: (key: string) => values.delete(key)},
+    setItem: {
+      configurable: true,
+      value: (key: string, value: string) => values.set(key, String(value)),
+    },
+  })
+  const storage = Object.create(Storage.prototype)
+
+  Object.defineProperty(globalThis, "localStorage", {configurable: true, value: storage})
+  Object.defineProperty(globalThis, "sessionStorage", {configurable: true, value: storage})
+})
+
 const utilMocks = vi.hoisted(() => ({
   uploadBlob: vi.fn(),
 }))
@@ -982,6 +1003,68 @@ describe("commands", () => {
       )
       expect(publishSpy).toHaveBeenCalledTimes(1)
     } finally {
+      publishSpy.mockRestore()
+    }
+  })
+
+  it("mutates relay settings by canonical identity", async () => {
+    const publishSpy = vi.spyOn(welshmanApp, "publishThunk").mockReturnValue({
+      event: {id: "published"},
+      complete: Promise.resolve(),
+      results: {},
+    } as any)
+    const relayListSubscribe = vi
+      .spyOn(welshmanApp.userRelayList, "subscribe")
+      .mockImplementation((run: any) => {
+        run({
+          kind: 10002,
+          publicTags: [
+            ["r", "WSS://Relay.Example"],
+            ["r", "wss://other.example/"],
+          ],
+          privateTags: [],
+        })
+        return () => undefined
+      })
+    const messagingListSubscribe = vi
+      .spyOn(welshmanApp.userMessagingRelayList, "subscribe")
+      .mockImplementation((run: any) => {
+        run({
+          kind: 10050,
+          publicTags: [["relay", "WSS://Relay.Example"]],
+          privateTags: [],
+        })
+        return () => undefined
+      })
+    const {setRelayPolicy, setMessagingRelayPolicy} = await import("./commands")
+
+    try {
+      setRelayPolicy("wss://RELAY.example/", true, true)
+      expect(publishSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          event: expect.objectContaining({
+            tags: [
+              ["r", "wss://other.example/"],
+              ["r", "wss://relay.example/"],
+            ],
+          }),
+        }),
+      )
+
+      setRelayPolicy("wss://relay.example/", false, false)
+      expect(publishSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          event: expect.objectContaining({tags: [["r", "wss://other.example/"]]}),
+        }),
+      )
+
+      setMessagingRelayPolicy("wss://relay.example/", false)
+      expect(publishSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({event: expect.objectContaining({tags: []})}),
+      )
+    } finally {
+      messagingListSubscribe.mockRestore()
+      relayListSubscribe.mockRestore()
       publishSpy.mockRestore()
     }
   })

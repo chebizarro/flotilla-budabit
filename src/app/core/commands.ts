@@ -33,7 +33,6 @@ import {
   getListTags,
   getRelayTags,
   toNostrURI,
-  getRelaysFromList,
   RelayMode,
   getAddress,
   getTagValue,
@@ -552,6 +551,7 @@ export const broadcastUserData = async (relays: string[]) => {
 // List updates
 
 export const setRelayPolicy = (url: string, read: boolean, write: boolean) => {
+  url = normalizeRelayUrl(url)
   const list = get(userRelayList) || makeList({kind: RELAYS})
   const tags = getRelayTags(getListTags(list)).filter(t => normalizeRelayUrl(t[1]) !== url)
 
@@ -574,11 +574,14 @@ export const setRelayPolicy = (url: string, read: boolean, write: boolean) => {
 }
 
 export const setMessagingRelayPolicy = (url: string, enabled: boolean) => {
+  url = normalizeRelayUrl(url)
   const list = get(userMessagingRelayList) || makeList({kind: MESSAGING_RELAYS})
+  const relayTags = getRelayTags(getListTags(list))
+  const hasRelay = relayTags.some(t => normalizeRelayUrl(t[1]) === url)
 
   // Only update messaging policies if they already exist or we're adding them
-  if (enabled || getRelaysFromList(list).includes(url)) {
-    const tags = getRelayTags(getListTags(list)).filter(t => normalizeRelayUrl(t[1]) !== url)
+  if (enabled || hasRelay) {
+    const tags = relayTags.filter(t => normalizeRelayUrl(t[1]) !== url)
 
     if (enabled) {
       tags.push(["relay", url])

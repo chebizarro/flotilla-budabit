@@ -9,6 +9,7 @@ import {
   removeFromListByPredicate,
   addToListPublicly,
   addToListPrivately,
+  getRelaysFromList,
 } from "../src/List"
 import type {DecryptedEvent} from "../src/Encryptable"
 import type {List} from "../src/List"
@@ -228,6 +229,35 @@ describe("List", () => {
 
     it("should handle undefined list", () => {
       expect(getListTags(undefined)).toEqual([])
+    })
+  })
+
+  describe("getRelaysFromList", () => {
+    it("preserves raw valid values and deduplicates by canonical identity", () => {
+      const list = makeList({
+        kind: MUTES,
+        publicTags: [
+          ["r", "WSS://Relay.Example.com"],
+          ["r", "wss://relay.example.com/"],
+          ["r", "wss://relay.example.com/Path"],
+        ],
+        privateTags: [["relay", "wss://relay.example.com/path"]],
+      })
+
+      expect(getRelaysFromList(list)).toEqual([
+        "WSS://Relay.Example.com",
+        "wss://relay.example.com/Path",
+        "wss://relay.example.com/path",
+      ])
+    })
+
+    it("ignores malformed tag shapes without throwing", () => {
+      const list = makeList({
+        kind: MUTES,
+        publicTags: [null, ["r"], ["r", "invalid"], ["r", "wss://valid.example"]] as any,
+      })
+
+      expect(getRelaysFromList(list)).toEqual(["wss://valid.example"])
     })
   })
 

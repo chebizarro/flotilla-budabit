@@ -25,7 +25,7 @@ import {
   FOLLOWS,
   WRAP,
   getPubkeyTagValues,
-  normalizeRelayUrl,
+  sanitizeRelayUrls,
   type TrustedEvent,
   type Filter,
   readList,
@@ -98,7 +98,7 @@ export type Selection = {
 }
 
 export const makeSelection = (relays: string[], weight = 1): Selection => ({
-  relays: relays.filter(isRelayUrl).map(normalizeRelayUrl),
+  relays: sanitizeRelayUrls(relays),
   weight,
 })
 

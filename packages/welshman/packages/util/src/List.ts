@@ -1,4 +1,4 @@
-import {parseJson, uniq, nthEq} from "@welshman/lib"
+import {parseJson, nthEq} from "@welshman/lib"
 import {Address} from "./Address.js"
 import {uniqTags, getRelayTags} from "./Tags.js"
 import {isRelayUrl, type RelayMode, normalizeRelayUrl} from "./Relay.js"
@@ -120,5 +120,20 @@ export const getRelaysFromList = (list?: List, mode?: RelayMode): string[] => {
     tags = tags.filter((t: string[]) => !t[2] || t[2] === mode)
   }
 
-  return uniq(tags.map(t => normalizeRelayUrl(t[1])))
+  const relays: string[] = []
+  const seen = new Set<string>()
+
+  for (const tag of tags) {
+    try {
+      const key = normalizeRelayUrl(tag[1])
+      if (!seen.has(key)) {
+        seen.add(key)
+        relays.push(tag[1])
+      }
+    } catch {
+      // Ignore malformed list values without rewriting valid signed values.
+    }
+  }
+
+  return relays
 }
