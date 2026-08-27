@@ -1,5 +1,9 @@
 import { getGitServiceApi } from "@nostr-git/core";
-import { hasMatchingGraspRepoCloneUrl, parseGraspRepoHttpUrl } from "@nostr-git/core/utils";
+import {
+  hasMatchingGraspRepoCloneUrl,
+  normalizeRelayUrl as canonicalizeRelayUrl,
+  parseGraspRepoHttpUrl,
+} from "@nostr-git/core/utils";
 
 import type { Token } from "../stores/tokens.js";
 import { checkGraspRepoExists } from "./grasp-availability.js";
@@ -45,7 +49,11 @@ export interface PreflightRemoteTargetsOptions {
 }
 
 export function normalizeRelayUrl(value: string): string {
-  return (value || "").trim().replace(/\/+$/, "");
+  try {
+    return canonicalizeRelayUrl(String(value || "").trim());
+  } catch {
+    return "";
+  }
 }
 
 export function normalizeTokenHostForTarget(host: string): string {

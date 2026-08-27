@@ -68,7 +68,7 @@ describe("RepoCreationTransactionJournal", () => {
       operation: "new",
       ownerPubkey: "f".repeat(64),
       repoName: "repo",
-      repositoryRelayUrls: ["wss://relay.example"],
+      repositoryRelayUrls: ["wss://relay.example/"],
       localRepoId: "owner/repo",
     });
     journal.setTargets([
@@ -94,12 +94,12 @@ describe("RepoCreationTransactionJournal", () => {
       journal,
       vi.fn().mockResolvedValue({
         event,
-        ackedRelays: ["wss://relay.example"],
+        ackedRelays: ["wss://relay.example/"],
         failedRelays: [],
       })
     );
 
-    await publisher?.(event, { relays: ["wss://relay.example"] });
+    await publisher?.(event, { relays: ["wss://relay.example/"] });
     journal.setPhase("metadata-pending", new Error("relay timeout"));
 
     const [record] = getPendingRepoCreationTransactions();
@@ -107,7 +107,7 @@ describe("RepoCreationTransactionJournal", () => {
       expect.objectContaining({
         version: 2,
         phase: "metadata-pending",
-        repositoryRelayUrls: ["wss://relay.example"],
+        repositoryRelayUrls: ["wss://relay.example/"],
         lastError: "relay timeout",
         localResource: {
           id: "owner/repo",
@@ -115,12 +115,12 @@ describe("RepoCreationTransactionJournal", () => {
           stage: "unknown",
         },
         targets: [expect.objectContaining({ id: "git:github.com", host: "github.com" })],
-        publishedEvents: [{ event, relayUrls: ["wss://relay.example"], stage: "provisional" }],
+        publishedEvents: [{ event, relayUrls: ["wss://relay.example/"], stage: "provisional" }],
         eventAcks: [
           expect.objectContaining({
             eventId: "event-id",
-            requestedRelayUrls: ["wss://relay.example"],
-            ackedRelays: ["wss://relay.example"],
+            requestedRelayUrls: ["wss://relay.example/"],
+            ackedRelays: ["wss://relay.example/"],
             failedRelays: [],
             successCount: 1,
             hasRelayOutcomes: true,
@@ -198,7 +198,7 @@ describe("RepoCreationTransactionJournal", () => {
             error: "network timeout",
           },
         ],
-        publishedEvents: [{ event, relayUrls: ["wss://relay.example"], stage: "provisional" }],
+        publishedEvents: [{ event, relayUrls: ["wss://relay.example/"], stage: "provisional" }],
         pendingCompensations: [],
         lastError: "network timeout",
         createdAt: 1,
@@ -231,7 +231,7 @@ describe("RepoCreationTransactionJournal", () => {
         eventAcks: [
           expect.objectContaining({
             eventId: "legacy-event",
-            ackedRelays: ["wss://relay.example"],
+            ackedRelays: ["wss://relay.example/"],
             hasRelayOutcomes: false,
             migrated: true,
           }),
@@ -357,13 +357,13 @@ describe("RepoCreationTransactionJournal", () => {
     journal.recordPublishedEvent(
       {
         event,
-        ackedRelays: ["wss://relay.example"],
+        ackedRelays: ["wss://relay.example/"],
         failedRelays: [],
         relayOutcomes: [
-          { relay: "wss://relay.example", status: "success", detail: `accepted ${token}` },
+          { relay: "wss://relay.example/", status: "success", detail: `accepted ${token}` },
         ],
       },
-      ["wss://relay.example"],
+      ["wss://relay.example/"],
       "provisional"
     );
 
@@ -423,18 +423,18 @@ describe("RepoCreationTransactionJournal", () => {
       journal,
       vi.fn().mockResolvedValue({
         event,
-        ackedRelays: ["wss://accepted.example"],
-        failedRelays: ["wss://timed-out.example"],
+        ackedRelays: ["wss://accepted.example/"],
+        failedRelays: ["wss://timed-out.example/"],
         successCount: 1,
         hasRelayOutcomes: true,
       })
     );
 
     await publisher?.(event, {
-      relays: ["wss://accepted.example", "wss://timed-out.example"],
+      relays: ["wss://accepted.example/", "wss://timed-out.example/"],
     });
 
-    expect(journal.record.publishedEvents[0].relayUrls).toEqual(["wss://accepted.example"]);
+    expect(journal.record.publishedEvents[0].relayUrls).toEqual(["wss://accepted.example/"]);
   });
 
   it("records no rollback scope when publication has no relay outcomes", async () => {
@@ -462,11 +462,11 @@ describe("RepoCreationTransactionJournal", () => {
       vi.fn().mockResolvedValue({ event, successCount: 1 })
     );
 
-    await publisher?.(event, { relays: ["wss://requested.example"] });
+    await publisher?.(event, { relays: ["wss://requested.example/"] });
 
     expect(journal.record.publishedEvents[0].relayUrls).toEqual([]);
     expect(journal.record.eventAcks[0]).toMatchObject({
-      requestedRelayUrls: ["wss://requested.example"],
+      requestedRelayUrls: ["wss://requested.example/"],
       ackedRelays: [],
       hasRelayOutcomes: false,
     });
@@ -544,24 +544,24 @@ describe("RepoCreationTransactionJournal", () => {
       created_at: 2,
       tags: [
         ["d", "repo"],
-        ["relays", "wss://relay.example"],
+        ["relays", "wss://relay.example/"],
       ],
       content: "",
     };
     const state = { ...announcement, id: "state-id", kind: 30618, tags: [["d", "repo"]] };
-    journal.recordPublishedEvent({ event: announcement }, ["wss://relay.example"], "final");
-    journal.recordPublishedEvent({ event: state }, ["wss://relay.removed"], "final");
+    journal.recordPublishedEvent({ event: announcement }, ["wss://relay.example/"], "final");
+    journal.recordPublishedEvent({ event: state }, ["wss://relay.removed/"], "final");
     journal.setPhase("metadata-pending");
     const publisher = vi.fn(async (event) => ({
       event,
-      ackedRelays: ["wss://relay.example"],
+      ackedRelays: ["wss://relay.example/"],
       failedRelays: [],
     }));
 
     await retryPendingRepoCreationMetadata(journal.record, publisher);
 
     expect(publisher.mock.calls.map((call) => call[0])).toEqual([announcement, state]);
-    expect(publisher.mock.calls.every((call) => call[1].relays[0] === "wss://relay.example")).toBe(
+    expect(publisher.mock.calls.every((call) => call[1].relays[0] === "wss://relay.example/")).toBe(
       true
     );
     expect(getPendingRepoCreationTransactions()).toHaveLength(0);
@@ -589,39 +589,39 @@ describe("RepoCreationTransactionJournal", () => {
       tags: [
         ["d", "repo"],
         ["clone", cloneUrl],
-        ["relays", "wss://grasp.example"],
+        ["relays", "wss://grasp.example/"],
       ],
       content: "",
     };
     const state = { ...announcement, id: "state-id", kind: 30618, tags: [["d", "repo"]] };
     journal.setTargets([
       {
-        id: "grasp:wss://grasp.example",
+        id: "grasp:wss://grasp.example/",
         label: "GRASP",
         provider: "grasp",
-        relayUrl: "wss://grasp.example",
+        relayUrl: "wss://grasp.example/",
       },
     ]);
-    journal.recordGraspAnnouncementEvidence("wss://grasp.example", announcement);
+    journal.recordGraspAnnouncementEvidence("wss://grasp.example/", announcement);
     expect(journal.record.targets[0].announcementEvent).toEqual(announcement);
     journal.setTargetResults([
       {
-        id: "grasp:wss://grasp.example",
+        id: "grasp:wss://grasp.example/",
         label: "GRASP",
         provider: "grasp",
-        relayUrl: "wss://grasp.example",
+        relayUrl: "wss://grasp.example/",
         remoteUrl: cloneUrl,
         success: true,
         provisionalAnnouncementEvent: announcement,
       },
     ]);
     expect(journal.record.targetResults[0].provisionalAnnouncementEvent).toEqual(announcement);
-    journal.recordPublishedEvent({ event: announcement }, ["wss://grasp.example"], "final");
-    journal.recordPublishedEvent({ event: state }, ["wss://grasp.example"], "final");
+    journal.recordPublishedEvent({ event: announcement }, ["wss://grasp.example/"], "final");
+    journal.recordPublishedEvent({ event: state }, ["wss://grasp.example/"], "final");
     journal.setPhase("metadata-pending");
     const publisher = vi.fn(async (event) => ({
       event,
-      ackedRelays: ["wss://grasp.example"],
+      ackedRelays: ["wss://grasp.example/"],
       failedRelays: [],
     }));
     const fetchRelayEvents = vi.fn(async ({ filters }) => {
@@ -653,7 +653,7 @@ describe("RepoCreationTransactionJournal", () => {
       tags: [
         ["d", "repo"],
         ["clone", cloneUrl, legacyCloneUrl],
-        ["relays", "wss://available.example"],
+        ["relays", "wss://available.example/"],
       ],
       content: "",
     };
@@ -678,24 +678,24 @@ describe("RepoCreationTransactionJournal", () => {
         ["d", "repo"],
         ["clone", cloneUrl, legacyCloneUrl],
         ["web", webUrl],
-        ["relays", "wss://available.example", "wss://offline.example"],
+        ["relays", "wss://available.example/", "wss://offline.example/"],
       ],
       content: "",
     };
     journal.setTargets([
       {
-        id: "grasp:wss://available.example",
+        id: "grasp:wss://available.example/",
         label: "GRASP",
         provider: "grasp",
-        relayUrl: "wss://available.example",
+        relayUrl: "wss://available.example/",
       },
     ]);
     journal.setTargetResults([
       {
-        id: "grasp:wss://available.example",
+        id: "grasp:wss://available.example/",
         label: "GRASP",
         provider: "grasp",
-        relayUrl: "wss://available.example",
+        relayUrl: "wss://available.example/",
         remoteUrl: cloneUrl,
         webUrl,
         success: true,
@@ -704,12 +704,12 @@ describe("RepoCreationTransactionJournal", () => {
     const state = { ...announcement, id: "state-id", kind: 30618, tags: [["d", "repo"]] };
     journal.recordPublishedEvent(
       { event: announcement },
-      ["wss://available.example", "wss://offline.example"],
+      ["wss://available.example/", "wss://offline.example/"],
       "final"
     );
     journal.recordPublishedEvent(
       { event: state },
-      ["wss://available.example", "wss://offline.example"],
+      ["wss://available.example/", "wss://offline.example/"],
       "final"
     );
     journal.setPhase("metadata-pending");
@@ -727,9 +727,9 @@ describe("RepoCreationTransactionJournal", () => {
       publishedEventsById.set(signed.id, signed);
       return {
         event: signed,
-        ackedRelays: ["wss://available.example"],
+        ackedRelays: ["wss://available.example/"],
         failedRelays: (context?.relays || []).filter(
-          (relay: string) => relay !== "wss://available.example"
+          (relay: string) => relay !== "wss://available.example/"
         ),
         successCount: 1,
         hasRelayOutcomes: true,
@@ -747,11 +747,14 @@ describe("RepoCreationTransactionJournal", () => {
     );
 
     expect(publisher.mock.calls[0][1].relays).toEqual([
-      "wss://available.example",
-      "wss://offline.example",
+      "wss://available.example/",
+      "wss://offline.example/",
     ]);
-    expect(publisher.mock.calls[1][1].relays).toEqual(["wss://available.example"]);
-    expect(recovered.announcement.event.tags).toContainEqual(["relays", "wss://available.example"]);
+    expect(publisher.mock.calls[1][1].relays).toEqual(["wss://available.example/"]);
+    expect(recovered.announcement.event.tags).toContainEqual([
+      "relays",
+      "wss://available.example/",
+    ]);
     expect(recovered.announcement.event.tags).toContainEqual(["clone", cloneUrl, legacyCloneUrl]);
     expect(recovered.announcement.event.tags).toContainEqual(["web", webUrl]);
     expect(getPendingRepoCreationTransactions()).toHaveLength(0);
@@ -778,8 +781,8 @@ describe("RepoCreationTransactionJournal", () => {
       content: "",
     };
 
-    journal.recordPublishedEvent({ event }, ["wss://relay.example"], "final");
-    journal.recordPublishedEvent({ event }, ["wss://relay.example"], "provisional");
+    journal.recordPublishedEvent({ event }, ["wss://relay.example/"], "final");
+    journal.recordPublishedEvent({ event }, ["wss://relay.example/"], "provisional");
 
     expect(journal.record.publishedEvents[0].stage).toBe("final");
   });
@@ -804,12 +807,12 @@ describe("RepoCreationTransactionJournal", () => {
       tags: [["d", "repo"]],
       content: "",
     };
-    journal.recordPublishedEvent({ event }, ["wss://relay.example"], "provisional");
+    journal.recordPublishedEvent({ event }, ["wss://relay.example/"], "provisional");
     journal.setPendingCompensations([
       {
         action: "delete",
         eventId: event.id,
-        relayUrls: ["wss://relay.example"],
+        relayUrls: ["wss://relay.example/"],
         error: "timeout",
       },
     ]);
@@ -819,7 +822,7 @@ describe("RepoCreationTransactionJournal", () => {
 
     await retryRepoCreationCompensations(record, onDeleteEvent);
 
-    expect(onDeleteEvent).toHaveBeenCalledWith(event, ["wss://relay.example"]);
+    expect(onDeleteEvent).toHaveBeenCalledWith(event, ["wss://relay.example/"]);
     expect(getPendingRepoCreationTransactions()).toHaveLength(0);
   });
 });

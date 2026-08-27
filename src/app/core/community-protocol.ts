@@ -156,6 +156,8 @@ const normalizeUrl = (
   }
 }
 
+// Community definitions have a shipped slashless-root wire format. Transport
+// consumers canonicalize these values after parsing.
 export const normalizeCommunityRelay = (value?: string) => normalizeUrl(value, ["wss:"])
 
 const normalizeHttpsUrl = (value?: string) => normalizeUrl(value, ["https:"])

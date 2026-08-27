@@ -1,5 +1,5 @@
 import {request, type RequestOptions} from "@welshman/net"
-import {matchFilters, type Filter, type TrustedEvent} from "@welshman/util"
+import {matchFilters, normalizeRelayUrl, type Filter, type TrustedEvent} from "@welshman/util"
 import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
 
 export const MAX_EXTENSION_SUBSCRIPTIONS = 10
@@ -53,10 +53,7 @@ const getFilterKey = (filter: Filter) =>
 
 const normalizeRelay = (relay: string) => {
   try {
-    const url = new URL(relay)
-    if (url.protocol !== "wss:" && url.protocol !== "ws:") return ""
-    url.hash = ""
-    return url.toString()
+    return normalizeRelayUrl(relay)
   } catch {
     return ""
   }

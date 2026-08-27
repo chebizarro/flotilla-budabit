@@ -1,5 +1,6 @@
 import type { NostrEvent, RepoAnnouncementEvent } from "@nostr-git/core";
 import { createRepoStateEvent } from "@nostr-git/core/events";
+import { normalizeRelayUrl, sanitizeRelays } from "@nostr-git/core/utils";
 
 import {
   reconcileRepoCreationEvents,
@@ -250,24 +251,21 @@ async function finalizeVerifiedTargets(
       ? [{ relayUrl: target.relayUrl, cloneUrl: target.remoteUrl, webUrl: target.webUrl }]
       : []
   );
-  const normalizeRelay = (relay: string) => relay.replace(/\/+$/, "");
   const selectedGraspRelayKeys = new Set(
     record.targets
       .filter((target) => target.provider === "grasp" && target.relayUrl)
-      .map((target) => normalizeRelay(target.relayUrl as string))
+      .map((target) => normalizeRelayUrl(target.relayUrl as string))
   );
   const verifiedGraspRelayKeys = new Set(
-    graspTargets.map((target) => normalizeRelay(target.relayUrl))
+    graspTargets.map((target) => normalizeRelayUrl(target.relayUrl))
   );
-  const relays = Array.from(
-    new Set([
-      ...taggedRelays.filter((relay) => {
-        const key = normalizeRelay(relay);
-        return !selectedGraspRelayKeys.has(key) || verifiedGraspRelayKeys.has(key);
-      }),
-      ...verifiedTargets.map((target) => target.relayUrl).filter(Boolean),
-    ])
-  ) as string[];
+  const relays = sanitizeRelays([
+    ...taggedRelays.filter((relay) => {
+      const key = normalizeRelayUrl(relay);
+      return !selectedGraspRelayKeys.has(key) || verifiedGraspRelayKeys.has(key);
+    }),
+    ...verifiedTargets.map((target) => target.relayUrl).filter(Boolean),
+  ] as string[]);
   const { id: _id, sig: _sig, pubkey: _pubkey, ...announcementTemplate } = announcementBase;
   const preservedTags = announcementTemplate.tags.filter(
     (tag) => !["clone", "web", "relays"].includes(tag[0])

@@ -1,7 +1,12 @@
 import { writable } from "svelte/store";
+import { normalizeRelayUrl } from "@nostr-git/core/utils";
 
 export function normalizeGraspServerUrl(url: string): string {
-  return (url || "").trim().replace(/\/+$/, "");
+  try {
+    return normalizeRelayUrl((url || "").trim());
+  } catch {
+    return "";
+  }
 }
 
 export function isValidGraspServerUrl(url: string): boolean {

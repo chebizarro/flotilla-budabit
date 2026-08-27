@@ -41,7 +41,7 @@ function signedEvent(event: any, id = "signed-event") {
 describe("grasp-pipeline", () => {
   it("builds clone URLs for every selected GRASP server", () => {
     const result = buildGraspRepoUrls({
-      relayUrls: ["wss://relay.one", "https://relay.two", "wss://relay.one/"],
+      relayUrls: ["wss://relay.one/", "https://relay.two", "wss://relay.one/"],
       ownerPubkey: "a".repeat(64),
       repoName: "flotilla-budabit",
     });
@@ -67,53 +67,53 @@ describe("grasp-pipeline", () => {
   it("derives mandatory and editable relay sets for GRASP targets", () => {
     expect(
       getMandatoryGraspRelayUrls(["https://relay.one/api", "wss://relay.two/", "relay.one"])
-    ).toEqual(["wss://relay.one/api", "wss://relay.two", "wss://relay.one"]);
+    ).toEqual(["wss://relay.one/api", "wss://relay.two/", "wss://relay.one/"]);
 
     expect(
       getEditableRepoRelayUrls(
-        ["wss://relay.one", "wss://relay.extra", "wss://relay.two/"],
-        ["https://relay.one", "wss://relay.two"]
+        ["wss://relay.one/", "wss://relay.extra/", "wss://relay.two/"],
+        ["https://relay.one", "wss://relay.two/"]
       )
-    ).toEqual(["wss://relay.extra"]);
+    ).toEqual(["wss://relay.extra/"]);
 
     expect(
-      getEffectiveRepoRelayUrls(["wss://relay.one", "wss://relay.extra"], ["https://relay.one"])
-    ).toEqual(["wss://relay.extra", "wss://relay.one"]);
+      getEffectiveRepoRelayUrls(["wss://relay.one/", "wss://relay.extra/"], ["https://relay.one"])
+    ).toEqual(["wss://relay.extra/", "wss://relay.one/"]);
   });
 
   it("restores an existing repository relay when its sync target is unchecked", () => {
     const selected = reconcileSelectedGraspRelays({
-      editableRelayUrls: ["wss://relay.example"],
+      editableRelayUrls: ["wss://relay.example/"],
       parkedTargetRelayUrls: [],
-      selectedGraspRelayUrls: ["wss://grasp.example"],
-      preservedRelayUrls: ["wss://grasp.example"],
+      selectedGraspRelayUrls: ["wss://grasp.example/"],
+      preservedRelayUrls: ["wss://grasp.example/"],
     });
     expect(selected).toEqual({
-      editableRelayUrls: ["wss://relay.example"],
-      parkedTargetRelayUrls: ["wss://grasp.example"],
+      editableRelayUrls: ["wss://relay.example/"],
+      parkedTargetRelayUrls: ["wss://grasp.example/"],
     });
 
     expect(
       reconcileSelectedGraspRelays({
         ...selected,
         selectedGraspRelayUrls: [],
-        preservedRelayUrls: ["wss://grasp.example"],
+        preservedRelayUrls: ["wss://grasp.example/"],
       })
     ).toEqual({
-      editableRelayUrls: ["wss://relay.example", "wss://grasp.example"],
+      editableRelayUrls: ["wss://relay.example/", "wss://grasp.example/"],
       parkedTargetRelayUrls: [],
     });
 
     expect(
       reconcileSelectedGraspRelays({
-        editableRelayUrls: ["wss://relay.example"],
+        editableRelayUrls: ["wss://relay.example/"],
         parkedTargetRelayUrls: [],
         selectedGraspRelayUrls: [],
-        preservedRelayUrls: ["wss://grasp.example"],
-        explicitlyRemovedRelayUrls: ["wss://grasp.example"],
+        preservedRelayUrls: ["wss://grasp.example/"],
+        explicitlyRemovedRelayUrls: ["wss://grasp.example/"],
       })
     ).toEqual({
-      editableRelayUrls: ["wss://relay.example"],
+      editableRelayUrls: ["wss://relay.example/"],
       parkedTargetRelayUrls: [],
     });
   });
@@ -129,7 +129,7 @@ describe("grasp-pipeline", () => {
         "https://bitbucket.org/team/project",
         "https://grasp.example/npub16p8v7varqwjes5hak6q7mz6pygqm4pwc6gve4mrned3xs8tz42gq7kfhdw/flotilla-budabit.git",
       ])
-    ).toEqual(["wss://grasp.example"]);
+    ).toEqual(["wss://grasp.example/"]);
   });
 
   it("keeps a declared GRASP relay when its matching clone URL is removed", () => {
@@ -138,17 +138,17 @@ describe("grasp-pipeline", () => {
     const githubClone = "https://github.com/example/repo.git";
 
     expect(getRepoSettingsRelayState(["wss://grasp.example/"], [githubClone, graspClone])).toEqual({
-      declaredRelays: ["wss://grasp.example"],
-      mandatoryGraspRelays: ["wss://grasp.example"],
+      declaredRelays: ["wss://grasp.example/"],
+      mandatoryGraspRelays: ["wss://grasp.example/"],
       automaticGraspRelays: [],
-      effectiveRelays: ["wss://grasp.example"],
+      effectiveRelays: ["wss://grasp.example/"],
     });
 
     expect(getRepoSettingsRelayState(["wss://grasp.example/"], [githubClone])).toEqual({
-      declaredRelays: ["wss://grasp.example"],
+      declaredRelays: ["wss://grasp.example/"],
       mandatoryGraspRelays: [],
       automaticGraspRelays: [],
-      effectiveRelays: ["wss://grasp.example"],
+      effectiveRelays: ["wss://grasp.example/"],
     });
   });
 
@@ -158,9 +158,9 @@ describe("grasp-pipeline", () => {
 
     expect(getRepoSettingsRelayState([], [graspClone])).toEqual({
       declaredRelays: [],
-      mandatoryGraspRelays: ["wss://grasp.example"],
-      automaticGraspRelays: ["wss://grasp.example"],
-      effectiveRelays: ["wss://grasp.example"],
+      mandatoryGraspRelays: ["wss://grasp.example/"],
+      automaticGraspRelays: ["wss://grasp.example/"],
+      effectiveRelays: ["wss://grasp.example/"],
     });
     expect(getRepoSettingsRelayState([], [])).toEqual({
       declaredRelays: [],
@@ -174,34 +174,34 @@ describe("grasp-pipeline", () => {
     const ownerNpub = nip19.npubEncode("a".repeat(64));
     expect(
       getRepoSettingsRelayState(
-        ["wss://events.example"],
+        ["wss://events.example/"],
         [`https://git.example/${ownerNpub}/repo.git`],
         [
           {
-            relayUrl: "wss://events.example",
+            relayUrl: "wss://events.example/",
             httpBaseAliases: ["https://events.example", "https://git.example"],
             sources: ["nip11"],
           },
         ]
       )
     ).toEqual({
-      declaredRelays: ["wss://events.example"],
-      mandatoryGraspRelays: ["wss://events.example"],
+      declaredRelays: ["wss://events.example/"],
+      mandatoryGraspRelays: ["wss://events.example/"],
       automaticGraspRelays: [],
-      effectiveRelays: ["wss://events.example"],
+      effectiveRelays: ["wss://events.example/"],
     });
   });
 
   it("publishes repository settings state only to relays that acknowledged the announcement", async () => {
     const announcementEvent = createRepoAnnouncementEvent({
       repoId: "repo",
-      relays: ["wss://relay.one", "wss://relay.two"],
+      relays: ["wss://relay.one/", "wss://relay.two/"],
     });
     const stateEvent = createRepoStateEvent({ repoId: "repo" });
     const publisher = vi.fn(async (event: any, _context?: any) => ({
       event: signedEvent(event),
-      ackedRelays: ["wss://relay.one"],
-      failedRelays: event.kind === 30617 ? ["wss://relay.two"] : [],
+      ackedRelays: ["wss://relay.one/"],
+      failedRelays: event.kind === 30617 ? ["wss://relay.two/"] : [],
       hasRelayOutcomes: true,
       relayOutcomes: [],
     }));
@@ -210,19 +210,19 @@ describe("grasp-pipeline", () => {
       publishRepoSettingsEvents({
         announcementEvent,
         stateEvent,
-        relayUrls: ["wss://relay.one", "wss://relay.two"],
+        relayUrls: ["wss://relay.one/", "wss://relay.two/"],
         onPublishEvent: publisher,
       })
     ).resolves.toEqual({
-      ackedRelays: ["wss://relay.one"],
-      failedRelays: ["wss://relay.two"],
+      ackedRelays: ["wss://relay.one/"],
+      failedRelays: ["wss://relay.two/"],
     });
     expect(publisher).toHaveBeenNthCalledWith(1, announcementEvent, {
-      relays: ["wss://relay.one", "wss://relay.two"],
+      relays: ["wss://relay.one/", "wss://relay.two/"],
       stage: "final",
     });
     expect(publisher).toHaveBeenNthCalledWith(2, stateEvent, {
-      relays: ["wss://relay.one"],
+      relays: ["wss://relay.one/"],
       stage: "final",
     });
   });
@@ -230,13 +230,13 @@ describe("grasp-pipeline", () => {
   it("reports failed replacement delivery to removed relays without failing the save", async () => {
     const announcementEvent = createRepoAnnouncementEvent({
       repoId: "repo",
-      relays: ["wss://relay.new"],
+      relays: ["wss://relay.new/"],
     });
     const stateEvent = createRepoStateEvent({ repoId: "repo" });
     const publisher = vi.fn(async (event: any) => ({
       event: signedEvent(event),
-      ackedRelays: ["wss://relay.new"],
-      failedRelays: event.kind === 30617 ? ["wss://relay.removed"] : [],
+      ackedRelays: ["wss://relay.new/"],
+      failedRelays: event.kind === 30617 ? ["wss://relay.removed/"] : [],
       hasRelayOutcomes: true,
     }));
 
@@ -244,22 +244,22 @@ describe("grasp-pipeline", () => {
       publishRepoSettingsEvents({
         announcementEvent,
         stateEvent,
-        relayUrls: ["wss://relay.new"],
-        previousRelayUrls: ["wss://relay.removed"],
+        relayUrls: ["wss://relay.new/"],
+        previousRelayUrls: ["wss://relay.removed/"],
         onPublishEvent: publisher,
       })
     ).resolves.toEqual({
-      ackedRelays: ["wss://relay.new"],
+      ackedRelays: ["wss://relay.new/"],
       failedRelays: [],
-      failedAdditionalRelays: ["wss://relay.removed"],
+      failedAdditionalRelays: ["wss://relay.removed/"],
     });
     expect(publisher).toHaveBeenNthCalledWith(1, announcementEvent, {
-      relays: ["wss://relay.new"],
-      additionalRelays: ["wss://relay.removed"],
+      relays: ["wss://relay.new/"],
+      additionalRelays: ["wss://relay.removed/"],
       stage: "final",
     });
     expect(publisher).toHaveBeenNthCalledWith(2, stateEvent, {
-      relays: ["wss://relay.new"],
+      relays: ["wss://relay.new/"],
       stage: "final",
     });
   });
@@ -267,21 +267,21 @@ describe("grasp-pipeline", () => {
   it("fails repository settings publication without a common relay ACK", async () => {
     const announcementEvent = createRepoAnnouncementEvent({
       repoId: "repo",
-      relays: ["wss://relay.one"],
+      relays: ["wss://relay.one/"],
     });
     const stateEvent = createRepoStateEvent({ repoId: "repo" });
     const publisher = vi
       .fn()
       .mockResolvedValueOnce({
         event: signedEvent(announcementEvent),
-        ackedRelays: ["wss://relay.one"],
+        ackedRelays: ["wss://relay.one/"],
         failedRelays: [],
         hasRelayOutcomes: true,
       })
       .mockResolvedValueOnce({
         event: signedEvent(stateEvent),
         ackedRelays: [],
-        failedRelays: ["wss://relay.one"],
+        failedRelays: ["wss://relay.one/"],
         hasRelayOutcomes: true,
       });
 
@@ -289,7 +289,7 @@ describe("grasp-pipeline", () => {
       publishRepoSettingsEvents({
         announcementEvent,
         stateEvent,
-        relayUrls: ["wss://relay.one"],
+        relayUrls: ["wss://relay.one/"],
         onPublishEvent: publisher,
       })
     ).rejects.toThrow(
@@ -300,13 +300,13 @@ describe("grasp-pipeline", () => {
   it("does not publish repository state when no configured relay acknowledges the announcement", async () => {
     const announcementEvent = createRepoAnnouncementEvent({
       repoId: "repo",
-      relays: ["wss://relay.one"],
+      relays: ["wss://relay.one/"],
     });
     const stateEvent = createRepoStateEvent({ repoId: "repo" });
     const publisher = vi.fn().mockResolvedValue({
       event: signedEvent(announcementEvent),
       ackedRelays: [],
-      failedRelays: ["wss://relay.one"],
+      failedRelays: ["wss://relay.one/"],
       hasRelayOutcomes: true,
     });
 
@@ -314,7 +314,7 @@ describe("grasp-pipeline", () => {
       publishRepoSettingsEvents({
         announcementEvent,
         stateEvent,
-        relayUrls: ["wss://relay.one"],
+        relayUrls: ["wss://relay.one/"],
         onPublishEvent: publisher,
       })
     ).rejects.toThrow("No configured repository relay acknowledged the updated announcement");
@@ -344,14 +344,14 @@ describe("grasp-pipeline", () => {
         announcementEvent: createRepoAnnouncementEvent({
           repoId: "repo",
           clone: ["https://github.com/alice/repo.git"],
-          relays: ["wss://grasp.example"],
+          relays: ["wss://grasp.example/"],
         }),
         stateEvent: createRepoStateEvent({ repoId: "repo" }),
-        relayUrls: ["wss://grasp.example"],
+        relayUrls: ["wss://grasp.example/"],
         coupling: {
           knownServices: [
             {
-              relayUrl: "wss://grasp.example",
+              relayUrl: "wss://grasp.example/",
               httpBaseAliases: ["https://grasp.example"],
               sources: ["community-definition"],
             },
@@ -371,12 +371,12 @@ describe("grasp-pipeline", () => {
         "https://gitnostr.com/npub16p8v7varqwjes5hak6q7mz6pygqm4pwc6gve4mrned3xs8tz42gq7kfhdw/flotilla-budabit.git",
         "https://github.com/me/flotilla-budabit.git",
       ])
-    ).toEqual(["wss://gitnostr.com"]);
+    ).toEqual(["wss://gitnostr.com/"]);
   });
 
   it("does not add maintainer tags when none are provided", () => {
     const { announcementEvent } = createGraspAnnouncementAndState({
-      relayUrl: "wss://relay.ngit.dev",
+      relayUrl: "wss://relay.ngit.dev/",
       ownerPubkey: "a".repeat(64),
       repoName: "flotilla-budabit",
     });
@@ -387,7 +387,7 @@ describe("grasp-pipeline", () => {
   it("preserves explicitly provided maintainer tags", () => {
     const maintainer = "b".repeat(64);
     const { announcementEvent } = createGraspAnnouncementAndState({
-      relayUrl: "wss://relay.ngit.dev",
+      relayUrl: "wss://relay.ngit.dev/",
       ownerPubkey: "a".repeat(64),
       repoName: "flotilla-budabit",
       maintainers: [maintainer],
@@ -398,18 +398,18 @@ describe("grasp-pipeline", () => {
 
   it("keeps relay hints on announcements and omits them from state events", () => {
     const { announcementEvent, stateEvent } = createGraspAnnouncementAndState({
-      relayUrl: "wss://relay.ngit.dev",
+      relayUrl: "wss://relay.ngit.dev/",
       ownerPubkey: "a".repeat(64),
       repoName: "flotilla-budabit",
-      relays: ["wss://relay.ngit.dev", "wss://relay.extra"],
+      relays: ["wss://relay.ngit.dev/", "wss://relay.extra/"],
       refs: [{ type: "heads", name: "main", commit: "a".repeat(40) }],
       head: "main",
     });
 
     expect(announcementEvent.tags).toContainEqual([
       "relays",
-      "wss://relay.ngit.dev",
-      "wss://relay.extra",
+      "wss://relay.ngit.dev/",
+      "wss://relay.extra/",
     ]);
     expect(stateEvent.tags.some((tag) => tag[0] === "relays")).toBe(false);
   });
@@ -423,9 +423,9 @@ describe("grasp-pipeline", () => {
 
     await expect(
       publishGraspEventWithRetry({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         event: stateEvent,
-        publishRelays: ["wss://relay.ngit.dev"],
+        publishRelays: ["wss://relay.ngit.dev/"],
         onPublishEvent: vi.fn().mockResolvedValue({ event: signedEvent(stateEvent) }),
         maxAttempts: 1,
         retryDelayMs: 0,
@@ -440,17 +440,17 @@ describe("grasp-pipeline", () => {
       head: "main",
     });
     const signed = signedEvent(stateEvent, "exact-signed-id");
-    const publishRelays = ["wss://relay.ngit.dev", "wss://relay.extra"];
+    const publishRelays = ["wss://relay.ngit.dev/", "wss://relay.extra/"];
     const onPublishEvent = vi
       .fn()
       .mockResolvedValueOnce({
         event: signed,
         ackedRelays: [],
-        failedRelays: ["wss://relay.ngit.dev"],
+        failedRelays: ["wss://relay.ngit.dev/"],
       })
       .mockResolvedValueOnce({
         event: signed,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
       });
 
@@ -465,7 +465,7 @@ describe("grasp-pipeline", () => {
     ).resolves.toEqual({
       event: signed,
       relayAck: {
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
         successCount: 1,
         hasRelayOutcomes: true,
@@ -496,20 +496,20 @@ describe("grasp-pipeline", () => {
       .fn()
       .mockResolvedValueOnce({
         event: signed,
-        relayOutcomes: [{ relay: "wss://relay.ngit.dev", status: "timeout", detail: "timed out" }],
+        relayOutcomes: [{ relay: "wss://relay.ngit.dev/", status: "timeout", detail: "timed out" }],
       })
       .mockResolvedValueOnce({
         event: signed,
         relayOutcomes: [
-          { relay: "wss://relay.ngit.dev", status: "success", detail: "stored in purgatory" },
+          { relay: "wss://relay.ngit.dev/", status: "success", detail: "stored in purgatory" },
         ],
       });
 
     await publishGraspEventWithRetry({
-      relayUrl: "wss://relay.ngit.dev",
+      relayUrl: "wss://relay.ngit.dev/",
       event: prepared as any,
       onPublishEvent,
-      publishRelays: ["wss://relay.ngit.dev"],
+      publishRelays: ["wss://relay.ngit.dev/"],
       retryDelayMs: 0,
     });
 
@@ -518,7 +518,7 @@ describe("grasp-pipeline", () => {
   });
 
   it("reports relay rejection details and signs state for recovery", async () => {
-    const relayUrl = "wss://grasp.example";
+    const relayUrl = "wss://grasp.example/";
     const stateEvent = createRepoStateEvent({
       repoId: "repo",
       refs: [{ type: "heads", name: "main", commit: "a".repeat(40) }],
@@ -562,7 +562,7 @@ describe("grasp-pipeline", () => {
   it("rejects final GRASP metadata for the wrong destination coordinate before publishing", async () => {
     const ownerPubkey = "a".repeat(64);
     const ownerNpub = nip19.npubEncode(ownerPubkey);
-    const relayUrl = "wss://grasp.example";
+    const relayUrl = "wss://grasp.example/";
     const onPublishEvent = vi.fn();
 
     await expect(
@@ -593,7 +593,7 @@ describe("grasp-pipeline", () => {
   it("preserves an authoritative source GRASP clone without restoring its legacy relay", async () => {
     const ownerPubkey = "a".repeat(64);
     const ownerNpub = nip19.npubEncode(ownerPubkey);
-    const selectedRelay = "wss://selected.example";
+    const selectedRelay = "wss://selected.example/";
     const sourceCloneUrl = `https://legacy.example/${ownerNpub}/repo.git`;
     const selectedCloneUrl = `https://selected.example/${ownerNpub}/repo.git`;
     const onPublishEvent = vi.fn(async (event: any, context?: { relays: string[] }) => ({
@@ -631,8 +631,8 @@ describe("grasp-pipeline", () => {
   });
 
   it("rebuilds final metadata until every retained relay ACKs announcement and state", async () => {
-    const relayOne = "wss://relay.one";
-    const relayTwo = "wss://relay.two";
+    const relayOne = "wss://relay.one/";
+    const relayTwo = "wss://relay.two/";
     const stateEvent = createRepoStateEvent({
       repoId: "repo",
       refs: [{ type: "heads", name: "main", commit: "a".repeat(40) }],
@@ -702,8 +702,8 @@ describe("grasp-pipeline", () => {
   });
 
   it("journals a timed-out final de-list replacement for compensation", async () => {
-    const relayOne = "wss://relay.one";
-    const relayTwo = "wss://relay.two";
+    const relayOne = "wss://relay.one/";
+    const relayTwo = "wss://relay.two/";
     const onPublishEvent = vi.fn(async (event: any, context?: { relays: string[] }) => {
       const relays = context?.relays || [];
       const isStateShrink = event.kind === 30618 && relays.includes(relayTwo);
@@ -743,7 +743,7 @@ describe("grasp-pipeline", () => {
   });
 
   it("deletes obsolete provisional events by exact event ID after final stabilization", async () => {
-    const relay = "wss://relay.one";
+    const relay = "wss://relay.one/";
     const provisional = signedEvent(createRepoStateEvent({ repoId: "repo" }), "provisional-id");
     const onDeleteEvent = vi.fn();
     const onPublishEvent = vi.fn(async (event: any, context?: { relays: string[] }) => ({
@@ -776,8 +776,8 @@ describe("grasp-pipeline", () => {
   });
 
   it("deletes an intermediate announcement only from relays that ACKed that event", async () => {
-    const relayOne = "wss://relay.one";
-    const relayTwo = "wss://relay.two";
+    const relayOne = "wss://relay.one/";
+    const relayTwo = "wss://relay.two/";
     const onDeleteEvent = vi.fn();
     let announcementCount = 0;
     const onPublishEvent = vi.fn(async (event: any, context?: { relays: string[] }) => {
@@ -828,7 +828,7 @@ describe("grasp-pipeline", () => {
 
     await expect(
       fetchLatestGraspRepoStateEvent({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         repoName: "repo",
         authorPubkey: "f".repeat(64),
         fetchRelayEvents: vi.fn().mockResolvedValue([makeState(higherId), makeState(lowerId)]),
@@ -851,7 +851,7 @@ describe("grasp-pipeline", () => {
 
     await expect(
       fetchLatestGraspRepoStateEvent({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         repoName: "repo",
         authorPubkey: ownerPubkey,
         fetchRelayEvents: vi.fn().mockResolvedValue([foreignState, ownerState]),
@@ -873,16 +873,16 @@ describe("grasp-pipeline", () => {
       .mockRejectedValueOnce(new Error("socket disconnected"))
       .mockResolvedValueOnce({
         event: signed,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
       });
 
     await expect(
       publishGraspEventWithRetry({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         event: signed,
         onPublishEvent,
-        publishRelays: ["wss://relay.ngit.dev"],
+        publishRelays: ["wss://relay.ngit.dev/"],
         retryDelayMs: 0,
       })
     ).resolves.toEqual(expect.objectContaining({ event: signed }));
@@ -978,12 +978,12 @@ describe("grasp-pipeline", () => {
       }),
       "post-push-id"
     );
-    const wrongCore = { ...event, tags: [...event.tags, ["relays", "wss://wrong"]] };
+    const wrongCore = { ...event, tags: [...event.tags, ["relays", "wss://wrong/"]] };
     const fetchRelayEvents = vi.fn().mockResolvedValue([wrongCore]);
 
     await expect(
       verifyGraspEventAfterPush({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         event,
         fetchRelayEvents,
         visibilityTimeoutMs: 0,
@@ -1003,13 +1003,13 @@ describe("grasp-pipeline", () => {
 
     await expect(
       verifyGraspEventAfterPush({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         event,
         fetchRelayEvents,
         visibilityTimeoutMs: 0,
         pollIntervalMs: 0,
       })
-    ).rejects.toThrow("could not be verified on wss://relay.ngit.dev (Relay query timed out)");
+    ).rejects.toThrow("could not be verified on wss://relay.ngit.dev/ (Relay query timed out)");
 
     expect(fetchRelayEvents).toHaveBeenCalledTimes(1);
   });
@@ -1024,21 +1024,21 @@ describe("grasp-pipeline", () => {
     const onPublishEvent = vi.fn().mockResolvedValue({
       event: signedEvent(stateEvent),
       ackedRelays: [],
-      failedRelays: ["wss://relay.ngit.dev"],
+      failedRelays: ["wss://relay.ngit.dev/"],
       successCount: 0,
       hasRelayOutcomes: true,
-      relayOutcomes: [{ relay: "wss://relay.ngit.dev", status: "timeout", detail: "timed out" }],
+      relayOutcomes: [{ relay: "wss://relay.ngit.dev/", status: "timeout", detail: "timed out" }],
     });
     await expect(
       publishGraspRepoStateAndWait({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         stateEvent,
         onPublishEvent,
         maxAttempts: 1,
         retryDelayMs: 0,
       })
     ).rejects.toThrow(
-      "attempt 1: selected relay wss://relay.ngit.dev returned timeout (timed out)"
+      "attempt 1: selected relay wss://relay.ngit.dev/ returned timeout (timed out)"
     );
   });
 
@@ -1052,23 +1052,23 @@ describe("grasp-pipeline", () => {
 
     const onPublishEvent = vi.fn(async (event) => ({
       event: signedEvent(event),
-      ackedRelays: ["wss://relay.ngit.dev"],
+      ackedRelays: ["wss://relay.ngit.dev/"],
       failedRelays: [],
       successCount: 1,
       hasRelayOutcomes: true,
       message: "stored in purgatory",
       ok: true,
     }));
-    const publishRelays = ["wss://relay.ngit.dev", "wss://relay.extra"];
+    const publishRelays = ["wss://relay.ngit.dev/", "wss://relay.extra/"];
     await expect(
       publishGraspRepoStateAndWait({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         stateEvent,
         onPublishEvent,
         publishRelays,
       })
     ).resolves.toEqual({
-      ackedRelays: ["wss://relay.ngit.dev"],
+      ackedRelays: ["wss://relay.ngit.dev/"],
       failedRelays: [],
       successCount: 1,
       hasRelayOutcomes: true,
@@ -1080,7 +1080,7 @@ describe("grasp-pipeline", () => {
   it("builds and publishes branch state for GRASP push targets", async () => {
     const onPublishEvent = vi.fn(async (event) => ({
       event: signedEvent(event),
-      ackedRelays: ["wss://relay.ngit.dev"],
+      ackedRelays: ["wss://relay.ngit.dev/"],
       failedRelays: [],
       successCount: 1,
       hasRelayOutcomes: true,
@@ -1112,10 +1112,10 @@ describe("grasp-pipeline", () => {
         fetchRelayEvents,
       })
     ).resolves.toEqual({
-      relayUrl: "wss://relay.ngit.dev",
+      relayUrl: "wss://relay.ngit.dev/",
       repoName: "flotilla-budabit",
       event: expect.objectContaining({ kind: 30618 }),
-      publishRelays: ["wss://relay.ngit.dev"],
+      publishRelays: ["wss://relay.ngit.dev/"],
     });
 
     expect(onPublishEvent).toHaveBeenCalledWith(
@@ -1127,7 +1127,7 @@ describe("grasp-pipeline", () => {
           ["HEAD", "ref: refs/heads/dev"],
         ]),
       }),
-      { relays: ["wss://relay.ngit.dev"] }
+      { relays: ["wss://relay.ngit.dev/"] }
     );
   });
 
@@ -1171,7 +1171,7 @@ describe("grasp-pipeline", () => {
       publishedState = event;
       return {
         event: signedEvent(event),
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
         successCount: 1,
         hasRelayOutcomes: true,
@@ -1190,10 +1190,10 @@ describe("grasp-pipeline", () => {
         fetchRelayEvents,
       })
     ).resolves.toEqual({
-      relayUrl: "wss://relay.ngit.dev",
+      relayUrl: "wss://relay.ngit.dev/",
       repoName: "flotilla-budabit",
       event: expect.objectContaining({ kind: 30618 }),
-      publishRelays: ["wss://relay.ngit.dev"],
+      publishRelays: ["wss://relay.ngit.dev/"],
     });
 
     expect(publishedState.tags).toEqual(
@@ -1218,7 +1218,7 @@ describe("grasp-pipeline", () => {
     try {
       await expect(
         waitForGraspProvisioning({
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
           userPubkey: "f".repeat(64),
           owner: "f".repeat(64),
           repoName: "flotilla-budabit",
@@ -1241,7 +1241,7 @@ describe("grasp-pipeline", () => {
 
     await expect(
       waitForGraspProvisioning({
-        relayUrl: "wss://relay.ngit.dev",
+        relayUrl: "wss://relay.ngit.dev/",
         userPubkey: "f".repeat(64),
         owner: "f".repeat(64),
         repoName: "flotilla-budabit",

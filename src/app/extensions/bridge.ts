@@ -1,7 +1,7 @@
 import {pubkey as activeUserPubkey, publishThunk, repository, signer} from "@welshman/app"
 import {goto} from "$app/navigation"
 import {PublishStatus, load} from "@welshman/net"
-import {matchFilters, type TrustedEvent} from "@welshman/util"
+import {matchFilters, sanitizeRelayUrls, type TrustedEvent} from "@welshman/util"
 import {verifyEvent} from "nostr-tools/pure"
 import {pushToast} from "@app/util/toast"
 import {activeRepoClass} from "@app/core/git-state"
@@ -186,20 +186,7 @@ const normalizeRelayUrls = (relays: unknown): string[] => {
     throw new Error("Invalid relays: expected string[]")
   }
 
-  const normalized: string[] = []
-  for (const raw of relays) {
-    if (typeof raw !== "string") continue
-    try {
-      const url = new URL(raw)
-      if (url.protocol !== "wss:" && url.protocol !== "ws:") continue
-      url.hash = ""
-      normalized.push(url.toString())
-    } catch {
-      // ignore invalid URL
-    }
-  }
-
-  return Array.from(new Set(normalized))
+  return sanitizeRelayUrls(relays)
 }
 
 const requireNonEmptyStringArray = (val: unknown, name: string): string[] => {

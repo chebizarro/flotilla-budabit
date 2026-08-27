@@ -71,12 +71,12 @@ describe("repository root history", () => {
     const calls: any[] = []
     const requestFiniteRelay = vi.fn(async (options: any) => {
       calls.push(options)
-      if (options.relay === "wss://empty") return result(options.relay, "eose")
+      if (options.relay === "wss://empty.example/") return result(options.relay, "eose")
       return result(options.relay, "eose", [makeEvent("1", 20), makeEvent("2", 10)])
     })
     const snapshots: any[] = []
     const history = createRepoRootHistory({requestFiniteRelay})({
-      relays: ["wss://empty", "wss://full"],
+      relays: ["wss://empty.example/", "wss://full.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       pageSize: 2,
@@ -87,8 +87,8 @@ describe("repository root history", () => {
 
     await history.loadRecent()
 
-    const empty = history.getSnapshot().relays.find(item => item.relay === "wss://empty")
-    const full = history.getSnapshot().relays.find(item => item.relay === "wss://full")
+    const empty = history.getSnapshot().relays.find(item => item.relay === "wss://empty.example/")
+    const full = history.getSnapshot().relays.find(item => item.relay === "wss://full.example/")
     expect(empty).toMatchObject({exhausted: true, outcome: "eose"})
     expect(full).toMatchObject({until: 10, exhausted: false})
     expect(history.getSnapshot()).toMatchObject({
@@ -103,7 +103,7 @@ describe("repository root history", () => {
     const history = createRepoRootHistory({
       requestFiniteRelay: vi.fn(async options => result(options.relay, "timeout")),
     })({
-      relays: ["wss://slow"],
+      relays: ["wss://slow.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       priority: 100,
@@ -120,7 +120,7 @@ describe("repository root history", () => {
     let finishSlow: ((value: FiniteRelayResult) => void) | undefined
     const snapshots: RepoRootHistorySnapshot[] = []
     const requestFiniteRelay = vi.fn(options => {
-      if (options.relay === "wss://fast") {
+      if (options.relay === "wss://fast.example/") {
         return Promise.resolve(result(options.relay, "eose"))
       }
       return new Promise<FiniteRelayResult>(resolve => {
@@ -128,7 +128,7 @@ describe("repository root history", () => {
       })
     })
     const history = createRepoRootHistory({requestFiniteRelay})({
-      relays: ["wss://fast", "wss://slow"],
+      relays: ["wss://fast.example/", "wss://slow.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       priority: 100,
@@ -141,14 +141,15 @@ describe("repository root history", () => {
       expect(
         snapshots.some(snapshot =>
           snapshot.relays.some(
-            relayState => relayState.relay === "wss://fast" && relayState.status === "complete",
+            relayState =>
+              relayState.relay === "wss://fast.example/" && relayState.status === "complete",
           ),
         ),
       ).toBe(true),
     )
     expect(history.getSnapshot().status).toBe("loading")
 
-    finishSlow?.(result("wss://slow", "timeout"))
+    finishSlow?.(result("wss://slow.example/", "timeout"))
     await loading
   })
 
@@ -156,7 +157,7 @@ describe("repository root history", () => {
     const events = Array.from({length: 50}, (_, index) => makeEvent(String(index + 1), 100 - index))
     const requestFiniteRelay = vi.fn(async options => result(options.relay, "eose", events))
     const history = createRepoRootHistory({requestFiniteRelay, getRelayPageLimit: () => 50})({
-      relays: ["wss://limited"],
+      relays: ["wss://limited.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       priority: 100,
@@ -172,7 +173,7 @@ describe("repository root history", () => {
 
   it("starts idle and retries only relays that did not complete", async () => {
     const requestFiniteRelay = vi.fn(async options => {
-      if (options.relay === "wss://healthy") return result(options.relay, "eose")
+      if (options.relay === "wss://healthy.example/") return result(options.relay, "eose")
       if (
         requestFiniteRelay.mock.calls.filter(call => call[0].relay === options.relay).length === 1
       ) {
@@ -181,7 +182,7 @@ describe("repository root history", () => {
       return result(options.relay, "eose")
     })
     const history = createRepoRootHistory({requestFiniteRelay})({
-      relays: ["wss://healthy", "wss://retry"],
+      relays: ["wss://healthy.example/", "wss://retry.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       priority: 100,
@@ -195,9 +196,9 @@ describe("repository root history", () => {
     await history.retry()
 
     expect(requestFiniteRelay.mock.calls.map(call => call[0].relay)).toEqual([
-      "wss://healthy",
-      "wss://retry",
-      "wss://retry",
+      "wss://healthy.example/",
+      "wss://retry.example/",
+      "wss://retry.example/",
     ])
     expect(history.getSnapshot()).toMatchObject({status: "complete", operation: "recent"})
   })
@@ -206,7 +207,7 @@ describe("repository root history", () => {
     let finishRetry: ((value: FiniteRelayResult) => void) | undefined
     const requestFiniteRelay = vi
       .fn()
-      .mockResolvedValueOnce(result("wss://retry", "timeout"))
+      .mockResolvedValueOnce(result("wss://retry.example/", "timeout"))
       .mockImplementationOnce(
         options =>
           new Promise<FiniteRelayResult>(resolve => {
@@ -214,7 +215,7 @@ describe("repository root history", () => {
           }),
       )
     const history = createRepoRootHistory({requestFiniteRelay})({
-      relays: ["wss://retry"],
+      relays: ["wss://retry.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       priority: 100,
@@ -228,7 +229,7 @@ describe("repository root history", () => {
     await vi.waitFor(() => expect(requestFiniteRelay).toHaveBeenCalledTimes(2))
     expect(requestFiniteRelay).toHaveBeenCalledTimes(2)
 
-    finishRetry?.(result("wss://retry", "eose"))
+    finishRetry?.(result("wss://retry.example/", "eose"))
     await Promise.all([first, second])
     expect(requestFiniteRelay).toHaveBeenCalledTimes(2)
   })
@@ -245,7 +246,7 @@ describe("repository root history", () => {
       )
     })
     const history = createRepoRootHistory({requestFiniteRelay, getRelayPageLimit: () => 4})({
-      relays: ["wss://same-time"],
+      relays: ["wss://same-time.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       pageSize: 2,
@@ -272,9 +273,9 @@ describe("repository root history", () => {
   it("treats a short EOSE page as exhausted", async () => {
     const requestFiniteRelay = vi
       .fn()
-      .mockResolvedValueOnce(result("wss://short", "eose", [makeEvent("1", 10)]))
+      .mockResolvedValueOnce(result("wss://short.example/", "eose", [makeEvent("1", 10)]))
     const history = createRepoRootHistory({requestFiniteRelay})({
-      relays: ["wss://short"],
+      relays: ["wss://short.example/"],
       addresses: [address],
       signal: new AbortController().signal,
       pageSize: 2,
@@ -333,7 +334,7 @@ describe("repository root gap scopes", () => {
 })
 
 describe("repository root resolution", () => {
-  const relay = "wss://repo"
+  const relay = "wss://repo.example/"
   const foreignAddress = `30617:${"f".repeat(64)}:foreign`
 
   const makeResolver = ({
@@ -430,7 +431,7 @@ describe("repository root resolution", () => {
     let finishSlow: ((value: FiniteRelayResult) => void) | undefined
     const onEvent = vi.fn()
     const requestFiniteRelay = vi.fn(options => {
-      if (options.relay === "wss://fast") {
+      if (options.relay === "wss://fast.example/") {
         options.onEvent?.(root, options.relay)
         return Promise.resolve(result(options.relay, "eose", [root]))
       }
@@ -440,14 +441,14 @@ describe("repository root resolution", () => {
     })
     const harness = makeResolver({
       requestFiniteRelay,
-      relays: ["wss://fast", "wss://slow"],
+      relays: ["wss://fast.example/", "wss://slow.example/"],
       onEvent,
     })
 
     const pending = harness.ensureRoot(root.id)
-    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledWith(root, "wss://fast"))
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledWith(root, "wss://fast.example/"))
 
-    finishSlow?.(result("wss://slow", "timeout"))
+    finishSlow?.(result("wss://slow.example/", "timeout"))
     await expect(pending).resolves.toMatchObject({rootId: root.id, status: "partial"})
   })
 
@@ -554,12 +555,12 @@ describe("repository root resolution", () => {
       const relayCalls = requestFiniteRelay.mock.calls.filter(
         call => call[0].relay === options.relay,
       )
-      if (options.relay === "wss://healthy") return result(options.relay, "eose")
+      if (options.relay === "wss://healthy.example/") return result(options.relay, "eose")
       return result(options.relay, relayCalls.length === 1 ? "timeout" : "eose")
     })
     const harness = makeResolver({
       requestFiniteRelay,
-      relays: ["wss://healthy", "wss://retry"],
+      relays: ["wss://healthy.example/", "wss://retry.example/"],
     })
     const id = "d".repeat(64)
 
@@ -567,9 +568,9 @@ describe("repository root resolution", () => {
     await expect(harness.ensureRoot(id)).resolves.toMatchObject({status: "complete"})
 
     expect(requestFiniteRelay.mock.calls.map(call => call[0].relay)).toEqual([
-      "wss://healthy",
-      "wss://retry",
-      "wss://retry",
+      "wss://healthy.example/",
+      "wss://retry.example/",
+      "wss://retry.example/",
     ])
   })
 })

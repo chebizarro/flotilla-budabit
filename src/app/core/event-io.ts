@@ -13,6 +13,7 @@ import type {
   PublishResult,
 } from "@nostr-git/core/types"
 import {sanitizeRelays} from "@nostr-git/core/utils"
+import {normalizeRelayUrl} from "@welshman/util"
 import {get} from "svelte/store"
 
 const EMPTY_RELAY_SCOPE_ERROR = "Repository EventIO requires at least one explicit relay"
@@ -83,7 +84,14 @@ const parsePublishOutcomes = (
   if (entries.length !== expectedRelays.size) return null
 
   const outcomes: Array<[string, PublishRelayOutcome]> = []
-  for (const [relay, outcome] of entries) {
+  for (const [rawRelay, outcome] of entries) {
+    let relay: string
+    try {
+      relay = normalizeRelayUrl(rawRelay)
+    } catch {
+      return null
+    }
+
     if (
       !expectedRelays.has(relay) ||
       !outcome ||
@@ -94,7 +102,17 @@ const parsePublishOutcomes = (
     }
 
     const {status, detail, relay: outcomeRelay} = outcome as Record<string, unknown>
-    if (!isPublishStatus(status) || typeof detail !== "string" || outcomeRelay !== relay) {
+    let normalizedOutcomeRelay: string
+    try {
+      normalizedOutcomeRelay = normalizeRelayUrl(String(outcomeRelay || ""))
+    } catch {
+      return null
+    }
+    if (
+      !isPublishStatus(status) ||
+      typeof detail !== "string" ||
+      normalizedOutcomeRelay !== relay
+    ) {
       return null
     }
     outcomes.push([relay, {relay, status, detail}])

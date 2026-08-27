@@ -1,6 +1,6 @@
 import {now} from "@welshman/lib"
 import {Repository} from "@welshman/net"
-import {getAddress, isReplaceable, type TrustedEvent} from "@welshman/util"
+import {getAddress, isReplaceable, normalizeRelayUrl, type TrustedEvent} from "@welshman/util"
 import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
 
 export const MAX_NOTIFICATION_EVENTS = 4_000
@@ -60,6 +60,11 @@ export class NotificationEventStore {
 
   private addRelay(eventId: string, relay: string) {
     if (!relay) return
+    try {
+      relay = normalizeRelayUrl(relay)
+    } catch {
+      return
+    }
     const relays = this.relaysById.get(eventId) || new Set<string>()
     relays.add(relay)
     this.relaysById.set(eventId, relays)
@@ -111,7 +116,13 @@ export const cancelQueuedNotificationEvents = () => {
 export const queueNotificationEvent = (event: TrustedEvent, relay: string) => {
   const current = queuedNotificationEvents.get(event.id)
   const relays = current?.relays || new Set<string>()
-  if (relay) relays.add(relay)
+  if (relay) {
+    try {
+      relays.add(normalizeRelayUrl(relay))
+    } catch {
+      // Ignore invalid callback relay values.
+    }
+  }
   queuedNotificationEvents.set(event.id, {event, relays})
   if (notificationEventFlushTimer) return
   notificationEventFlushTimer = setTimeout(() => {

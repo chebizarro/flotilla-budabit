@@ -1,5 +1,5 @@
 import type { NostrEvent, RepoAnnouncementEvent } from "@nostr-git/core";
-import { parseGraspRepoHttpUrl } from "@nostr-git/core/utils";
+import { normalizeRelayUrl, parseGraspRepoHttpUrl, sanitizeRelays } from "@nostr-git/core/utils";
 
 import type {
   DeleteRepoEvent,
@@ -461,9 +461,11 @@ export class RepoCreationTransactionJournal {
       repoName: params.repoName,
       ...(params.repositoryRelayUrls
         ? {
-            repositoryRelayUrls: params.repositoryRelayUrls
-              .map((relay) => sanitizeUrl(relay, []))
-              .filter((relay): relay is string => Boolean(relay)),
+            repositoryRelayUrls: sanitizeRelays(
+              params.repositoryRelayUrls
+                .map((relay) => sanitizeUrl(relay, []))
+                .filter((relay): relay is string => Boolean(relay))
+            ),
           }
         : {}),
       ...(params.localRepoId ? { localRepoId: params.localRepoId } : {}),
@@ -699,15 +701,15 @@ export class RepoCreationTransactionJournal {
     if (!event) return;
 
     const ack = extractPublishRelayAck(result);
-    const requestedRelayUrls = relayUrls
-      .map((relay) => sanitizeUrl(relay, this.#secrets))
-      .filter((relay): relay is string => Boolean(relay));
-    const ackedRelays = ack.ackedRelays
-      .map((relay) => sanitizeUrl(relay, this.#secrets))
-      .filter((relay): relay is string => Boolean(relay));
-    const failedRelays = ack.failedRelays
-      .map((relay) => sanitizeUrl(relay, this.#secrets))
-      .filter((relay): relay is string => Boolean(relay));
+    const sanitizeDestinations = (relays: string[]) =>
+      sanitizeRelays(
+        relays
+          .map((relay) => sanitizeUrl(relay, this.#secrets))
+          .filter((relay): relay is string => Boolean(relay))
+      );
+    const requestedRelayUrls = sanitizeDestinations(relayUrls);
+    const ackedRelays = sanitizeDestinations(ack.ackedRelays);
+    const failedRelays = sanitizeDestinations(ack.failedRelays);
     const effectiveRelayUrls = ack.hasRelayOutcomes ? ackedRelays : [];
     const existing = this.#record.publishedEvents.find((item) => item.event.id === event.id);
     const next = existing
@@ -934,9 +936,7 @@ export async function retryPendingRepoCreationMetadata(
   }
 
   const taggedRelays = getAnnouncementRelays(announcement.event);
-  const relays = Array.from(
-    new Set(taggedRelays.length > 0 ? taggedRelays : announcement.relayUrls)
-  );
+  const relays = sanitizeRelays(taggedRelays.length > 0 ? taggedRelays : announcement.relayUrls);
   if (relays.length === 0) {
     throw new Error("Metadata recovery requires explicit relay destinations");
   }
@@ -996,18 +996,16 @@ export async function retryPendingRepoCreationMetadata(
     if (!ack.hasRelayOutcomes || ack.ackedRelays.length === 0) {
       throw new Error(`Metadata recovery received no relay ACK for event ${item.event.id}`);
     }
-    const acked = new Set(ack.ackedRelays.map((relay) => relay.replace(/\/+$/, "")));
+    const acked = new Set(sanitizeRelays(ack.ackedRelays));
     return {
       result,
-      ackedRelays: destinations.filter((relay) => acked.has(relay.replace(/\/+$/, ""))),
+      ackedRelays: destinations.filter((relay) => acked.has(normalizeRelayUrl(relay))),
     };
   };
 
   const announcementPublish = await publishExact(announcement, relays);
   const statePublish = await publishExact(state, announcementPublish.ackedRelays);
-  const retainedRelaySet = new Set(
-    statePublish.ackedRelays.map((relay) => relay.replace(/\/+$/, ""))
-  );
+  const retainedRelaySet = new Set(sanitizeRelays(statePublish.ackedRelays));
   let effectiveAnnouncement = announcement.event;
   let effectiveState = state.event;
   let effectiveRelays = statePublish.ackedRelays;
@@ -1045,7 +1043,7 @@ export async function retryPendingRepoCreationMetadata(
     const reconciled = await reconcileRepoCreationEvents({
       relayUrls: statePublish.ackedRelays,
       graspTargets: successfulGraspTargets.filter((target) =>
-        retainedRelaySet.has(target.relayUrl.replace(/\/+$/, ""))
+        retainedRelaySet.has(normalizeRelayUrl(target.relayUrl))
       ),
       stateEvent: state.event,
       onPublishEvent: publisher,
@@ -1100,9 +1098,7 @@ export async function retryPendingRepoCreationMetadata(
   }
   const successfulGraspRelays = successfulGraspTargets
     .map((target) => target.relayUrl)
-    .filter((relayUrl) =>
-      effectiveRelays.some((relay) => relay.replace(/\/+$/, "") === relayUrl.replace(/\/+$/, ""))
-    );
+    .filter((relayUrl) => sanitizeRelays(effectiveRelays).includes(normalizeRelayUrl(relayUrl)));
   if (successfulGraspRelays.length > 0 && !fetchRelayEvents) {
     throw new Error("Metadata recovery requires GRASP post-push verification");
   }

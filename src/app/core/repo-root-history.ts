@@ -136,9 +136,7 @@ const chunkValues = (values: string[], size: number) => {
 }
 
 const normalizeRequestRelays = (relays: string[]) =>
-  Array.from(
-    new Set(relays.map(relay => normalizeRepoRelay(relay) || relay.trim()).filter(Boolean)),
-  )
+  Array.from(new Set(relays.map(normalizeRepoRelay).filter(Boolean)))
 
 export const buildRepoRootPageFilter = ({
   addresses,

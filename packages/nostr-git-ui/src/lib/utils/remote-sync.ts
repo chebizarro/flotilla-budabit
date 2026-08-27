@@ -9,6 +9,7 @@ import {
 import { createRepoAnnouncementEvent, type RepoCommunityBinding } from "@nostr-git/core/events";
 import {
   hasMatchingGraspRepoCloneUrl,
+  normalizeRelayUrl,
   parseGraspRepoHttpUrl,
   sanitizeRelays,
 } from "@nostr-git/core/utils";
@@ -192,14 +193,10 @@ export interface RepoSyncAnnouncementAdmission {
 }
 
 function normalizeRelayForAdmission(relayUrl: string): string {
-  const trimmed = relayUrl.trim();
   try {
-    const url = new URL(trimmed);
-    url.hash = "";
-    url.search = "";
-    return url.pathname === "/" && !url.search ? url.origin : url.toString();
+    return normalizeRelayUrl(relayUrl.trim());
   } catch {
-    return trimmed;
+    return "";
   }
 }
 
@@ -1159,10 +1156,12 @@ export async function syncLocalRepoToTargets(
     ownerPubkey: userPubkey,
     repoName,
   }).cloneUrls;
-  const selectedGraspRelayUrls = orderedTargets
-    .filter((target) => target.provider === "grasp" && target.relayUrl)
-    .map((target) => normalizeGraspOrigins(target.relayUrl as string).wsOrigin);
-  const canonicalGraspRelays = Array.from(new Set([...selectedGraspRelayUrls, ...relays]));
+  const selectedGraspRelayUrls = sanitizeRelays(
+    orderedTargets
+      .filter((target) => target.provider === "grasp" && target.relayUrl)
+      .map((target) => normalizeGraspOrigins(target.relayUrl as string).wsOrigin)
+  );
+  const canonicalGraspRelays = sanitizeRelays([...selectedGraspRelayUrls, ...relays]);
   const canonicalGraspEvents = selectedGraspRelayUrls[0]
     ? createGraspAnnouncementAndState({
         relayUrl: selectedGraspRelayUrls[0],
@@ -1538,9 +1537,10 @@ export async function syncLocalRepoToTargets(
                 ownerPubkey: userPubkey,
                 repoName,
                 description: repoDescription,
-                relays: Array.from(
-                  new Set([normalizeGraspOrigins(target.relayUrl).wsOrigin, ...relays])
-                ),
+                relays: sanitizeRelays([
+                  normalizeGraspOrigins(target.relayUrl).wsOrigin,
+                  ...relays,
+                ]),
                 cloneUrls:
                   selectedGraspCloneUrls.length > 0 ? selectedGraspCloneUrls : [graspRemoteUrl],
                 webUrls:

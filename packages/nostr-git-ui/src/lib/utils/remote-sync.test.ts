@@ -57,10 +57,10 @@ describe("assertCompleteRemoteRefPush", () => {
 
 describe("publishRepoSyncAnnouncement", () => {
   const graspTarget = {
-    id: "grasp:wss://relay.ngit.dev",
+    id: "grasp:wss://relay.ngit.dev/",
     label: "GRASP (relay.ngit.dev)",
     provider: "grasp" as const,
-    relayUrl: "wss://relay.ngit.dev",
+    relayUrl: "wss://relay.ngit.dev/",
   };
 
   it("requires relay admission and GRASP readiness before returning", async () => {
@@ -69,17 +69,17 @@ describe("publishRepoSyncAnnouncement", () => {
       operations.push("announcement");
       return {
         event: signedEvent(event),
-        ackedRelays: ["wss://relay.ngit.dev", "wss://repo.example"],
+        ackedRelays: ["wss://relay.ngit.dev/", "wss://repo.example/"],
         failedRelays: [],
         successCount: 2,
         hasRelayOutcomes: true,
         relayOutcomes: [
           {
-            relay: "wss://relay.ngit.dev",
+            relay: "wss://relay.ngit.dev/",
             status: "success",
             detail: "purgatory: won't be served until git data arrives",
           },
-          { relay: "wss://repo.example", status: "success", detail: "" },
+          { relay: "wss://repo.example/", status: "success", detail: "" },
         ],
       };
     });
@@ -88,7 +88,7 @@ describe("publishRepoSyncAnnouncement", () => {
       repoName: "repo",
       userPubkey: "a".repeat(64),
       targets: [graspTarget],
-      relayUrls: ["wss://repo.example"],
+      relayUrls: ["wss://repo.example/"],
       onPublishEvent,
       updateProgress: vi.fn(),
       runAbortable: async (_operation, label) => {
@@ -98,11 +98,11 @@ describe("publishRepoSyncAnnouncement", () => {
     });
 
     expect(operations).toEqual(["announcement", "readiness"]);
-    expect(admission.ackedRelayUrls).toEqual(["wss://repo.example", "wss://relay.ngit.dev"]);
-    expect(admission.graspRelayUrls).toEqual(["wss://relay.ngit.dev"]);
+    expect(admission.ackedRelayUrls).toEqual(["wss://repo.example/", "wss://relay.ngit.dev/"]);
+    expect(admission.graspRelayUrls).toEqual(["wss://relay.ngit.dev/"]);
     expect(admission.announcementEvent.tags).toEqual(
       expect.arrayContaining([
-        ["relays", "wss://repo.example", "wss://relay.ngit.dev"],
+        ["relays", "wss://repo.example/", "wss://relay.ngit.dev/"],
         expect.arrayContaining(["clone", expect.stringContaining("relay.ngit.dev")]),
       ])
     );
@@ -113,17 +113,17 @@ describe("publishRepoSyncAnnouncement", () => {
     const githubWeb = "https://github.com/Pleb5/zap-stream-core";
     const onPublishEvent = vi.fn(async (event) => ({
       event: signedEvent(event),
-      ackedRelays: ["wss://relay.ngit.dev"],
+      ackedRelays: ["wss://relay.ngit.dev/"],
       failedRelays: [],
       hasRelayOutcomes: true,
-      relayOutcomes: [{ relay: "wss://relay.ngit.dev", status: "success", detail: "stored" }],
+      relayOutcomes: [{ relay: "wss://relay.ngit.dev/", status: "success", detail: "stored" }],
     }));
 
     const admission = await publishRepoSyncAnnouncement({
       repoName: "zap-stream-core",
       userPubkey: "a".repeat(64),
       targets: [graspTarget],
-      relayUrls: ["wss://relay.ngit.dev"],
+      relayUrls: ["wss://relay.ngit.dev/"],
       sourceCloneUrls: [githubClone],
       sourceWebUrls: [githubWeb],
       onPublishEvent,
@@ -149,11 +149,11 @@ describe("publishRepoSyncAnnouncement", () => {
         onPublishEvent: vi.fn(async (event) => ({
           event: signedEvent(event),
           ackedRelays: [],
-          failedRelays: ["wss://relay.ngit.dev"],
+          failedRelays: ["wss://relay.ngit.dev/"],
           successCount: 0,
           hasRelayOutcomes: true,
           relayOutcomes: [
-            { relay: "wss://relay.ngit.dev", status: "timeout", detail: "timed out" },
+            { relay: "wss://relay.ngit.dev/", status: "timeout", detail: "timed out" },
           ],
         })),
         updateProgress: vi.fn(),
@@ -171,21 +171,21 @@ describe("publishRepoSyncAnnouncement", () => {
         return {
           event: signedAnnouncement,
           ackedRelays: [],
-          failedRelays: ["wss://relay.ngit.dev"],
+          failedRelays: ["wss://relay.ngit.dev/"],
           hasRelayOutcomes: true,
           relayOutcomes: [
-            { relay: "wss://relay.ngit.dev", status: "timeout", detail: "timed out" },
+            { relay: "wss://relay.ngit.dev/", status: "timeout", detail: "timed out" },
           ],
         };
       }
       return {
         event,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
         hasRelayOutcomes: true,
         relayOutcomes: [
           {
-            relay: "wss://relay.ngit.dev",
+            relay: "wss://relay.ngit.dev/",
             status: "success",
             detail: "purgatory: won't be served until git data arrives",
           },
@@ -208,7 +208,7 @@ describe("publishRepoSyncAnnouncement", () => {
     expect(onPublishEvent).toHaveBeenCalledTimes(2);
     expect(onPublishEvent.mock.calls[1]?.[0]).toBe(signedAnnouncement);
     expect(admission.announcementEvent).toBe(signedAnnouncement);
-    expect(admission.ackedRelayUrls).toEqual(["wss://relay.ngit.dev"]);
+    expect(admission.ackedRelayUrls).toEqual(["wss://relay.ngit.dev/"]);
   });
 
   it("fails when a selected GRASP relay misses the ACK even if a generic relay succeeds", async () => {
@@ -217,16 +217,16 @@ describe("publishRepoSyncAnnouncement", () => {
         repoName: "repo",
         userPubkey: "a".repeat(64),
         targets: [graspTarget],
-        relayUrls: ["wss://repo.example"],
+        relayUrls: ["wss://repo.example/"],
         onPublishEvent: vi.fn(async (event) => ({
           event: signedEvent(event),
-          ackedRelays: ["wss://repo.example"],
-          failedRelays: ["wss://relay.ngit.dev"],
+          ackedRelays: ["wss://repo.example/"],
+          failedRelays: ["wss://relay.ngit.dev/"],
           successCount: 1,
           hasRelayOutcomes: true,
           relayOutcomes: [
-            { relay: "wss://repo.example", status: "success", detail: "" },
-            { relay: "wss://relay.ngit.dev", status: "timeout", detail: "timed out" },
+            { relay: "wss://repo.example/", status: "success", detail: "" },
+            { relay: "wss://relay.ngit.dev/", status: "timeout", detail: "timed out" },
           ],
         })),
         updateProgress: vi.fn(),
@@ -255,7 +255,7 @@ describe("publishRepoSyncAnnouncement", () => {
       repoName: "repo",
       userPubkey: ownerPubkey,
       targets: [{ ...graspTarget, existingRemoteUrl: cloneUrl }],
-      relayUrls: ["wss://relay.ngit.dev"],
+      relayUrls: ["wss://relay.ngit.dev/"],
       onPublishEvent,
       onFetchRelayEvents: vi.fn().mockResolvedValue([existingAnnouncement]),
       updateProgress: vi.fn(),
@@ -264,9 +264,9 @@ describe("publishRepoSyncAnnouncement", () => {
 
     expect(onPublishEvent).not.toHaveBeenCalled();
     expect(admission.announcementEvent).toBe(existingAnnouncement);
-    expect(admission.ackedRelayUrls).toEqual(["wss://relay.ngit.dev"]);
+    expect(admission.ackedRelayUrls).toEqual(["wss://relay.ngit.dev/"]);
     expect(admission.graspRelayUrls).toEqual([]);
-    expect(admission.announcementByGraspRelay["wss://relay.ngit.dev"]).toBe(existingAnnouncement);
+    expect(admission.announcementByGraspRelay["wss://relay.ngit.dev/"]).toBe(existingAnnouncement);
   });
 
   it("retries an empty existing GRASP announcement read before failing closed", async () => {
@@ -279,7 +279,7 @@ describe("publishRepoSyncAnnouncement", () => {
       tags: [
         ["d", "repo"],
         ["clone", cloneUrl],
-        ["relays", "wss://relay.ngit.dev"],
+        ["relays", "wss://relay.ngit.dev/"],
       ],
     });
     const onFetchRelayEvents = vi
@@ -292,7 +292,7 @@ describe("publishRepoSyncAnnouncement", () => {
       repoName: "repo",
       userPubkey: ownerPubkey,
       targets: [{ ...graspTarget, existingRemoteUrl: cloneUrl }],
-      relayUrls: ["wss://relay.ngit.dev"],
+      relayUrls: ["wss://relay.ngit.dev/"],
       onPublishEvent,
       onFetchRelayEvents,
       updateProgress: vi.fn(),
@@ -321,7 +321,7 @@ describe("publishRepoSyncAnnouncement", () => {
             existingRemoteUrl: cloneUrl,
           },
         ],
-        relayUrls: ["wss://relay.ngit.dev"],
+        relayUrls: ["wss://relay.ngit.dev/"],
         onPublishEvent,
         onFetchRelayEvents: vi.fn().mockResolvedValue([
           signedEvent({
@@ -331,7 +331,7 @@ describe("publishRepoSyncAnnouncement", () => {
             tags: [
               ["d", "repo"],
               ["clone", cloneUrl],
-              ["relays", "wss://relay.ngit.dev"],
+              ["relays", "wss://relay.ngit.dev/"],
             ],
           }),
           signedEvent({
@@ -359,7 +359,7 @@ describe("publishRepoSyncAnnouncement", () => {
       tags: [
         ["d", "repo"],
         ["clone", cloneUrl],
-        ["relays", "wss://relay.ngit.dev"],
+        ["relays", "wss://relay.ngit.dev/"],
       ],
     });
     const newerDelistedEvent = signedEvent({
@@ -374,7 +374,7 @@ describe("publishRepoSyncAnnouncement", () => {
         repoName: "repo",
         userPubkey: ownerPubkey,
         targets: [{ ...graspTarget, existingRemoteUrl: cloneUrl }],
-        relayUrls: ["wss://relay.ngit.dev"],
+        relayUrls: ["wss://relay.ngit.dev/"],
         onPublishEvent: vi.fn(),
         onFetchRelayEvents: vi
           .fn()
@@ -606,7 +606,7 @@ describe("syncLocalRepoToTargets", () => {
       tags: [
         ["d", "repo"],
         ["clone", "https://relay.ngit.dev/npub1example/repo.git"],
-        ["relays", "wss://relay.ngit.dev"],
+        ["relays", "wss://relay.ngit.dev/"],
       ],
     });
     let publishedState: any;
@@ -615,7 +615,7 @@ describe("syncLocalRepoToTargets", () => {
       if (event.kind === 30618) publishedState = signed;
       return {
         event: signed,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
         successCount: 1,
         hasRelayOutcomes: true,
@@ -637,10 +637,10 @@ describe("syncLocalRepoToTargets", () => {
       refs: [{ type: "heads", name: "main", ref: "refs/heads/main", commit }],
       targets: [
         {
-          id: "grasp:wss://relay.ngit.dev",
+          id: "grasp:wss://relay.ngit.dev/",
           label: "GRASP (relay.ngit.dev)",
           provider: "grasp",
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
         },
       ],
       userPubkey: "a".repeat(64),
@@ -652,7 +652,7 @@ describe("syncLocalRepoToTargets", () => {
       updateProgress: vi.fn(),
       runAbortable,
       prepublishedAnnouncement: announcement,
-      preprovisionedGraspRelayUrls: ["wss://relay.ngit.dev"],
+      preprovisionedGraspRelayUrls: ["wss://relay.ngit.dev/"],
       operationId: "import:progress",
       onOperationProgress,
     });
@@ -666,7 +666,7 @@ describe("syncLocalRepoToTargets", () => {
     expect(workerApi.pushToRemote).toHaveBeenCalledWith(
       expect.objectContaining({
         operationId: expect.stringMatching(/^import:progress:.+:pushToRemote:\d+$/),
-        repoRelays: ["wss://relay.ngit.dev"],
+        repoRelays: ["wss://relay.ngit.dev/"],
       })
     );
     expect(onOperationProgress.mock.calls.map(([event]) => event.phase)).toEqual(
@@ -719,7 +719,7 @@ describe("syncLocalRepoToTargets", () => {
 
       return {
         event: signed,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
         successCount: 1,
         hasRelayOutcomes: true,
@@ -743,14 +743,14 @@ describe("syncLocalRepoToTargets", () => {
       ],
       targets: [
         {
-          id: "grasp:wss://relay.ngit.dev",
+          id: "grasp:wss://relay.ngit.dev/",
           label: "GRASP (relay.ngit.dev)",
           provider: "grasp",
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
         },
       ],
       userPubkey: "a".repeat(64),
-      relays: ["wss://relay.ngit.dev"],
+      relays: ["wss://relay.ngit.dev/"],
       webUrls: ["https://budabit.club/git/naddr1repo", "https://gitworkshop.dev/npub1example/repo"],
       onPublishEvent,
       onFetchRelayEvents: vi.fn(async ({ filters }) => {
@@ -791,13 +791,13 @@ describe("syncLocalRepoToTargets", () => {
       expect.arrayContaining([["web", "https://relay.ngit.dev/npub1example/repo"]])
     );
     expect(publishedAnnouncement.tags).toEqual(
-      expect.arrayContaining([["relays", "wss://relay.ngit.dev"]])
+      expect.arrayContaining([["relays", "wss://relay.ngit.dev/"]])
     );
     expect(onPublishEvent.mock.calls.every((call) => call[1]?.relays === undefined)).toBe(false);
     expect(onPublishEvent.mock.calls.map((call) => call[1]?.relays)).toEqual([
-      ["wss://relay.ngit.dev"],
-      ["wss://relay.ngit.dev"],
-      ["wss://relay.ngit.dev"],
+      ["wss://relay.ngit.dev/"],
+      ["wss://relay.ngit.dev/"],
+      ["wss://relay.ngit.dev/"],
     ]);
     expect(operations).toEqual([
       "publish-announcement",
@@ -840,10 +840,10 @@ describe("syncLocalRepoToTargets", () => {
       ],
       targets: [
         {
-          id: "grasp:wss://relay.ngit.dev",
+          id: "grasp:wss://relay.ngit.dev/",
           label: "GRASP (relay.ngit.dev)",
           provider: "grasp",
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
           existingRemoteUrl: "https://relay.ngit.dev/npub1example/repo.git",
         },
       ],
@@ -876,10 +876,10 @@ describe("syncLocalRepoToTargets", () => {
       refs: [{ type: "heads", name: "main", ref: "refs/heads/main" }],
       targets: [
         {
-          id: "grasp:wss://relay.ngit.dev",
+          id: "grasp:wss://relay.ngit.dev/",
           label: "GRASP (relay.ngit.dev)",
           provider: "grasp",
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
           existingRemoteUrl: "https://relay.ngit.dev/npub1example/repo.git",
         },
       ],
@@ -1260,7 +1260,7 @@ describe("syncLocalRepoToTargets", () => {
       if (event.kind === 30618) publishedState = signed;
       return {
         event: signed,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
       };
     });
@@ -1281,10 +1281,10 @@ describe("syncLocalRepoToTargets", () => {
           token: "ghp_test",
         },
         {
-          id: "grasp:wss://relay.ngit.dev",
+          id: "grasp:wss://relay.ngit.dev/",
           label: "GRASP (relay.ngit.dev)",
           provider: "grasp",
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
         },
       ],
       userPubkey: "f".repeat(64),
@@ -1331,7 +1331,7 @@ describe("syncLocalRepoToTargets", () => {
       if (event.kind === 30618) publishedState = signed;
       return {
         event: signed,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
       };
     });
@@ -1345,10 +1345,10 @@ describe("syncLocalRepoToTargets", () => {
       refs: [{ type: "heads", name: "main", ref: "refs/heads/main", commit }],
       targets: [
         {
-          id: "grasp:wss://relay.ngit.dev",
+          id: "grasp:wss://relay.ngit.dev/",
           label: "GRASP (relay.ngit.dev)",
           provider: "grasp",
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
         },
       ],
       userPubkey: "f".repeat(64),
@@ -1401,7 +1401,7 @@ describe("syncLocalRepoToTargets", () => {
       publishedState = signedEvent(event);
       return {
         event: publishedState,
-        ackedRelays: ["wss://relay.ngit.dev"],
+        ackedRelays: ["wss://relay.ngit.dev/"],
         failedRelays: [],
         successCount: 1,
         hasRelayOutcomes: true,
@@ -1427,10 +1427,10 @@ describe("syncLocalRepoToTargets", () => {
       ],
       targets: [
         {
-          id: "grasp:wss://relay.ngit.dev",
+          id: "grasp:wss://relay.ngit.dev/",
           label: "GRASP (relay.ngit.dev)",
           provider: "grasp",
-          relayUrl: "wss://relay.ngit.dev",
+          relayUrl: "wss://relay.ngit.dev/",
           existingRemoteUrl: "https://relay.ngit.dev/npub1example/repo.git",
         },
       ],
@@ -1443,7 +1443,7 @@ describe("syncLocalRepoToTargets", () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        id: "grasp:wss://relay.ngit.dev",
+        id: "grasp:wss://relay.ngit.dev/",
         success: true,
         pushedRefs: ["refs/heads/feature"],
       }),
@@ -1461,7 +1461,7 @@ describe("syncLocalRepoToTargets", () => {
       expect.objectContaining({
         provider: "grasp",
         ref: "refs/heads/feature",
-        repoRelays: ["wss://relay.ngit.dev"],
+        repoRelays: ["wss://relay.ngit.dev/"],
       })
     );
   });

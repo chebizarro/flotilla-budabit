@@ -97,7 +97,7 @@ describe("repository creation recovery", () => {
         ["t", "nostr"],
         ["clone", "https://github.com/alice/repo.git", legacyCloneUrl],
         ["web", "https://github.com/alice/repo"],
-        ["relays", "wss://relay.example", "wss://grasp.failed"],
+        ["relays", "wss://relay.example/", "wss://grasp.failed/"],
       ],
     };
     const publisher = vi.fn(async (event: any, context?: { relays?: string[] }) => ({
@@ -118,7 +118,7 @@ describe("repository creation recovery", () => {
 
     const result = await recoverRepoCreationRecord(
       record({
-        repositoryRelayUrls: ["wss://selected.example"],
+        repositoryRelayUrls: ["wss://selected.example/"],
         sourceMetadata: {
           cloneUrls: ["https://github.com/alice/repo.git", legacyCloneUrl],
           webUrls: ["https://github.com/alice/repo"],
@@ -138,11 +138,11 @@ describe("repository creation recovery", () => {
             updatedAt: 1,
           },
           {
-            id: "grasp:wss://grasp.failed",
+            id: "grasp:wss://grasp.failed/",
             label: "Failed GRASP",
             provider: "grasp",
             stage: "pushing",
-            relayUrl: "wss://grasp.failed",
+            relayUrl: "wss://grasp.failed/",
             remoteUrl: "https://grasp.failed/npub1owner/repo.git",
             refs: [{ ref: "refs/heads/main", commit, stage: "pushing" }],
             cleanup: { stage: "not-needed", manualAttention: false },
@@ -173,12 +173,12 @@ describe("repository creation recovery", () => {
     expect(finalCloneTag).toContain("https://github.com/alice/repo.git");
     expect(finalCloneTag).toContain(legacyCloneUrl);
     expect(finalAnnouncement?.tags).toContainEqual(["web", "https://github.com/alice/repo"]);
-    expect(finalAnnouncement?.tags).toContainEqual(["relays", "wss://selected.example"]);
+    expect(finalAnnouncement?.tags).toContainEqual(["relays", "wss://selected.example/"]);
     expect(finalAnnouncement?.tags).toContainEqual(["name", "Repository Display Name"]);
     expect(finalAnnouncement?.tags).toContainEqual(["t", "nostr"]);
     expect(
       publisher.mock.calls.every(
-        ([, context]) => !(context?.relays || []).includes("wss://grasp.failed")
+        ([, context]) => !(context?.relays || []).includes("wss://grasp.failed/")
       )
     ).toBe(true);
     expect(createRemoteRepo).not.toHaveBeenCalled();
@@ -212,7 +212,9 @@ describe("repository creation recovery", () => {
             updatedAt: 1,
           },
         ],
-        publishedEvents: [{ event: provisional, relayUrls: ["wss://relay"], stage: "provisional" }],
+        publishedEvents: [
+          { event: provisional, relayUrls: ["wss://relay/"], stage: "provisional" },
+        ],
       }),
       {
         workerApi: { deleteRepo },
@@ -223,7 +225,7 @@ describe("repository creation recovery", () => {
     );
 
     expect(result.status).toBe("recovered");
-    expect(onDeleteEvent).toHaveBeenCalledWith(provisional, ["wss://relay"]);
+    expect(onDeleteEvent).toHaveBeenCalledWith(provisional, ["wss://relay/"]);
     expect(deleteRepo).toHaveBeenCalledWith({ repoId: "owner/repo" });
   });
 

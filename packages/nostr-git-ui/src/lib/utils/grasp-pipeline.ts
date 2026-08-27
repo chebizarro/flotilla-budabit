@@ -9,6 +9,7 @@ import type { NostrEvent, NostrFilter } from "@nostr-git/core";
 import {
   isGraspRepoHttpUrl,
   normalizeGraspServiceHttpBase,
+  normalizeRelayUrl,
   parseGraspRepoHttpUrl,
   sanitizeRelays,
 } from "@nostr-git/core/utils";
@@ -166,14 +167,10 @@ export interface FetchLatestGraspRepoStateParams {
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function normalizeRelayForCompare(relay: string): string {
-  const trimmed = String(relay || "").trim();
-  if (!trimmed) return "";
   try {
-    const url = new URL(trimmed);
-    const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
-    return `${url.protocol}//${url.host}${path}`;
+    return normalizeRelayUrl(String(relay || "").trim());
   } catch {
-    return trimmed.replace(/\/+$/, "");
+    return "";
   }
 }
 
@@ -261,7 +258,7 @@ function describeRelayFailures(ack: GraspPublishRelayAck): string {
 }
 
 function normalizeRelayOrigin(relayUrl: string): string {
-  return normalizeGraspOrigins(relayUrl).wsOrigin.replace(/\/+$/, "");
+  return normalizeRelayUrl(normalizeGraspOrigins(relayUrl).wsOrigin);
 }
 
 function dedupeStrings(values: string[]): string[] {
@@ -306,7 +303,7 @@ function canDeriveMandatoryGraspRelay(input: string): boolean {
 }
 
 export function getMandatoryGraspRelayUrls(relayUrls: string[] = []): string[] {
-  return dedupeStrings(
+  return sanitizeRelays(
     relayUrls
       .map((relayUrl) => {
         try {
@@ -406,7 +403,7 @@ export function getRepoSettingsRelayState(
   knownServices: GraspServiceDescriptor[] = []
 ): RepoSettingsRelayState {
   const declaredRelays = sanitizeRelays(relayUrls);
-  const mandatoryGraspRelays = dedupeStrings(
+  const mandatoryGraspRelays = sanitizeRelays(
     cloneUrls.flatMap((cloneUrl) => {
       const parsed = parseGraspRepoHttpUrl(cloneUrl);
       if (!parsed) return [];
@@ -499,7 +496,7 @@ export async function publishRepoSettingsEvents({
 }
 
 export function getSuccessfulGraspRelayUrls(remoteUrls: string[] = []): string[] {
-  return dedupeStrings(
+  return sanitizeRelays(
     remoteUrls
       .filter((remoteUrl) => isGraspRepoHttpUrl(remoteUrl))
       .map((remoteUrl) => normalizeGraspOrigins(remoteUrl).wsOrigin)
@@ -1185,7 +1182,7 @@ export function normalizeGraspOrigins(input: string): { wsOrigin: string; httpOr
     const baseSegments = ownerIndex >= 0 ? pathSegments.slice(0, ownerIndex) : pathSegments;
     const basePath = baseSegments.length > 0 ? `/${baseSegments.join("/")}` : "";
     return {
-      wsOrigin: `${isSecure ? "wss" : "ws"}://${host}${basePath}`,
+      wsOrigin: normalizeRelayUrl(`${isSecure ? "wss" : "ws"}://${host}${basePath}`),
       httpOrigin: `${isSecure ? "https" : "http"}://${host}${basePath}`,
     };
   } catch {

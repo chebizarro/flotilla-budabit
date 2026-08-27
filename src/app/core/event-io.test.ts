@@ -14,7 +14,7 @@ const publishStatuses = {
   Aborted: "aborted",
 } as const
 const routerGetMock = vi.fn(() => ({
-  FromUser: () => ({getUrls: () => ["wss://ambient-outbox.example.com"]}),
+  FromUser: () => ({getUrls: () => ["wss://ambient-outbox.example.com/"]}),
 }))
 
 const makePublishOutcome = (
@@ -81,7 +81,7 @@ describe("event-io", () => {
 
       const result = await eventIO.publishEvent(
         {kind: 1, content: "", created_at: 0, tags: []},
-        {relays: ["wss://repo.example.com"]},
+        {relays: ["wss://repo.example.com/"]},
       )
 
       expect(result).toEqual({ok: false, error: "No signer available"})
@@ -106,7 +106,10 @@ describe("event-io", () => {
       const result = await eventIO.publishEvent(
         {kind: 1, content: "", created_at: 0, tags: []},
         {
-          relays: [" WSS://EXPLICIT.RELAY.EXAMPLE/path/ ", "wss://explicit.relay.example/path"],
+          relays: [
+            " WSS://EXPLICIT.RELAY.EXAMPLE/path#ignored ",
+            "wss://explicit.relay.example/path",
+          ],
         },
       )
 
@@ -130,7 +133,7 @@ describe("event-io", () => {
     })
 
     it("fails when a relay rejects the event", async () => {
-      const relay = "wss://repo.example.com"
+      const relay = "wss://repo.example.com/"
       const signed = {
         id: "evt-rejected",
         kind: 1,
@@ -162,7 +165,7 @@ describe("event-io", () => {
     })
 
     it("fails when publication times out", async () => {
-      const relay = "wss://repo.example.com"
+      const relay = "wss://repo.example.com/"
       const signed = {
         id: "evt-timeout",
         kind: 1,
@@ -199,8 +202,8 @@ describe("event-io", () => {
       [
         "invalid",
         {
-          "wss://repo.example.com": {
-            relay: "wss://repo.example.com",
+          "wss://repo.example.com/": {
+            relay: "wss://repo.example.com/",
             status: "unknown",
             detail: "",
           },
@@ -209,8 +212,8 @@ describe("event-io", () => {
       [
         "non-terminal",
         {
-          "wss://repo.example.com": {
-            relay: "wss://repo.example.com",
+          "wss://repo.example.com/": {
+            relay: "wss://repo.example.com/",
             status: publishStatuses.Pending,
             detail: "waiting",
           },
@@ -232,7 +235,7 @@ describe("event-io", () => {
       const {createEventIO} = await import("./event-io")
       const result = await createEventIO().publishEvent(
         {kind: 1, content: "", created_at: 0, tags: []},
-        {relays: ["wss://repo.example.com"]},
+        {relays: ["wss://repo.example.com/"]},
       )
 
       expect(result).toEqual({
@@ -243,9 +246,9 @@ describe("event-io", () => {
     })
 
     it("returns success and only accepted relays for mixed publication outcomes", async () => {
-      const acceptedRelay = "wss://accepted.example.com"
-      const rejectedRelay = "wss://rejected.example.com"
-      const timeoutRelay = "wss://timeout.example.com"
+      const acceptedRelay = "wss://accepted.example.com/"
+      const rejectedRelay = "wss://rejected.example.com/"
+      const timeoutRelay = "wss://timeout.example.com/"
       const signed = {
         id: "evt-mixed",
         kind: 1,
@@ -305,7 +308,7 @@ describe("event-io", () => {
       const eventIO = createEventIO()
       const result = await eventIO.publishEvent(
         {kind: 30617, content: "", created_at: 0, tags: [["d", "repo"]]},
-        {relays: ["wss://discovery.example.com"]},
+        {relays: ["wss://discovery.example.com/"]},
       )
 
       expect(result).toEqual({
@@ -327,9 +330,9 @@ describe("event-io", () => {
           kind: 30617,
           content: "",
           created_at: 0,
-          tags: [["relays", "wss://repo.example.com", "wss://missing.example.com"]],
+          tags: [["relays", "wss://repo.example.com/", "wss://missing.example.com/"]],
         },
-        {relays: ["wss://repo.example.com"]},
+        {relays: ["wss://repo.example.com/"]},
       )
 
       expect(result).toEqual({
@@ -341,8 +344,8 @@ describe("event-io", () => {
     })
 
     it("allows extra discovery relays when a declared repository relay accepts", async () => {
-      const repoRelay = "wss://repo.example.com"
-      const discoveryRelay = "wss://discovery.example.com"
+      const repoRelay = "wss://repo.example.com/"
+      const discoveryRelay = "wss://discovery.example.com/"
       const signed = {
         id: "evt-announcement",
         kind: 30617,
@@ -384,8 +387,8 @@ describe("event-io", () => {
     })
 
     it("fails a repository announcement when only an extra discovery relay accepts", async () => {
-      const repoRelay = "wss://repo.example.com"
-      const discoveryRelay = "wss://discovery.example.com"
+      const repoRelay = "wss://repo.example.com/"
+      const discoveryRelay = "wss://discovery.example.com/"
       const signed = {
         id: "evt-announcement",
         kind: 30617,
@@ -419,13 +422,13 @@ describe("event-io", () => {
     })
 
     it("rejects a signer that changes relay policy fields", async () => {
-      const repoRelay = "wss://repo.example.com"
+      const repoRelay = "wss://repo.example.com/"
       const sign = vi.fn().mockResolvedValue({
         id: "evt-mutated",
         kind: 30617,
         content: "",
         created_at: 0,
-        tags: [["relays", "wss://different.example.com"]],
+        tags: [["relays", "wss://different.example.com/"]],
         pubkey: "a".repeat(64),
         sig: "sig",
       })
@@ -451,11 +454,11 @@ describe("event-io", () => {
       const filters = [{kinds: [30618], "#d": ["repo"]}]
 
       await eventIO.fetchEvents(filters, {
-        relays: ["wss://REPO.EXAMPLE.com/", "wss://repo.example.com"],
+        relays: ["wss://REPO.EXAMPLE.com/", "wss://repo.example.com/"],
       })
 
       expect(loadMock).toHaveBeenCalledWith(
-        expect.objectContaining({relays: ["wss://repo.example.com"], filters}),
+        expect.objectContaining({relays: ["wss://repo.example.com/"], filters}),
       )
       expect(routerGetMock).not.toHaveBeenCalled()
 
@@ -498,7 +501,7 @@ describe("event-io", () => {
     })
 
     it("publishEvents applies per-relay success semantics to each event", async () => {
-      const relay = "wss://repo.example.com"
+      const relay = "wss://repo.example.com/"
       const sign = vi.fn().mockImplementation(async unsigned => ({
         ...unsigned,
         id: `evt-${unsigned.content}`,

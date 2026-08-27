@@ -8,12 +8,12 @@ import {
 
 describe("grasp server helpers", () => {
   it("trims trailing slashes from manual entries", () => {
-    expect(normalizeGraspServerUrl("  wss://gitnostr.com/  ")).toBe("wss://gitnostr.com");
+    expect(normalizeGraspServerUrl("  wss://gitnostr.com/  ")).toBe("wss://gitnostr.com/");
   });
 
   it("accepts only WebSocket GRASP service URLs", () => {
     expect(isValidGraspServerUrl("ws://localhost:8080")).toBe(true);
-    expect(isValidGraspServerUrl("wss://grasp.budabit.club")).toBe(true);
+    expect(isValidGraspServerUrl("wss://grasp.budabit.club/")).toBe(true);
     expect(isValidGraspServerUrl("http://grasp.budabit.club")).toBe(false);
     expect(isValidGraspServerUrl("https://grasp.budabit.club")).toBe(false);
     expect(isValidGraspServerUrl("https://github.com")).toBe(false);
@@ -24,10 +24,10 @@ describe("grasp server helpers", () => {
     expect(
       normalizeGraspServerUrls([
         "wss://grasp.budabit.club/",
-        "wss://grasp.budabit.club",
+        "wss://grasp.budabit.club/",
         "https://grasp.budabit.club",
         "https://github.com/Pleb5/flotilla-budabit.git",
       ])
-    ).toEqual(["wss://grasp.budabit.club"]);
+    ).toEqual(["wss://grasp.budabit.club/"]);
   });
 });
