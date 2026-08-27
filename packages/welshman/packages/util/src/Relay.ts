@@ -201,7 +201,7 @@ export const sanitizeRelayUrls = (urls: Iterable<unknown>): string[] => {
   const seen = new Set<string>()
 
   for (const value of urls) {
-    if (typeof value !== "string" || !isRelayUrl(value)) continue
+    if (typeof value !== "string" || (value !== LOCAL_RELAY_URL && !isRelayUrl(value))) continue
 
     try {
       const relay = normalizeRelayUrl(value)

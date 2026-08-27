@@ -1,5 +1,6 @@
 import {get} from "svelte/store"
 import {MockAdapter, PublishStatus, LOCAL_RELAY_URL} from "@welshman/net"
+import {Nip01Signer} from "@welshman/signer"
 import {NOTE, DIRECT_MESSAGE, WRAP, makeEvent, getPubkey, makeSecret, prep} from "@welshman/util"
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {repository, tracker} from "../src/core"
@@ -20,6 +21,11 @@ import {
 const secret = makeSecret()
 
 const pubkey = getPubkey(secret)
+const relay1 = "wss://relay-1.example/"
+const relay2 = "wss://relay-2.example/"
+const target = "wss://target.example/"
+const outside = "wss://outside.example/"
+const missing = "wss://missing.example/"
 
 const mockRequest = {
   event: prep({...makeEvent(NOTE), pubkey}),
@@ -70,21 +76,21 @@ describe("thunk", () => {
 
   describe("waitForAnyRelayAck", () => {
     it("resolves on the first success from an explicit target relay", async () => {
-      const thunk = new Thunk({...mockRequest, relays: ["relay-1", "relay-2"]})
-      const ack = waitForAnyRelayAck(thunk, ["relay-1", "relay-2"])
+      const thunk = new Thunk({...mockRequest, relays: [relay1, relay2]})
+      const ack = waitForAnyRelayAck(thunk, ["WSS://RELAY-1.EXAMPLE", relay2])
       const success = {
-        relay: "relay-2",
+        relay: relay2,
         status: PublishStatus.Success,
         detail: "accepted",
       }
 
-      thunk.results["relay-1"] = {
-        relay: "relay-1",
+      thunk.results[relay1] = {
+        relay: relay1,
         status: PublishStatus.Failure,
         detail: "denied",
       }
       thunk._notify()
-      thunk.results["relay-2"] = success
+      thunk.results[relay2] = success
       thunk._notify()
 
       await expect(ack).resolves.toBe(success)
@@ -92,13 +98,13 @@ describe("thunk", () => {
     })
 
     it("ignores success outside the explicit target relays", async () => {
-      const thunk = new Thunk({...mockRequest, relays: ["target", "outside"]})
-      const ack = waitForAnyRelayAck(thunk, ["target"])
+      const thunk = new Thunk({...mockRequest, relays: [target, outside]})
+      const ack = waitForAnyRelayAck(thunk, [target])
       const settled = vi.fn()
 
       void ack.then(settled, settled)
-      thunk.results.outside = {
-        relay: "outside",
+      thunk.results[outside] = {
+        relay: outside,
         status: PublishStatus.Success,
         detail: "accepted",
       }
@@ -108,25 +114,25 @@ describe("thunk", () => {
       expect(settled).not.toHaveBeenCalled()
 
       const success = {
-        relay: "target",
+        relay: target,
         status: PublishStatus.Success,
         detail: "accepted",
       }
 
-      thunk.results.target = success
+      thunk.results[target] = success
       thunk._notify()
 
       await expect(ack).resolves.toBe(success)
     })
 
     it("rejects once all represented targets are terminal and details missing targets", async () => {
-      const thunk = new Thunk({...mockRequest, relays: ["relay-1", "relay-2", "outside"]})
-      const ack = waitForAnyRelayAck(thunk, ["relay-1", "relay-2", "missing"])
+      const thunk = new Thunk({...mockRequest, relays: [relay1, relay2, outside]})
+      const ack = waitForAnyRelayAck(thunk, [relay1, relay2, missing])
       const settled = vi.fn()
 
       void ack.then(settled, settled)
-      thunk.results["relay-1"] = {
-        relay: "relay-1",
+      thunk.results[relay1] = {
+        relay: relay1,
         status: PublishStatus.Failure,
         detail: "denied",
       }
@@ -135,15 +141,15 @@ describe("thunk", () => {
 
       expect(settled).not.toHaveBeenCalled()
 
-      thunk.results["relay-2"] = {
-        relay: "relay-2",
+      thunk.results[relay2] = {
+        relay: relay2,
         status: PublishStatus.Timeout,
         detail: "timed out",
       }
       thunk._notify()
 
       await expect(ack).rejects.toThrow(
-        "No target relay acknowledged publication (relay-1: failure (denied); relay-2: timeout (timed out); missing: no result)",
+        `No target relay acknowledged publication (${relay1}: failure (denied); ${relay2}: timeout (timed out); ${missing}: no result)`,
       )
       expect(thunk._subs).toHaveLength(0)
     })
@@ -157,9 +163,9 @@ describe("thunk", () => {
     })
 
     it("detaches an aborted ACK observer without aborting transport", async () => {
-      const thunk = new Thunk({...mockRequest, relays: ["relay-1"]})
+      const thunk = new Thunk({...mockRequest, relays: [relay1]})
       const controller = new AbortController()
-      const ack = waitForAnyRelayAck(thunk, ["relay-1"], {signal: controller.signal})
+      const ack = waitForAnyRelayAck(thunk, [relay1], {signal: controller.signal})
 
       expect(thunk._subs).toHaveLength(1)
 
@@ -171,12 +177,12 @@ describe("thunk", () => {
     })
 
     it("does not subscribe an already-aborted ACK observer", async () => {
-      const thunk = new Thunk({...mockRequest, relays: ["relay-1"]})
+      const thunk = new Thunk({...mockRequest, relays: [relay1]})
       const controller = new AbortController()
       controller.abort()
 
       await expect(
-        waitForAnyRelayAck(thunk, ["relay-1"], {signal: controller.signal}),
+        waitForAnyRelayAck(thunk, [relay1], {signal: controller.signal}),
       ).rejects.toMatchObject({name: "AbortError"})
       expect(thunk._subs).toHaveLength(0)
       expect(thunk.controller.signal.aborted).toBe(false)
@@ -184,6 +190,28 @@ describe("thunk", () => {
   })
 
   describe("publishThunk", () => {
+    it("canonicalizes destinations and preserves the signed event on retry", async () => {
+      const event = await Nip01Signer.ephemeral().sign(
+        makeEvent(NOTE, {tags: [["test", "canonical-retry"]]}),
+      )
+      const thunk = new Thunk({
+        event,
+        relays: ["WSS://RELAY-1.EXAMPLE", relay1, "wss://relay-2.example/Path"],
+        optimistic: false,
+      })
+
+      expect(thunk.options.relays).toEqual([relay1, "wss://relay-2.example/Path"])
+      expect(Object.keys(thunk.results)).toEqual(thunk.options.relays)
+      expect(Object.values(thunk.results).map(result => result.relay)).toEqual(thunk.options.relays)
+
+      const retry = retryThunk(thunk) as Thunk
+
+      expect(retry.event).toBe(thunk.event)
+      expect(retry.options.event).toBe(thunk.event)
+      expect(retry.options.relays).toEqual(thunk.options.relays)
+      abortThunk(retry)
+    })
+
     it("observes sanitized lifecycle results and retry correlation without event data", () => {
       const events: unknown[] = []
       const unsubscribeThrowing = subscribePublicationLifecycle(() => {
@@ -195,30 +223,30 @@ describe("thunk", () => {
           content: "private publication content",
           tags: [["secret", "private tag"]],
         }),
-        relays: ["wss://user:pass@relay.example/path?token=private#fragment"],
+        relays: ["WSS://Relay.Example/Path?token=private#fragment"],
         operationId: "operation-1",
         publicationStage: "primary",
       })
 
       expect(() =>
         thunk._setPending({
-          relay: "wss://user:pass@relay.example/path?token=private",
+          relay: "wss://relay.example/Path?token=private",
           status: PublishStatus.Pending,
           detail: "private pending detail",
         }),
       ).not.toThrow()
       thunk._setFailure({
-        relay: "wss://user:pass@relay.example/path?token=private",
+        relay: "wss://relay.example/Path?token=private",
         status: PublishStatus.Failure,
         detail: "private failure detail",
       })
       thunk._setTimeout({
-        relay: "wss://user:pass@relay.example/path?token=private",
+        relay: "wss://relay.example/Path?token=private",
         status: PublishStatus.Timeout,
         detail: "private timeout detail",
       })
       thunk._setSuccess({
-        relay: "wss://user:pass@relay.example/path?token=private",
+        relay: "wss://relay.example/Path?token=private",
         status: PublishStatus.Success,
         detail: "private success detail",
       })
@@ -230,7 +258,7 @@ describe("thunk", () => {
           publicationId: thunk.diagnosticId,
           eventKind: NOTE,
           attempt: 1,
-          destinations: ["wss://relay.example/path"],
+          destinations: ["wss://relay.example/Path"],
           operationId: "operation-1",
           publicationStage: "primary",
         }),
@@ -254,7 +282,6 @@ describe("thunk", () => {
         PublishStatus.Success,
       ])
       const serialized = JSON.stringify(events)
-      expect(serialized).not.toContain("user")
       expect(serialized).not.toContain("private")
       expect(serialized).not.toContain("content")
       expect(serialized).not.toContain("tags")
@@ -276,7 +303,7 @@ describe("thunk", () => {
     })
 
     it("publishes private thunks without exposing them through the global store", async () => {
-      const relay = "private-relay"
+      const relay = "wss://private-relay.example/"
       const send = vi.fn()
       const adapter = new MockAdapter(relay, send)
       const trackSpy = vi.spyOn(tracker, "track")
@@ -319,7 +346,7 @@ describe("thunk", () => {
     })
 
     it("does not insert or remove ordinary events when optimistic is false", async () => {
-      const relay = "optimistic-relay"
+      const relay = "wss://optimistic-relay.example/"
       const send = vi.fn()
       const adapter = new MockAdapter(relay, send)
       const event = prep(makeEvent(NOTE, {tags: [["test", "non-optimistic"]]}), pubkey)
@@ -350,7 +377,7 @@ describe("thunk", () => {
     })
 
     it("settles relay ACK waiters when transport setup throws", async () => {
-      const relay = "broken-relay"
+      const relay = "wss://broken-relay.example/"
       const lifecycle: any[] = []
       const unsubscribe = subscribePublicationLifecycle(event => lifecycle.push(event))
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined)
@@ -454,7 +481,7 @@ describe("thunk", () => {
   })
 
   it("records tracker provenance only after a successful relay ACK", async () => {
-    const relay = "tracker-relay"
+    const relay = "wss://tracker-relay.example/"
     const send = vi.fn()
     const adapter = new MockAdapter(relay, send)
     const track = vi.spyOn(tracker, "track")

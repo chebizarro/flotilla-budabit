@@ -10,6 +10,7 @@ import {
   WRAPPED_KINDS,
   prep,
   makePow,
+  sanitizeRelayUrls,
 } from "@welshman/util"
 import {
   publish,
@@ -94,11 +95,15 @@ export class Thunk {
   diagnosticId: string
   diagnosticAttempt: number
   _terminal = false
+  readonly options: ThunkOptions
 
   constructor(
-    readonly options: ThunkOptions,
+    options: ThunkOptions,
     diagnostic: {attempt?: number; previousPublicationId?: string} = {},
   ) {
+    this.options = {...options, relays: sanitizeRelayUrls(options.relays)}
+    options = this.options
+
     if (!options.recipient && WRAPPED_KINDS.includes(options.event.kind)) {
       throw new Error(`Attempted to publish a kind ${options.event.kind} without wrapping it`)
     }
@@ -538,7 +543,7 @@ export const waitForAnyRelayAck = (
   targetRelays: string[] = thunk.options.relays,
   {signal}: {signal?: AbortSignal} = {},
 ): Promise<PublishResult> => {
-  const targets = Array.from(new Set(targetRelays))
+  const targets = sanitizeRelayUrls(targetRelays)
   const getAbortReason = () => {
     if (signal?.reason !== undefined) return signal.reason
 

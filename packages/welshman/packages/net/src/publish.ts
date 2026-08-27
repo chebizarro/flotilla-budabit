@@ -1,5 +1,5 @@
 import {fromPairs, once} from "@welshman/lib"
-import {type SignedEvent} from "@welshman/util"
+import {normalizeRelayUrl, sanitizeRelayUrls, type SignedEvent} from "@welshman/util"
 import {type RelayMessage, ClientMessageType, isRelayOk} from "./message.js"
 import {AdapterEvent, type AdapterContext, getAdapter} from "./adapter.js"
 
@@ -34,10 +34,11 @@ export type PublishOneOptions = {
 
 export const publishOne = (options: PublishOneOptions) =>
   new Promise<PublishResult>(resolve => {
-    const adapter = getAdapter(options.relay, options.context)
+    const relay = normalizeRelayUrl(options.relay)
+    const adapter = getAdapter(relay, options.context)
 
     const result = {
-      relay: options.relay,
+      relay,
       status: PublishStatus.Pending,
       detail: "",
     }
@@ -124,15 +125,11 @@ export type PublishOptions = {
 export const publish = async (options: PublishOptions): Promise<PublishResultsByRelay> => {
   const {event, timeout, signal, context} = options
   const completed = new Set<string>()
-  const relays = new Set(options.relays)
-
-  if (relays.size !== options.relays.length) {
-    console.warn("Non-unique relays passed to publish")
-  }
+  const relays = sanitizeRelayUrls(options.relays)
 
   return fromPairs(
     await Promise.all(
-      options.relays.map(async relay => {
+      relays.map(async relay => {
         const result = await publishOne({
           event,
           relay,
@@ -147,7 +144,7 @@ export const publish = async (options: PublishOptions): Promise<PublishResultsBy
           onComplete: (result: PublishResult) => {
             completed.add(relay)
 
-            if (completed.size === relays.size) {
+            if (completed.size === relays.length) {
               options.onComplete?.(result)
             }
           },

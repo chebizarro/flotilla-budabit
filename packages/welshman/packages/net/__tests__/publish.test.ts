@@ -5,6 +5,10 @@ import {ClientMessageType} from "../src/message"
 import {makeEvent} from "@welshman/util"
 import {Nip01Signer} from "@welshman/signer"
 
+const relay1 = "wss://relay-1.example/"
+const relay2 = "wss://relay-2.example/"
+const relay3 = "wss://relay-3.example/"
+
 describe("publishOne", () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -16,7 +20,7 @@ describe("publishOne", () => {
 
   it("success works", async () => {
     const sendSpy = vi.fn()
-    const adapter = new MockAdapter("1", sendSpy)
+    const adapter = new MockAdapter(relay1, sendSpy)
     const signer = Nip01Signer.ephemeral()
     const event = await signer.sign(makeEvent(1))
     const successSpy = vi.fn()
@@ -25,7 +29,7 @@ describe("publishOne", () => {
 
     publishOne({
       event,
-      relay: "1",
+      relay: "WSS://RELAY-1.EXAMPLE",
       context: {getAdapter: () => adapter},
       onSuccess: successSpy,
       onFailure: failureSpy,
@@ -41,7 +45,7 @@ describe("publishOne", () => {
     await vi.runAllTimers()
 
     expect(successSpy).toHaveBeenCalledWith({
-      relay: "1",
+      relay: relay1,
       detail: "hi",
       status: PublishStatus.Success,
     })
@@ -51,7 +55,7 @@ describe("publishOne", () => {
 
   it("failure works", async () => {
     const sendSpy = vi.fn()
-    const adapter = new MockAdapter("1", sendSpy)
+    const adapter = new MockAdapter(relay1, sendSpy)
     const signer = Nip01Signer.ephemeral()
     const event = await signer.sign(makeEvent(1))
     const successSpy = vi.fn()
@@ -60,7 +64,7 @@ describe("publishOne", () => {
 
     publishOne({
       event,
-      relay: "1",
+      relay: relay1,
       context: {getAdapter: () => adapter},
       onSuccess: successSpy,
       onFailure: failureSpy,
@@ -77,7 +81,7 @@ describe("publishOne", () => {
 
     expect(successSpy).not.toHaveBeenCalled()
     expect(failureSpy).toHaveBeenCalledWith({
-      relay: "1",
+      relay: relay1,
       detail: "hi",
       status: PublishStatus.Failure,
     })
@@ -86,7 +90,7 @@ describe("publishOne", () => {
 
   it("timeout works", async () => {
     const sendSpy = vi.fn()
-    const adapter = new MockAdapter("1", sendSpy)
+    const adapter = new MockAdapter(relay1, sendSpy)
     const signer = Nip01Signer.ephemeral()
     const event = await signer.sign(makeEvent(1))
     const successSpy = vi.fn()
@@ -96,7 +100,7 @@ describe("publishOne", () => {
 
     publishOne({
       event,
-      relay: "1",
+      relay: relay1,
       context: {getAdapter: () => adapter},
       onSuccess: successSpy,
       onFailure: failureSpy,
@@ -118,7 +122,7 @@ describe("publishOne", () => {
 
   it("abort works", async () => {
     const sendSpy = vi.fn()
-    const adapter = new MockAdapter("1", sendSpy)
+    const adapter = new MockAdapter(relay1, sendSpy)
     const signer = Nip01Signer.ephemeral()
     const event = await signer.sign(makeEvent(1))
     const ctrl = new AbortController()
@@ -129,7 +133,7 @@ describe("publishOne", () => {
 
     publishOne({
       event,
-      relay: "1",
+      relay: relay1,
       signal: ctrl.signal,
       context: {getAdapter: () => adapter},
       onSuccess: successSpy,
@@ -164,11 +168,11 @@ describe("publish", () => {
 
   it("should all basically work", async () => {
     const send1Spy = vi.fn()
-    const adapter1 = new MockAdapter("1", send1Spy)
+    const adapter1 = new MockAdapter(relay1, send1Spy)
     const send2Spy = vi.fn()
-    const adapter2 = new MockAdapter("2", send2Spy)
+    const adapter2 = new MockAdapter(relay2, send2Spy)
     const send3Spy = vi.fn()
-    const adapter3 = new MockAdapter("3", send3Spy)
+    const adapter3 = new MockAdapter(relay3, send3Spy)
     const signer = Nip01Signer.ephemeral()
     const event = await signer.sign(makeEvent(1))
     const successSpy = vi.fn()
@@ -178,15 +182,15 @@ describe("publish", () => {
 
     publish({
       event,
-      relays: ["1", "2", "3"],
+      relays: [relay1, relay2, relay3],
       context: {
         getAdapter: (url: string) => {
           switch (url) {
-            case "1":
+            case relay1:
               return adapter1
-            case "2":
+            case relay2:
               return adapter2
-            case "3":
+            case relay3:
               return adapter3
             default:
               throw new Error(`Unknown relay: ${url}`)
@@ -205,20 +209,42 @@ describe("publish", () => {
     await vi.runAllTimersAsync()
 
     expect(successSpy).toHaveBeenCalledWith({
-      relay: "1",
+      relay: relay1,
       status: PublishStatus.Success,
       detail: "hi",
     })
     expect(failureSpy).toHaveBeenCalledWith({
-      relay: "2",
+      relay: relay2,
       status: PublishStatus.Failure,
       detail: "hi",
     })
     expect(completeSpy).toHaveBeenCalledTimes(1)
     expect(timeoutSpy).toHaveBeenCalledWith({
-      relay: "3",
+      relay: relay3,
       status: PublishStatus.Timeout,
       detail: "timed out",
     })
+  })
+
+  it("publishes equivalent relay spellings once under the canonical result key", async () => {
+    const send = vi.fn()
+    const adapter = new MockAdapter(relay1, send)
+    const event = await Nip01Signer.ephemeral().sign(makeEvent(1))
+    const getAdapter = vi.fn(() => adapter)
+    const resultPromise = publish({
+      event,
+      relays: ["WSS://RELAY-1.EXAMPLE", relay1],
+      context: {getAdapter},
+    })
+
+    adapter.receive(["OK", event.id, true, "accepted"])
+    await vi.runAllTimersAsync()
+
+    await expect(resultPromise).resolves.toEqual({
+      [relay1]: {relay: relay1, status: PublishStatus.Success, detail: "accepted"},
+    })
+    expect(getAdapter).toHaveBeenCalledOnce()
+    expect(getAdapter).toHaveBeenCalledWith(relay1, expect.anything())
+    expect(send).toHaveBeenCalledOnce()
   })
 })
