@@ -84,10 +84,14 @@
   import {githubPermalinkDiffId} from "@nostr-git/core/git"
   import Button from "@lib/components/Button.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
+  import ExtensionIcon from "@app/components/ExtensionIcon.svelte"
   import NoteCard from "@app/components/NoteCard.svelte"
   import NoteContentMinimal from "@app/components/NoteContentMinimal.svelte"
+  import ProfileLink from "@app/components/ProfileLink.svelte"
   import ModeratedContent from "@app/components/community/ModeratedContent.svelte"
   import {deriveEvent, entityLink} from "@app/core/state"
+  import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
+  import {enableExtension, installWidgetFromEvent} from "@app/core/commands"
   import {activeCommunityReportState} from "@app/core/community-state"
   import {getRepoPublicationAddress} from "@app/core/repo-publication"
   import {parseCommunityDefinitionAddress} from "@app/core/community"
@@ -101,6 +105,11 @@
   import {getQuoteRelayHints, getQuoteTagRelayHints} from "@app/util/git-quote"
   import {makeEventNevent} from "@app/util/event-links"
   import {makeEventShareEntityForEvent} from "@app/util/event-share"
+  import {parseSmartWidget} from "@app/extensions/registry"
+  import {getWidgetLineId} from "@app/extensions/widget-identity"
+  import {effectiveExtensionSettings} from "@app/extensions/settings"
+  import {clearCommunityWidgetSlotCache} from "@app/extensions/community-widget-slots"
+  import type {SmartWidgetEvent} from "@app/extensions/types"
   import {
     Button as GitButton,
     highlightCodeLines,
@@ -289,7 +298,7 @@
     }
   }
 
-  const copyShareLink = async (link: string, event?: MouseEvent) => {
+  const copyShareLink = async (link: string, event?: Event) => {
     event?.stopPropagation()
     if (!link) return
     if (typeof navigator === "undefined" || !navigator.clipboard) {
@@ -678,6 +687,48 @@
   })
 
   const gitCard = $derived.by(() => ($quote ? getGitShareCard($quote, mergedRelays) : null))
+  const smartWidget = $derived.by<SmartWidgetEvent | undefined>(() => {
+    if (!$quote || $quote.kind !== SMART_WIDGET_KIND) return undefined
+
+    try {
+      return parseSmartWidget($quote)
+    } catch (error) {
+      console.warn("Failed to parse quoted Smart Widget", error)
+      return undefined
+    }
+  })
+  const smartWidgetId = $derived(smartWidget ? getWidgetLineId(smartWidget) : "")
+  const smartWidgetInstalled = $derived(
+    Boolean(smartWidgetId && $effectiveExtensionSettings.installed?.widget?.[smartWidgetId]),
+  )
+  let smartWidgetInstalling = $state(false)
+
+  const installSmartWidget = async (clickEvent: Event) => {
+    clickEvent.preventDefault()
+    clickEvent.stopPropagation()
+    if (!$quote || !smartWidget || smartWidgetInstalled || smartWidgetInstalling) return
+
+    smartWidgetInstalling = true
+    try {
+      const installed = installWidgetFromEvent($quote, {
+        naddr: fallbackEntity,
+        relays: mergedRelays,
+      })
+      await enableExtension(getWidgetLineId(installed))
+      clearCommunityWidgetSlotCache()
+      pushToast({
+        theme: "success",
+        message: `Installed and enabled widget ${installed.content || installed.identifier}`,
+      })
+    } catch (error) {
+      pushToast({
+        theme: "error",
+        message: error instanceof Error ? error.message : "Install failed",
+      })
+    } finally {
+      smartWidgetInstalling = false
+    }
+  }
 
   const handlePermalinkOpen = (event: MouseEvent, href: string) => {
     openInternalHref(event, href)
@@ -843,6 +894,67 @@
           {/if}
         </div>
       {/if}
+    </div>
+  </div>
+{:else if smartWidget}
+  <div class="my-2 block w-full min-w-0 max-w-full text-left" data-smart-widget-quote>
+    <div class="w-full min-w-0 rounded-lg border bg-card p-3 shadow-sm">
+      <div class="flex min-w-0 items-start gap-3">
+        <div class="rounded-lg bg-primary/10 p-2 text-primary">
+          <ExtensionIcon
+            icon={smartWidget.iconUrl || smartWidget.imageUrl || "Puzzle"}
+            size={22}
+            class="h-[22px] w-[22px] object-cover" />
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <strong class="truncate text-sm"
+              >{smartWidget.content || smartWidget.identifier}</strong>
+            <span class="badge badge-outline badge-sm">Smart Widget</span>
+            <span class="badge badge-ghost badge-sm capitalize">{smartWidget.widgetType}</span>
+          </div>
+          <div class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs opacity-70">
+            <span class="truncate font-mono">{smartWidget.identifier}</span>
+            {#if smartWidget.slot?.label}
+              <span>{smartWidget.slot.label}</span>
+            {/if}
+          </div>
+          {#if smartWidget.pubkey}
+            <div class="mt-2 flex items-center gap-1 text-xs opacity-80">
+              <span>Published by</span>
+              <ProfileLink
+                pubkey={smartWidget.pubkey}
+                relays={mergedRelays}
+                unstyled
+                class="underline" />
+            </div>
+          {/if}
+          {#if smartWidget.permissions?.length}
+            <div class="mt-2 text-xs opacity-70">
+              Requests: {smartWidget.permissions.join(", ")}
+            </div>
+          {/if}
+        </div>
+      </div>
+      <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <Button
+          class="btn btn-ghost btn-sm"
+          onclick={event => copyShareLink(entity, event)}
+          data-stop-tap>
+          {shareTitle}
+        </Button>
+        <Button
+          class="btn btn-primary btn-sm"
+          onclick={installSmartWidget}
+          disabled={smartWidgetInstalled || smartWidgetInstalling}
+          data-stop-tap>
+          {smartWidgetInstalled
+            ? "Installed"
+            : smartWidgetInstalling
+              ? "Installing..."
+              : "Install Widget"}
+        </Button>
+      </div>
     </div>
   </div>
 {:else if gitCard}

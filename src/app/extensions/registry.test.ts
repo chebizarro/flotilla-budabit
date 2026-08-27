@@ -59,6 +59,35 @@ describe("extension registry", () => {
     expect(widget.slot).toEqual({type: "repo-tab", label: "Pipelines", path: "pipelines"})
   })
 
+  it("parses shared workflow widget addresses as widgets", () => {
+    const widget = parseSmartWidget({
+      id: "2d3e7460b8bdbdb5db0ef29b2f900939da010348583d5c56da376190b8adf71d",
+      kind: 30033,
+      content: "Workflows",
+      pubkey: "471bdae48653ffd4cfe94bad437a44c0408f25f59a3f74870a83e47b6d7892d3",
+      created_at: 1787808843,
+      tags: [
+        ["d", "budabit-pipelines"],
+        ["l", "tool"],
+        ["image", "https://budabit.dev/images/pipelines-preview.png"],
+        ["icon", "Play"],
+        ["button", "Open", "app", "http://localhost:5173"],
+        ["permission", "nostr:publish"],
+        ["permission", "nostr:query"],
+        ["slot", "repo-tab", "Workflows", "pipelines"],
+      ],
+    })
+
+    expect(widget).toMatchObject({
+      identifier: "budabit-pipelines",
+      widgetType: "tool",
+      iconUrl: "Play",
+      appUrl: "http://localhost:5173",
+      permissions: ["nostr:publish", "nostr:query"],
+      slot: {type: "repo-tab", label: "Workflows", path: "pipelines"},
+    })
+  })
+
   it("falls back to widget content for supported community slot labels", () => {
     const widget = parseSmartWidget(makeWidgetEvent(["slot", "chat-message-actions"]))
 
