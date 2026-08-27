@@ -4,6 +4,8 @@ import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 export const DEBUG_DIAGNOSTICS_SCHEMA_VERSION = 1
 export const DEBUG_DIAGNOSTICS_SCHEMA = "budabit-debug-run-v1"
 export const DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY = "budabit/debug-diagnostics/settings:v1"
+export const DEBUG_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
+export const DEBUG_DIAGNOSTICS_DEFAULT_RELAY = "wss://relay.budabit.club"
 
 export const DEBUG_DIAGNOSTIC_CATEGORIES = [
   "relay-normalization",
@@ -38,6 +40,12 @@ export type DebugDiagnosticsSnapshot = {
   schemaVersion: typeof DEBUG_DIAGNOSTICS_SCHEMA_VERSION
   generatedAt: number
   build: {id: string; hash: string}
+  environment: {
+    origin: string
+    pathname: string
+    userAgent: string
+    language: string
+  }
   capture: {
     id: string
     startedAt: number
@@ -46,6 +54,16 @@ export type DebugDiagnosticsSnapshot = {
     enabledCategories: DebugDiagnosticCategory[]
   }
   records: DebugDiagnosticRecord[]
+}
+
+export type PreparedDebugDiagnosticsArtifact = {
+  schemaVersion: 1
+  filename: string
+  encoding: "gzip" | "identity"
+  contentType: "application/gzip" | "application/json"
+  bytes: Uint8Array
+  sha256: string
+  uncompressedBytes: number
 }
 
 const MAX_DETAIL_DEPTH = 8
@@ -114,6 +132,33 @@ export const sanitizeDebugDiagnosticValue = (value: unknown, depth = 0): DebugDi
     return result
   }
   return sanitizeString(String(value))
+}
+
+const sortDebugDiagnosticValue = (value: DebugDiagnosticValue): DebugDiagnosticValue => {
+  if (Array.isArray(value)) return value.map(sortDebugDiagnosticValue)
+  if (!value || typeof value !== "object") return value
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, sortDebugDiagnosticValue(item)]),
+  )
+}
+
+export const serializeDebugDiagnostics = (snapshot: DebugDiagnosticsSnapshot) =>
+  JSON.stringify(sortDebugDiagnosticValue(sanitizeDebugDiagnosticValue(snapshot)))
+
+const getDebugDiagnosticsEnvironment = (): DebugDiagnosticsSnapshot["environment"] => {
+  if (typeof window === "undefined") {
+    return {origin: "", pathname: "", userAgent: "", language: ""}
+  }
+
+  return {
+    origin: window.location.origin,
+    pathname: window.location.pathname,
+    userAgent: navigator.userAgent,
+    language: navigator.language,
+  }
 }
 
 export const normalizeDebugDiagnosticsSettings = (value: unknown): DebugDiagnosticsSettings => {
@@ -221,6 +266,7 @@ export const createDebugDiagnosticsRecorder = ({
       schemaVersion: DEBUG_DIAGNOSTICS_SCHEMA_VERSION,
       generatedAt: now(),
       build: {id: APP_BUILD_ID, hash: APP_BUILD_HASH},
+      environment: getDebugDiagnosticsEnvironment(),
       capture: {
         id: captureId,
         startedAt,
@@ -301,4 +347,48 @@ export const setDebugDiagnosticCategoryEnabled = (
     localStorage.setItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
   }
   return settings
+}
+
+const defaultCompress = async (bytes: Uint8Array) => {
+  if (typeof CompressionStream === "undefined") return
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new CompressionStream("gzip"))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+const defaultHash = async (bytes: Uint8Array) => {
+  const hash = await crypto.subtle.digest("SHA-256", bytes as BufferSource)
+  return Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, "0")).join("")
+}
+
+export const prepareDebugDiagnosticsArtifact = async (
+  snapshot: DebugDiagnosticsSnapshot,
+  {
+    compress = defaultCompress,
+    hash = defaultHash,
+    runId,
+  }: {
+    compress?: (bytes: Uint8Array) => Promise<Uint8Array | undefined>
+    hash?: (bytes: Uint8Array) => Promise<string>
+    runId?: string
+  } = {},
+): Promise<PreparedDebugDiagnosticsArtifact> => {
+  const serialized = serializeDebugDiagnostics(snapshot)
+  const sourceBytes = new TextEncoder().encode(serialized)
+  const compressed = await compress(sourceBytes)
+  const bytes = compressed?.length ? compressed : sourceBytes
+  const encoding = compressed?.length ? "gzip" : "identity"
+  const artifactId = (runId || snapshot.capture.id || String(snapshot.generatedAt)).replace(
+    /[^a-z0-9._-]/gi,
+    "-",
+  )
+
+  return {
+    schemaVersion: DEBUG_DIAGNOSTICS_SCHEMA_VERSION,
+    filename: `budabit-debug-${artifactId}.json${encoding === "gzip" ? ".gz" : ""}`,
+    encoding,
+    contentType: encoding === "gzip" ? "application/gzip" : "application/json",
+    bytes,
+    sha256: await hash(bytes),
+    uncompressedBytes: sourceBytes.length,
+  }
 }

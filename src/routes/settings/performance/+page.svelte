@@ -9,12 +9,18 @@
     debugDiagnosticsRevision,
     debugDiagnosticsSettings,
     getDebugDiagnosticsOverview,
+    getDebugDiagnosticsSnapshot,
+    prepareDebugDiagnosticsArtifact,
     refreshDebugDiagnosticsSettings,
     setDebugDiagnosticCategoryEnabled,
     startDebugDiagnosticsCapture,
     stopDebugDiagnosticsCapture,
     type DebugDiagnosticCategory,
   } from "@app/core/debug-diagnostics"
+  import {
+    publishDebugDiagnosticsArtifact,
+    type DebugDiagnosticsPublishStage,
+  } from "@app/core/debug-diagnostics-publish"
   import {
     activePerformanceDiagnosticsRun,
     armPerformanceDiagnosticsCapture,
@@ -37,6 +43,10 @@
   let preparing = $state(false)
   let publishStage = $state<PerformanceDiagnosticsPublishStage | "idle" | "failed">("idle")
   let preparedArtifact = $state<Awaited<ReturnType<typeof preparePerformanceDiagnosticsArtifact>>>()
+  let debugError = $state("")
+  let debugPreparing = $state(false)
+  let debugPublishStage = $state<DebugDiagnosticsPublishStage | "idle" | "failed">("idle")
+  let preparedDebugArtifact = $state<Awaited<ReturnType<typeof prepareDebugDiagnosticsArtifact>>>()
   const overview = $derived.by(() => {
     void $performanceDiagnosticsRevision
     return getPerformanceDiagnosticsOverview()
@@ -160,6 +170,71 @@
 
   const toggleDebugCategory = (category: DebugDiagnosticCategory, enabled: boolean) => {
     setDebugDiagnosticCategoryEnabled(category, enabled)
+  }
+
+  const requireCompletedDebugSnapshot = () => {
+    const snapshot = getDebugDiagnosticsSnapshot()
+    if (snapshot.capture.active) throw new Error("Stop recording before preparing an artifact")
+    if (!snapshot.capture.id || snapshot.records.length === 0) {
+      throw new Error("Record debug information before preparing an artifact")
+    }
+    return snapshot
+  }
+
+  const downloadDebug = async () => {
+    debugPreparing = true
+    debugError = ""
+    try {
+      const snapshot = requireCompletedDebugSnapshot()
+      const artifact = await prepareDebugDiagnosticsArtifact(snapshot, {
+        runId: snapshot.capture.id,
+      })
+      preparedDebugArtifact = artifact
+      const url = URL.createObjectURL(
+        new Blob([new Uint8Array(artifact.bytes).buffer], {type: artifact.contentType}),
+      )
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = artifact.filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (cause) {
+      debugError = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      debugPreparing = false
+    }
+  }
+
+  const publishDebug = async () => {
+    debugPreparing = true
+    debugError = ""
+    debugPublishStage = "preparing"
+    try {
+      const snapshot = requireCompletedDebugSnapshot()
+      const artifact = await prepareDebugDiagnosticsArtifact(snapshot, {
+        runId: snapshot.capture.id,
+      })
+      preparedDebugArtifact = artifact
+      await publishDebugDiagnosticsArtifact({
+        artifact,
+        runId: snapshot.capture.id,
+        categories: snapshot.capture.enabledCategories,
+        recordCount: snapshot.records.length,
+        onStage: stage => (debugPublishStage = stage),
+      })
+    } catch (cause) {
+      debugPublishStage = "failed"
+      debugError = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      debugPreparing = false
+    }
+  }
+
+  const clearDebug = () => {
+    clearDebugDiagnostics()
+    preparedDebugArtifact = undefined
+    debugPublishStage = "idle"
+    debugError = ""
   }
 </script>
 
@@ -355,12 +430,34 @@
           Stop
         </Button>
         <Button
+          class="btn btn-neutral btn-sm"
+          disabled={$debugDiagnosticsActive || debugOverview.recordCount === 0 || debugPreparing}
+          onclick={downloadDebug}>
+          {debugPreparing ? "Preparing..." : "Download"}
+        </Button>
+        <Button
+          class="btn btn-secondary btn-sm"
+          disabled={$debugDiagnosticsActive || debugOverview.recordCount === 0 || debugPreparing}
+          onclick={publishDebug}>
+          {debugPublishStage === "failed" ? "Retry publish" : "Upload & publish"}
+        </Button>
+        <Button
           class="btn btn-ghost btn-sm"
           disabled={debugOverview.recordCount === 0}
-          onclick={clearDebugDiagnostics}>
+          onclick={clearDebug}>
           Clear
         </Button>
       </div>
+      {#if preparedDebugArtifact}
+        <p class="font-mono text-xs opacity-65">
+          Artifact: {preparedDebugArtifact.bytes.length} bytes · {preparedDebugArtifact.encoding} ·
+          {preparedDebugArtifact.sha256.slice(0, 12)}…
+        </p>
+      {/if}
+      {#if debugPublishStage !== "idle"}
+        <p class="text-xs">Publication: {debugPublishStage}</p>
+      {/if}
+      {#if debugError}<p class="text-sm text-error">{debugError}</p>{/if}
       <p class="text-xs opacity-60">
         Captures remain in this tab until cleared or the app is closed. Sensitive fields and relay
         query values are removed before records are retained.

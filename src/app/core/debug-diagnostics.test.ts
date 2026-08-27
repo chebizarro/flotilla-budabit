@@ -5,9 +5,11 @@ import {
   createDebugDiagnosticsRecorder,
   defaultDebugDiagnosticsSettings,
   normalizeDebugDiagnosticsSettings,
+  prepareDebugDiagnosticsArtifact,
   refreshDebugDiagnosticsSettings,
   debugDiagnosticsSettings,
   sanitizeDebugDiagnosticValue,
+  serializeDebugDiagnostics,
   setDebugDiagnosticCategoryEnabled,
 } from "./debug-diagnostics"
 
@@ -116,5 +118,61 @@ describe("debug diagnostics", () => {
       message: "[redacted] [redacted]",
       relay: "wss://relay.example/Path?[redacted]",
     })
+  })
+
+  it("serializes a stable, sanitized debug run contract", () => {
+    const recorder = createDebugDiagnosticsRecorder({now: () => 100})
+    recorder.setCategoryEnabled("relay-normalization", true)
+    recorder.start("run-1")
+    recorder.record("relay-normalization", "normalized", {
+      token: "secret",
+      relay: "wss://user:pass@relay.example/path?auth=secret",
+    })
+
+    const parsed = JSON.parse(serializeDebugDiagnostics(recorder.snapshot()))
+    expect(parsed).toMatchObject({
+      schema: "budabit-debug-run-v1",
+      schemaVersion: 1,
+      capture: {id: "run-1", enabledCategories: ["relay-normalization"]},
+      records: [
+        {
+          detail: {token: "[redacted]", relay: "wss://relay.example/path?[redacted]"},
+        },
+      ],
+    })
+    expect(parsed).toHaveProperty("build")
+    expect(parsed).toHaveProperty("environment")
+  })
+
+  it("prepares deterministic identity and gzip artifacts", async () => {
+    const recorder = createDebugDiagnosticsRecorder({now: () => 100})
+    recorder.start("run/unsafe")
+    const snapshot = recorder.snapshot()
+    const hash = vi.fn(async bytes => `hash-${bytes.length}`)
+
+    const identity = await prepareDebugDiagnosticsArtifact(snapshot, {
+      compress: async () => undefined,
+      hash,
+    })
+    expect(identity).toMatchObject({
+      schemaVersion: 1,
+      filename: "budabit-debug-run-unsafe.json",
+      encoding: "identity",
+      contentType: "application/json",
+      sha256: `hash-${identity.bytes.length}`,
+    })
+    expect(new TextDecoder().decode(identity.bytes)).toBe(serializeDebugDiagnostics(snapshot))
+
+    const gzip = await prepareDebugDiagnosticsArtifact(snapshot, {
+      compress: async () => new Uint8Array([1, 2, 3]),
+      hash: async () => "a".repeat(64),
+    })
+    expect(gzip).toMatchObject({
+      filename: "budabit-debug-run-unsafe.json.gz",
+      encoding: "gzip",
+      contentType: "application/gzip",
+      sha256: "a".repeat(64),
+    })
+    expect(gzip.bytes).toEqual(new Uint8Array([1, 2, 3]))
   })
 })
