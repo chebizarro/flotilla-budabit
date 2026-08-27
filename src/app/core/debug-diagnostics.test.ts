@@ -3,15 +3,21 @@ import {beforeEach, describe, expect, it, vi} from "vitest"
 import {
   DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY,
   createDebugDiagnosticsRecorder,
+  clearDebugDiagnostics,
   defaultDebugDiagnosticsSettings,
   normalizeDebugDiagnosticsSettings,
   prepareDebugDiagnosticsArtifact,
   refreshDebugDiagnosticsSettings,
   debugDiagnosticsSettings,
+  getDebugDiagnosticsSnapshot,
+  recordDebugDiagnostic,
+  registerDebugDiagnosticsFinalizer,
   sanitizeDebugDiagnosticValue,
   serializeDebugDiagnostics,
   setDebugDiagnosticCategoryEnabled,
   setDebugDiagnosticsPreset,
+  startDebugDiagnosticsCapture,
+  stopDebugDiagnosticsCapture,
 } from "./debug-diagnostics"
 
 describe("debug diagnostics", () => {
@@ -168,9 +174,9 @@ describe("debug diagnostics", () => {
     recorder.setCategoryEnabled("relay-normalization", true)
     recorder.setCategoryEnabled("relay-scheduler", true)
     recorder.start("bounded")
-    recorder.record("relay-normalization", "one")
-    recorder.record("relay-normalization", "two")
-    recorder.record("relay-normalization", "three")
+    recorder.record("relay-normalization", "one", undefined, 10)
+    recorder.record("relay-normalization", "two", undefined, 20)
+    recorder.record("relay-normalization", "three", undefined, 30)
     recorder.record("relay-scheduler", "four")
     recorder.record("relay-scheduler", "five")
 
@@ -182,7 +188,30 @@ describe("debug diagnostics", () => {
     expect(recorder.overview()).toMatchObject({
       recordCount: 3,
       counts: {"relay-normalization": 1, "relay-scheduler": 2},
+      observationCounts: {"relay-normalization": 60, "relay-scheduler": 2},
     })
+    expect(recorder.snapshot().capture.observationCounts["relay-normalization"]).toBe(60)
+  })
+
+  it("awaits finalizers before stopping the shared recorder", async () => {
+    setDebugDiagnosticCategoryEnabled("relay-normalization", true)
+    startDebugDiagnosticsCapture("tail-flush")
+    const unregister = registerDebugDiagnosticsFinalizer(async () => {
+      await Promise.resolve()
+      recordDebugDiagnostic("relay-normalization", "tail", undefined, 7)
+    })
+
+    await expect(stopDebugDiagnosticsCapture()).resolves.toBe(true)
+
+    expect(getDebugDiagnosticsSnapshot()).toMatchObject({
+      capture: {
+        active: false,
+        observationCounts: {"relay-normalization": 7},
+      },
+      records: [{type: "tail", observations: 7}],
+    })
+    unregister()
+    clearDebugDiagnostics()
   })
 
   it("redacts secret keys, secret values, credentials, and URL queries", () => {
@@ -212,8 +241,8 @@ describe("debug diagnostics", () => {
 
     const parsed = JSON.parse(serializeDebugDiagnostics(recorder.snapshot()))
     expect(parsed).toMatchObject({
-      schema: "budabit-debug-run-v2",
-      schemaVersion: 2,
+      schema: "budabit-debug-run-v3",
+      schemaVersion: 3,
       capture: {id: "run-1", enabledCategories: ["relay-normalization"]},
       records: [
         {
@@ -237,7 +266,7 @@ describe("debug diagnostics", () => {
       hash,
     })
     expect(identity).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       filename: "budabit-debug-run-unsafe.json",
       encoding: "identity",
       contentType: "application/json",

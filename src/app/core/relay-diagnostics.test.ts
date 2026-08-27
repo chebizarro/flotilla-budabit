@@ -1,6 +1,6 @@
 import {writable} from "svelte/store"
 import {afterEach, describe, expect, it, vi} from "vitest"
-import type {RequestSchedulerSnapshot} from "@welshman/net"
+import type {RequestSchedulerMetric, RequestSchedulerSnapshot} from "@welshman/net"
 import type {RelayNormalizationContext, RelayNormalizationObservation} from "@welshman/util"
 import {defaultDebugDiagnosticsSettings} from "./debug-diagnostics"
 import {
@@ -337,6 +337,7 @@ describe("relay diagnostics", () => {
         calls: {total: 1, unchanged: 0, normalized: 1, rejected: 0},
         samples: [expect.objectContaining({endpoint: "wss://relay.example", pathHash: "hash:"})],
       }),
+      1,
     )
 
     settings.update(current => ({
@@ -351,6 +352,7 @@ describe("relay diagnostics", () => {
       expect.objectContaining({
         snapshots: [expect.objectContaining({schedulerId: 0, socketCount: 1})],
       }),
+      0,
     )
 
     settings.update(current => ({
@@ -361,6 +363,105 @@ describe("relay diagnostics", () => {
     uninstall()
     vi.advanceTimersByTime(200)
     expect(read).toHaveBeenCalledTimes(3)
+  })
+
+  it("flushes partial normalization and scheduler observations before capture stop", async () => {
+    vi.useFakeTimers()
+    const settings = writable({
+      ...defaultDebugDiagnosticsSettings(),
+      categories: {
+        ...defaultDebugDiagnosticsSettings().categories,
+        "relay-normalization": true,
+        "relay-scheduler": true,
+      },
+    })
+    const active = writable(true)
+    const revision = writable(0)
+    const overview = {active: true, captureId: "capture"}
+    const record = vi.fn(() => true)
+    let normalizationListener:
+      | ((event: RelayNormalizationObservation, context: RelayNormalizationContext) => void)
+      | undefined
+    let metricListener: ((metric: RequestSchedulerMetric) => void) | undefined
+    let finalize: (() => void | Promise<void>) | undefined
+    const unregisterFinalizer = vi.fn()
+    const uninstall = installRelayDebugDiagnostics({
+      enabled: true,
+      pollIntervalMs: 10_000,
+      settings,
+      active,
+      revision,
+      getOverview: () => overview,
+      isCategoryEnabled: category => category !== "publication-lifecycle",
+      read: () => [makeSnapshot()],
+      record,
+      registerFinalizer: callback => {
+        finalize = callback
+        return unregisterFinalizer
+      },
+      subscribeNormalization: listener => {
+        normalizationListener = listener
+        return vi.fn()
+      },
+      subscribeMetrics: listener => {
+        metricListener = listener
+        return vi.fn()
+      },
+      createSalt: () => new Uint8Array([1]),
+      hashPath: async (_salt, path) => `hash:${path}`,
+    })
+    record.mockClear()
+    normalizationListener?.(
+      {
+        source: "welshman.normalizeRelayUrl",
+        outcome: "unchanged",
+        classification: "canonical",
+        changed: false,
+        inputType: "string",
+        inputShape: {
+          hadProtocol: true,
+          hadCredentials: false,
+          hadQuery: false,
+          hadFragment: false,
+          hadTrailingSlash: true,
+          pathHadUppercase: false,
+          queryHadUppercase: false,
+        },
+        reasons: {
+          schemeCaseChanged: false,
+          hostnameCaseChanged: false,
+          defaultPortRemoved: false,
+          rootSlashAdded: false,
+          fragmentRemoved: false,
+        },
+        inputEndpoint: "wss://relay.example",
+        canonicalEndpoint: "wss://relay.example",
+      },
+      {inputPath: "/", canonicalPath: "/"},
+    )
+    metricListener?.({
+      type: "queue-start",
+      schedulerId: 1,
+      relay: "wss://relay.example/",
+      delayMs: 5,
+    })
+
+    await finalize?.()
+
+    expect(record).toHaveBeenCalledWith(
+      "relay-normalization",
+      "aggregate",
+      expect.objectContaining({calls: expect.objectContaining({total: 1})}),
+      1,
+    )
+    expect(record).toHaveBeenCalledWith(
+      "relay-scheduler",
+      "heartbeat",
+      expect.objectContaining({capture: expect.objectContaining({queueStartCount: 1})}),
+      1,
+    )
+    uninstall()
+    expect(unregisterFinalizer).toHaveBeenCalledOnce()
   })
 
   it("keeps disabled and failing debug installers isolated", () => {

@@ -26,6 +26,7 @@ export type DebugDiagnosticsManifestInput = {
   runId: string
   categories: DebugDiagnosticCategory[]
   recordCount: number
+  observationCount: number
   dTag: string
   createdAt?: number
 }
@@ -36,6 +37,7 @@ export const buildDebugDiagnosticsManifest = ({
   runId,
   categories,
   recordCount,
+  observationCount,
   dTag,
   createdAt = Math.floor(Date.now() / 1000),
 }: DebugDiagnosticsManifestInput): DiagnosticsEventTemplate => ({
@@ -54,6 +56,7 @@ export const buildDebugDiagnosticsManifest = ({
     runId,
     categories,
     recordCount,
+    observationCount,
     build: {id: APP_BUILD_ID, hash: APP_BUILD_HASH},
     diagnosticsSchemaVersion: DEBUG_DIAGNOSTICS_SCHEMA_VERSION,
   }),
@@ -66,6 +69,7 @@ export const buildDebugDiagnosticsManifest = ({
     ["encoding", artifact.encoding],
     ["size", String(artifact.bytes.length)],
     ["records", String(recordCount)],
+    ["observations", String(observationCount)],
     ["build", APP_BUILD_ID, APP_BUILD_HASH],
     ...Array.from(new Set(categories)).map(category => ["category", category]),
   ],
@@ -89,6 +93,7 @@ export const publishDebugDiagnosticsArtifact = async ({
   runId,
   categories,
   recordCount,
+  observationCount,
   blossomServer = DEBUG_DIAGNOSTICS_DEFAULT_BLOSSOM,
   relays = [DEBUG_DIAGNOSTICS_DEFAULT_RELAY],
   onStage,
@@ -98,6 +103,7 @@ export const publishDebugDiagnosticsArtifact = async ({
   runId: string
   categories: DebugDiagnosticCategory[]
   recordCount: number
+  observationCount: number
   blossomServer?: string
   relays?: string[]
   onStage?: (stage: DebugDiagnosticsPublishStage) => void
@@ -116,6 +122,7 @@ export const publishDebugDiagnosticsArtifact = async ({
         runId,
         categories,
         recordCount,
+        observationCount,
         dTag,
       }),
     onStage,

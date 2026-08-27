@@ -1,8 +1,8 @@
 import {get, writable} from "svelte/store"
 import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 
-export const DEBUG_DIAGNOSTICS_SCHEMA_VERSION = 2
-export const DEBUG_DIAGNOSTICS_SCHEMA = "budabit-debug-run-v2"
+export const DEBUG_DIAGNOSTICS_SCHEMA_VERSION = 3
+export const DEBUG_DIAGNOSTICS_SCHEMA = "budabit-debug-run-v3"
 export const DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY = "budabit/debug-diagnostics/settings:v1"
 export const DEBUG_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
 export const DEBUG_DIAGNOSTICS_DEFAULT_RELAY = "wss://relay.budabit.club"
@@ -38,6 +38,7 @@ export type DebugDiagnosticRecord = {
   type: string
   at: number
   elapsedMs: number
+  observations: number
   detail?: DebugDiagnosticValue
 }
 
@@ -66,12 +67,13 @@ export type DebugDiagnosticsSnapshot = {
     preset: DebugDiagnosticPreset
     limits: {maxRecords: number; maxRecordsPerCategory: number}
     enabledCategories: DebugDiagnosticCategory[]
+    observationCounts: Record<DebugDiagnosticCategory, number>
   }
   records: DebugDiagnosticRecord[]
 }
 
 export type PreparedDebugDiagnosticsArtifact = {
-  schemaVersion: 2
+  schemaVersion: 3
   filename: string
   encoding: "gzip" | "identity"
   contentType: "application/gzip" | "application/json"
@@ -241,6 +243,9 @@ export const createDebugDiagnosticsRecorder = ({
   let counts = Object.fromEntries(
     DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
   ) as Record<DebugDiagnosticCategory, number>
+  let observationCounts = Object.fromEntries(
+    DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
+  ) as Record<DebugDiagnosticCategory, number>
 
   const notify = () => revision.update(value => value + 1)
   const getLimits = () => {
@@ -298,6 +303,9 @@ export const createDebugDiagnosticsRecorder = ({
     counts = Object.fromEntries(
       DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
     ) as Record<DebugDiagnosticCategory, number>
+    observationCounts = Object.fromEntries(
+      DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
+    ) as Record<DebugDiagnosticCategory, number>
     captureId = id
     capturePreset = currentSettings.preset
     captureCategories = {...currentSettings.categories}
@@ -323,6 +331,9 @@ export const createDebugDiagnosticsRecorder = ({
     counts = Object.fromEntries(
       DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
     ) as Record<DebugDiagnosticCategory, number>
+    observationCounts = Object.fromEntries(
+      DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, 0]),
+    ) as Record<DebugDiagnosticCategory, number>
     captureId = ""
     capturePreset = "standard"
     captureCategories = {...defaultDebugDiagnosticsSettings().categories}
@@ -331,18 +342,28 @@ export const createDebugDiagnosticsRecorder = ({
     active.set(false)
     notify()
   }
-  const record = (category: DebugDiagnosticCategory, type: string, detail?: unknown) => {
+  const record = (
+    category: DebugDiagnosticCategory,
+    type: string,
+    detail?: unknown,
+    observations = 1,
+  ) => {
     if (!get(active) || !isCategoryEnabled(category)) return false
     const at = now()
+    const representedObservations = Number.isFinite(observations)
+      ? Math.max(0, Math.floor(observations))
+      : 0
     const record: DebugDiagnosticRecord = {
       category,
       type: sanitizeString(type),
       at,
       elapsedMs: Math.max(0, at - startedAt),
+      observations: representedObservations,
       ...(detail === undefined ? {} : {detail: sanitizeDebugDiagnosticValue(detail)}),
     }
     records.push(record)
     counts[category] += 1
+    observationCounts[category] += representedObservations
     const limits = getLimits()
     if (counts[category] > limits.maxRecordsPerCategory) {
       const oldestCategoryRecord = records.findIndex(candidate => candidate.category === category)
@@ -375,6 +396,7 @@ export const createDebugDiagnosticsRecorder = ({
         enabledCategories: DEBUG_DIAGNOSTIC_CATEGORIES.filter(category =>
           captureId ? captureCategories[category] : currentSettings.categories[category],
         ),
+        observationCounts,
       },
       records,
     })
@@ -390,6 +412,7 @@ export const createDebugDiagnosticsRecorder = ({
       preset: captureId ? capturePreset : currentSettings.preset,
       limits: getLimits(),
       counts: {...counts},
+      observationCounts: {...observationCounts},
     }
   }
 
@@ -412,11 +435,31 @@ export const createDebugDiagnosticsRecorder = ({
 
 const recorder = createDebugDiagnosticsRecorder()
 
+type DebugDiagnosticsFinalizer = () => void | Promise<void>
+const debugDiagnosticsFinalizers = new Set<DebugDiagnosticsFinalizer>()
+let stopPromise: Promise<boolean> | undefined
+
+export const registerDebugDiagnosticsFinalizer = (finalizer: DebugDiagnosticsFinalizer) => {
+  debugDiagnosticsFinalizers.add(finalizer)
+  return () => debugDiagnosticsFinalizers.delete(finalizer)
+}
+
 export const debugDiagnosticsSettings = recorder.settings
 export const debugDiagnosticsActive = recorder.active
 export const debugDiagnosticsRevision = recorder.revision
 export const startDebugDiagnosticsCapture = recorder.start
-export const stopDebugDiagnosticsCapture = recorder.stop
+export const stopDebugDiagnosticsCapture = () => {
+  if (stopPromise) return stopPromise
+  if (!get(debugDiagnosticsActive)) return Promise.resolve(false)
+
+  stopPromise = (async () => {
+    await Promise.allSettled(Array.from(debugDiagnosticsFinalizers, finalizer => finalizer()))
+    return recorder.stop()
+  })().finally(() => {
+    stopPromise = undefined
+  })
+  return stopPromise
+}
 export const clearDebugDiagnostics = recorder.clear
 export const recordDebugDiagnostic = recorder.record
 export const getDebugDiagnosticsSnapshot = recorder.snapshot

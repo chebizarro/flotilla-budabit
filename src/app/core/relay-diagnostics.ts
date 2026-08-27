@@ -19,6 +19,7 @@ import {
   debugDiagnosticsRevision,
   getDebugDiagnosticsOverview,
   isDebugDiagnosticCategoryEnabled,
+  registerDebugDiagnosticsFinalizer,
   recordDebugDiagnostic,
   type DebugDiagnosticCategory,
   type DebugDiagnosticsSettings,
@@ -300,6 +301,7 @@ export const installRelayDebugDiagnostics = ({
   isCategoryEnabled = isDebugDiagnosticCategoryEnabled,
   read = getRequestSchedulerSnapshots,
   record = recordDebugDiagnostic,
+  registerFinalizer = registerDebugDiagnosticsFinalizer,
   subscribeNormalization = subscribeRelayNormalization,
   subscribeMetrics = subscribeRequestSchedulerMetrics,
   createSalt = () => crypto.getRandomValues(new Uint8Array(16)),
@@ -320,7 +322,13 @@ export const installRelayDebugDiagnostics = ({
   getOverview?: () => {active: boolean; captureId: string}
   isCategoryEnabled?: (category: DebugDiagnosticCategory) => boolean
   read?: () => RequestSchedulerSnapshot[]
-  record?: (category: DebugDiagnosticCategory, type: string, detail?: unknown) => boolean
+  record?: (
+    category: DebugDiagnosticCategory,
+    type: string,
+    detail?: unknown,
+    observations?: number,
+  ) => boolean
+  registerFinalizer?: (finalizer: () => void | Promise<void>) => () => void
   subscribeNormalization?: (
     listener: (event: RelayNormalizationObservation, context: RelayNormalizationContext) => void,
   ) => () => void
@@ -349,6 +357,9 @@ export const installRelayDebugDiagnostics = ({
   let schedulerStates = new Map<number, string>()
   let captureId = ""
   let stopped = false
+  let finalizing = false
+  let reportedSchedulerQueueStarts = 0
+  let reportedSchedulerNotices = 0
 
   function createNormalizationBatch() {
     return {
@@ -371,9 +382,14 @@ export const installRelayDebugDiagnostics = ({
     }
   }
 
-  const recordSafely = (category: DebugDiagnosticCategory, type: string, detail: unknown) => {
+  const recordSafely = (
+    category: DebugDiagnosticCategory,
+    type: string,
+    detail: unknown,
+    observations = 1,
+  ) => {
     try {
-      record(category, type, detail)
+      record(category, type, detail, observations)
     } catch {
       // Diagnostics must never affect relay scheduling or normalization.
     }
@@ -420,15 +436,20 @@ export const installRelayDebugDiagnostics = ({
     ) {
       return
     }
-    recordSafely("relay-normalization", "aggregate", {
-      intervalMs: pollIntervalMs,
-      calls: batch.calls,
-      reasons: batch.reasons,
-      samples,
-      droppedSamples: batch.droppedSamples,
-      pathHashAlgorithm: "sha256",
-      pathHashScope: "capture",
-    })
+    recordSafely(
+      "relay-normalization",
+      "aggregate",
+      {
+        intervalMs: pollIntervalMs,
+        calls: batch.calls,
+        reasons: batch.reasons,
+        samples,
+        droppedSamples: batch.droppedSamples,
+        pathHashAlgorithm: "sha256",
+        pathHashScope: "capture",
+      },
+      batch.calls.total,
+    )
   }
   const startNormalization = () => {
     if (normalizationUnsubscribe) return
@@ -481,16 +502,27 @@ export const installRelayDebugDiagnostics = ({
   }
   const recordSchedulerSnapshot = () => {
     const snapshots = read()
-    recordSafely("relay-scheduler", "heartbeat", {
-      snapshots: aggregateRelayDiagnostics(snapshots),
-      capture: {
-        ...schedulerCapture,
-        averageQueueStartDelayMs:
-          schedulerCapture.queueStartCount === 0
-            ? 0
-            : schedulerCapture.queueStartDelayTotalMs / schedulerCapture.queueStartCount,
+    const observations =
+      schedulerCapture.queueStartCount -
+      reportedSchedulerQueueStarts +
+      (schedulerCapture.noticeCount - reportedSchedulerNotices)
+    recordSafely(
+      "relay-scheduler",
+      "heartbeat",
+      {
+        snapshots: aggregateRelayDiagnostics(snapshots),
+        capture: {
+          ...schedulerCapture,
+          averageQueueStartDelayMs:
+            schedulerCapture.queueStartCount === 0
+              ? 0
+              : schedulerCapture.queueStartDelayTotalMs / schedulerCapture.queueStartCount,
+        },
       },
-    })
+      observations,
+    )
+    reportedSchedulerQueueStarts = schedulerCapture.queueStartCount
+    reportedSchedulerNotices = schedulerCapture.noticeCount
     recordSchedulerTransitions(snapshots)
     schedulerMonitor?.inspect(snapshots)
   }
@@ -503,6 +535,8 @@ export const installRelayDebugDiagnostics = ({
       queueStartDelayTotalMs: 0,
       maxQueueStartDelayMs: 0,
     }
+    reportedSchedulerQueueStarts = 0
+    reportedSchedulerNotices = 0
     schedulerMonitor = createRelayDiagnosticMonitor({
       enabled: true,
       warn: (_message, warning) => recordSafely("relay-scheduler", "warning", warning),
@@ -541,6 +575,7 @@ export const installRelayDebugDiagnostics = ({
   }
 
   const reconcile = () => {
+    if (finalizing) return
     const overview = getOverview()
     if (!overview.active) {
       captureId = overview.captureId
@@ -561,6 +596,26 @@ export const installRelayDebugDiagnostics = ({
   const unsubscribeSettings = settings.subscribe(reconcile)
   const unsubscribeActive = active.subscribe(reconcile)
   const unsubscribeRevision = revision.subscribe(reconcile)
+  const unregisterFinalizer = registerFinalizer(async () => {
+    const overview = getOverview()
+    if (!overview.active || overview.captureId !== captureId) return
+    finalizing = true
+    try {
+      if (normalizationInterval !== undefined) clearInterval(normalizationInterval)
+      normalizationInterval = undefined
+      normalizationUnsubscribe?.()
+      normalizationUnsubscribe = undefined
+      await flushNormalization()
+
+      if (schedulerInterval !== undefined) clearInterval(schedulerInterval)
+      schedulerInterval = undefined
+      schedulerMetricUnsubscribe?.()
+      schedulerMetricUnsubscribe = undefined
+      if (schedulerStarted) recordSchedulerSnapshot()
+    } finally {
+      finalizing = false
+    }
+  })
 
   return () => {
     if (stopped) return
@@ -568,6 +623,7 @@ export const installRelayDebugDiagnostics = ({
     unsubscribeSettings()
     unsubscribeActive()
     unsubscribeRevision()
+    unregisterFinalizer()
     stopNormalization()
     stopScheduler()
   }

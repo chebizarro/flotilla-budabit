@@ -49,6 +49,7 @@
   let preparedArtifact = $state<Awaited<ReturnType<typeof preparePerformanceDiagnosticsArtifact>>>()
   let debugError = $state("")
   let debugPreparing = $state(false)
+  let debugStopping = $state(false)
   let debugPublishStage = $state<DebugDiagnosticsPublishStage | "idle" | "failed">("idle")
   let preparedDebugArtifact = $state<Awaited<ReturnType<typeof prepareDebugDiagnosticsArtifact>>>()
   const overview = $derived.by(() => {
@@ -230,6 +231,10 @@
         runId: snapshot.capture.id,
         categories: snapshot.capture.enabledCategories,
         recordCount: snapshot.records.length,
+        observationCount: Object.values(snapshot.capture.observationCounts).reduce(
+          (total, count) => total + count,
+          0,
+        ),
         onStage: stage => (debugPublishStage = stage),
       })
     } catch (cause) {
@@ -245,6 +250,18 @@
     preparedDebugArtifact = undefined
     debugPublishStage = "idle"
     debugError = ""
+  }
+
+  const stopDebug = async () => {
+    debugStopping = true
+    debugError = ""
+    try {
+      await stopDebugDiagnosticsCapture()
+    } catch (cause) {
+      debugError = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      debugStopping = false
+    }
   }
 </script>
 
@@ -405,8 +422,8 @@
             $debugDiagnosticsSettings.preset
           ].maxRecords.toLocaleString()} records total and {DEBUG_DIAGNOSTIC_PRESETS[
             $debugDiagnosticsSettings.preset
-          ].maxRecordsPerCategory.toLocaleString()} per category. Choosing a smaller preset drops the
-          oldest records immediately.
+          ].maxRecordsPerCategory.toLocaleString()} stored record envelopes per category. Aggregate records
+          can represent many observations. Choosing a smaller preset drops the oldest records immediately.
         </span>
       </label>
 
@@ -422,7 +439,7 @@
             <input
               type="checkbox"
               class="toggle toggle-primary mt-1"
-              disabled={$debugDiagnosticsActive}
+              disabled={$debugDiagnosticsActive || debugStopping}
               checked={$debugDiagnosticsSettings.categories[category]}
               onchange={event => toggleDebugCategory(category, event.currentTarget.checked)} />
           </label>
@@ -432,54 +449,71 @@
       <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
         <div>
           <dt class="opacity-60">Status</dt>
-          <dd>{$debugDiagnosticsActive ? "Recording" : "Stopped"}</dd>
+          <dd>{debugStopping ? "Finishing" : $debugDiagnosticsActive ? "Recording" : "Stopped"}</dd>
         </div>
         <div>
-          <dt class="opacity-60">Records</dt>
-          <dd>{debugOverview.recordCount}</dd>
+          <dt class="opacity-60">Stored records</dt>
+          <dd>{debugOverview.recordCount.toLocaleString()}</dd>
         </div>
         <div>
           <dt class="opacity-60">Normalization</dt>
-          <dd>{debugOverview.counts["relay-normalization"]}</dd>
+          <dd>{debugOverview.observationCounts["relay-normalization"].toLocaleString()} calls</dd>
+          <dd class="text-xs opacity-60">
+            {debugOverview.counts["relay-normalization"].toLocaleString()} batches
+          </dd>
         </div>
         <div>
           <dt class="opacity-60">Scheduler</dt>
-          <dd>{debugOverview.counts["relay-scheduler"]}</dd>
+          <dd>{debugOverview.observationCounts["relay-scheduler"].toLocaleString()} signals</dd>
+          <dd class="text-xs opacity-60">
+            {debugOverview.counts["relay-scheduler"].toLocaleString()} records
+          </dd>
         </div>
         <div>
           <dt class="opacity-60">Publications</dt>
-          <dd>{debugOverview.counts["publication-lifecycle"]}</dd>
+          <dd>
+            {debugOverview.observationCounts["publication-lifecycle"].toLocaleString()} events
+          </dd>
+          <dd class="text-xs opacity-60">
+            {debugOverview.counts["publication-lifecycle"].toLocaleString()} records
+          </dd>
         </div>
       </dl>
 
       <div class="flex flex-wrap gap-2">
         <Button
           class="btn btn-primary btn-sm"
-          disabled={$debugDiagnosticsActive}
+          disabled={$debugDiagnosticsActive || debugStopping}
           onclick={() => startDebugDiagnosticsCapture()}>
           Start recording
         </Button>
         <Button
           class="btn btn-secondary btn-sm"
-          disabled={!$debugDiagnosticsActive}
-          onclick={stopDebugDiagnosticsCapture}>
-          Stop
+          disabled={!$debugDiagnosticsActive || debugStopping}
+          onclick={stopDebug}>
+          {debugStopping ? "Finishing..." : "Stop"}
         </Button>
         <Button
           class="btn btn-neutral btn-sm"
-          disabled={$debugDiagnosticsActive || debugOverview.recordCount === 0 || debugPreparing}
+          disabled={$debugDiagnosticsActive ||
+            debugStopping ||
+            debugOverview.recordCount === 0 ||
+            debugPreparing}
           onclick={downloadDebug}>
           {debugPreparing ? "Preparing..." : "Download"}
         </Button>
         <Button
           class="btn btn-secondary btn-sm"
-          disabled={$debugDiagnosticsActive || debugOverview.recordCount === 0 || debugPreparing}
+          disabled={$debugDiagnosticsActive ||
+            debugStopping ||
+            debugOverview.recordCount === 0 ||
+            debugPreparing}
           onclick={publishDebug}>
           {debugPublishStage === "failed" ? "Retry publish" : "Upload & publish"}
         </Button>
         <Button
           class="btn btn-ghost btn-sm"
-          disabled={debugOverview.recordCount === 0}
+          disabled={$debugDiagnosticsActive || debugStopping || debugOverview.recordCount === 0}
           onclick={clearDebug}>
           Clear
         </Button>

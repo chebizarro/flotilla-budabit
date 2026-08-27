@@ -10,7 +10,7 @@ import {
 } from "./debug-diagnostics-publish"
 
 const artifact: PreparedDebugDiagnosticsArtifact = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   filename: "budabit-debug-run-1.json.gz",
   encoding: "gzip",
   contentType: "application/gzip",
@@ -50,12 +50,14 @@ describe("debug diagnostics publication", () => {
       runId: "run-1",
       categories: ["relay-scheduler", "relay-scheduler", "publication-lifecycle"],
       recordCount: 12,
+      observationCount: 1_234,
       dTag: `${DEBUG_DIAGNOSTICS_RUN_D_TAG_PREFIX}run-1`,
       createdAt: 123,
     })
 
     expect(manifest).toMatchObject({kind: 30078, created_at: 123})
     expect(manifest.tags).toContainEqual(["d", "budabit-debug-run:run-1"])
+    expect(manifest.tags).toContainEqual(["observations", "1234"])
     expect(manifest.tags.filter(tag => tag[0] === "category")).toEqual([
       ["category", "relay-scheduler"],
       ["category", "publication-lifecycle"],
@@ -64,6 +66,7 @@ describe("debug diagnostics publication", () => {
       schema: "budabit-debug-manifest-v1",
       runId: "run-1",
       recordCount: 12,
+      observationCount: 1_234,
       artifact: {sha256: artifact.sha256, bytes: 3},
     })
   })
@@ -93,6 +96,7 @@ describe("debug diagnostics publication", () => {
       runId: "run-1",
       categories: ["relay-normalization"],
       recordCount: 4,
+      observationCount: 400,
       onStage: stage => stages.push(stage),
       dependencies,
     })
@@ -119,6 +123,7 @@ describe("debug diagnostics publication", () => {
         runId: "run-1",
         categories: [],
         recordCount: 0,
+        observationCount: 0,
         dependencies: {
           getIdentity: () => ({pubkey: currentPubkey, signer}),
           upload: async () => {
@@ -139,6 +144,7 @@ describe("debug diagnostics publication", () => {
         runId: "run-1",
         categories: [],
         recordCount: 0,
+        observationCount: 0,
         dependencies,
       }),
     ).rejects.toThrow("not accepted")
@@ -152,6 +158,7 @@ describe("debug diagnostics publication", () => {
         runId: "run-1",
         categories: [],
         recordCount: 0,
+        observationCount: 0,
         dependencies: failedUpload,
       }),
     ).rejects.toThrow("could not be read back exactly")
@@ -163,6 +170,7 @@ describe("debug diagnostics publication", () => {
         runId: "run-1",
         categories: [],
         recordCount: 0,
+        observationCount: 0,
         dependencies: failedManifest,
       }),
     ).rejects.toThrow("acknowledged but not found")
