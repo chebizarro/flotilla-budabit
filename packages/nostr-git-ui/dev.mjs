@@ -66,7 +66,6 @@ for (const task of tasks) {
   const child = spawn(task.command, task.args, {
     cwd: process.cwd(),
     stdio: ["inherit", "pipe", "pipe"],
-    shell: true,
   });
   children.push(child);
   prefixOutput(child.stdout, task.name, task.color);

@@ -71,11 +71,13 @@ pnpm install
 ### 6. Start Development Server
 
 ```bash
-# Start the development server
+# Start the app and rebuild local core/UI dependencies as they change
 pnpm dev
 ```
 
 The application will be available at `http://localhost:1847`. The dev server uses a strict port; stop the other process if port `1847` is already in use.
+
+Use `pnpm dev:app` when working only on application code and the local package build outputs are already current.
 
 ## Features
 

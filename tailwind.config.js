@@ -10,7 +10,7 @@ config({path: ".env.template"})
 export default {
   content: [
     "./src/**/*.{html,js,svelte,ts}",
-    "./node_modules/@nostr-git/ui/dist/**/*.{html,js,svelte,ts}",
+    "./packages/nostr-git-ui/src/**/*.{html,js,svelte,ts}",
   ],
   darkMode: ["selector", '[data-theme="dark"]'],
   safelist: ["bg-success", "bg-warning"],
