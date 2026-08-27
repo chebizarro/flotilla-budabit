@@ -68,7 +68,7 @@ const pullWithFallbackDm = ({relays, filters, signal, fullHistory = false}: DmPu
   const events = repository.query(filters, {shouldSort: false}).filter(isSignedEvent)
   const loadRelay = (url: string) => {
     let relayFilters = filters
-    const urlEvents = events.filter(e => tracker.getRelays(e.id).has(url))
+    const urlEvents = events.filter(e => tracker.hasRelay(e.id, url))
 
     if (!fullHistory && urlEvents.length >= 100) {
       relayFilters = relayFilters.map(

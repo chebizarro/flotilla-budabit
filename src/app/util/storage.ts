@@ -19,6 +19,7 @@ import {
   DELETE,
   REACTION,
   getTagValue,
+  sanitizeRelayUrls,
 } from "@welshman/util"
 import type {Zapper, TrustedEvent, RelayProfile} from "@welshman/util"
 import type {Handle, RelayStats} from "@welshman/app"
@@ -139,17 +140,28 @@ export const mergePersistedRelayProvenance = (items: TrackerItem[]) => {
     Array.from(tracker.relaysById, ([id, relays]) => [id, new Set(relays)] as const),
   )
   let changed = false
+  const migratedIds = new Set<string>()
 
   for (const {id, relays} of items) {
     const merged = relaysById.get(id) || new Set<string>()
-    for (const relay of relays) {
+    const canonicalRelays = sanitizeRelayUrls(relays)
+    if (
+      canonicalRelays.length !== relays.length ||
+      canonicalRelays.some((relay, index) => relay !== relays[index])
+    ) {
+      migratedIds.add(id)
+    }
+
+    for (const relay of canonicalRelays) {
       if (!merged.has(relay)) changed = true
       merged.add(relay)
     }
-    relaysById.set(id, merged)
+    if (merged.size > 0) relaysById.set(id, merged)
   }
 
-  if (changed) tracker.load(relaysById)
+  if (changed || migratedIds.size > 0) tracker.load(relaysById)
+
+  return migratedIds
 }
 
 const pendingEventPersistence = new Map<string, Promise<boolean>>()
@@ -240,7 +252,7 @@ export const trackerAdapter = {
   name: "tracker",
   keyPath: "id",
   init: async (table: IDBTable<TrackerItem>) => {
-    mergePersistedRelayProvenance(await table.getAll())
+    const persistedItems = await table.getAll()
 
     const _onAdd = async (ids: Iterable<string>) => {
       const items: TrackerItem[] = []
@@ -289,6 +301,12 @@ export const trackerAdapter = {
       {kinds: persistedRepositoryKinds},
       onRepositoryUpdate,
     )
+
+    const migratedIds = mergePersistedRelayProvenance(persistedItems)
+    const populatedIds = Array.from(migratedIds).filter(id => tracker.getRelays(id).size > 0)
+    const emptyIds = Array.from(migratedIds).filter(id => tracker.getRelays(id).size === 0)
+    if (populatedIds.length > 0) await _onAdd(populatedIds)
+    if (emptyIds.length > 0) await _onRemove(emptyIds)
 
     return () => {
       tracker.off("add", onAdd)

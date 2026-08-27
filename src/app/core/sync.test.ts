@@ -54,6 +54,7 @@ const mocks = vi.hoisted(() => {
     hasNegentropy: vi.fn(() => false),
     repositoryQuery: vi.fn(() => []),
     trackerGetRelays: vi.fn(() => new Set<string>()),
+    trackerHasRelay: vi.fn(() => false),
     loadGraspServers: vi.fn(),
     loadTokens: vi.fn(),
     loadExtensionSettings: vi.fn(),
@@ -140,6 +141,7 @@ vi.mock("@welshman/app", () => ({
   loadProfile: mocks.loadProfile,
   tracker: {
     getRelays: mocks.trackerGetRelays,
+    hasRelay: mocks.trackerHasRelay,
   },
   repository: {
     query: mocks.repositoryQuery,
@@ -229,6 +231,7 @@ describe("syncApplicationData", () => {
     mocks.userMessagingRelayList.set(null)
     mocks.repositoryQuery.mockReturnValue([])
     mocks.trackerGetRelays.mockReturnValue(new Set<string>())
+    mocks.trackerHasRelay.mockReturnValue(false)
     mocks.hasNegentropy.mockReturnValue(false)
     mocks.gitRelays.splice(0)
     mocks.routerUrls.splice(0)

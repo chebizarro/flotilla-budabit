@@ -88,9 +88,34 @@ describe("storage hydration", () => {
     ])
 
     expect(Array.from(tracker.getRelays("event")).sort()).toEqual([
-      "wss://cached.example",
-      "wss://live.example",
+      "wss://cached.example/",
+      "wss://live.example/",
     ])
+  })
+
+  it("migrates mixed persisted provenance into exact inverse canonical indexes", () => {
+    const migrated = mergePersistedRelayProvenance([
+      {
+        id: "event",
+        relays: [
+          "WSS://RELAY.EXAMPLE",
+          "wss://relay.example/",
+          "wss://relay.example/Path",
+          "invalid",
+        ],
+      },
+    ])
+
+    expect(migrated).toEqual(new Set(["event"]))
+    expect(tracker.relaysById).toEqual(
+      new Map([["event", new Set(["wss://relay.example/", "wss://relay.example/Path"])]]),
+    )
+    expect(tracker.idsByRelay).toEqual(
+      new Map([
+        ["wss://relay.example/", new Set(["event"])],
+        ["wss://relay.example/Path", new Set(["event"])],
+      ]),
+    )
   })
 
   it("loads persisted provenance as one tracker update", () => {
@@ -118,11 +143,30 @@ describe("storage hydration", () => {
       await vi.advanceTimersByTimeAsync(3000)
 
       expect(trackerTable.bulkPut).toHaveBeenCalledWith([
-        {id: event.id, relays: ["wss://repo.example"]},
+        {id: event.id, relays: ["wss://repo.example/"]},
       ])
     } finally {
       stopTracker()
       stopEvents()
+    }
+  })
+
+  it("writes canonical migrated provenance and deletes empty records during hydration", async () => {
+    const event = makeEvent({id: "9".repeat(64), createdAt: 30, content: "profile"})
+    repository.publish(event)
+    const table = makeTable<TrackerItem>([
+      {id: event.id, relays: ["WSS://REPO.EXAMPLE", "wss://repo.example/", "invalid"]},
+      {id: "invalid-only", relays: ["invalid"]},
+    ])
+
+    const stop = await trackerAdapter.init(table)
+
+    try {
+      expect(table.bulkPut).toHaveBeenCalledWith([{id: event.id, relays: ["wss://repo.example/"]}])
+      expect(table.bulkDelete).toHaveBeenCalledWith(["invalid-only"])
+      expect(event.id).toBe("9".repeat(64))
+    } finally {
+      stop()
     }
   })
 

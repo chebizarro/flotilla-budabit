@@ -1,6 +1,11 @@
 import {vi, describe, it, expect, beforeEach} from "vitest"
 import {Tracker} from "../src/tracker"
 
+const relay1 = "wss://relay1.example/"
+const relay2 = "wss://relay2.example/"
+const relay3 = "wss://relay3.example/"
+const oldRelay = "wss://old-relay.example/"
+
 describe("Tracker", () => {
   let tracker: Tracker
 
@@ -15,7 +20,7 @@ describe("Tracker", () => {
     })
 
     it("should return empty set for non-existent relay", () => {
-      expect(tracker.getIds("relay1")).toEqual(new Set())
+      expect(tracker.getIds(relay1)).toEqual(new Set())
     })
 
     it("should return empty set for non-existent event", () => {
@@ -25,43 +30,43 @@ describe("Tracker", () => {
 
   describe("addRelay", () => {
     it("should add new relay-event pair", () => {
-      tracker.addRelay("event1", "relay1")
+      tracker.addRelay("event1", relay1)
 
-      expect(tracker.hasRelay("event1", "relay1")).toBe(true)
-      expect(tracker.getRelays("event1")).toEqual(new Set(["relay1"]))
-      // expect(tracker.getIds("relay1")).toEqual(new Set(["event1"]))
+      expect(tracker.hasRelay("event1", relay1)).toBe(true)
+      expect(tracker.getRelays("event1")).toEqual(new Set([relay1]))
+      expect(tracker.getIds(relay1)).toEqual(new Set(["event1"]))
     })
 
     it("should not duplicate existing pairs", () => {
       const updateSpy = vi.fn()
       tracker.on("add", updateSpy)
 
-      tracker.addRelay("event1", "relay1")
-      tracker.addRelay("event1", "relay1")
+      tracker.addRelay("event1", "WSS://RELAY1.EXAMPLE")
+      tracker.addRelay("event1", relay1)
 
-      // expect(updateSpy).toHaveBeenCalledTimes(1)
+      expect(updateSpy).toHaveBeenCalledTimes(1)
       expect(tracker.getRelays("event1").size).toBe(1)
     })
   })
 
   describe("removeRelay", () => {
     beforeEach(() => {
-      tracker.addRelay("event1", "relay1")
+      tracker.addRelay("event1", relay1)
     })
 
     it("should remove existing relay-event pair", () => {
-      tracker.removeRelay("event1", "relay1")
+      tracker.removeRelay("event1", "WSS://RELAY1.EXAMPLE")
 
-      expect(tracker.hasRelay("event1", "relay1")).toBe(false)
+      expect(tracker.hasRelay("event1", relay1)).toBe(false)
       expect(tracker.getRelays("event1").size).toBe(0)
-      expect(tracker.getIds("relay1").size).toBe(0)
+      expect(tracker.getIds(relay1).size).toBe(0)
     })
 
     it("should emit update event on successful removal", () => {
       const updateSpy = vi.fn()
       tracker.on("remove", updateSpy)
 
-      tracker.removeRelay("event1", "relay1")
+      tracker.removeRelay("event1", relay1)
 
       expect(updateSpy).toHaveBeenCalled()
     })
@@ -70,7 +75,7 @@ describe("Tracker", () => {
       const updateSpy = vi.fn()
       tracker.on("remove", updateSpy)
 
-      tracker.removeRelay("nonexistent", "relay1")
+      tracker.removeRelay("nonexistent", relay1)
 
       expect(updateSpy).not.toHaveBeenCalled()
     })
@@ -78,26 +83,26 @@ describe("Tracker", () => {
 
   describe("track", () => {
     it("should return false for first occurrence", () => {
-      const seen = tracker.track("event1", "relay1")
+      const seen = tracker.track("event1", relay1)
       expect(seen).toBe(false)
     })
 
     it("should return true for subsequent occurrences", () => {
-      tracker.track("event1", "relay1")
-      const seen = tracker.track("event1", "relay2")
+      tracker.track("event1", relay1)
+      const seen = tracker.track("event1", relay2)
       expect(seen).toBe(true)
     })
 
     it("should add relay-event pair", () => {
-      tracker.track("event1", "relay1")
-      expect(tracker.hasRelay("event1", "relay1")).toBe(true)
+      tracker.track("event1", relay1)
+      expect(tracker.hasRelay("event1", relay1)).toBe(true)
     })
   })
 
   describe("copy", () => {
     it("should copy relays from one event to another", () => {
-      tracker.addRelay("event1", "relay1")
-      tracker.addRelay("event1", "relay2")
+      tracker.addRelay("event1", relay1)
+      tracker.addRelay("event1", relay2)
 
       tracker.copy("event1", "event2")
 
@@ -113,22 +118,22 @@ describe("Tracker", () => {
   describe("load", () => {
     it("should load data from relaysById map", () => {
       const data = new Map([
-        ["event1", new Set(["relay1", "relay2"])],
-        ["event2", new Set(["relay2", "relay3"])],
+        ["event1", new Set(["WSS://RELAY1.EXAMPLE", relay1, relay2, "invalid"])],
+        ["event2", new Set([relay2, relay3])],
       ])
 
       tracker.load(data)
 
-      expect(tracker.getRelays("event1")).toEqual(new Set(["relay1", "relay2"]))
-      expect(tracker.getIds("relay2")).toEqual(new Set(["event1", "event2"]))
+      expect(tracker.getRelays("event1")).toEqual(new Set([relay1, relay2]))
+      expect(tracker.getIds(relay2)).toEqual(new Set(["event1", "event2"]))
     })
 
     it("should clear existing data before loading", () => {
-      tracker.addRelay("oldEvent", "oldRelay")
+      tracker.addRelay("oldEvent", oldRelay)
 
-      tracker.load(new Map([["event1", new Set(["relay1"])]]))
+      tracker.load(new Map([["event1", new Set([relay1])]]))
 
-      expect(tracker.hasRelay("oldEvent", "oldRelay")).toBe(undefined)
+      expect(tracker.hasRelay("oldEvent", oldRelay)).toBe(false)
     })
 
     it("should emit update event", () => {
@@ -143,8 +148,8 @@ describe("Tracker", () => {
 
   describe("clear", () => {
     beforeEach(() => {
-      tracker.addRelay("event1", "relay1")
-      tracker.addRelay("event2", "relay2")
+      tracker.addRelay("event1", relay1)
+      tracker.addRelay("event2", relay2)
     })
 
     it("should clear all data", () => {
@@ -166,15 +171,28 @@ describe("Tracker", () => {
 
   describe("edge cases", () => {
     it("should handle removing non-existent pairs", () => {
-      expect(() => tracker.removeRelay("nonexistent", "relay1")).not.toThrow()
+      expect(() => tracker.removeRelay("nonexistent", "invalid")).not.toThrow()
     })
 
     it("should maintain bidirectional consistency", () => {
-      tracker.addRelay("event1", "relay1")
+      tracker.addRelay("event1", "WSS://RELAY1.EXAMPLE")
 
-      // Check both maps are consistent
-      expect(tracker.relaysById.get("event1")?.has("relay1")).toBe(true)
-      // expect(tracker.idsByRelay.get("relay1")?.has("event1")).toBe(true)
+      expect(tracker.relaysById.get("event1")?.has(relay1)).toBe(true)
+      expect(tracker.idsByRelay.get(relay1)?.has("event1")).toBe(true)
+    })
+
+    it("ignores malformed mutation and lookup values without changing either index", () => {
+      tracker.addRelay("event1", relay1)
+      const relaysById = new Map(tracker.relaysById)
+      const idsByRelay = new Map(tracker.idsByRelay)
+
+      tracker.addRelay("event1", "invalid")
+      tracker.removeRelay("event1", "invalid")
+
+      expect(tracker.hasRelay("event1", "invalid")).toBe(false)
+      expect(tracker.getIds("invalid")).toEqual(new Set())
+      expect(tracker.relaysById).toEqual(relaysById)
+      expect(tracker.idsByRelay).toEqual(idsByRelay)
     })
   })
 })
