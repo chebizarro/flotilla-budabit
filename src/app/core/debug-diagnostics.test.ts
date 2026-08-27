@@ -11,6 +11,7 @@ import {
   sanitizeDebugDiagnosticValue,
   serializeDebugDiagnostics,
   setDebugDiagnosticCategoryEnabled,
+  setDebugDiagnosticsPreset,
 } from "./debug-diagnostics"
 
 describe("debug diagnostics", () => {
@@ -25,6 +26,7 @@ describe("debug diagnostics", () => {
   })
 
   it("defaults every category off and fails malformed settings closed", () => {
+    expect(defaultDebugDiagnosticsSettings().preset).toBe("standard")
     expect(defaultDebugDiagnosticsSettings().categories).toEqual({
       "relay-normalization": false,
       "relay-scheduler": false,
@@ -37,11 +39,14 @@ describe("debug diagnostics", () => {
       normalizeDebugDiagnosticsSettings({
         version: 1,
         categories: {"relay-normalization": true, unknown: true},
-      }).categories,
-    ).toEqual({
-      "relay-normalization": true,
-      "relay-scheduler": false,
-      "publication-lifecycle": false,
+      }),
+    ).toMatchObject({
+      preset: "standard",
+      categories: {
+        "relay-normalization": true,
+        "relay-scheduler": false,
+        "publication-lifecycle": false,
+      },
     })
   })
 
@@ -51,12 +56,44 @@ describe("debug diagnostics", () => {
     expect(get(debugDiagnosticsSettings).categories["relay-normalization"]).toBe(true)
     expect(JSON.parse(localStorage.getItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY)!)).toEqual({
       version: 1,
+      preset: "standard",
       categories: {
         "relay-normalization": true,
         "relay-scheduler": false,
         "publication-lifecycle": false,
       },
     })
+  })
+
+  it("persists presets and trims immediately when limits shrink", () => {
+    setDebugDiagnosticsPreset("extended")
+    expect(get(debugDiagnosticsSettings).preset).toBe("extended")
+    expect(JSON.parse(localStorage.getItem(DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY)!).preset).toBe(
+      "extended",
+    )
+
+    const recorder = createDebugDiagnosticsRecorder()
+    recorder.setPreset("standard")
+    recorder.setCategoryEnabled("relay-normalization", true)
+    recorder.start("preset-bounds")
+    for (let index = 0; index < 501; index += 1) {
+      recorder.record("relay-normalization", `record-${index}`)
+    }
+    expect(recorder.overview()).toMatchObject({
+      preset: "standard",
+      recordCount: 501,
+      limits: {maxRecords: 5_000, maxRecordsPerCategory: 2_500},
+    })
+
+    recorder.setPreset("quick")
+    expect(recorder.snapshot()).toMatchObject({
+      capture: {
+        preset: "quick",
+        limits: {maxRecords: 1_000, maxRecordsPerCategory: 500},
+      },
+    })
+    expect(recorder.snapshot().records).toHaveLength(500)
+    expect(recorder.snapshot().records[0].type).toBe("record-1")
   })
 
   it("records only while active and enabled", () => {

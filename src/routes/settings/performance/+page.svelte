@@ -4,6 +4,8 @@
   import {DIAGNOSTICS_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
   import {
     DEBUG_DIAGNOSTIC_CATEGORIES,
+    DEBUG_DIAGNOSTIC_PRESET_IDS,
+    DEBUG_DIAGNOSTIC_PRESETS,
     clearDebugDiagnostics,
     debugDiagnosticsActive,
     debugDiagnosticsRevision,
@@ -13,9 +15,11 @@
     prepareDebugDiagnosticsArtifact,
     refreshDebugDiagnosticsSettings,
     setDebugDiagnosticCategoryEnabled,
+    setDebugDiagnosticsPreset,
     startDebugDiagnosticsCapture,
     stopDebugDiagnosticsCapture,
     type DebugDiagnosticCategory,
+    type DebugDiagnosticPreset,
   } from "@app/core/debug-diagnostics"
   import {
     publishDebugDiagnosticsArtifact,
@@ -170,6 +174,10 @@
 
   const toggleDebugCategory = (category: DebugDiagnosticCategory, enabled: boolean) => {
     setDebugDiagnosticCategoryEnabled(category, enabled)
+  }
+
+  const selectDebugPreset = (preset: DebugDiagnosticPreset) => {
+    setDebugDiagnosticsPreset(preset)
   }
 
   const requireCompletedDebugSnapshot = () => {
@@ -376,6 +384,26 @@
     </section>
   {:else}
     <section class="card2 column gap-4 border border-base-300 p-5" aria-label="Debug info settings">
+      <label class="form-control gap-2 rounded bg-base-200 p-3">
+        <span class="font-medium">Capture capacity</span>
+        <select
+          class="select select-bordered w-full sm:max-w-xs"
+          value={$debugDiagnosticsSettings.preset}
+          onchange={event => selectDebugPreset(event.currentTarget.value as DebugDiagnosticPreset)}>
+          {#each DEBUG_DIAGNOSTIC_PRESET_IDS as preset}
+            <option value={preset}>{DEBUG_DIAGNOSTIC_PRESETS[preset].label}</option>
+          {/each}
+        </select>
+        <span class="text-sm opacity-65">
+          Up to {DEBUG_DIAGNOSTIC_PRESETS[
+            $debugDiagnosticsSettings.preset
+          ].maxRecords.toLocaleString()} records total and {DEBUG_DIAGNOSTIC_PRESETS[
+            $debugDiagnosticsSettings.preset
+          ].maxRecordsPerCategory.toLocaleString()} per category. Choosing a smaller preset drops the
+          oldest records immediately.
+        </span>
+      </label>
+
       <div class="column gap-3">
         {#each DEBUG_DIAGNOSTIC_CATEGORIES as category}
           <label
