@@ -20,6 +20,7 @@ import {
   type TrustedEvent,
 } from "@welshman/util"
 import {recoverActiveNip46Receiver} from "@app/util/nip46"
+import {recordPublicationOperationDiagnostic} from "@app/core/publication-diagnostics"
 
 export type PublicationPreviewPolicy = "retain-on-failure" | "rollback-on-failure" | "none"
 
@@ -159,6 +160,7 @@ const updateSnapshot = (
   runtime: {snapshot: PublicationSnapshot},
   patch: Partial<PublicationSnapshot>,
 ): PublicationSnapshot => {
+  const previous = runtime.snapshot
   const snapshot = Object.freeze({
     ...runtime.snapshot,
     ...patch,
@@ -167,6 +169,17 @@ const updateSnapshot = (
 
   runtime.snapshot = snapshot
   publishSnapshot(snapshot)
+  if (
+    snapshot.phase !== previous.phase ||
+    snapshot.stage !== previous.stage ||
+    snapshot.attempt !== previous.attempt
+  ) {
+    recordPublicationOperationDiagnostic("operation-transition", snapshot, {
+      previousPhase: previous.phase,
+      ...(previous.stage ? {previousStage: previous.stage} : {}),
+      previousAttempt: previous.attempt,
+    })
+  }
   return snapshot
 }
 
@@ -493,6 +506,7 @@ export const startPublication = (options: StartPublicationOptions): PublicationH
     runtimes.set(operationId, runtime)
     releaseAdmission()
     publishSnapshot(snapshot)
+    recordPublicationOperationDiagnostic("operation-created", snapshot)
 
     return {
       operationId,
@@ -765,6 +779,7 @@ export const startLinkedPublication = (
     linkedRuntimes.set(operationId, runtime)
     releaseAdmission()
     publishSnapshot(snapshot)
+    recordPublicationOperationDiagnostic("linked-operation-created", snapshot)
     syncTrackerObserver()
 
     return {operationId, settled: beginLinkedAttempt(runtime)}
@@ -909,6 +924,7 @@ export const cancelPublication = (operationId: string) => {
   if (linkedRuntime) {
     if (linkedRuntime.snapshot.phase !== "publishing") return
     const cancelled = Object.freeze({...linkedRuntime.snapshot, phase: "cancelled" as const})
+    recordPublicationOperationDiagnostic("operation-cancelled", cancelled)
     const resolve = linkedRuntime.resolveAttempt
     linkedRuntime.resolveAttempt = undefined
     const thunk = getLinkedThunk(linkedRuntime)
@@ -922,6 +938,7 @@ export const cancelPublication = (operationId: string) => {
   if (!runtime || runtime.snapshot.phase !== "publishing") return
 
   const cancelled = Object.freeze({...runtime.snapshot, phase: "cancelled" as const})
+  recordPublicationOperationDiagnostic("operation-cancelled", cancelled)
   const resolve = runtime.resolveAttempt
   runtime.resolveAttempt = undefined
   removeRuntime(runtime)

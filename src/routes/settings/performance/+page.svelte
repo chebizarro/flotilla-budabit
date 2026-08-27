@@ -394,7 +394,7 @@
         {/each}
       </div>
 
-      <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+      <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
         <div>
           <dt class="opacity-60">Status</dt>
           <dd>{$debugDiagnosticsActive ? "Recording" : "Stopped"}</dd>
@@ -408,11 +408,12 @@
           <dd>{debugOverview.counts["relay-normalization"]}</dd>
         </div>
         <div>
-          <dt class="opacity-60">Scheduler / publications</dt>
-          <dd>
-            {debugOverview.counts["relay-scheduler"] +
-              debugOverview.counts["publication-lifecycle"]}
-          </dd>
+          <dt class="opacity-60">Scheduler</dt>
+          <dd>{debugOverview.counts["relay-scheduler"]}</dd>
+        </div>
+        <div>
+          <dt class="opacity-60">Publications</dt>
+          <dd>{debugOverview.counts["publication-lifecycle"]}</dd>
         </div>
       </dl>
 

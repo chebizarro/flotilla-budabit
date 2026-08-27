@@ -13,5 +13,8 @@ describe("root debug diagnostics lifecycle", () => {
     expect(source).toContain("installRelayDiagnostics({enabled: browser && dev})")
     expect(source).toContain("onDestroy(uninstallRelayDebugDiagnostics)")
     expect(source).toContain("uninstallRelayDebugDiagnostics()")
+    expect(source).toContain("installPublicationDebugDiagnostics({")
+    expect(source).toContain("onDestroy(uninstallPublicationDebugDiagnostics)")
+    expect(source).toContain("uninstallPublicationDebugDiagnostics()")
   })
 })

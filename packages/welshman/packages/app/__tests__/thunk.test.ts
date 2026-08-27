@@ -9,6 +9,7 @@ import {
   MergedThunk,
   publishThunk,
   retryThunk,
+  subscribePublicationLifecycle,
   thunks,
   Thunk,
   thunkQueue,
@@ -183,6 +184,81 @@ describe("thunk", () => {
   })
 
   describe("publishThunk", () => {
+    it("observes sanitized lifecycle results and retry correlation without event data", () => {
+      const events: unknown[] = []
+      const unsubscribeThrowing = subscribePublicationLifecycle(() => {
+        throw new Error("observer failed")
+      })
+      const unsubscribe = subscribePublicationLifecycle(event => events.push(event))
+      const thunk = new Thunk({
+        event: makeEvent(NOTE, {
+          content: "private publication content",
+          tags: [["secret", "private tag"]],
+        }),
+        relays: ["wss://user:pass@relay.example/path?token=private#fragment"],
+      })
+
+      expect(() =>
+        thunk._setPending({
+          relay: "wss://user:pass@relay.example/path?token=private",
+          status: PublishStatus.Pending,
+          detail: "private pending detail",
+        }),
+      ).not.toThrow()
+      thunk._setFailure({
+        relay: "wss://user:pass@relay.example/path?token=private",
+        status: PublishStatus.Failure,
+        detail: "private failure detail",
+      })
+      thunk._setTimeout({
+        relay: "wss://user:pass@relay.example/path?token=private",
+        status: PublishStatus.Timeout,
+        detail: "private timeout detail",
+      })
+      thunk._setSuccess({
+        relay: "wss://user:pass@relay.example/path?token=private",
+        status: PublishStatus.Success,
+        detail: "private success detail",
+      })
+      const retry = retryThunk(thunk) as Thunk
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "created",
+          publicationId: thunk.diagnosticId,
+          eventKind: NOTE,
+          attempt: 1,
+          destinations: ["wss://relay.example/path"],
+        }),
+      )
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "retry",
+          publicationId: retry.diagnosticId,
+          previousPublicationId: thunk.diagnosticId,
+          attempt: 2,
+        }),
+      )
+      expect(
+        events.filter((event: any) => event.type === "result").map((event: any) => event.status),
+      ).toEqual([
+        PublishStatus.Pending,
+        PublishStatus.Failure,
+        PublishStatus.Timeout,
+        PublishStatus.Success,
+      ])
+      const serialized = JSON.stringify(events)
+      expect(serialized).not.toContain("user")
+      expect(serialized).not.toContain("private")
+      expect(serialized).not.toContain("content")
+      expect(serialized).not.toContain("tags")
+      expect(serialized).not.toContain("sig")
+
+      unsubscribe()
+      unsubscribeThrowing()
+      abortThunk(retry)
+    })
+
     it("should create and publish a thunk", async () => {
       const publishSpy = vi.spyOn(repository, "publish")
       const result = publishThunk(mockRequest)

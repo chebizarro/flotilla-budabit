@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     publishThunk: vi.fn(),
     repositoryGetEvent: vi.fn(),
     repositoryPublish: vi.fn(),
+    recordPublicationDiagnostic: vi.fn(),
     retryThunk: vi.fn(),
     trackerHasRelay: vi.fn(),
     trackerListeners,
@@ -42,6 +43,10 @@ vi.mock("@welshman/app", () => ({
 
 vi.mock("@app/util/nip46", () => ({
   recoverActiveNip46Receiver: vi.fn(async () => true),
+}))
+
+vi.mock("@app/core/publication-diagnostics", () => ({
+  recordPublicationOperationDiagnostic: mocks.recordPublicationDiagnostic,
 }))
 
 import {recoverActiveNip46Receiver} from "@app/util/nip46"
@@ -153,6 +158,7 @@ describe("single-event publication operations", () => {
     mocks.publishThunk.mockReset()
     mocks.repositoryGetEvent.mockReset().mockReturnValue(undefined)
     mocks.repositoryPublish.mockReset().mockReturnValue(true)
+    mocks.recordPublicationDiagnostic.mockReset()
     mocks.retryThunk.mockReset()
     mocks.trackerHasRelay.mockReset().mockReturnValue(false)
     mocks.trackerOff.mockReset()
@@ -367,6 +373,11 @@ describe("single-event publication operations", () => {
       preview: "retain-on-failure",
       error: "No relay confirmed publication",
     })
+    expect(mocks.recordPublicationDiagnostic).toHaveBeenCalledWith(
+      "operation-transition",
+      expect.objectContaining({operationId: operation.operationId, phase: "unconfirmed"}),
+      expect.objectContaining({previousPhase: "publishing"}),
+    )
   })
 
   it("keeps failed publications in attention while retrying until they confirm", async () => {
@@ -535,6 +546,11 @@ describe("single-event publication operations", () => {
     })
     expect(mocks.repositoryPublish).toHaveBeenCalledOnce()
     expect(mocks.repositoryPublish).toHaveBeenCalledWith(event)
+    expect(mocks.recordPublicationDiagnostic).toHaveBeenCalledWith(
+      "operation-transition",
+      expect.objectContaining({operationId: operation.operationId, attempt: 2}),
+      expect.objectContaining({previousAttempt: 1}),
+    )
   })
 
   it("retries signing for the same prepared event after a signing failure", async () => {
@@ -756,6 +772,11 @@ describe("single-event publication operations", () => {
     expect(mocks.repositoryPublish).toHaveBeenCalledOnce()
     expect(mocks.repositoryPublish).toHaveBeenCalledWith(primary)
     expect(getOperation(operation.operationId)).toMatchObject({event: primary, stage: "target"})
+    expect(mocks.recordPublicationDiagnostic).toHaveBeenCalledWith(
+      "operation-transition",
+      expect.objectContaining({operationId: operation.operationId, stage: "target"}),
+      expect.objectContaining({previousStage: "primary"}),
+    )
 
     targetAck.resolve(acknowledgement)
     await expect(operation.settled).resolves.toMatchObject({

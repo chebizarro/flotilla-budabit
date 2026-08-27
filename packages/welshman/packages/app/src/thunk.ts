@@ -34,6 +34,47 @@ export type ThunkOptions = Override<
   }
 >
 
+export type PublicationLifecycleObservation = {
+  type: "created" | "started" | "result" | "completed" | "retry" | "signing-failure"
+  publicationId: string
+  previousPublicationId?: string
+  eventKind: number
+  attempt: number
+  destinations?: string[]
+  relay?: string
+  status?: PublishStatus
+  resultCounts?: Record<string, number>
+}
+
+const publicationLifecycleListeners = new Set<(event: PublicationLifecycleObservation) => void>()
+let publicationDiagnosticSequence = 0
+
+export const subscribePublicationLifecycle = (
+  listener: (event: PublicationLifecycleObservation) => void,
+) => {
+  publicationLifecycleListeners.add(listener)
+  return () => publicationLifecycleListeners.delete(listener)
+}
+
+const safePublicationRelay = (relay: string) => {
+  try {
+    const parsed = new URL(relay.includes("://") ? relay : `wss://${relay}`)
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname || "/"}`
+  } catch {
+    return "[invalid-relay]"
+  }
+}
+
+const emitPublicationLifecycle = (event: PublicationLifecycleObservation) => {
+  for (const listener of publicationLifecycleListeners) {
+    try {
+      listener(event)
+    } catch {
+      // Diagnostics must never affect publication.
+    }
+  }
+}
+
 export class Thunk {
   _subs: Subscriber<Thunk>[] = []
   _optimisticEventId?: string
@@ -45,8 +86,13 @@ export class Thunk {
   complete = defer<void>()
   controller = new AbortController()
   wrap?: SignedEvent
+  diagnosticId: string
+  diagnosticAttempt: number
 
-  constructor(readonly options: ThunkOptions) {
+  constructor(
+    readonly options: ThunkOptions,
+    diagnostic: {attempt?: number; previousPublicationId?: string} = {},
+  ) {
     if (!options.recipient && WRAPPED_KINDS.includes(options.event.kind)) {
       throw new Error(`Attempted to publish a kind ${options.event.kind} without wrapping it`)
     }
@@ -66,6 +112,8 @@ export class Thunk {
     this.pubkey = $pubkey
     this.signer = $signer
     this.event = prep(options.event, this.pubkey)
+    this.diagnosticId = `publication-${++publicationDiagnosticSequence}`
+    this.diagnosticAttempt = diagnostic.attempt || 1
 
     for (const relay of options.relays) {
       this.results[relay] = {
@@ -84,6 +132,17 @@ export class Thunk {
         })
       }
     })
+
+    emitPublicationLifecycle({
+      type: "created",
+      publicationId: this.diagnosticId,
+      ...(diagnostic.previousPublicationId
+        ? {previousPublicationId: diagnostic.previousPublicationId}
+        : {}),
+      eventKind: this.event.kind,
+      attempt: this.diagnosticAttempt,
+      destinations: options.relays.map(safePublicationRelay),
+    })
   }
 
   _notify() {
@@ -99,26 +158,56 @@ export class Thunk {
         status: PublishStatus.Failure,
         detail: detail,
       }
+      this._observeResult(this.results[relay]!)
     }
 
+    this._notify()
+  }
+
+  _observeResult = (result: PublishResult) => {
+    emitPublicationLifecycle({
+      type: "result",
+      publicationId: this.diagnosticId,
+      eventKind: this.event.kind,
+      attempt: this.diagnosticAttempt,
+      relay: safePublicationRelay(result.relay),
+      status: result.status,
+    })
+  }
+
+  _setSuccess = (result: PublishResult, eventId = this.event.id) => {
+    tracker.track(eventId, result.relay)
+    this.options.onSuccess?.(result)
+    this.results[result.relay] = result
+    this._observeResult(result)
+    this._notify()
+  }
+
+  _setFailure = (result: PublishResult) => {
+    this.options.onFailure?.(result)
+    this.results[result.relay] = result
+    this._observeResult(result)
     this._notify()
   }
 
   _setPending = (result: PublishResult) => {
     this.options.onPending?.(result)
     this.results[result.relay] = result
+    this._observeResult(result)
     this._notify()
   }
 
   _setTimeout = (result: PublishResult) => {
     this.options.onTimeout?.(result)
     this.results[result.relay] = result
+    this._observeResult(result)
     this._notify()
   }
 
   _setAborted = (result: PublishResult) => {
     this.options.onAborted?.(result)
     this.results[result.relay] = result
+    this._observeResult(result)
     this._notify()
   }
 
@@ -142,17 +231,8 @@ export class Thunk {
       ...this.options,
       event,
       signal,
-      onSuccess: (result: PublishResult) => {
-        tracker.track(event.id, result.relay)
-        this.options.onSuccess?.(result)
-        this.results[result.relay] = result
-        this._notify()
-      },
-      onFailure: (result: PublishResult) => {
-        this.options.onFailure?.(result)
-        this.results[result.relay] = result
-        this._notify()
-      },
+      onSuccess: result => this._setSuccess(result, event.id),
+      onFailure: this._setFailure,
       onPending: this._setPending,
       onTimeout: this._setTimeout,
       onAborted: this._setAborted,
@@ -163,12 +243,30 @@ export class Thunk {
     })
 
     // Notify the caller that we're done
+    const resultCounts = Object.values(this.results).reduce<Record<string, number>>(
+      (counts, result) => ({...counts, [result.status]: (counts[result.status] || 0) + 1}),
+      {},
+    )
+    emitPublicationLifecycle({
+      type: "completed",
+      publicationId: this.diagnosticId,
+      eventKind: this.event.kind,
+      attempt: this.diagnosticAttempt,
+      resultCounts,
+    })
     this.complete.resolve()
   }
 
   async publish() {
     // Handle abort immediately if possible
     if (this.controller.signal.aborted) return
+
+    emitPublicationLifecycle({
+      type: "started",
+      publicationId: this.diagnosticId,
+      eventKind: this.event.kind,
+      attempt: this.diagnosticAttempt,
+    })
 
     const {recipient} = this.options
 
@@ -222,6 +320,12 @@ export class Thunk {
       return this._publish(signedEvent)
     } catch (e: any) {
       console.error("Failed to sign event", e)
+      emitPublicationLifecycle({
+        type: "signing-failure",
+        publicationId: this.diagnosticId,
+        eventKind: this.event.kind,
+        attempt: this.diagnosticAttempt,
+      })
       return this._fail(String(e || "Failed to sign event"))
     }
   }
@@ -517,7 +621,19 @@ export const abortThunk = (thunk: AbstractThunk) => {
 }
 
 const retrySingleThunk = (thunk: Thunk) => {
-  const retry = new Thunk({...thunk.options, event: thunk.event})
+  const retry = new Thunk(
+    {...thunk.options, event: thunk.event},
+    {attempt: thunk.diagnosticAttempt + 1, previousPublicationId: thunk.diagnosticId},
+  )
+
+  emitPublicationLifecycle({
+    type: "retry",
+    publicationId: retry.diagnosticId,
+    previousPublicationId: thunk.diagnosticId,
+    eventKind: retry.event.kind,
+    attempt: retry.diagnosticAttempt,
+    destinations: retry.options.relays.map(safePublicationRelay),
+  })
 
   retry._optimisticEventId = thunk._optimisticEventId
   thunk._optimisticEventId = undefined

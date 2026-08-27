@@ -61,6 +61,7 @@
     PERFORMANCE_DIAGNOSTICS_ENABLED,
   } from "@app/core/feature-flags"
   import {refreshDebugDiagnosticsSettings} from "@app/core/debug-diagnostics"
+  import {installPublicationDebugDiagnostics} from "@app/core/publication-diagnostics"
   import {
     consumeArmedPerformanceDiagnosticsCapture,
     measurePerformanceDiagnosticsWork,
@@ -119,7 +120,11 @@
   const uninstallRelayDebugDiagnostics = installRelayDebugDiagnostics({
     enabled: browser && DIAGNOSTICS_ENABLED,
   })
+  const uninstallPublicationDebugDiagnostics = installPublicationDebugDiagnostics({
+    enabled: browser && DIAGNOSTICS_ENABLED,
+  })
   onDestroy(uninstallRelayDebugDiagnostics)
+  onDestroy(uninstallPublicationDebugDiagnostics)
   let socketPoliciesInstalled = false
 
   const installSocketPolicies = () => {
@@ -1268,6 +1273,7 @@
     uninstallRelayRequestPolicy()
     uninstallRelayDiagnostics()
     uninstallRelayDebugDiagnostics()
+    uninstallPublicationDebugDiagnostics()
 
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval)
