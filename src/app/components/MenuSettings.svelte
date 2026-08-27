@@ -24,7 +24,11 @@
   import {makeProfilePath} from "@app/util/routes"
   import {theme} from "@app/util/theme"
   import {pushToast} from "@app/util/toast"
-  import {CASHU_WALLET_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {
+    CASHU_WALLET_ENABLED,
+    DIAGNOSTICS_ENABLED,
+    PERFORMANCE_DIAGNOSTICS_ENABLED,
+  } from "@app/core/feature-flags"
 
   const login = () => pushModal(LogIn)
 
@@ -37,7 +41,7 @@
   const navigationPending = $derived(Boolean(pendingHref))
 
   onMount(() => {
-    if (!PERFORMANCE_DIAGNOSTICS_ENABLED) return
+    if (!PERFORMANCE_DIAGNOSTICS_ENABLED && !DIAGNOSTICS_ENABLED) return
     const timer = window.setTimeout(() => void preloadCode("/settings/performance"), 0)
     return () => window.clearTimeout(timer)
   })
@@ -231,7 +235,7 @@
       </CardButton>
     </a>
   {/if}
-  {#if PERFORMANCE_DIAGNOSTICS_ENABLED}
+  {#if PERFORMANCE_DIAGNOSTICS_ENABLED || DIAGNOSTICS_ENABLED}
     <a
       href="/settings/performance"
       data-sveltekit-replacestate
@@ -243,10 +247,10 @@
           <div><Icon icon={Chart} size={7} /></div>
         {/snippet}
         {#snippet title()}
-          <div>Performance Diagnostics</div>
+          <div>Diagnostics</div>
         {/snippet}
         {#snippet info()}
-          <div>Arm, inspect, download, and publish cold-start captures</div>
+          <div>Capture performance measurements and opt-in debug information</div>
         {/snippet}
       </CardButton>
     </a>

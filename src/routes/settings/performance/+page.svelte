@@ -1,7 +1,20 @@
 <script lang="ts">
   import {onMount} from "svelte"
   import Button from "@lib/components/Button.svelte"
-  import {PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {DIAGNOSTICS_ENABLED, PERFORMANCE_DIAGNOSTICS_ENABLED} from "@app/core/feature-flags"
+  import {
+    DEBUG_DIAGNOSTIC_CATEGORIES,
+    clearDebugDiagnostics,
+    debugDiagnosticsActive,
+    debugDiagnosticsRevision,
+    debugDiagnosticsSettings,
+    getDebugDiagnosticsOverview,
+    refreshDebugDiagnosticsSettings,
+    setDebugDiagnosticCategoryEnabled,
+    startDebugDiagnosticsCapture,
+    stopDebugDiagnosticsCapture,
+    type DebugDiagnosticCategory,
+  } from "@app/core/debug-diagnostics"
   import {
     activePerformanceDiagnosticsRun,
     armPerformanceDiagnosticsCapture,
@@ -29,8 +42,28 @@
     return getPerformanceDiagnosticsOverview()
   })
   const latest = $derived(overview.latest)
+  const debugOverview = $derived.by(() => {
+    void $debugDiagnosticsRevision
+    return getDebugDiagnosticsOverview()
+  })
+  const debugCategoryCopy: Record<DebugDiagnosticCategory, {label: string; description: string}> = {
+    "relay-normalization": {
+      label: "Relay URL normalization",
+      description: "Canonicalization outcomes, invalid inputs, and equivalent URL mismatches.",
+    },
+    "relay-scheduler": {
+      label: "Relay scheduler and requests",
+      description: "Bounded queue, subscription, owner, saturation, and timing snapshots.",
+    },
+    "publication-lifecycle": {
+      label: "Publication lifecycle",
+      description:
+        "Destinations, acknowledgements, failures, timeouts, retries, and linked stages.",
+    },
+  }
 
   onMount(() => {
+    if (DIAGNOSTICS_ENABLED) refreshDebugDiagnosticsSettings()
     const armed = refreshArmedPerformanceDiagnosticsCapture()
     if (armed) target = armed.route
   })
@@ -124,17 +157,20 @@
       preparing = false
     }
   }
+
+  const toggleDebugCategory = (category: DebugDiagnosticCategory, enabled: boolean) => {
+    setDebugDiagnosticCategoryEnabled(category, enabled)
+  }
 </script>
 
-<svelte:head><title>Performance Diagnostics</title></svelte:head>
+<svelte:head><title>Diagnostics</title></svelte:head>
 
 <div class="content column mx-auto max-w-3xl gap-6 py-8" data-perf="diagnostics-settings">
   <header class="column gap-2">
     <p class="font-mono text-xs uppercase tracking-widest opacity-60">Settings / Diagnostics</p>
-    <h1 class="text-3xl font-bold">Performance Diagnostics</h1>
+    <h1 class="text-3xl font-bold">Diagnostics</h1>
     <p class="max-w-2xl opacity-75">
-      Arm one exact route before loading it. Capture starts during client bootstrap and stops when
-      the route settles, or fails after 60 seconds.
+      Capture bounded performance measurements and opt-in debug evidence for later analysis.
     </p>
   </header>
 
@@ -144,6 +180,13 @@
       <code>VITE_PERFORMANCE_DIAGNOSTICS=1</code>.
     </section>
   {:else}
+    <div class="column gap-2">
+      <h2 class="text-2xl font-semibold">Performance measurements</h2>
+      <p class="text-sm opacity-70">
+        Arm one exact route before loading it. Capture starts during client bootstrap and stops when
+        the route settles, or fails after 60 seconds.
+      </p>
+    </div>
     <section class="card2 column gap-4 border border-base-300 p-5" aria-label="Arm capture">
       <div>
         <h2 class="text-lg font-semibold">Next cold-start capture</h2>
@@ -240,6 +283,88 @@
       </div>
       {#if publishStage !== "idle"}<p class="text-xs">Publication: {publishStage}</p>{/if}
       {#if error}<p class="text-sm text-error">{error}</p>{/if}
+    </section>
+  {/if}
+
+  <div class="border-t border-base-300 pt-6">
+    <h2 class="text-2xl font-semibold">Debug info</h2>
+    <p class="mt-1 text-sm opacity-70">
+      Record selected diagnostic classes in memory. All classes are off by default and records are
+      bounded and sanitized.
+    </p>
+  </div>
+
+  {#if !DIAGNOSTICS_ENABLED}
+    <section class="card2 border border-warning p-5">
+      This build does not include debug diagnostics. Build with
+      <code>VITE_DIAGNOSTICS=1</code>.
+    </section>
+  {:else}
+    <section class="card2 column gap-4 border border-base-300 p-5" aria-label="Debug info settings">
+      <div class="column gap-3">
+        {#each DEBUG_DIAGNOSTIC_CATEGORIES as category}
+          <label
+            class="flex cursor-pointer items-start justify-between gap-4 rounded bg-base-200 p-3">
+            <span>
+              <span class="block font-medium">{debugCategoryCopy[category].label}</span>
+              <span class="block text-sm opacity-65"
+                >{debugCategoryCopy[category].description}</span>
+            </span>
+            <input
+              type="checkbox"
+              class="toggle toggle-primary mt-1"
+              checked={$debugDiagnosticsSettings.categories[category]}
+              onchange={event => toggleDebugCategory(category, event.currentTarget.checked)} />
+          </label>
+        {/each}
+      </div>
+
+      <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+        <div>
+          <dt class="opacity-60">Status</dt>
+          <dd>{$debugDiagnosticsActive ? "Recording" : "Stopped"}</dd>
+        </div>
+        <div>
+          <dt class="opacity-60">Records</dt>
+          <dd>{debugOverview.recordCount}</dd>
+        </div>
+        <div>
+          <dt class="opacity-60">Normalization</dt>
+          <dd>{debugOverview.counts["relay-normalization"]}</dd>
+        </div>
+        <div>
+          <dt class="opacity-60">Scheduler / publications</dt>
+          <dd>
+            {debugOverview.counts["relay-scheduler"] +
+              debugOverview.counts["publication-lifecycle"]}
+          </dd>
+        </div>
+      </dl>
+
+      <div class="flex flex-wrap gap-2">
+        <Button
+          class="btn btn-primary btn-sm"
+          disabled={$debugDiagnosticsActive}
+          onclick={() => startDebugDiagnosticsCapture()}>
+          Start recording
+        </Button>
+        <Button
+          class="btn btn-secondary btn-sm"
+          disabled={!$debugDiagnosticsActive}
+          onclick={stopDebugDiagnosticsCapture}>
+          Stop
+        </Button>
+        <Button
+          class="btn btn-ghost btn-sm"
+          disabled={debugOverview.recordCount === 0}
+          onclick={clearDebugDiagnostics}>
+          Clear
+        </Button>
+      </div>
+      <p class="text-xs opacity-60">
+        Captures remain in this tab until cleared or the app is closed. Sensitive fields and relay
+        query values are removed before records are retained.
+      </p>
     </section>
   {/if}
 </div>
