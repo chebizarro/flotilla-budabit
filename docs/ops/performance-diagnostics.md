@@ -20,7 +20,7 @@ Open **Settings → Performance Diagnostics**:
 
 **Arm and open now** is convenient for warm-session diagnostics but does not produce a genuinely cold browser load. A small status control on the target page links back to the diagnostics settings while a capture is running or available.
 
-The artifact schema is `budabit-performance-run-v1`. Captures include route milestones, bounded state samples, long tasks, resources, relay scheduler snapshots, warnings, build metadata, and browser environment data. Known secret fields and secret-shaped values are redacted before serialization.
+The artifact schema is `budabit-performance-run-v2`. Captures include route milestones, bounded state samples, long tasks, resources, relay scheduler snapshots, capture-local scheduler counters, warnings, build metadata, and browser environment data. Known secret fields and secret-shaped values are redacted before serialization, and relay paths are omitted.
 
 `/git` foreground settlement means a current positive card projection remained stable through two animation frames. Background repository acquisition is recorded separately until it becomes terminal or a bounded 10-second telemetry tail expires. Authoritative empty results still require background acquisition to become terminal.
 
