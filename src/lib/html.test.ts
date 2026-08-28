@@ -22,12 +22,17 @@ describe("event scrolling", () => {
 
   it("scrolls and highlights an existing event without replacing inline styles", () => {
     const element = document.createElement("div")
+    let highlightedWhenScrolled = false
     element.dataset.event = "a".repeat(64)
     element.style.color = "red"
+    scrollIntoView.mockImplementation(() => {
+      highlightedWhenScrolled = element.classList.contains("event-target-highlight")
+    })
     document.body.appendChild(element)
 
     expect(scrollToEventNow(element.dataset.event)).toBe(true)
-    expect(scrollIntoView).toHaveBeenCalledWith({behavior: "smooth", block: "center"})
+    expect(scrollIntoView).toHaveBeenCalledWith({behavior: "smooth", block: "start"})
+    expect(highlightedWhenScrolled).toBe(true)
     expect(element.classList.contains("event-target-highlight")).toBe(true)
     expect(document.activeElement).toBe(element)
     expect(element.style.color).toBe("red")
@@ -59,7 +64,7 @@ describe("event scrolling", () => {
     document.body.append(outside, root)
 
     expect(scrollToEventNow(id, root, "auto")).toBe(true)
-    expect(insideScroll).toHaveBeenCalledWith({behavior: "auto", block: "center"})
+    expect(insideScroll).toHaveBeenCalledWith({behavior: "auto", block: "start"})
     expect(outsideScroll).not.toHaveBeenCalled()
   })
 
@@ -86,7 +91,7 @@ describe("event scrolling", () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([true, true])
     expect(scrollIntoView).toHaveBeenCalledOnce()
-    expect(scrollIntoView).toHaveBeenCalledWith({behavior: "auto", block: "center"})
+    expect(scrollIntoView).toHaveBeenCalledWith({behavior: "auto", block: "start"})
   })
 
   it("lets one coalesced caller abort without cancelling another", async () => {

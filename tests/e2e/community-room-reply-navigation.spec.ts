@@ -1,4 +1,4 @@
-import {expect, test} from "@playwright/test"
+import {expect, test, type Page} from "@playwright/test"
 import {finalizeEvent, getPublicKey, nip19} from "nostr-tools"
 import {DEV_PUBKEY, DEV_SECRET, seedDevSession} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
@@ -125,6 +125,26 @@ const communityNaddr = nip19.naddrEncode({
 })
 const roomPath = `/c/${communityNaddr}/rooms/${room.id}`
 
+const expectEventAtContentTop = async (page: Page, id: string) => {
+  await expect
+    .poll(() =>
+      page.evaluate(eventId => {
+        const target = document.querySelector(`[data-event="${eventId}"]`)
+        const scroller = document.querySelector('[data-component="PageContent"]')
+        const pageBar = document.querySelector('[data-component="PageBar"]')
+        if (!target || !scroller || !pageBar) return Number.POSITIVE_INFINITY
+
+        const targetRect = target.getBoundingClientRect()
+        const scrollerRect = scroller.getBoundingClientRect()
+        const pageBarRect = pageBar.getBoundingClientRect()
+        const visibleTop = Math.max(scrollerRect.top, pageBarRect.bottom)
+
+        return Math.abs(targetRect.top - visibleTop)
+      }, id),
+    )
+    .toBeLessThan(24)
+}
+
 test("loads a room opened from a direct event permalink", async ({page}) => {
   const effectErrors: string[] = []
   page.on("pageerror", error => {
@@ -196,6 +216,7 @@ test("opens a quoted room parent without reloading the room", async ({page}) => 
 
   await expect(page).toHaveURL(`${roomPath}#event-${parent.id}`)
   await expect(parentMessage).toBeInViewport({timeout: 10_000})
+  await expectEventAtContentTop(page, parent.id)
   await expect(replyMessage).toHaveAttribute("data-jump-sentinel", "original")
   await expect(parentMessage).toHaveClass(/event-target-highlight/)
   await page.waitForTimeout(500)
@@ -206,7 +227,7 @@ test("opens a quoted room parent without reloading the room", async ({page}) => 
   )
 })
 
-test("centers an already-visible nearby parent on repeated jumps", async ({page}) => {
+test("aligns an already-visible nearby parent to the top on repeated jumps", async ({page}) => {
   const mockRelay = new MockRelay({
     seedEvents: [definition, room, nearbyParent, nearbyFiller, nearbyReply],
   })
@@ -226,33 +247,12 @@ test("centers an already-visible nearby parent on repeated jumps", async ({page}
   await replyMessage.evaluate(element => element.scrollIntoView({block: "center"}))
   await expect(parentMessage).toBeInViewport()
 
-  const assertTargetCentered = async () => {
-    await expect
-      .poll(() =>
-        page.evaluate(id => {
-          const target = document.querySelector(`[data-event="${id}"]`)
-          const scroller = document.querySelector('[data-component="PageContent"]')
-          const composer = document.querySelector(".chat__compose")
-          if (!target || !scroller || !composer) return Number.POSITIVE_INFINITY
-
-          const targetRect = target.getBoundingClientRect()
-          const scrollerRect = scroller.getBoundingClientRect()
-          const composerRect = composer.getBoundingClientRect()
-          const visibleBottom = Math.min(scrollerRect.bottom, composerRect.top)
-          const visibleCenter = scrollerRect.top + (visibleBottom - scrollerRect.top) / 2
-
-          return Math.abs(targetRect.top + targetRect.height / 2 - visibleCenter)
-        }, nearbyParent.id),
-      )
-      .toBeLessThan(120)
-  }
-
   await quoteButton.click()
   await expect(page).toHaveURL(`${roomPath}#event-${nearbyParent.id}`)
-  await assertTargetCentered()
+  await expectEventAtContentTop(page, nearbyParent.id)
   await expect(parentMessage).toHaveClass(/event-target-highlight/)
 
   await replyMessage.evaluate(element => element.scrollIntoView({block: "center"}))
   await quoteButton.click()
-  await assertTargetCentered()
+  await expectEventAtContentTop(page, nearbyParent.id)
 })

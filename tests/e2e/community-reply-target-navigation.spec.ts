@@ -198,9 +198,24 @@ const openTarget = async ({
   await quoteButton.click()
 
   await expect(page).toHaveURL(`${path}#event-${parent.id}`)
-  await expect(page.locator(`[data-event="${parent.id}"]`).first()).toBeInViewport({
-    timeout: 10_000,
-  })
+  const parentItem = page.locator(`[data-event="${parent.id}"]`).first()
+  await expect(parentItem).toBeInViewport({timeout: 10_000})
+  await expect
+    .poll(() =>
+      page.evaluate(id => {
+        const target = document.querySelector(`[data-event="${id}"]`)
+        const scroller = document.querySelector('[data-component="PageContent"]')
+        const pageBar = document.querySelector('[data-component="PageBar"]')
+        if (!target || !scroller || !pageBar) return Number.POSITIVE_INFINITY
+
+        const targetRect = target.getBoundingClientRect()
+        const scrollerRect = scroller.getBoundingClientRect()
+        const pageBarRect = pageBar.getBoundingClientRect()
+
+        return Math.abs(targetRect.top - Math.max(scrollerRect.top, pageBarRect.bottom))
+      }, parent.id),
+    )
+    .toBeLessThan(24)
 }
 
 test.beforeEach(async ({page}) => {

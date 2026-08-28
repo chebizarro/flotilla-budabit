@@ -24,6 +24,7 @@
 }
 
 .event-target-highlight {
+  scroll-margin-block-start: 1rem;
   outline: 2px solid transparent;
   outline-offset: -2px;
   animation: event-target-highlight 2s ease-out;

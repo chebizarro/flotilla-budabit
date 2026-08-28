@@ -195,8 +195,8 @@ export const scrollToEventNow = (
   const element = getEventElement(id, root)
   if (!element) return false
 
-  element.scrollIntoView({behavior, block: "center"})
   highlightEventElement(element)
+  element.scrollIntoView({behavior, block: "start"})
 
   return true
 }

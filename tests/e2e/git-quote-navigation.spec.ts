@@ -93,5 +93,21 @@ test("focuses a quoted issue comment without recreating the repository route", a
 
   await expect(page).toHaveURL(`${issuePath}#comment-${parent.id}`)
   await expect(parentComment).toBeInViewport({timeout: 10_000})
+  await expect
+    .poll(() =>
+      page.evaluate(id => {
+        const target = document.querySelector(`[data-event="${id}"]`)
+        const scroller = document.querySelector('[data-component="PageContent"]')
+        const pageBar = document.querySelector('[data-component="PageBar"]')
+        if (!target || !scroller || !pageBar) return Number.POSITIVE_INFINITY
+
+        const targetRect = target.getBoundingClientRect()
+        const scrollerRect = scroller.getBoundingClientRect()
+        const pageBarRect = pageBar.getBoundingClientRect()
+
+        return Math.abs(targetRect.top - Math.max(scrollerRect.top, pageBarRect.bottom))
+      }, parent.id),
+    )
+    .toBeLessThan(24)
   await expect(page.locator("body")).toHaveAttribute("data-git-quote-document", "original")
 })
