@@ -910,7 +910,7 @@
           definitionRelays={routeCommunityDefinition?.relays || []} />
         <CommunityStarButton
           community={communityPointer}
-          publishRelayHints={routeCommunityDefinition?.relays || communityPointer.relayHints} />
+          publishRelayHints={routeCommunityDefinition?.relays || []} />
       </div>
     {/if}
     <div class="relative flex gap-4">

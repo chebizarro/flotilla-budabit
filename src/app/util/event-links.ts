@@ -19,6 +19,7 @@ import {
 } from "@nostr-git/core/events"
 import {buildRepoNaddrFromEvent} from "@nostr-git/core/utils"
 import {
+  COMMUNITY_DEFINITION_KIND,
   TARGETED_PUBLICATION_KIND,
   TARGETED_PUBLICATION_KINDS,
   parseTargetedPublication,
@@ -158,6 +159,14 @@ const normalizeKind = (kind: number | string | undefined) => {
 
 const isTargetablePublicationKind = (kind: number | undefined) =>
   kind !== undefined && TARGETED_PUBLICATION_KINDS.includes(kind as any)
+
+const getCommunityDefinitionRelayHints = (event: Pick<TrustedEvent, "kind" | "tags">) => {
+  if (normalizeKind(event.kind) !== COMMUNITY_DEFINITION_KIND) return []
+
+  return normalizeRelayHints(
+    (event.tags || []).filter(tag => tag[0] === "r" && tag.length === 2).map(tag => tag[1]),
+  ).slice(0, 3)
+}
 
 export const getTargetedPublicationRelayHints = (event: Pick<TrustedEvent, "kind" | "tags">) => {
   const kind = normalizeKind(event.kind)
@@ -326,6 +335,10 @@ export const getEventRelayHints = (
     includeRepoRelays = true,
   }: EventRelayHintOptions = {},
 ) => {
+  if (normalizeKind(event.kind) === COMMUNITY_DEFINITION_KIND) {
+    return getCommunityDefinitionRelayHints(event)
+  }
+
   // Repo-related events (issues, patches, PRs, statuses, comments, permalinks)
   // are canonically located on the repo announcement relays. Never mix in
   // seen-on, browsing, or outbox relays for these.

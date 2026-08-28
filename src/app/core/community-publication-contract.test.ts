@@ -116,6 +116,7 @@ describe("strict community publication source contracts", () => {
     const badgeAward = readProjectFile("../components/CommunityBadgeAwardForm.svelte")
     const widgets = readProjectFile("../../routes/c/[community]/widgets/+page.svelte")
     const explore = readProjectFile("../../routes/explore/+page.svelte")
+    const communityHome = readProjectFile("../../routes/c/[community]/+page.svelte")
 
     expect(star).toContain(
       "publishRelayHints === undefined ? relays : normalizeRelays(publishRelayHints)",
@@ -132,6 +133,12 @@ describe("strict community publication source contracts", () => {
       "const defaultPublishRelayHints = $derived(normalizeRelays(defaultDefinition?.relays || []))",
     )
     expect(explore).toContain("publishRelayHints={item.publishRelayHints}")
+    expect(communityHome).toContain(
+      "publishRelayHints={routeCommunityDefinition?.relays || []}",
+    )
+    expect(communityHome).not.toContain(
+      "publishRelayHints={routeCommunityDefinition?.relays || communityPointer.relayHints}",
+    )
   })
 
   it("publishes community repositories as direct single-community announcements", () => {

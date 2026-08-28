@@ -30,7 +30,7 @@ vi.mock("@welshman/util", () => ({
   normalizeRelayUrl: (url: string) => (url.endsWith("/") ? url : `${url}/`),
   isRelayUrl: (url: string) => /^wss?:\/\//.test(url),
   getTagValue: (name: string, tags: string[][]) => tags.find(tag => tag[0] === name)?.[1] || "",
-  isReplaceable: () => false,
+  isReplaceable: (event: {kind: number}) => event.kind === 32222,
   Address: class {
     static fromEvent() {
       return {toNaddr: () => "naddr1test"}
@@ -257,6 +257,44 @@ describe("event link utilities", () => {
       kind: event.kind,
       author: event.pubkey,
       relays: ["wss://community.example.com/"],
+    })
+  })
+
+  it("encodes only declared definition relays in canonical community shares", async () => {
+    relayMocks.trackerRelays = new Set(["wss://seen.example.com"])
+    relayMocks.authorRelays = ["wss://author.example.com"]
+    const event = makeEvent({
+      kind: 32222,
+      tags: [
+        ["d", "community"],
+        ["r", "wss://first.example.com"],
+        ["r", "invalid"],
+        ["r", "wss://second.example.com"],
+        ["r", "wss://first.example.com/"],
+        ["r", "wss://third.example.com"],
+        ["r", "wss://fourth.example.com"],
+        ["r", "wss://ignored.example.com", "extra"],
+      ],
+    })
+    const {makeEventShareEntity} = await import("./event-links")
+
+    const decoded = nip19.decode(
+      makeEventShareEntity(event as any, {
+        relays: ["wss://explicit.example.com"],
+        fallbackRelays: ["wss://fallback.example.com"],
+      }),
+    )
+
+    expect(decoded.type).toBe("naddr")
+    expect(decoded.data).toMatchObject({
+      kind: 32222,
+      pubkey: event.pubkey,
+      identifier: "community",
+      relays: [
+        "wss://first.example.com/",
+        "wss://second.example.com/",
+        "wss://third.example.com/",
+      ],
     })
   })
 
