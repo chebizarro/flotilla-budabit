@@ -4,13 +4,11 @@
   import {onDestroy, onMount} from "svelte"
   import {get} from "svelte/store"
   import WidgetModal from "@app/components/WidgetModal.svelte"
-  import {normalizePubkey} from "@app/core/community"
+  import {normalizePubkey, type CommunityPointer} from "@app/core/community"
   import {
+    activeCommunityDescriptor,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    activeExactCommunityDefinition,
-    activeExactCommunityPointer,
-    activeExactCommunityRelays,
   } from "@app/core/community-state"
   import {makeCommunityWidgetContext} from "@app/extensions/community-context"
   import {
@@ -28,35 +26,22 @@
   type LauncherVariant = "message-actions" | "top-menu"
 
   type Props = {
-    communityPubkey: string
-    communityAddress?: string
-    relayHints?: string[]
+    community: CommunityPointer
     slotType: WidgetActionSlotType
     variant?: LauncherVariant
     context?: Record<string, unknown>
   }
 
-  const {
-    communityPubkey,
-    communityAddress = "",
-    relayHints = [],
-    slotType,
-    variant = "message-actions",
-    context = {},
-  }: Props = $props()
-  const exactCommunity = $derived(
-    $activeExactCommunityPointer?.address === communityAddress ||
-      (!communityAddress &&
-        normalizePubkey($activeExactCommunityPointer?.ownerPubkey || "") ===
-          normalizePubkey(communityPubkey))
-      ? $activeExactCommunityPointer
+  const {community, slotType, variant = "message-actions", context = {}}: Props = $props()
+  const descriptor = $derived(
+    $activeCommunityDescriptor?.community.address === community.address
+      ? $activeCommunityDescriptor
       : undefined,
   )
-  const exactDefinition = $derived(
-    exactCommunity && $activeExactCommunityDefinition?.pointer.address === exactCommunity.address
-      ? $activeExactCommunityDefinition
-      : undefined,
-  )
+  const exactCommunity = $derived(descriptor?.community)
+  const exactDefinition = $derived(descriptor?.definition)
+  const relayHints = $derived(exactCommunity?.relayHints || [])
+  const communityRelays = $derived(descriptor?.relays.length ? descriptor.relays : relayHints)
   const contextDefinition = $derived(
     exactDefinition ? {...exactDefinition, pubkey: exactDefinition.ownerPubkey} : undefined,
   )
@@ -100,32 +85,28 @@
       profileListEvents: $activeCommunityProfileListEvents,
       reportState: $activeCommunityReportState,
       userPubkey: $pubkey || "",
-      relays: $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints,
+      relays: communityRelays,
       relayHints,
     })
   })
   const getCurrentCommunityRuntimeContext = () => {
-    const exactCommunity = get(activeExactCommunityPointer)
-    const definition = get(activeExactCommunityDefinition)
-    if (
-      !exactCommunity ||
-      (communityAddress && exactCommunity.address !== communityAddress) ||
-      normalizePubkey(exactCommunity.ownerPubkey) !== normalizePubkey(communityPubkey) ||
-      definition?.pointer.address !== exactCommunity.address
-    ) {
+    const descriptor = get(activeCommunityDescriptor)
+    const exactCommunity = descriptor?.community
+    const definition = descriptor?.definition
+    if (!exactCommunity || exactCommunity.address !== community.address || !definition) {
       return undefined
     }
 
     const profileListEvents = get(activeCommunityProfileListEvents)
     const reportState = get(activeCommunityReportState)
-    const relays = get(activeExactCommunityRelays)
+    const relays = descriptor.relays.length ? descriptor.relays : exactCommunity.relayHints
     const currentCommunityContext = makeCommunityWidgetContext({
       definition: {...definition, pubkey: definition.ownerPubkey} as any,
       profileListEvents,
       reportState,
       userPubkey: get(pubkey) || "",
-      relays: relays.length ? relays : relayHints,
-      relayHints,
+      relays,
+      relayHints: exactCommunity.relayHints,
     })
 
     return {
@@ -133,8 +114,8 @@
       definition,
       profileListEvents,
       reportState,
-      relays: relays.length ? relays : relayHints,
-      relayHints,
+      relays,
+      relayHints: exactCommunity.relayHints,
       communityContext: currentCommunityContext,
     }
   }
@@ -229,7 +210,7 @@
         if (requestId !== loadRequestId || key !== loadKey) {
           logCommunityWidgetDebug("launcher slot discarded stale curated widgets result", {
             slotType,
-            communityPubkey,
+            communityAddress: exactCommunity?.address,
             key,
             currentKey: loadKey,
             requestId,

@@ -71,7 +71,7 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -334,7 +334,8 @@
           signal: controller.signal,
         }),
       ),
-    ).catch(error => {
+    )
+      .catch(error => {
         if (controller.signal.aborted) return
         console.warn("[community-permalinks] Failed to load hinted permalink originals", error)
       })

@@ -115,12 +115,12 @@
   )
   const mainRelay = $derived(exactDefinition?.relays[0] || "")
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === community.ownerPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === community.address
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
   const communityAdmissionFormReadiness = $derived(
-    $activeCommunityAdmissionFormReadiness.communityPubkey === community.ownerPubkey
+    $activeCommunityAdmissionFormReadiness.communityAddress === community.address
       ? $activeCommunityAdmissionFormReadiness.state
       : "loading",
   )

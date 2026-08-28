@@ -1,16 +1,14 @@
 <script lang="ts">
   import {onDestroy, onMount} from "svelte"
   import {pubkey, repository} from "@welshman/app"
-  import {normalizePubkey} from "@app/core/community"
+  import {normalizePubkey, type CommunityPointer} from "@app/core/community"
   import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
   import {getCommunitySectionAuthorityPubkeys} from "@app/core/community-permissions"
   import {RELAY_REQUEST_PRIORITY} from "@app/core/relay-policy"
   import {
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    activeExactCommunityDefinition,
-    activeExactCommunityRelays,
     loadCommunityEventsWithStatus,
   } from "@app/core/community-state"
   import {
@@ -32,27 +30,26 @@
   import {makeExactCommunityInputValue} from "@app/util/community-stars"
 
   type Props = {
-    communityAddress: string
-    relayHints?: string[]
+    community: CommunityPointer
     ready: boolean
     recoveryStore: CommunityHomeWidgetRecoveryStore
   }
 
-  const {communityAddress, relayHints = [], ready, recoveryStore}: Props = $props()
-  const exactDefinition = $derived(
-    $activeExactCommunityDefinition?.pointer.address === communityAddress
-      ? $activeExactCommunityDefinition
+  const {community, ready, recoveryStore}: Props = $props()
+  const descriptor = $derived(
+    $activeCommunityDescriptor?.community.address === community.address
+      ? $activeCommunityDescriptor
       : undefined,
   )
-  const exactCommunity = $derived(
-    $activeExactCommunityDefinition?.pointer.address === communityAddress
-      ? $activeExactCommunityDefinition.pointer
-      : undefined,
-  )
+  const communityAddress = $derived(community.address)
+  const relayHints = $derived(community.relayHints)
+  const exactDefinition = $derived(descriptor?.definition)
+  const exactCommunity = $derived(descriptor?.community)
+  const communityRelays = $derived(descriptor?.relays.length ? descriptor.relays : relayHints)
   const communityReadinessKey = $derived.by(() => {
-    const readiness = $activeCommunityAuthorityReadiness
+    const readiness = descriptor?.authorityReadiness
     return exactDefinition &&
-      normalizePubkey(readiness.communityPubkey) === normalizePubkey(exactDefinition.ownerPubkey) &&
+      readiness?.communityAddress === community.address &&
       readiness.state === "ready"
       ? JSON.stringify({authorityKey: readiness.key, authorityState: readiness.state})
       : ""
@@ -204,7 +201,7 @@
 
   $effect(() => {
     void refreshNonce
-    const relays = $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints
+    const relays = communityRelays
     const authorizedPubkeys = sharedConfigAuthority.authorizedPubkeys
     const key =
       ready && communityReadinessKey && relays.length > 0 && authorizedPubkeys.size > 0

@@ -129,7 +129,7 @@
     Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -822,7 +822,7 @@
               data-latest-reply={item.id === latestReplyId ? "true" : undefined}>
               <ChannelMessage
                 url={communityId}
-                communityPubkey={communityOwnerPubkey}
+                community={routeCommunity}
                 event={replyEvent}
                 operationId={replyProjection.operationIds.get(replyEvent.id)}
                 showPubkey

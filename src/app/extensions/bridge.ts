@@ -1156,7 +1156,7 @@ const isCommunityAuthorityLoading = (snapshot: ReturnType<typeof getCommunityReq
   if (snapshot.source === "runtime") return false
 
   const status = get(activeCommunityPermissionStatus)
-  if (!status.communityPubkey) return false
+  if (!status.communityAddress) return false
   const expectedKeyPrefix = getCommunityPermissionStatusKeyPrefix(
     snapshot.definition,
     snapshot.relays,
@@ -1166,7 +1166,7 @@ const isCommunityAuthorityLoading = (snapshot: ReturnType<typeof getCommunityReq
   return (
     getCommunityPermissionReadiness({
       status,
-      communityPubkey: snapshot.definition.ownerPubkey,
+      communityAddress: snapshot.definition.pointer.address,
       expectedKeyPrefix,
     }) === "loading"
   )
@@ -1292,7 +1292,7 @@ const getCommunityRequestSnapshot = (ext: LoadedExtension) => {
   const authorityEvidenceSettled =
     getCommunityPermissionReadiness({
       status: permissionStatus,
-      communityPubkey: definition.ownerPubkey,
+      communityAddress: definition.pointer.address,
       expectedKeyPrefix: permissionKeyPrefix,
     }) === "ready"
 

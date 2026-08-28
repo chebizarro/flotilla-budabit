@@ -76,14 +76,14 @@ const mocks = vi.hoisted(() => {
     activeExactCommunityDefinition: createStore(undefined as any),
     activeExactCommunityPointer: createStore(undefined as any),
     activeCommunityPermissionStatus: createStore<{
-      communityPubkey: string
+      communityAddress: string
       key: string
       loading: boolean
       loaded: boolean
       complete?: boolean
       hasCachedEvents: boolean
     }>({
-      communityPubkey: "",
+      communityAddress: "",
       key: "",
       loading: false,
       loaded: false,
@@ -281,8 +281,8 @@ vi.mock("@app/core/community-state", () => ({
   getCommunityBootstrapRelays: vi.fn((relays: string[] = []) => relays),
   getCommunityPermissionStatusKeyPrefix: vi.fn(() => "expected:"),
   getCommunityPermissionReadiness: vi.fn(
-    ({status, communityPubkey}: {status: any; communityPubkey: string}) => {
-      if (status.communityPubkey !== communityPubkey || !status.key.startsWith("expected:")) {
+    ({status, communityAddress}: {status: any; communityAddress: string}) => {
+      if (status.communityAddress !== communityAddress || !status.key.startsWith("expected:")) {
         return "loading"
       }
       if (status.hasCachedEvents) return "ready"
@@ -404,7 +404,7 @@ beforeEach(() => {
   mocks.activeExactCommunityDefinition.set(undefined)
   mocks.activeExactCommunityPointer.set(communityPointer)
   mocks.activeCommunityPermissionStatus.set({
-    communityPubkey: "",
+    communityAddress: "",
     key: "",
     loading: false,
     loaded: false,
@@ -1441,7 +1441,7 @@ describe("ExtensionBridge", () => {
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.pubkey.set(calendarWriterPubkey)
     mocks.activeCommunityPermissionStatus.set({
-      communityPubkey,
+      communityAddress: communityDefinition.pointer.address,
       key: "expected:settled",
       loading: false,
       loaded: true,
@@ -1867,7 +1867,7 @@ describe("ExtensionBridge", () => {
     mocks.activeCommunityProfileListEvents.set([])
     mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
     mocks.activeCommunityPermissionStatus.set({
-      communityPubkey,
+      communityAddress: communityDefinition.pointer.address,
       key: "permission-load",
       loading: true,
       loaded: false,

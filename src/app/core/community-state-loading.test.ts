@@ -607,7 +607,7 @@ describe("community relay loading", () => {
   it("classifies current authority readiness without accepting stale generations", () => {
     const expectedKeyPrefix = `viewer:definition:relay:`
     const baseStatus = {
-      communityPubkey,
+      communityAddress: community.address,
       key: `${expectedKeyPrefix}1`,
       loading: true,
       loaded: true,
@@ -618,28 +618,39 @@ describe("community relay loading", () => {
     expect(
       getCommunityPermissionReadiness({
         status: baseStatus,
-        communityPubkey,
+        communityAddress: community.address,
         expectedKeyPrefix,
       }),
     ).toBe("loading")
     expect(
       getCommunityPermissionReadiness({
         status: {...baseStatus, hasCachedEvents: true},
-        communityPubkey,
+        communityAddress: community.address,
         expectedKeyPrefix,
       }),
     ).toBe("ready")
     expect(
       getCommunityPermissionReadiness({
         status: {...baseStatus, loading: false},
-        communityPubkey,
+        communityAddress: community.address,
         expectedKeyPrefix,
       }),
     ).toBe("unavailable")
     expect(
       getCommunityPermissionReadiness({
         status: {...baseStatus, key: "viewer:older-definition:relay:1"},
-        communityPubkey,
+        communityAddress: community.address,
+        expectedKeyPrefix,
+      }),
+    ).toBe("loading")
+    const sibling = makeCommunityPointer({
+      ownerPubkey: community.ownerPubkey,
+      communityId: getPublicKey(new Uint8Array(32).fill(11)),
+    })!
+    expect(
+      getCommunityPermissionReadiness({
+        status: {...baseStatus, hasCachedEvents: true},
+        communityAddress: sibling.address,
         expectedKeyPrefix,
       }),
     ).toBe("loading")
@@ -1316,7 +1327,7 @@ describe("community relay loading", () => {
     expect(
       getCommunityPermissionReadiness({
         status,
-        communityPubkey,
+        communityAddress: community.address,
         expectedKeyPrefix: `${status.key.slice(0, status.key.lastIndexOf(":"))}:`,
       }),
     ).toBe("ready")
@@ -1539,7 +1550,7 @@ describe("community relay loading", () => {
     profileLoadCount = 0
     admissionFormLoadCount = 0
     activeCommunityPermissionStatus.set({
-      communityPubkey,
+      communityAddress: community.address,
       key: authorityKey,
       loading: true,
       loaded: false,
@@ -1547,7 +1558,7 @@ describe("community relay loading", () => {
       hasCachedEvents: false,
     })
     activeCommunityAdmissionFormStatus.set({
-      communityPubkey,
+      communityAddress: community.address,
       key: authorityKey,
       loading: false,
       loaded: true,
@@ -1591,7 +1602,7 @@ describe("community relay loading", () => {
     expect(bootstrap.definition?.event.id).toBe(singleRelayDefinitionEvent.id)
     expect(bootstrap.profileListEvents).toEqual([])
     expect(get(activeCommunityPermissionStatus)).toMatchObject({
-      communityPubkey,
+      communityAddress: community.address,
       loading: true,
       loaded: false,
       hasCachedEvents: false,
@@ -1601,7 +1612,7 @@ describe("community relay loading", () => {
     await flushPromises()
 
     expect(get(activeCommunityPermissionStatus)).toMatchObject({
-      communityPubkey,
+      communityAddress: community.address,
       loading: false,
       loaded: true,
       complete: true,
@@ -1621,7 +1632,7 @@ describe("community relay loading", () => {
     const staleBootstrap = loadCommunityBootstrap(communitySession)
     setActiveExactCommunityPointer(otherCommunity)
     activeCommunityPermissionStatus.set({
-      communityPubkey: otherCommunityPubkey,
+      communityAddress: otherCommunity.address,
       key: "other-permission-generation",
       loading: false,
       loaded: true,
@@ -1635,7 +1646,7 @@ describe("community relay loading", () => {
 
     expect(activeCommunity).toBe(otherCommunityPubkey)
     expect(activePermission).toMatchObject({
-      communityPubkey: otherCommunityPubkey,
+      communityAddress: otherCommunity.address,
       key: "other-permission-generation",
     })
   })
@@ -1650,7 +1661,7 @@ describe("community relay loading", () => {
     await staleBootstrap
 
     expect(get(activeExactCommunitySession)).toBeUndefined()
-    expect(get(activeCommunityPermissionStatus).communityPubkey).toBe("")
+    expect(get(activeCommunityPermissionStatus).communityAddress).toBe("")
   })
 
   it("waits for community relay auth before loading bootstrap content", async () => {

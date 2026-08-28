@@ -176,7 +176,7 @@
   )
   const communityBootstrapReady = $derived(Boolean(communityPointer && routeCommunityDefinition))
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === ownerPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityPointer?.address
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -897,8 +897,7 @@
   {#if communityPointer}
     {#key communityPointer.address}
       <CommunityHomeWidgetRecovery
-        communityAddress={communityPointer.address}
-        relayHints={homeWidgetRelayHints}
+        community={communityPointer}
         ready={communityHomeExtensionsReady}
         recoveryStore={homeWidgetRecovery} />
     {/key}
@@ -1021,9 +1020,7 @@
       <CommunityExtensionsPrompt relayHints={homeWidgetRelayHints} />
 
       <CommunityHomeWidgetSlot
-        communityPubkey={ownerPubkey}
-        communityAddress={communityPointer.address}
-        relayHints={homeWidgetRelayHints}
+        community={communityPointer}
         recovery={$homeWidgetRecovery}
         onInitialState={setWidgetSlotInitialState}
         slotType="community-home-before-quicklinks" />
@@ -1145,9 +1142,7 @@
   {#if communityPointer && communityHomeExtensionsReady}
     {#key roomCatalogReadinessKey}
       <CommunityHomeWidgetSlot
-        communityPubkey={ownerPubkey}
-        communityAddress={communityPointer.address}
-        relayHints={homeWidgetRelayHints}
+        community={communityPointer}
         recovery={$homeWidgetRecovery}
         onInitialState={setWidgetSlotInitialState}
         slotType="community-home-after-quicklinks" />

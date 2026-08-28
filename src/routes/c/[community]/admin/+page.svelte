@@ -103,9 +103,7 @@
   const ownerProfileStore = $derived(
     communityPubkey ? deriveProfile(communityPubkey, parsedCommunity?.relayHints) : undefined,
   )
-  const ownerProfile = $derived(
-    ownerProfileStore ? getStore(ownerProfileStore) : undefined,
-  )
+  const ownerProfile = $derived(ownerProfileStore ? getStore(ownerProfileStore) : undefined)
   const adminPath = $derived(
     $activeExactCommunityPointer
       ? makeExactCommunityPath($activeExactCommunityPointer, "admin")
@@ -127,7 +125,7 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -156,8 +154,7 @@
       $pubkey &&
       communityBootstrapReady &&
       $activeExactCommunityDefinition &&
-      normalizePubkey($pubkey) ===
-        normalizePubkey($activeExactCommunityDefinition.ownerPubkey),
+      normalizePubkey($pubkey) === normalizePubkey($activeExactCommunityDefinition.ownerPubkey),
     ),
   )
   const moderatorRequestFilters = $derived(
@@ -298,9 +295,7 @@
   )
   const communityDefinitionPublishRelays = $derived(
     getCommunityRootPublishRelays(communityPublishRelays, undefined, {
-      outboxRelays: getPubkeyOutboxRelays(
-        $pubkey || $activeExactCommunityDefinition?.ownerPubkey,
-      ),
+      outboxRelays: getPubkeyOutboxRelays($pubkey || $activeExactCommunityDefinition?.ownerPubkey),
     }),
   )
   const communityPrimaryRelay = $derived(communityPublishRelays[0] || "")

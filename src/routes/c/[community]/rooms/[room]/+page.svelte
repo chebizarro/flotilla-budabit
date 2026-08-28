@@ -208,7 +208,7 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === communityAddress &&
-      $activeCommunityAuthorityReadiness.communityPubkey === communityOwnerPubkey
+      $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -635,8 +635,7 @@
     id: string,
     root: NonNullable<Parameters<typeof waitAndScrollToEvent>[1]>["root"],
     signal?: AbortSignal,
-  ) =>
-    waitAndScrollToEvent(id, {root, signal, behavior: "auto"})
+  ) => waitAndScrollToEvent(id, {root, signal, behavior: "auto"})
   const waitingForRoom = $derived(
     Boolean(
       communityAuthorityReady &&
@@ -1266,7 +1265,6 @@
         <div class:-mt-1={!item.showPubkey}>
           <RoomItem
             url={communityOwnerPubkey}
-            communityPubkey={communityOwnerPubkey}
             {community}
             profileRelays={$activeExactCommunityRelays}
             interactionRelays={$activeExactCommunityRelays}

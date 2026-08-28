@@ -311,7 +311,7 @@ export type CommunityBootstrapStatus = {
 }
 
 export type CommunityPermissionStatus = {
-  communityPubkey: string
+  communityAddress: string
   key: string
   loading: boolean
   loaded: boolean
@@ -367,7 +367,7 @@ export const activeCommunityBootstrapStatus = writable<CommunityBootstrapStatus>
   loaded: false,
 })
 export const activeCommunityPermissionStatus = writable<CommunityPermissionStatus>({
-  communityPubkey: "",
+  communityAddress: "",
   key: "",
   loading: false,
   loaded: false,
@@ -375,7 +375,7 @@ export const activeCommunityPermissionStatus = writable<CommunityPermissionStatu
   hasCachedEvents: false,
 })
 export const activeCommunityAdmissionFormStatus = writable<CommunityPermissionStatus>({
-  communityPubkey: "",
+  communityAddress: "",
   key: "",
   loading: false,
   loaded: false,
@@ -441,7 +441,7 @@ export const clearActiveCommunityState = () => {
   clearActiveExactCommunity()
   startCommunityPermissionLoadContext()
   activeCommunityPermissionStatus.set({
-    communityPubkey: "",
+    communityAddress: "",
     key: "",
     loading: false,
     loaded: false,
@@ -449,7 +449,7 @@ export const clearActiveCommunityState = () => {
     hasCachedEvents: false,
   })
   activeCommunityAdmissionFormStatus.set({
-    communityPubkey: "",
+    communityAddress: "",
     key: "",
     loading: false,
     loaded: false,
@@ -710,17 +710,17 @@ export type CommunityPermissionReadiness = "loading" | "ready" | "unavailable"
 
 export const getCommunityPermissionReadiness = ({
   status,
-  communityPubkey,
+  communityAddress,
   expectedKeyPrefix,
 }: {
   status: CommunityPermissionStatus
-  communityPubkey: string
+  communityAddress: string
   expectedKeyPrefix: string
 }): CommunityPermissionReadiness => {
   const matchesCurrentAuthority = Boolean(
-    communityPubkey &&
+    communityAddress &&
     expectedKeyPrefix &&
-    normalizePubkey(status.communityPubkey) === normalizePubkey(communityPubkey) &&
+    status.communityAddress === communityAddress &&
     status.key.startsWith(expectedKeyPrefix),
   )
 
@@ -732,7 +732,7 @@ export const getCommunityPermissionReadiness = ({
 }
 
 export type ActiveCommunityPermissionReadiness = {
-  communityPubkey: string
+  communityAddress: string
   key: string
   state: CommunityPermissionReadiness
 }
@@ -745,7 +745,7 @@ const deriveActiveCommunityPermissionReadiness = (
     ([$definition, $relays, $pubkey, $status]) => {
       if (!$definition) {
         return {
-          communityPubkey: "",
+          communityAddress: "",
           key: "",
           state: "loading" as CommunityPermissionReadiness,
         }
@@ -758,11 +758,11 @@ const deriveActiveCommunityPermissionReadiness = (
       )
 
       return {
-        communityPubkey: $definition.ownerPubkey,
+        communityAddress: $definition.pointer.address,
         key: $status.key,
         state: getCommunityPermissionReadiness({
           status: $status,
-          communityPubkey: $definition.ownerPubkey,
+          communityAddress: $definition.pointer.address,
           expectedKeyPrefix,
         }),
       }
@@ -774,6 +774,35 @@ export const activeCommunityAuthorityReadiness = deriveActiveCommunityPermission
 )
 export const activeCommunityAdmissionFormReadiness = deriveActiveCommunityPermissionReadiness(
   activeCommunityAdmissionFormStatus,
+)
+
+export type ActiveCommunityDescriptor = {
+  community: CommunityPointer
+  definition?: CommunityDefinition
+  relays: string[]
+  authorityReadiness: ActiveCommunityPermissionReadiness
+  admissionFormReadiness: ActiveCommunityPermissionReadiness
+}
+
+export const activeCommunityDescriptor: Readable<ActiveCommunityDescriptor | undefined> = derived(
+  [
+    activeExactCommunityPointer,
+    activeExactCommunityDefinition,
+    activeExactCommunityRelays,
+    activeCommunityAuthorityReadiness,
+    activeCommunityAdmissionFormReadiness,
+  ],
+  ([community, definition, relays, authorityReadiness, admissionFormReadiness]) => {
+    if (!community) return undefined
+
+    return {
+      community,
+      definition: definition?.pointer.address === community.address ? definition : undefined,
+      relays,
+      authorityReadiness,
+      admissionFormReadiness,
+    }
+  },
 )
 
 const startCommunityPermissionLoadStatus = ({
@@ -795,7 +824,7 @@ const startCommunityPermissionLoadStatus = ({
 
   if (context.generation === latestCommunityPermissionLoadGeneration) {
     status.set({
-      communityPubkey: definition.ownerPubkey,
+      communityAddress: definition.pointer.address,
       key,
       loading: hasFilters,
       loaded: !hasFilters,
@@ -3369,7 +3398,7 @@ const ensureCompletedCommunityPermissionHydration = (
   const authorityStatus = get(activeCommunityPermissionStatus)
   const admissionFormStatus = get(activeCommunityAdmissionFormStatus)
   const statusMatches = (status: CommunityPermissionStatus) =>
-    status.communityPubkey === definition.ownerPubkey && status.key.startsWith(keyPrefix)
+    status.communityAddress === definition.pointer.address && status.key.startsWith(keyPrefix)
   const loadAuthority =
     !statusMatches(authorityStatus) || (!authorityStatus.loading && !authorityStatus.complete)
   const loadAdmissionForms =

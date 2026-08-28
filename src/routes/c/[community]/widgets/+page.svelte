@@ -70,6 +70,7 @@
     }
   })
   const communityPubkey = $derived(parsedCommunity?.ownerPubkey || "")
+  const communityAddress = $derived(parsedCommunity?.address || "")
   const communityBootstrapReady = $derived(
     Boolean(
       communityPubkey &&
@@ -85,7 +86,7 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -476,7 +477,8 @@
       signal: controller.signal,
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `community-widgets:${communityPubkey}:targets`,
-    }).catch(error => {
+    })
+      .catch(error => {
         if (controller.signal.aborted) return
         console.warn("[community-widgets] Failed to load targeting history", error)
       })
@@ -521,7 +523,8 @@
       signal: controller.signal,
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `community-widgets:${communityPubkey}:target-deletes`,
-    }).catch(error => {
+    })
+      .catch(error => {
         if (controller.signal.aborted) return
         console.warn("[community-widgets] Failed to load targeting delete history", error)
       })

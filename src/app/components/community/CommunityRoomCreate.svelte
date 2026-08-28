@@ -58,7 +58,7 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === community.address &&
-      $activeCommunityAuthorityReadiness.communityPubkey === community.ownerPubkey
+      $activeCommunityAuthorityReadiness.communityAddress === community.address
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )

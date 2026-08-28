@@ -64,7 +64,7 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
@@ -239,7 +239,8 @@
       priority: RELAY_REQUEST_PRIORITY.interactive,
       owner: `community-repositories:${communityPubkey}`,
       signal: controller.signal,
-    }).catch(error => {
+    })
+      .catch(error => {
         if (controller.signal.aborted) return
         console.warn("[community-repositories] Failed to load direct repositories", error)
       })

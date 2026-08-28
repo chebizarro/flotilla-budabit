@@ -42,14 +42,15 @@ describe("reactive comment counts", () => {
     expect(roomItem).not.toContain("deriveEventsForUrl(url")
   })
 
-  it("passes community owner identity explicitly to message action widgets", () => {
-    expect(channelMessage).toContain("communityPubkey?: string")
-    expect(channelMessage).toContain("{communityPubkey}")
-    expect(channelMessage).not.toContain("communityPubkey={url}")
-    expect(roomItem).toContain("communityPubkey?: string")
-    expect(roomItem).not.toContain("communityPubkey={url}")
-    expect(goal).toContain("communityPubkey={communityOwnerPubkey}")
-    expect(calendar).toContain("communityPubkey={communityOwnerPubkey}")
+  it("passes exact community descriptors to message action widgets", () => {
+    expect(channelMessage).toContain("community?: CommunityPointer")
+    expect(channelMessage).toContain("{community}")
+    expect(channelMessage).not.toContain("communityPubkey")
+    expect(roomItem).toContain("community?: CommunityPointer")
+    expect(roomItem).toContain("{community}")
+    expect(roomItem).not.toContain("communityPubkey")
+    expect(goal).toContain("community={routeCommunity}")
+    expect(calendar).toContain("community={routeCommunity}")
   })
 
   it("keeps Calendar activity live because its route feed does not carry comments", () => {

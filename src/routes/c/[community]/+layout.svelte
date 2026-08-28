@@ -202,8 +202,7 @@
       $activeExactCommunityPointer &&
       $activeExactCommunityDefinition.pointer.address === exactCommunity?.address &&
       $activeExactCommunityPointer.address === exactCommunity?.address &&
-      $activeCommunityAuthorityReadiness.communityPubkey ===
-        $activeExactCommunityDefinition.ownerPubkey &&
+      $activeCommunityAuthorityReadiness.communityAddress === exactCommunity?.address &&
       $activeCommunityAuthorityReadiness.state === "ready"
       ? filterAuthorizedCommunityTargetingEvents({
           community: $activeExactCommunityPointer!,
@@ -436,7 +435,7 @@
       $activeCommunityBootstrapStatus.key === exactCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
-      $activeCommunityAuthorityReadiness.communityPubkey === definition.ownerPubkey &&
+      $activeCommunityAuthorityReadiness.communityAddress === definition.pointer.address &&
       $activeCommunityAuthorityReadiness.state === "ready",
     )
 
@@ -472,7 +471,7 @@
       $activeCommunityBootstrapStatus.key === exactCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
-      $activeCommunityAuthorityReadiness.communityPubkey === exactDefinition.ownerPubkey &&
+      $activeCommunityAuthorityReadiness.communityAddress === exactDefinition.pointer.address &&
       $activeCommunityAuthorityReadiness.state === "ready",
     )
 

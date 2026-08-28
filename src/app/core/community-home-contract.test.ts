@@ -12,13 +12,14 @@ describe("canonical community home contracts", () => {
   const launchers = readProjectFile("../components/community/CommunityWidgetSlotLaunchers.svelte")
 
   it("uses the active exact pointer instead of reparsing a legacy community identity", () => {
-    for (const source of [home, topMenu, homeSlot, launchers]) {
-      expect(source).toContain("activeExactCommunityPointer")
+    expect(home).toContain("activeExactCommunityPointer")
+    for (const source of [topMenu, homeSlot, launchers]) {
+      expect(source).toContain("activeCommunityDescriptor")
       expect(source).not.toContain("parseCommunityRouteParam")
     }
 
     expect(home).not.toContain("parseExactCommunityRouteParam")
-    expect(topMenu).toContain("$activeExactCommunityPointer")
+    expect(topMenu).toContain("$activeCommunityDescriptor")
   })
 
   it("synchronizes the route pointer before rendering community content", () => {
@@ -51,7 +52,8 @@ describe("canonical community home contracts", () => {
 
   it("binds widget catalogs, modal context, and runtime authority to one exact pointer", () => {
     for (const source of [homeSlot, launchers]) {
-      expect(source).toContain("$activeExactCommunityPointer?.address === communityAddress")
+      expect(source).toContain("$activeCommunityDescriptor")
+      expect(source).toContain("community.address")
       expect(source).toContain("community: exactCommunity")
       expect(source).toContain("address: exactCommunity.address")
       expect(source).toContain("ownerPubkey: exactCommunity.ownerPubkey")

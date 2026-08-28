@@ -129,12 +129,12 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
   const communityAdmissionFormReadiness = $derived(
-    $activeCommunityAdmissionFormReadiness.communityPubkey === communityPubkey
+    $activeCommunityAdmissionFormReadiness.communityAddress === communityAddress
       ? $activeCommunityAdmissionFormReadiness.state
       : "loading",
   )

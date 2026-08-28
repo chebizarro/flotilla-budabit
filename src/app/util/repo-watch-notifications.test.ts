@@ -119,7 +119,7 @@ vi.mock("@app/core/community-state", () => ({
   activeExactCommunityDefinition: readable(undefined),
   activeCommunityModeratorRequestStates: readable([]),
   activeCommunityPermissionStatus: readable({
-    communityPubkey: "",
+    communityAddress: "",
     key: "",
     loading: false,
     loaded: false,

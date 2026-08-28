@@ -23,7 +23,7 @@ vi.mock("@app/core/community-state", () => ({
   activeExactCommunityDefinition: readable(undefined),
   activeCommunityModeratorRequestStates: readable([]),
   activeCommunityPermissionStatus: readable({
-    communityPubkey: "",
+    communityAddress: "",
     key: "",
     loading: false,
     loaded: false,
@@ -92,7 +92,7 @@ describe("notifications", () => {
       ownerPubkey: community.ownerPubkey,
     } as CommunityDefinition
     const ready: CommunityPermissionStatus = {
-      communityPubkey,
+      communityAddress: community.address,
       key: `${viewer}:definition:wss://relay.example/:1`,
       loading: false,
       loaded: true,
@@ -127,7 +127,7 @@ describe("notifications", () => {
     expect(
       getActiveCommunityNotificationPermissionKey(definition, viewer, {
         ...ready,
-        communityPubkey: "c".repeat(64),
+        communityAddress: makeTestCommunity(11, 13).address,
       }),
     ).toBe("")
     expect(

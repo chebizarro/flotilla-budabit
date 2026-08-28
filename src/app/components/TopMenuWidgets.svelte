@@ -1,34 +1,17 @@
 <script lang="ts">
   import {page} from "$app/stores"
   import CommunityWidgetSlotLaunchers from "@app/components/community/CommunityWidgetSlotLaunchers.svelte"
-  import {
-    activeCommunityAuthorityReadiness,
-    activeExactCommunityDefinition,
-    activeExactCommunityPointer,
-    activeExactCommunityRelays,
-  } from "@app/core/community-state"
+  import {activeCommunityDescriptor} from "@app/core/community-state"
 
-  const exactCommunity = $derived($activeExactCommunityPointer)
-  const relayHints = $derived($activeExactCommunityRelays)
-  const permissionReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === exactCommunity?.ownerPubkey
-      ? $activeCommunityAuthorityReadiness.state
-      : "loading",
-  )
+  const descriptor = $derived($activeCommunityDescriptor)
   const communityCoreReady = $derived(
-    Boolean(
-      exactCommunity &&
-      $activeExactCommunityDefinition?.pointer.address === exactCommunity.address &&
-      permissionReadiness === "ready",
-    ),
+    Boolean(descriptor?.definition && descriptor.authorityReadiness.state === "ready"),
   )
 </script>
 
-{#if exactCommunity && communityCoreReady}
+{#if descriptor && communityCoreReady}
   <CommunityWidgetSlotLaunchers
-    communityPubkey={exactCommunity.ownerPubkey}
-    communityAddress={exactCommunity.address}
-    {relayHints}
+    community={descriptor.community}
     slotType="global-menu"
     variant="top-menu"
     context={{route: $page.url.pathname}} />

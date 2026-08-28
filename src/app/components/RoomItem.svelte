@@ -37,7 +37,6 @@
 
   interface Props {
     url: string
-    communityPubkey?: string
     community?: CommunityPointer
     event: TrustedEvent
     replyTo?: (event: TrustedEvent) => void
@@ -59,7 +58,6 @@
 
   const {
     url,
-    communityPubkey = "",
     community = undefined,
     event,
     replyTo = undefined,
@@ -321,10 +319,9 @@
           relays={actionRelayTargets}
           {communitySectionName} />
       </div>
-      {#if !readOnly}
+      {#if !readOnly && community}
         <CommunityWidgetSlotLaunchers
-          {communityPubkey}
-          relayHints={relayTargets}
+          {community}
           slotType="chat-message-actions"
           variant="message-actions"
           context={{

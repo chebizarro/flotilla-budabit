@@ -3,15 +3,12 @@
   import {pubkey} from "@welshman/app"
   import {onDestroy} from "svelte"
   import WidgetFrame from "@app/components/WidgetFrame.svelte"
-  import {normalizePubkey} from "@app/core/community"
+  import {normalizePubkey, type CommunityPointer} from "@app/core/community"
   import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
   import {
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
-    activeExactCommunityDefinition,
-    activeExactCommunityPointer,
-    activeExactCommunityRelays,
   } from "@app/core/community-state"
   import {makeCommunityWidgetContext} from "@app/extensions/community-context"
   import {
@@ -33,32 +30,23 @@
   } from "@app/extensions/types"
 
   type Props = {
-    communityPubkey: string
-    communityAddress: string
-    relayHints?: string[]
+    community: CommunityPointer
     recovery: CommunityHomeWidgetRecoveryState
     slotType: WidgetHomeSlotType
     onInitialState?: (state: CommunityHomeWidgetSlotInitialState) => void
   }
 
-  const {
-    communityPubkey,
-    communityAddress,
-    relayHints = [],
-    recovery,
-    slotType,
-    onInitialState,
-  }: Props = $props()
-  const exactCommunity = $derived(
-    $activeExactCommunityPointer?.address === communityAddress
-      ? $activeExactCommunityPointer
+  const {community, recovery, slotType, onInitialState}: Props = $props()
+  const descriptor = $derived(
+    $activeCommunityDescriptor?.community.address === community.address
+      ? $activeCommunityDescriptor
       : undefined,
   )
-  const exactDefinition = $derived(
-    $activeExactCommunityDefinition?.pointer.address === communityAddress
-      ? $activeExactCommunityDefinition
-      : undefined,
-  )
+  const exactCommunity = $derived(descriptor?.community)
+  const exactDefinition = $derived(descriptor?.definition)
+  const communityAddress = $derived(community.address)
+  const relayHints = $derived(community.relayHints)
+  const communityRelays = $derived(descriptor?.relays.length ? descriptor.relays : relayHints)
   const contextDefinition = $derived(
     exactDefinition ? {...exactDefinition, pubkey: exactDefinition.ownerPubkey} : undefined,
   )
@@ -106,9 +94,8 @@
     exactCommunity ? mergeCommunitySlotWidgets(slotWidgets, sharedConfigSlotWidgets) : [],
   )
   const communityReadinessKey = $derived.by(() => {
-    const readiness = $activeCommunityAuthorityReadiness
-    return normalizePubkey(readiness.communityPubkey) === normalizePubkey(communityPubkey) &&
-      readiness.state === "ready"
+    const readiness = descriptor?.authorityReadiness
+    return readiness?.communityAddress === community.address && readiness.state === "ready"
       ? JSON.stringify({authorityKey: readiness.key, authorityState: readiness.state})
       : ""
   })
@@ -119,7 +106,7 @@
       profileListEvents: $activeCommunityProfileListEvents,
       reportState: $activeCommunityReportState,
       userPubkey: $pubkey || "",
-      relays: $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints,
+      relays: communityRelays,
       relayHints,
       readinessKey: communityReadinessKey,
     })
@@ -132,7 +119,7 @@
       profileListEvents: $activeCommunityProfileListEvents,
       authorityEvidenceSettled: true,
       reportState: $activeCommunityReportState,
-      relays: $activeExactCommunityRelays.length ? $activeExactCommunityRelays : relayHints,
+      relays: communityRelays,
       relayHints,
       communityContext,
     }

@@ -473,7 +473,7 @@ export const getActiveCommunityNotificationPermissionKey = (
 ) => {
   const expectedKeyPrefix = `${normalizePubkey(currentPubkey)}:${definition.event.id}:`
 
-  return normalizePubkey(permissionStatus.communityPubkey) === definition.ownerPubkey &&
+  return permissionStatus.communityAddress === definition.pointer.address &&
     permissionStatus.key.startsWith(expectedKeyPrefix) &&
     !permissionStatus.loading &&
     permissionStatus.loaded &&

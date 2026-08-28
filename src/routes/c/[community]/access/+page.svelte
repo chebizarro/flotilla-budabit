@@ -109,6 +109,7 @@
 
   const parsedCommunity = $derived(parseExactCommunityRouteParam($page.params.community))
   const communityPubkey = $derived(parsedCommunity?.ownerPubkey || "")
+  const communityAddress = $derived(parsedCommunity?.address || "")
   const exactCommunityId = $derived($activeExactCommunityPointer?.communityId || "")
   const exactCommunityRoute = $derived($activeExactCommunityPointer?.naddr || "")
   const communityBootstrapReady = $derived(
@@ -126,12 +127,12 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityPubkey === communityPubkey
+    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
       ? $activeCommunityAuthorityReadiness.state
       : "loading",
   )
   const communityAdmissionFormReadiness = $derived(
-    $activeCommunityAdmissionFormReadiness.communityPubkey === communityPubkey
+    $activeCommunityAdmissionFormReadiness.communityAddress === communityAddress
       ? $activeCommunityAdmissionFormReadiness.state
       : "loading",
   )
