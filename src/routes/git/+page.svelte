@@ -4419,6 +4419,7 @@
           onPublishEvent: async (repoEvent: NostrEvent, context?: {relays: string[]}) => {
             const explicitRelays = context?.relays || []
             const targetRelays =
+              (repoEvent.kind === GIT_REPO_STATE && context?.relays !== undefined) ||
               explicitRelays.length > 0
                 ? explicitRelays
                 : resolveRepoEventPublishRelays(repoEvent, defaultRepoRelays)
@@ -4579,6 +4580,7 @@
           onPublishEvent: async (repoEvent: NostrEvent, context?: {relays: string[]}) => {
             const explicitRelays = context?.relays || []
             const targetRelays =
+              (repoEvent.kind === GIT_REPO_STATE && context?.relays !== undefined) ||
               explicitRelays.length > 0
                 ? explicitRelays
                 : resolveRepoEventPublishRelays(repoEvent, defaultRepoRelays)

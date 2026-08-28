@@ -3535,7 +3535,7 @@
     if (event.kind === GIT_REPO_STATE) {
       const publishRelays = requireRepoPublicationScope({
         event,
-        relays: options.relays?.length ? options.relays : fallbackRelays,
+        relays: options.relays !== undefined ? options.relays : fallbackRelays,
         repoAddress: `${GIT_REPO_ANNOUNCEMENT}:${repoPubkey}:${repoName}`,
       })
       if (options.transport) return options.transport.publish(event, publishRelays)

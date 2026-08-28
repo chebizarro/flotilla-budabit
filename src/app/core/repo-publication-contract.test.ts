@@ -111,6 +111,7 @@ describe("repository publication source contract", () => {
 
   it("validates repository state relays before transport", () => {
     const layout = readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte")
+    const gitPage = readProjectFile("../../routes/git/+page.svelte")
     const stateGuard = layout.indexOf("if (event.kind === GIT_REPO_STATE)")
     const scopeGuard = layout.indexOf("requireRepoPublicationScope({", stateGuard)
     const transport = layout.indexOf("options.transport.publish(event, publishRelays)", stateGuard)
@@ -118,6 +119,14 @@ describe("repository publication source contract", () => {
     expect(stateGuard).toBeGreaterThan(-1)
     expect(scopeGuard).toBeGreaterThan(stateGuard)
     expect(transport).toBeGreaterThan(scopeGuard)
+    expect(layout).toContain(
+      "relays: options.relays !== undefined ? options.relays : fallbackRelays",
+    )
+    expect(
+      gitPage.match(
+        /repoEvent\.kind === GIT_REPO_STATE && context\?\.relays !== undefined/g,
+      ),
+    ).toHaveLength(2)
   })
 
   it("completes strict repository inventory before destructive deletion work", () => {
