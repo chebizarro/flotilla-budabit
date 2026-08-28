@@ -75,6 +75,21 @@ export const setChecked = (key: string) => checked.update(state => ({...state, [
 export const setCheckedAt = (key: string, timestamp: number) =>
   checked.update(state => ({...state, [key]: timestamp}))
 
+export const setCheckedAtMany = (entries: Iterable<readonly [string, number]>) =>
+  checked.update(state => {
+    let next = state
+
+    for (const [key, timestamp] of entries) {
+      const normalizedTimestamp = normalizeChecked(timestamp)
+      if (!key || normalizedTimestamp <= normalizeChecked(Number(next[key] || 0))) continue
+
+      if (next === state) next = {...state}
+      next[key] = normalizedTimestamp
+    }
+
+    return next
+  })
+
 export type NotificationCandidate = {
   path: string
   latestEvent?: TrustedEvent

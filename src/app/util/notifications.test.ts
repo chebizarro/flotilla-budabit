@@ -208,6 +208,26 @@ describe("notifications", () => {
     expect(setCheckedForRepoNotifications(new Set(), {repoAddress})).toBeUndefined()
   })
 
+  it("advances checked paths to visible notification timestamps without moving them backward", async () => {
+    const {checked, setCheckedAtMany} = await import("./notifications")
+    checked.set({"/chat/alice": 15, "/git/repo/issues": 30})
+
+    setCheckedAtMany([
+      ["/chat/alice", 10],
+      ["/chat/alice", 20],
+      ["/git/repo/issues", 25],
+      ["/c/community/threads", 40],
+      ["", 50],
+      ["/ignored", 0],
+    ])
+
+    expect(get(checked)).toEqual({
+      "/chat/alice": 20,
+      "/git/repo/issues": 30,
+      "/c/community/threads": 40,
+    })
+  })
+
   it("setupBudabitNotifications returns cleanup", async () => {
     const {setupBudabitNotifications} = await import("./notifications")
     const cleanup = setupBudabitNotifications()

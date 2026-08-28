@@ -64,6 +64,7 @@
     notificationHistoryCanLoadMore,
     resetNotificationHistory,
   } from "@app/util/notification-history"
+  import {setCheckedAtMany} from "@app/util/notifications"
   import {notificationCenterRows} from "@app/util/notification-sources"
   import {
     filterNotificationRows,
@@ -216,13 +217,23 @@
       }
     }
 
-    const visibleUnreadIds = getUnreadNotificationRowIdsState(
-      $notificationReadState,
-      $pubkey || undefined,
-      visibleRowsWithoutActorNames.map(row => row.id),
+    const visibleUnreadIds = new Set(
+      getUnreadNotificationRowIdsState(
+        $notificationReadState,
+        $pubkey || undefined,
+        visibleRowsWithoutActorNames.map(row => row.id),
+      ),
     )
-    if (visibleUnreadIds.length > 0)
-      markNotificationRowsRead($pubkey || undefined, visibleUnreadIds)
+    if (visibleUnreadIds.size > 0) {
+      const visibleUnreadRows = visibleRowsWithoutActorNames.filter(row =>
+        visibleUnreadIds.has(row.id),
+      )
+      markNotificationRowsRead(
+        $pubkey || undefined,
+        visibleUnreadRows.map(row => row.id),
+      )
+      setCheckedAtMany(visibleUnreadRows.map(row => [row.readPath, row.createdAt] as const))
+    }
   })
 
   $effect(() => {
