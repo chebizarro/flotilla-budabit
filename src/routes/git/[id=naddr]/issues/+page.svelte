@@ -7,13 +7,7 @@
     type LabelEvent,
   } from "@nostr-git/core/events"
   import {Plus, SearchX, SlidersHorizontal} from "@lucide/svelte"
-  import {
-    Address,
-    getTagValue,
-    GIT_STATUS_OPEN,
-    getTag,
-    type TrustedEvent,
-  } from "@welshman/util"
+  import {Address, getTagValue, GIT_STATUS_OPEN, getTag, type TrustedEvent} from "@welshman/util"
   import {createSearch, pubkey, repository} from "@welshman/app"
   import {sortBy} from "@welshman/lib"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
@@ -61,16 +55,14 @@
   import {editedTargetIds, filterVisibleAfterDeletesAndEdits} from "@app/core/event-edits"
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
   import {postIssue, postStatus} from "@app/core/git-commands"
-  import {
-    getAutoFilledRootVisibleCount,
-    getRepoRootListPresentation,
-  } from "@app/core/repo-root-presentation"
+  import {getRepoRootListPresentation} from "@app/core/repo-root-presentation"
 
   let showScrollButton = $state(false)
   let pageContainerRef: HTMLElement | undefined = $state()
   let scrollParent: HTMLElement | null = $state(null)
   const ITEMS_PER_PAGE = 20
   let visibleIssueCount = $state(ITEMS_PER_PAGE)
+  let pageFillInProgress = $state(false)
   let lastKnownIssueIndex = $state(0)
   let lastKnownIssueOffset = $state(0)
   let lastKnownIssueId = $state("")
@@ -217,8 +209,7 @@
       offset,
       id: issueId,
       title,
-      visibleCount:
-        issueIndex >= 0 ? Math.max(visibleIssueCount, issueIndex + 1) : visibleIssueCount,
+      visibleCount: visibleIssueCount,
     }
   }
 
@@ -293,7 +284,7 @@
       offset: anchorOffset,
       id: issue.id,
       title,
-      visibleCount: Math.max(visibleIssueCount, index + 1),
+      visibleCount: visibleIssueCount,
     }
   }
 
@@ -361,7 +352,10 @@
         parsedVisibleCount > 0 &&
         visibleIssueCount < parsedVisibleCount
       ) {
-        visibleIssueCount = Math.min(Math.max(parsedVisibleCount, ITEMS_PER_PAGE), count)
+        visibleIssueCount = Math.max(
+          ITEMS_PER_PAGE,
+          Math.ceil(parsedVisibleCount / ITEMS_PER_PAGE) * ITEMS_PER_PAGE,
+        )
         return
       }
     } catch {
@@ -393,9 +387,9 @@
     }
 
     const targetIndex = matchIndex >= 0 ? matchIndex : fallbackIndex
-    const requiredVisibleCount = Math.max(targetIndex + 1, ITEMS_PER_PAGE)
-    if (visibleIssueCount < requiredVisibleCount) {
-      visibleIssueCount = Math.min(requiredVisibleCount, count)
+    const requiredVisibleCount = (Math.floor(targetIndex / ITEMS_PER_PAGE) + 1) * ITEMS_PER_PAGE
+    if (visibleIssueCount !== requiredVisibleCount) {
+      visibleIssueCount = requiredVisibleCount
       return
     }
 
@@ -874,30 +868,6 @@
     visibleIssueCount = ITEMS_PER_PAGE
   })
 
-  $effect(() => {
-    const total = searchedIssues.length
-    const nextVisibleCount = getAutoFilledRootVisibleCount({
-      visibleCount: visibleIssueCount,
-      resultCount: total,
-      pageSize: ITEMS_PER_PAGE,
-    })
-
-    if (visibleIssueCount !== nextVisibleCount) visibleIssueCount = nextVisibleCount
-  })
-
-  const visibleIssues = $derived.by(() => searchedIssues.slice(0, visibleIssueCount))
-  const canLoadMoreIssues = $derived.by(
-    () => visibleIssueCount < searchedIssues.length || issueListPresentation.canLoadOlder,
-  )
-
-  const loadMoreIssues = async () => {
-    if (visibleIssueCount < searchedIssues.length) {
-      visibleIssueCount = Math.min(visibleIssueCount + ITEMS_PER_PAGE, searchedIssues.length)
-      return
-    }
-
-    await repoRootHistory.loadOlderRoots()
-  }
   const issueProjectionPending = $derived(
     issues.length > 0 && (issueList.length === 0 || searchedIssuesCacheKey === ""),
   )
@@ -913,6 +883,45 @@
       cacheHydrationFailed: $repoCacheHydrationFailedStore,
     }),
   )
+
+  $effect(() => {
+    const total = searchedIssues.length
+    const pageStart = Math.max(0, visibleIssueCount - ITEMS_PER_PAGE)
+    const canLoadOlder = issueListPresentation.canLoadOlder
+    const filling = pageFillInProgress
+
+    if (total <= pageStart && visibleIssueCount > ITEMS_PER_PAGE && !canLoadOlder) {
+      visibleIssueCount = Math.max(
+        ITEMS_PER_PAGE,
+        Math.ceil(total / ITEMS_PER_PAGE) * ITEMS_PER_PAGE,
+      )
+      return
+    }
+    if (total >= visibleIssueCount || !canLoadOlder || filling) return
+
+    pageFillInProgress = true
+    void repoRootHistory.loadOlderRoots().finally(() => {
+      pageFillInProgress = false
+    })
+  })
+
+  const issuePageStart = $derived(Math.max(0, visibleIssueCount - ITEMS_PER_PAGE))
+  const visibleIssues = $derived.by(() => searchedIssues.slice(issuePageStart, visibleIssueCount))
+  const currentIssuePage = $derived(Math.floor(issuePageStart / ITEMS_PER_PAGE) + 1)
+  const canShowPreviousIssuePage = $derived(visibleIssueCount > ITEMS_PER_PAGE)
+  const canShowNextIssuePage = $derived(
+    visibleIssueCount < searchedIssues.length || issueListPresentation.canLoadOlder,
+  )
+
+  const showPreviousIssuePage = () => {
+    visibleIssueCount = Math.max(ITEMS_PER_PAGE, visibleIssueCount - ITEMS_PER_PAGE)
+    scrollToTop()
+  }
+
+  const showNextIssuePage = () => {
+    visibleIssueCount += ITEMS_PER_PAGE
+    scrollToTop()
+  }
   // CRITICAL: Cleanup on destroy to prevent memory leaks and blocking navigation
   onDestroy(() => {
     const seenAt = getIssuesSeenAt()
@@ -1134,7 +1143,11 @@
         </GitButton>
       {/if}
       {#if issueListPresentation.canLoadOlder}
-        <GitButton variant="outline" size="sm" class="mt-3" onclick={loadMoreIssues}>
+        <GitButton
+          variant="outline"
+          size="sm"
+          class="mt-3"
+          onclick={() => repoRootHistory.loadOlderRoots()}>
           Load older history
         </GitButton>
       {/if}
@@ -1143,13 +1156,13 @@
     <div class="overflow-hidden rounded-md border border-border bg-card">
       {#each visibleIssues as issue, index (issue.id)}
         <div
-          data-index={index}
+          data-index={issuePageStart + index}
           data-issue-id={issue.id}
           class={`w-full cursor-pointer border-b border-l-2 border-border outline-none transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${getLatestIssueActivityAt(issue) > lastIssuesSeen ? "border-l-primary" : "border-l-transparent"}`}
-          onclick={event => handleIssueClick(event, issue, index)}
+          onclick={event => handleIssueClick(event, issue, issuePageStart + index)}
           role="link"
           tabindex="0"
-          onkeydown={event => handleIssueKeydown(event, issue, index)}>
+          onkeydown={event => handleIssueKeydown(event, issue, issuePageStart + index)}>
           <IssueListRow
             event={issue.event}
             status={statusMap[issue.id] || "open"}
@@ -1160,14 +1173,27 @@
       {/each}
     </div>
 
-    {#if canLoadMoreIssues}
-      <div class="mt-3 flex flex-col items-center gap-1.5 pb-2">
-        <GitButton variant="outline" size="sm" class="h-8 min-h-0 gap-2" onclick={loadMoreIssues}>
-          Load more
+    {#if canShowPreviousIssuePage || canShowNextIssuePage || pageFillInProgress}
+      <div class="mt-3 flex items-center justify-center gap-3 pb-2">
+        <GitButton
+          variant="outline"
+          size="sm"
+          class="h-8 min-h-0"
+          disabled={!canShowPreviousIssuePage || pageFillInProgress}
+          onclick={showPreviousIssuePage}>
+          Previous
         </GitButton>
-        <p class="text-xs text-muted-foreground">
-          Showing {visibleIssues.length} of {searchedIssues.length}
+        <p class="min-w-20 text-center text-xs text-muted-foreground">
+          {pageFillInProgress ? "Loading page..." : `Page ${currentIssuePage}`}
         </p>
+        <GitButton
+          variant="outline"
+          size="sm"
+          class="h-8 min-h-0"
+          disabled={!canShowNextIssuePage || pageFillInProgress}
+          onclick={showNextIssuePage}>
+          Next
+        </GitButton>
       </div>
     {/if}
   {/if}

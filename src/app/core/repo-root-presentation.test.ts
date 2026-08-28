@@ -1,6 +1,6 @@
 import {describe, expect, it} from "vitest"
 import type {RepoRootHistorySnapshot} from "./repo-root-history"
-import {getAutoFilledRootVisibleCount, getRepoRootListPresentation} from "./repo-root-presentation"
+import {getRepoRootListPresentation} from "./repo-root-presentation"
 
 const history = (
   status: RepoRootHistorySnapshot["status"],
@@ -15,18 +15,6 @@ const history = (
 })
 
 describe("repository root list presentation", () => {
-  it("fills the first visible page as cold-start results arrive", () => {
-    expect(getAutoFilledRootVisibleCount({visibleCount: 3, resultCount: 10, pageSize: 20})).toBe(10)
-    expect(getAutoFilledRootVisibleCount({visibleCount: 3, resultCount: 30, pageSize: 20})).toBe(20)
-    expect(getAutoFilledRootVisibleCount({visibleCount: 40, resultCount: 50, pageSize: 20})).toBe(
-      40,
-    )
-    expect(getAutoFilledRootVisibleCount({visibleCount: 40, resultCount: 10, pageSize: 20})).toBe(
-      10,
-    )
-    expect(getAutoFilledRootVisibleCount({visibleCount: 20, resultCount: 0, pageSize: 20})).toBe(0)
-  })
-
   it("preserves rows while refresh is loading, partial, failed, or unavailable", () => {
     for (const [authority, snapshot, notice] of [
       ["available", history("loading", {operation: "recent"}), "loading"],

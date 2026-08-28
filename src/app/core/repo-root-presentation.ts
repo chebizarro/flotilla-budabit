@@ -18,21 +18,6 @@ export type RepoRootListPresentation = {
   canLoadOlder: boolean
 }
 
-export const getAutoFilledRootVisibleCount = ({
-  visibleCount,
-  resultCount,
-  pageSize,
-}: {
-  visibleCount: number
-  resultCount: number
-  pageSize: number
-}) => {
-  const boundedResultCount = Math.max(0, resultCount)
-  const firstPageTarget = Math.min(Math.max(1, pageSize), boundedResultCount)
-
-  return Math.min(Math.max(visibleCount, firstPageTarget), boundedResultCount)
-}
-
 export const getRepoRootListPresentation = ({
   authority,
   history,

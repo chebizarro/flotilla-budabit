@@ -114,10 +114,11 @@ test("fills the first issue page reactively and stops loading after history time
   await mockRelay.injectEvents(issues.slice(4))
 
   await expect(page.locator("[data-issue-id]")).toHaveCount(20, {timeout: 10_000})
-  await expect(page.getByRole("button", {name: "Load more", exact: true})).toBeVisible()
+  await expect(page.getByText("Page 1", {exact: true})).toBeVisible()
+  await expect(page.getByRole("button", {name: "Next", exact: true})).toBeVisible()
 })
 
-test("replaces an EOSE-backed empty PR list when late live activity arrives", async ({page}) => {
+test("replaces an empty PR list and paginates late live activity", async ({page}) => {
   const relayUrl = "wss://git-pr-list-resolution.test"
   const identifier = "pr-list-resolution-fixture"
   const repoAddress = getRepoAddress(TEST_PUBKEYS.alice, identifier)
@@ -130,15 +131,17 @@ test("replaces an EOSE-backed empty PR list when late live activity arrives", as
       created_at: BASE_TIMESTAMP,
     }),
   )
-  const pullRequest = signTestEvent(
-    createPullRequest({
-      repoAddress,
-      subject: "Cold-start pull request",
-      content: "Delivered after the PR list initially rendered.",
-      tipCommitOid: TEST_COMMITS.second,
-      pubkey: TEST_PUBKEYS.bob,
-      created_at: BASE_TIMESTAMP + 1,
-    }),
+  const pullRequests = Array.from({length: 24}, (_, index) =>
+    signTestEvent(
+      createPullRequest({
+        repoAddress,
+        subject: `Cold-start pull request ${index + 1}`,
+        content: "Delivered after the PR list initially rendered.",
+        tipCommitOid: TEST_COMMITS.second,
+        pubkey: TEST_PUBKEYS.bob,
+        created_at: BASE_TIMESTAMP + index + 1,
+      }),
+    ),
   )
   let activitySubscriptions = 0
   const mockRelay = new MockRelay({
@@ -158,11 +161,13 @@ test("replaces an EOSE-backed empty PR list when late live activity arrives", as
   await expect.poll(() => activitySubscriptions).toBeGreaterThan(0)
   await expect(page.getByText(/Live announcement updates cover/)).toHaveCount(0)
 
-  await mockRelay.injectEvents([pullRequest])
+  await mockRelay.injectEvents(pullRequests)
 
-  await expect(page.getByText("Cold-start pull request", {exact: true})).toBeVisible({
-    timeout: 10_000,
-  })
+  await expect(page.locator("[data-pr-id]")).toHaveCount(20, {timeout: 10_000})
+  await expect(page.getByText("Page 1", {exact: true})).toBeVisible()
+  await page.getByRole("button", {name: "Next", exact: true}).click()
+  await expect(page.locator("[data-pr-id]")).toHaveCount(4)
+  await expect(page.getByText("Page 2", {exact: true})).toBeVisible()
 })
 
 test("loads issue and PR statuses after partial root history without detail navigation", async ({
@@ -303,12 +308,12 @@ test("loads a bounded recent issue page before requesting older relay history", 
   expect(rootRequests[0]).toEqual({limit: 100, until: undefined})
   await expect(page.getByText("Paginated issue 100", {exact: true})).toBeVisible({timeout: 10_000})
 
-  const loadMore = page.getByRole("button", {name: "Load more", exact: true})
+  const nextPage = page.getByRole("button", {name: "Next", exact: true})
   for (let index = 0; index < 4; index += 1) {
-    await loadMore.click()
+    await nextPage.click()
   }
-  await expect(page.locator("[data-issue-id]")).toHaveCount(100)
-  await loadMore.click()
+  await expect(page.locator("[data-issue-id]")).toHaveCount(20)
+  await expect(page.getByText("Page 5", {exact: true})).toBeVisible()
 
   await expect.poll(() => rootRequests.some(request => request.until !== undefined)).toBe(true)
   expect(rootRequests.find(request => request.until !== undefined)?.until).toBe(BASE_TIMESTAMP + 1)

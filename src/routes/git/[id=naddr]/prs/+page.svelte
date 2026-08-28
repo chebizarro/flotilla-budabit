@@ -52,10 +52,7 @@
   import type {Readable} from "svelte/store"
   import type {Repo} from "@nostr-git/ui"
   import {updateRepoWatchNotificationSeen} from "@app/core/repo-watch"
-  import {
-    getAutoFilledRootVisibleCount,
-    getRepoRootListPresentation,
-  } from "@app/core/repo-root-presentation"
+  import {getRepoRootListPresentation} from "@app/core/repo-root-presentation"
 
   type PrStatusKey = "open" | "merged" | "closed" | "draft"
 
@@ -386,6 +383,7 @@
 
   const ITEMS_PER_PAGE = 20
   let visiblePrCount = $state(ITEMS_PER_PAGE)
+  let pageFillInProgress = $state(false)
   let element: HTMLElement | undefined = $state()
   let showScrollButton = $state(false)
   let scrollParent: HTMLElement | null = $state(null)
@@ -446,7 +444,7 @@
       offset,
       id: prId,
       title,
-      visibleCount: prIndex >= 0 ? Math.max(visiblePrCount, prIndex + 1) : visiblePrCount,
+      visibleCount: visiblePrCount,
     }
   }
 
@@ -492,7 +490,7 @@
       offset: anchorOffset,
       id: pr.id,
       title: pr.title || "",
-      visibleCount: Math.max(visiblePrCount, index + 1),
+      visibleCount: visiblePrCount,
     }
   }
 
@@ -560,7 +558,10 @@
         parsedVisibleCount > 0 &&
         visiblePrCount < parsedVisibleCount
       ) {
-        visiblePrCount = Math.min(Math.max(parsedVisibleCount, ITEMS_PER_PAGE), count)
+        visiblePrCount = Math.max(
+          ITEMS_PER_PAGE,
+          Math.ceil(parsedVisibleCount / ITEMS_PER_PAGE) * ITEMS_PER_PAGE,
+        )
         return
       }
     } catch {
@@ -589,9 +590,9 @@
     }
 
     const targetIndex = matchIndex >= 0 ? matchIndex : fallbackIndex
-    const requiredVisibleCount = Math.max(targetIndex + 1, ITEMS_PER_PAGE)
-    if (visiblePrCount < requiredVisibleCount) {
-      visiblePrCount = Math.min(requiredVisibleCount, count)
+    const requiredVisibleCount = (Math.floor(targetIndex / ITEMS_PER_PAGE) + 1) * ITEMS_PER_PAGE
+    if (visiblePrCount !== requiredVisibleCount) {
+      visiblePrCount = requiredVisibleCount
       return
     }
 
@@ -865,18 +866,28 @@
 
   $effect(() => {
     const total = searchedPrs.length
-    const nextVisibleCount = getAutoFilledRootVisibleCount({
-      visibleCount: visiblePrCount,
-      resultCount: total,
-      pageSize: ITEMS_PER_PAGE,
-    })
+    const pageStart = Math.max(0, visiblePrCount - ITEMS_PER_PAGE)
+    const canLoadOlder = prListPresentation.canLoadOlder
+    const filling = pageFillInProgress
 
-    if (visiblePrCount !== nextVisibleCount) visiblePrCount = nextVisibleCount
+    if (total <= pageStart && visiblePrCount > ITEMS_PER_PAGE && !canLoadOlder) {
+      visiblePrCount = Math.max(ITEMS_PER_PAGE, Math.ceil(total / ITEMS_PER_PAGE) * ITEMS_PER_PAGE)
+      return
+    }
+    if (total >= visiblePrCount || !canLoadOlder || filling) return
+
+    pageFillInProgress = true
+    void repoRootHistory.loadOlderRoots().finally(() => {
+      pageFillInProgress = false
+    })
   })
 
-  const visiblePrs = $derived.by(() => searchedPrs.slice(0, visiblePrCount))
-  const canLoadMorePrs = $derived.by(
-    () => visiblePrCount < searchedPrs.length || prListPresentation.canLoadOlder,
+  const prPageStart = $derived(Math.max(0, visiblePrCount - ITEMS_PER_PAGE))
+  const visiblePrs = $derived.by(() => searchedPrs.slice(prPageStart, visiblePrCount))
+  const currentPrPage = $derived(Math.floor(prPageStart / ITEMS_PER_PAGE) + 1)
+  const canShowPreviousPrPage = $derived(visiblePrCount > ITEMS_PER_PAGE)
+  const canShowNextPrPage = $derived(
+    visiblePrCount < searchedPrs.length || prListPresentation.canLoadOlder,
   )
   const roleAssignments = $derived.by(() => {
     const ids = pullRequests?.map((pr: any) => pr.id) || []
@@ -899,13 +910,14 @@
     return deriveAssignmentsFor(ids, authorityByRoot)
   })
 
-  const loadMorePrs = async () => {
-    if (visiblePrCount < searchedPrs.length) {
-      visiblePrCount = Math.min(visiblePrCount + ITEMS_PER_PAGE, searchedPrs.length)
-      return
-    }
+  const showPreviousPrPage = () => {
+    visiblePrCount = Math.max(ITEMS_PER_PAGE, visiblePrCount - ITEMS_PER_PAGE)
+    scrollToTop()
+  }
 
-    await repoRootHistory.loadOlderRoots()
+  const showNextPrPage = () => {
+    visiblePrCount += ITEMS_PER_PAGE
+    scrollToTop()
   }
 </script>
 
@@ -1000,7 +1012,11 @@
         </GitButton>
       {/if}
       {#if prListPresentation.canLoadOlder}
-        <GitButton variant="outline" size="sm" class="mt-3" onclick={loadMorePrs}>
+        <GitButton
+          variant="outline"
+          size="sm"
+          class="mt-3"
+          onclick={() => repoRootHistory.loadOlderRoots()}>
           Load older history
         </GitButton>
       {/if}
@@ -1010,12 +1026,12 @@
       {#each visiblePrs as pr, index (pr.id)}
         <div
           class={`w-full cursor-pointer border-b border-l-2 border-border outline-none transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${getLatestPrActivityAt(pr) > lastPrsSeen ? "border-l-primary" : "border-l-transparent"}`}
-          data-index={index}
+          data-index={prPageStart + index}
           data-pr-id={pr.id}
-          onclick={event => handlePrClick(event, pr, index)}
+          onclick={event => handlePrClick(event, pr, prPageStart + index)}
           role="link"
           tabindex="0"
-          onkeydown={event => handlePrKeydown(event, pr, index)}>
+          onkeydown={event => handlePrKeydown(event, pr, prPageStart + index)}>
           <PullRequestListRow
             event={pr.event}
             title={pr.title}
@@ -1029,14 +1045,27 @@
       {/each}
     </div>
 
-    {#if canLoadMorePrs}
-      <div class="mt-3 flex flex-col items-center gap-1.5 pb-2">
-        <GitButton variant="outline" size="sm" class="h-8 min-h-0 gap-2" onclick={loadMorePrs}>
-          Load more
+    {#if canShowPreviousPrPage || canShowNextPrPage || pageFillInProgress}
+      <div class="mt-3 flex items-center justify-center gap-3 pb-2">
+        <GitButton
+          variant="outline"
+          size="sm"
+          class="h-8 min-h-0"
+          disabled={!canShowPreviousPrPage || pageFillInProgress}
+          onclick={showPreviousPrPage}>
+          Previous
         </GitButton>
-        <p class="text-xs text-muted-foreground">
-          Showing {visiblePrs.length} of {searchedPrs.length}
+        <p class="min-w-20 text-center text-xs text-muted-foreground">
+          {pageFillInProgress ? "Loading page..." : `Page ${currentPrPage}`}
         </p>
+        <GitButton
+          variant="outline"
+          size="sm"
+          class="h-8 min-h-0"
+          disabled={!canShowNextPrPage || pageFillInProgress}
+          onclick={showNextPrPage}>
+          Next
+        </GitButton>
       </div>
     {/if}
   {/if}
