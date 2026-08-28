@@ -53,6 +53,7 @@
   import {nip19} from "nostr-tools"
   import {clip, pushToast} from "@app/util/toast"
   import {getDisplayedRepoWebUrls} from "@app/util/repo-web-urls"
+  import {resolveRepoReadmeHref} from "@app/util/repo-readme-links"
   import {normalizeRelays, parseCommunityDefinitionAddress} from "@app/core/community"
   import {makeEventShareEntityForEvent} from "@app/util/event-share"
 
@@ -413,6 +414,14 @@
     linkify: true,
     typographer: true,
   })
+  const defaultLinkOpen =
+    md.renderer.rules.link_open ??
+    ((tokens, index, options, _env, renderer) => renderer.renderToken(tokens, index, options))
+  md.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
+    const href = tokens[index].attrGet("href")
+    if (href) tokens[index].attrSet("href", resolveRepoReadmeHref(href, repoBasePath))
+    return defaultLinkOpen(tokens, index, options, env, renderer)
+  }
 
   $effect(() => {
     // Track repoClass.key to ensure we only load once per repo
