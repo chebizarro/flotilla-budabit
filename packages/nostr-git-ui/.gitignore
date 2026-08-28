@@ -8,6 +8,7 @@ node_modules/
 
 # Builds
 dist/
+/index.css
 build/
 .svelte-kit/
 .vite/

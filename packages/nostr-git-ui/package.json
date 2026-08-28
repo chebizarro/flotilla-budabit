@@ -14,11 +14,10 @@
       "require": "./dist/index.js"
     },
     "./tailwind.preset.js": "./tailwind.preset.js",
-    "./index.css": "./index.css"
+    "./index.css": "./dist/index.css"
   },
   "files": [
     "dist",
-    "index.css",
     "tailwind.preset.js"
   ],
   "scripts": {
