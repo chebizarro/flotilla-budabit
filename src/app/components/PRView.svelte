@@ -2812,6 +2812,7 @@
       fallbackRepoName: repoClass.name || "repo",
       fetchRelayEvents,
       onPublishEvent: publishRepoState,
+      publishRelays: [normalizedRelayUrl],
     })
 
     return async () => {

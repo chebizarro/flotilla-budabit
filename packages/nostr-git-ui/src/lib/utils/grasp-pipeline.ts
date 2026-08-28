@@ -138,7 +138,7 @@ export interface PublishGraspRepoStateAndWaitParams {
   relayUrl: string;
   stateEvent: RepoStateEvent;
   onPublishEvent: PublishRepoEvent;
-  publishRelays?: string[];
+  publishRelays: string[];
   maxAttempts?: number;
   retryDelayMs?: number;
 }
@@ -150,7 +150,7 @@ export interface PublishGraspRepoStateForPushParams {
   authorPubkey: string;
   fallbackRepoName?: string;
   onPublishEvent: PublishRepoEvent;
-  publishRelays?: string[];
+  publishRelays: string[];
   maxAttempts?: number;
   retryDelayMs?: number;
   fetchRelayEvents: FetchRelayEvents;
@@ -1401,11 +1401,15 @@ export async function publishGraspRepoEvents(
 export async function publishGraspRepoStateAndWait(
   params: PublishGraspRepoStateAndWaitParams
 ): Promise<GraspPublishRelayAck> {
+  const publishRelays = sanitizeRelays(params.publishRelays);
+  if (publishRelays.length === 0) {
+    throw new Error("GRASP state publication requires accepted repository relays");
+  }
   const published = await publishGraspEventWithRetry({
     relayUrl: params.relayUrl,
     event: params.stateEvent,
     onPublishEvent: params.onPublishEvent,
-    publishRelays: params.publishRelays || [normalizeRelayOrigin(params.relayUrl)],
+    publishRelays,
     maxAttempts: params.maxAttempts,
     retryDelayMs: params.retryDelayMs,
   });
@@ -1430,6 +1434,10 @@ export async function publishGraspRepoStateForPush({
   event: NostrEvent;
   publishRelays: string[];
 }> {
+  const targetPublishRelays = sanitizeRelays(publishRelays);
+  if (targetPublishRelays.length === 0) {
+    throw new Error("GRASP state publication requires accepted repository relays");
+  }
   if (!authorPubkey.trim()) {
     throw new Error("Existing GRASP state lookup requires the repository owner pubkey");
   }
@@ -1468,7 +1476,6 @@ export async function publishGraspRepoStateForPush({
     created_at: Math.max(Math.floor(Date.now() / 1000), existingStateEvent.created_at + 1),
   });
 
-  const targetPublishRelays = publishRelays || [relayUrl];
   const published = await publishGraspEventWithRetry({
     relayUrl,
     event: stateEvent,

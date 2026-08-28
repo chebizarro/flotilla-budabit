@@ -109,6 +109,17 @@ describe("repository publication source contract", () => {
     expect(gitPage).not.toContain("publishThunk({event: repoEvent")
   })
 
+  it("validates repository state relays before transport", () => {
+    const layout = readProjectFile("../../routes/git/[id=naddr]/RepoSession.svelte")
+    const stateGuard = layout.indexOf("if (event.kind === GIT_REPO_STATE)")
+    const scopeGuard = layout.indexOf("requireRepoPublicationScope({", stateGuard)
+    const transport = layout.indexOf("options.transport.publish(event, publishRelays)", stateGuard)
+
+    expect(stateGuard).toBeGreaterThan(-1)
+    expect(scopeGuard).toBeGreaterThan(stateGuard)
+    expect(transport).toBeGreaterThan(scopeGuard)
+  })
+
   it("completes strict repository inventory before destructive deletion work", () => {
     const source = readProjectFile("../components/DeleteRepoConfirm.svelte")
     const submit = source.indexOf("const deleteRepo")

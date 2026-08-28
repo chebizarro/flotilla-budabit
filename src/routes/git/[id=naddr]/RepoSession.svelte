@@ -48,7 +48,11 @@
     publishRepoEventWithRelayOutcomes,
     type RepoPublishTransport,
   } from "@app/core/git-commands.js"
-  import {getDeclaredRepoRelays, getRepoPublicationAddress} from "@app/core/repo-publication"
+  import {
+    getDeclaredRepoRelays,
+    getRepoPublicationAddress,
+    requireRepoPublicationScope,
+  } from "@app/core/repo-publication"
   import RepoWatchModal from "@app/components/RepoWatchModal.svelte"
   import {nip19} from "nostr-tools"
   import type {NostrFilter, NostrEvent} from "@nostr-git/core"
@@ -3528,6 +3532,23 @@
       transport?: RepoPublishTransport
     } = {},
   ) {
+    if (event.kind === GIT_REPO_STATE) {
+      const publishRelays = requireRepoPublicationScope({
+        event,
+        relays: options.relays?.length ? options.relays : fallbackRelays,
+        repoAddress: `${GIT_REPO_ANNOUNCEMENT}:${repoPubkey}:${repoName}`,
+      })
+      if (options.transport) return options.transport.publish(event, publishRelays)
+
+      const thunk = postRepoStateEvent(
+        event as RepoStateEvent,
+        publishRelays,
+        `${GIT_REPO_ANNOUNCEMENT}:${repoPubkey}:${repoName}`,
+      )
+      await awaitPublishThunk(thunk, options)
+      return thunk
+    }
+
     if (options.relays?.length) {
       return options.transport
         ? options.transport.publish(event, options.relays)
@@ -3558,31 +3579,17 @@
         : publishRepoEventWithRelayOutcomes(event, publishRelays)
     }
 
-    if (event.kind !== GIT_REPO_ANNOUNCEMENT && policy.repoRelays.length === 0) {
-      throw new Error("Repository relays not ready. Please wait...")
-    }
-
     if (options.transport) {
-      const publishRelays =
-        event.kind === GIT_REPO_ANNOUNCEMENT
-          ? getRepoAnnouncementPublishRelays({
-              repoEvent: event,
-              repoRelays: policy.repoRelays,
-              userOutboxRelays: getUserOutboxRelays(),
-              gitIndexerRelays: GIT_RELAYS,
-            })
-          : policy.repoRelays
+      const publishRelays = getRepoAnnouncementPublishRelays({
+        repoEvent: event,
+        repoRelays: policy.repoRelays,
+        userOutboxRelays: getUserOutboxRelays(),
+        gitIndexerRelays: GIT_RELAYS,
+      })
       return options.transport.publish(event, publishRelays)
     }
 
-    const thunk =
-      event.kind === GIT_REPO_STATE
-        ? postRepoStateEvent(
-            event as RepoStateEvent,
-            policy.repoRelays,
-            `${GIT_REPO_ANNOUNCEMENT}:${repoPubkey}:${repoName}`,
-          )
-        : postRepoAnnouncement(event as RepoAnnouncementEvent, policy.repoRelays)
+    const thunk = postRepoAnnouncement(event as RepoAnnouncementEvent, policy.repoRelays)
 
     await awaitPublishThunk(thunk, options)
 
@@ -3771,7 +3778,11 @@
           const taggedRelays = getEventRelayTargets(event)
           const thunk = await publishRepoEventWithRelayPolicy(
             event,
-            taggedRelays.length > 0 ? taggedRelays : defaultRelays,
+            event.kind === GIT_REPO_STATE
+              ? defaultRelays
+              : taggedRelays.length > 0
+                ? taggedRelays
+                : defaultRelays,
             {
               timeoutMs: FORK_PUBLISH_TIMEOUT_MS,
               label:
@@ -3983,7 +3994,12 @@
       onRefresh: refreshRepo,
       onPublishEvent: async (event: any, context?: {relays: string[]}) => {
         const taggedRelays = getEventRelayTargets(event)
-        const relaysForPublish = taggedRelays.length > 0 ? taggedRelays : getRepoRelaysForModal()
+        const relaysForPublish =
+          event.kind === GIT_REPO_STATE
+            ? getRepoRelaysForModal()
+            : taggedRelays.length > 0
+              ? taggedRelays
+              : getRepoRelaysForModal()
         const thunk = await publishRepoEventWithRelayPolicy(event, relaysForPublish, {
           timeoutMs: FORK_PUBLISH_TIMEOUT_MS,
           label:

@@ -132,6 +132,22 @@ describe("repository publication authority", () => {
     ).toEqual([`${relay}/`])
   })
 
+  it("ignores state-authored relay tags when validating explicit authority", () => {
+    expect(
+      requireRepoPublicationScope({
+        event: {
+          kind: 30618,
+          tags: [
+            ["d", "repo"],
+            ["relays", "wss://state-controlled.example"],
+          ],
+        },
+        relays: [relay],
+        repoAddress,
+      }),
+    ).toEqual([`${relay}/`])
+  })
+
   it("derives announcement and state addresses for rollback scoping", () => {
     expect(getRepoPublicationAddress({kind: 30617, pubkey: owner, tags: [["d", "repo"]]})).toBe(
       repoAddress,

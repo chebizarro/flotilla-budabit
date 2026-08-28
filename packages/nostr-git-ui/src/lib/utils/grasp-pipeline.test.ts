@@ -1043,6 +1043,7 @@ describe("grasp-pipeline", () => {
         relayUrl: "wss://relay.ngit.dev/",
         stateEvent,
         onPublishEvent,
+        publishRelays: ["wss://relay.ngit.dev/"],
         maxAttempts: 1,
         retryDelayMs: 0,
       })
@@ -1118,6 +1119,7 @@ describe("grasp-pipeline", () => {
         commitSha: "feedbeef1234",
         authorPubkey: "a".repeat(64),
         onPublishEvent,
+        publishRelays: ["wss://relay.ngit.dev/"],
         fetchRelayEvents,
       })
     ).resolves.toEqual({
@@ -1151,10 +1153,32 @@ describe("grasp-pipeline", () => {
         commitSha: "d".repeat(40),
         authorPubkey: "a".repeat(64),
         onPublishEvent,
+        publishRelays: ["wss://relay.ngit.dev/"],
         fetchRelayEvents: vi.fn().mockResolvedValue([]),
       })
     ).rejects.toThrow("Existing GRASP repository state is unavailable");
 
+    expect(onPublishEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty state authority before GRASP lookup", async () => {
+    const fetchRelayEvents = vi.fn();
+    const onPublishEvent = vi.fn();
+
+    await expect(
+      publishGraspRepoStateForPush({
+        remoteUrl:
+          "https://relay.ngit.dev/npub16p8v7varqwjes5hak6q7mz6pygqm4pwc6gve4mrned3xs8tz42gq7kfhdw/flotilla-budabit.git",
+        branch: "dev",
+        commitSha: "d".repeat(40),
+        authorPubkey: "a".repeat(64),
+        onPublishEvent,
+        publishRelays: [],
+        fetchRelayEvents,
+      })
+    ).rejects.toThrow("requires accepted repository relays");
+
+    expect(fetchRelayEvents).not.toHaveBeenCalled();
     expect(onPublishEvent).not.toHaveBeenCalled();
   });
 
@@ -1196,6 +1220,7 @@ describe("grasp-pipeline", () => {
         commitSha: "d".repeat(40),
         authorPubkey: "a".repeat(64),
         onPublishEvent,
+        publishRelays: ["wss://relay.ngit.dev/"],
         fetchRelayEvents,
       })
     ).resolves.toEqual({
