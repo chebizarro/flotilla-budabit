@@ -60,7 +60,13 @@
     DIAGNOSTICS_ENABLED,
     PERFORMANCE_DIAGNOSTICS_ENABLED,
   } from "@app/core/feature-flags"
-  import {refreshDebugDiagnosticsSettings} from "@app/core/debug-diagnostics"
+  import {
+    ensureAppUpdateDebugDiagnosticsCapture,
+    isAppUpdateDebugDiagnosticsActive,
+    recordAppUpdateDebugDiagnostic,
+    refreshDebugDiagnosticsSettings,
+    restoreDebugDiagnosticsCapture,
+  } from "@app/core/debug-diagnostics"
   import {installPublicationDebugDiagnostics} from "@app/core/publication-diagnostics"
   import {
     activePerformanceDiagnosticsRun,
@@ -100,7 +106,11 @@
   if (browser && PERFORMANCE_DIAGNOSTICS_ENABLED) {
     consumeArmedPerformanceDiagnosticsCapture(window.location.pathname)
   }
-  if (browser && DIAGNOSTICS_ENABLED) refreshDebugDiagnosticsSettings()
+  if (browser && DIAGNOSTICS_ENABLED) {
+    refreshDebugDiagnosticsSettings()
+    restoreDebugDiagnosticsCapture()
+    ensureAppUpdateDebugDiagnosticsCapture()
+  }
   const nostrGitProviderProps = /** @type {any} */ ({
     components: {
       AvatarImage,
@@ -199,6 +209,49 @@
   let communityAuthWarmupKey = ""
   let builtinExtensionInstallFrame: number | null = null
   let builtinExtensionInstallCancelled = false
+  const trackedAppUpdateWorkers = new WeakSet<ServiceWorker>()
+
+  const describeAppUpdateWorker = (worker?: ServiceWorker | null) => {
+    if (!worker) return null
+    let scriptPath = ""
+    try {
+      scriptPath = new URL(worker.scriptURL).pathname
+    } catch {
+      scriptPath = worker.scriptURL
+    }
+    return {state: worker.state, scriptPath}
+  }
+
+  const describeAppUpdateRegistration = (registration?: ServiceWorkerRegistration | null) =>
+    registration
+      ? {
+          scopePath: new URL(registration.scope).pathname,
+          active: describeAppUpdateWorker(registration.active),
+          waiting: describeAppUpdateWorker(registration.waiting),
+          installing: describeAppUpdateWorker(registration.installing),
+          controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+        }
+      : null
+
+  const trackAppUpdateWorker = (worker?: ServiceWorker | null, role = "worker") => {
+    if (!DIAGNOSTICS_ENABLED || !worker || trackedAppUpdateWorkers.has(worker)) return
+    trackedAppUpdateWorkers.add(worker)
+    worker.addEventListener("statechange", () => {
+      recordAppUpdateDebugDiagnostic("worker-state-change", {
+        role,
+        worker: describeAppUpdateWorker(worker),
+      })
+    })
+  }
+
+  if (browser && DIAGNOSTICS_ENABLED) {
+    recordAppUpdateDebugDiagnostic("layout-loaded", {
+      visibilityState: document.visibilityState,
+      expectedBuildId: sessionStorage.getItem(APP_EXPECTED_BUILD_STORAGE_KEY) || "",
+      recoveryAttempted: sessionStorage.getItem(APP_RELOAD_RECOVERY_ATTEMPT_KEY) === "1",
+      controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+    })
+  }
 
   // Add stuff to window for convenience. Dev-only so production stays tree-shakeable.
   if (dev) {
@@ -512,6 +565,10 @@
   }
 
   const forceReload = () => {
+    recordAppUpdateDebugDiagnostic("reload-navigation", {
+      pathname: window.location.pathname,
+      controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+    })
     window.location.replace(buildReloadUrl())
   }
 
@@ -525,41 +582,71 @@
       const registration =
         (await navigator.serviceWorker.getRegistration(scopePath)) ||
         (await navigator.serviceWorker.getRegistration())
-      if (registration) return registration
+      if (registration) {
+        trackAppUpdateWorker(registration.active, "active")
+        trackAppUpdateWorker(registration.waiting, "waiting")
+        trackAppUpdateWorker(registration.installing, "installing")
+        recordAppUpdateDebugDiagnostic("registration-found", {
+          registerIfMissing,
+          registration: describeAppUpdateRegistration(registration),
+        })
+        return registration
+      }
 
       if (registerIfMissing) {
         const workerUrl = new URL("service-worker.js", getAppBaseUrl()).toString()
-        return await navigator.serviceWorker.register(workerUrl, {
+        const registered = await navigator.serviceWorker.register(workerUrl, {
           scope: scopePath,
           updateViaCache: "none",
         })
+        trackAppUpdateWorker(registered.active, "active")
+        trackAppUpdateWorker(registered.waiting, "waiting")
+        trackAppUpdateWorker(registered.installing, "installing")
+        recordAppUpdateDebugDiagnostic("registration-created", {
+          registration: describeAppUpdateRegistration(registered),
+        })
+        return registered
       }
 
-      return await Promise.race([
+      const ready = await Promise.race([
         navigator.serviceWorker.ready,
         new Promise<null>(resolve =>
           window.setTimeout(() => resolve(null), APP_SERVICE_WORKER_UPDATE_TIMEOUT),
         ),
       ])
-    } catch {
+      recordAppUpdateDebugDiagnostic("registration-ready-result", {
+        registration: describeAppUpdateRegistration(ready),
+      })
+      return ready
+    } catch (error) {
+      recordAppUpdateDebugDiagnostic("registration-error", {registerIfMissing, error})
       return null
     }
   }
 
-  const getServiceWorkerVersion = async (worker?: ServiceWorker | null) => {
+  const getServiceWorkerVersion = async (worker?: ServiceWorker | null, role = "unspecified") => {
     if (!worker) return ""
+    trackAppUpdateWorker(worker, role)
 
     return await new Promise<string>(resolve => {
       const channel = new MessageChannel()
       let settled = false
-      const finish = (buildId = "") => {
+      const startedAt = performance.now()
+      const finish = (buildId = "", outcome = "response") => {
         if (settled) return
         settled = true
         window.clearTimeout(timeout)
         channel.port1.close()
+        recordAppUpdateDebugDiagnostic("worker-version-result", {
+          role,
+          outcome,
+          buildId,
+          durationMs: Math.max(0, performance.now() - startedAt),
+          worker: describeAppUpdateWorker(worker),
+        })
         resolve(buildId)
       }
-      const timeout = window.setTimeout(() => finish(), 2_000)
+      const timeout = window.setTimeout(() => finish("", "timeout"), 2_000)
 
       channel.port1.onmessage = event => {
         const data = event.data
@@ -572,8 +659,9 @@
 
       try {
         worker.postMessage({type: "APP_CACHE_GET_VERSION"}, [channel.port2])
-      } catch {
-        finish()
+      } catch (error) {
+        recordAppUpdateDebugDiagnostic("worker-version-post-error", {role, error})
+        finish("", "post-error")
       }
     })
   }
@@ -582,6 +670,10 @@
     if (!registration.installing) return null
 
     const installingWorker = registration.installing
+    trackAppUpdateWorker(installingWorker, "installing")
+    recordAppUpdateDebugDiagnostic("installation-observed", {
+      registration: describeAppUpdateRegistration(registration),
+    })
 
     if (["installed", "activated"].includes(installingWorker.state)) {
       return registration.waiting || installingWorker
@@ -598,17 +690,27 @@
       const onStateChange = () => {
         if (["installed", "activated"].includes(installingWorker.state)) {
           cleanup()
+          recordAppUpdateDebugDiagnostic("installation-finished", {
+            registration: describeAppUpdateRegistration(registration),
+          })
           resolve(registration.waiting || installingWorker)
         }
 
         if (installingWorker.state === "redundant") {
           cleanup()
+          recordAppUpdateDebugDiagnostic("installation-redundant", {
+            registration: describeAppUpdateRegistration(registration),
+          })
           resolve(null)
         }
       }
 
       const timeout = window.setTimeout(() => {
         cleanup()
+        recordAppUpdateDebugDiagnostic("installation-timeout", {
+          timeoutMs: APP_SERVICE_WORKER_UPDATE_TIMEOUT,
+          registration: describeAppUpdateRegistration(registration),
+        })
         resolve(registration.waiting || null)
       }, APP_SERVICE_WORKER_UPDATE_TIMEOUT)
 
@@ -636,10 +738,18 @@
       }
 
       const onUpdateFound = () => {
+        trackAppUpdateWorker(registration.installing, "installing")
+        recordAppUpdateDebugDiagnostic("registration-update-found", {
+          registration: describeAppUpdateRegistration(registration),
+        })
         void waitForInstallingServiceWorker(registration).then(finish)
       }
 
       const timeout = window.setTimeout(() => {
+        recordAppUpdateDebugDiagnostic("registration-update-timeout", {
+          timeoutMs: APP_SERVICE_WORKER_UPDATE_TIMEOUT,
+          registration: describeAppUpdateRegistration(registration),
+        })
         finish(registration.waiting || null)
       }, APP_SERVICE_WORKER_UPDATE_TIMEOUT)
 
@@ -648,40 +758,110 @@
   }
 
   const prepareAppUpdate = async (buildId: string): Promise<"active" | "ready" | null> => {
+    recordAppUpdateDebugDiagnostic("prepare-started", {expectedBuildId: buildId})
     const registration = await getAppServiceWorkerRegistration(true)
 
-    if (!registration) return null
-    if ((await getServiceWorkerVersion(registration.active)) === buildId) return "active"
-    if ((await getServiceWorkerVersion(registration.waiting)) === buildId) return "ready"
+    if (!registration) {
+      recordAppUpdateDebugDiagnostic("prepare-finished", {expectedBuildId: buildId, result: null})
+      return null
+    }
+    if ((await getServiceWorkerVersion(registration.active, "active")) === buildId) {
+      recordAppUpdateDebugDiagnostic("prepare-finished", {
+        expectedBuildId: buildId,
+        result: "active",
+      })
+      return "active"
+    }
+    if ((await getServiceWorkerVersion(registration.waiting, "waiting")) === buildId) {
+      recordAppUpdateDebugDiagnostic("prepare-finished", {
+        expectedBuildId: buildId,
+        result: "ready",
+      })
+      return "ready"
+    }
 
     const updateReady = waitForServiceWorkerUpdate(registration)
+    recordAppUpdateDebugDiagnostic("registration-update-requested", {
+      expectedBuildId: buildId,
+      registration: describeAppUpdateRegistration(registration),
+    })
     await registration.update()
 
     const candidate = registration.waiting || (await updateReady)
-    if ((await getServiceWorkerVersion(registration.active)) === buildId) return "active"
-    if (!candidate || (await getServiceWorkerVersion(candidate)) !== buildId) return null
+    trackAppUpdateWorker(candidate, "candidate")
+    if ((await getServiceWorkerVersion(registration.active, "active")) === buildId) {
+      recordAppUpdateDebugDiagnostic("prepare-finished", {
+        expectedBuildId: buildId,
+        result: "active",
+      })
+      return "active"
+    }
+    if (!candidate || (await getServiceWorkerVersion(candidate, "candidate")) !== buildId) {
+      recordAppUpdateDebugDiagnostic("prepare-finished", {
+        expectedBuildId: buildId,
+        result: null,
+        registration: describeAppUpdateRegistration(registration),
+      })
+      return null
+    }
 
+    recordAppUpdateDebugDiagnostic("prepare-finished", {expectedBuildId: buildId, result: "ready"})
     return "ready"
   }
 
   const activateReadyServiceWorker = async (buildId: string) => {
+    recordAppUpdateDebugDiagnostic("activation-attempt-started", {expectedBuildId: buildId})
     const registration = await getAppServiceWorkerRegistration()
 
-    if (!registration) return false
-    if ((await getServiceWorkerVersion(registration.waiting)) !== buildId) {
+    if (!registration) {
+      recordAppUpdateDebugDiagnostic("activation-attempt-finished", {
+        expectedBuildId: buildId,
+        result: "registration-missing",
+      })
+      return false
+    }
+    if ((await getServiceWorkerVersion(registration.waiting, "waiting")) !== buildId) {
       const prepared = await prepareAppUpdate(buildId)
-      if (prepared === "active") return true
+      if (prepared === "active") {
+        recordAppUpdateDebugDiagnostic("activation-attempt-finished", {
+          expectedBuildId: buildId,
+          result: "already-active",
+        })
+        return true
+      }
     }
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const worker = registration.waiting
-      if (!worker || (await getServiceWorkerVersion(worker)) !== buildId) return false
+      if (!worker || (await getServiceWorkerVersion(worker, "waiting")) !== buildId) {
+        recordAppUpdateDebugDiagnostic("activation-attempt-finished", {
+          expectedBuildId: buildId,
+          result: "waiting-worker-mismatch",
+          attempt,
+          registration: describeAppUpdateRegistration(registration),
+        })
+        return false
+      }
       if (registration.waiting !== worker) continue
 
-      worker.postMessage({type: "SKIP_WAITING"})
+      trackAppUpdateWorker(worker, "activation-target")
+      recordAppUpdateDebugDiagnostic("skip-waiting-posted", {
+        expectedBuildId: buildId,
+        attempt,
+        registration: describeAppUpdateRegistration(registration),
+      })
+      worker.postMessage({
+        type: "SKIP_WAITING",
+        diagnostics: isAppUpdateDebugDiagnosticsActive(),
+      })
       return true
     }
 
+    recordAppUpdateDebugDiagnostic("activation-attempt-finished", {
+      expectedBuildId: buildId,
+      result: "waiting-worker-raced",
+      registration: describeAppUpdateRegistration(registration),
+    })
     return false
   }
 
@@ -694,11 +874,26 @@
           "cache-control": "no-cache",
         },
       })
-      if (!response.ok) return {version: "", retry: true}
+      if (!response.ok) {
+        recordAppUpdateDebugDiagnostic("published-version-result", {
+          status: response.status,
+          version: "",
+          retry: true,
+        })
+        return {version: "", retry: true}
+      }
       const data = await response.json()
       const version = typeof data?.version === "string" ? data.version : ""
-      return {version, retry: !version || data?.status === "deploying"}
-    } catch {
+      const retry = !version || data?.status === "deploying"
+      recordAppUpdateDebugDiagnostic("published-version-result", {
+        status: response.status,
+        version,
+        deploymentStatus: typeof data?.status === "string" ? data.status : "",
+        retry,
+      })
+      return {version, retry}
+    } catch (error) {
+      recordAppUpdateDebugDiagnostic("published-version-error", {error})
       return {version: "", retry: true}
     }
   }
@@ -712,15 +907,34 @@
   }
 
   const reloadIntoBuild = (buildId: string) => {
-    if (!buildId || buildId === APP_BUILD_ID || serviceWorkerReloadInFlight) return
+    if (!buildId || buildId === APP_BUILD_ID || serviceWorkerReloadInFlight) {
+      recordAppUpdateDebugDiagnostic("reload-into-build-skipped", {
+        targetBuildId: buildId,
+        reloadInFlight: serviceWorkerReloadInFlight,
+      })
+      return
+    }
 
     serviceWorkerReloadInFlight = true
+    recordAppUpdateDebugDiagnostic("reload-into-build", {targetBuildId: buildId})
     setExpectedBuildForReload(buildId)
     forceReload()
   }
 
   const waitForControllerBuild = async (buildId: string) => {
-    if ((await getServiceWorkerVersion(navigator.serviceWorker.controller)) === buildId) return true
+    recordAppUpdateDebugDiagnostic("controller-wait-started", {
+      expectedBuildId: buildId,
+      controller: describeAppUpdateWorker(navigator.serviceWorker.controller),
+    })
+    if (
+      (await getServiceWorkerVersion(navigator.serviceWorker.controller, "controller")) === buildId
+    ) {
+      recordAppUpdateDebugDiagnostic("controller-wait-finished", {
+        expectedBuildId: buildId,
+        result: "already-controlled",
+      })
+      return true
+    }
 
     return await new Promise<boolean>(resolve => {
       let settled = false
@@ -731,16 +945,28 @@
         settled = true
         window.clearTimeout(timeout)
         navigator.serviceWorker.removeEventListener("controllerchange", inspectController)
+        recordAppUpdateDebugDiagnostic("controller-wait-finished", {
+          expectedBuildId: buildId,
+          result: activated ? "controlled" : "timeout",
+          registration: null,
+          controller: describeAppUpdateWorker(navigator.serviceWorker.controller),
+        })
         resolve(activated)
       }
       const inspectController = () => {
-        void getServiceWorkerVersion(navigator.serviceWorker.controller).then(controllerBuildId => {
-          if (controllerBuildId === buildId) finish(true)
+        recordAppUpdateDebugDiagnostic("controller-wait-change", {
+          expectedBuildId: buildId,
+          controller: describeAppUpdateWorker(navigator.serviceWorker.controller),
         })
+        void getServiceWorkerVersion(navigator.serviceWorker.controller, "controller").then(
+          controllerBuildId => {
+            if (controllerBuildId === buildId) finish(true)
+          },
+        )
       }
       const timeout = window.setTimeout(() => {
-        void getServiceWorkerVersion(navigator.serviceWorker.controller).then(controllerBuildId =>
-          finish(controllerBuildId === buildId),
+        void getServiceWorkerVersion(navigator.serviceWorker.controller, "controller-timeout").then(
+          controllerBuildId => finish(controllerBuildId === buildId),
         )
       }, APP_SERVICE_WORKER_ACTIVATION_TIMEOUT)
 
@@ -750,6 +976,11 @@
 
   const requestAppReload = async (expectedBuildId = readyAppUpdateBuildId) => {
     if (!browser || !expectedBuildId || appUpdateReloading) return
+
+    recordAppUpdateDebugDiagnostic("reload-requested", {
+      expectedBuildId,
+      controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+    })
 
     setExpectedBuildForReload(expectedBuildId)
     appUpdateRecoveryMessage = ""
@@ -770,6 +1001,7 @@
 
       if (activationStarted) {
         appUpdateActivationDelayed = true
+        recordAppUpdateDebugDiagnostic("activation-delayed", {expectedBuildId})
         console.warn(`[app-update] Build ${expectedBuildId} is still activating`)
         void activateReadyServiceWorker(expectedBuildId).catch(error =>
           console.warn("[app-update] Failed to retry delayed activation", error),
@@ -779,10 +1011,12 @@
 
       appUpdateRecoveryMessage =
         "The app update could not start. The current version is still available."
+      recordAppUpdateDebugDiagnostic("activation-not-started", {expectedBuildId})
     } catch (error) {
       console.warn("[app-update] Failed to activate app update", error)
       appUpdateRecoveryMessage =
         "The app update could not be activated. The current version is still available."
+      recordAppUpdateDebugDiagnostic("activation-error", {expectedBuildId, error})
     } finally {
       if (!serviceWorkerReloadInFlight) appUpdateReloading = false
     }
@@ -794,6 +1028,7 @@
     readyAppUpdateBuildId = buildId
     appUpdateRecoveryMessage = ""
     appUpdateActivationDelayed = false
+    recordAppUpdateDebugDiagnostic("update-ready", {expectedBuildId: buildId})
   }
 
   const resetAppUpdateRetry = () => {
@@ -958,17 +1193,28 @@
     if (typeof sessionStorage === "undefined") return true
 
     const expectedBuildId = sessionStorage.getItem(APP_EXPECTED_BUILD_STORAGE_KEY) || ""
-    if (!expectedBuildId) return true
+    if (!expectedBuildId) {
+      recordAppUpdateDebugDiagnostic("reload-verification", {result: "not-expected"})
+      return true
+    }
 
     if (expectedBuildId === APP_BUILD_ID) {
       sessionStorage.removeItem(APP_EXPECTED_BUILD_STORAGE_KEY)
       sessionStorage.removeItem(APP_RELOAD_RECOVERY_ATTEMPT_KEY)
       readyAppUpdateBuildId = ""
       appUpdateRecoveryMessage = ""
+      recordAppUpdateDebugDiagnostic("reload-verification", {
+        expectedBuildId,
+        result: "expected-build-running",
+        controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+      })
       return true
     }
 
-    const controllerBuildId = await getServiceWorkerVersion(navigator.serviceWorker?.controller)
+    const controllerBuildId = await getServiceWorkerVersion(
+      navigator.serviceWorker?.controller,
+      "reload-verification-controller",
+    )
     const action = getExpectedBuildAction({
       expectedBuildId,
       runningBuildId: APP_BUILD_ID,
@@ -977,6 +1223,11 @@
     })
 
     if (action === "reload") {
+      recordAppUpdateDebugDiagnostic("reload-verification", {
+        expectedBuildId,
+        controllerBuildId,
+        result: "cache-busted-reload",
+      })
       sessionStorage.setItem(APP_RELOAD_RECOVERY_ATTEMPT_KEY, "1")
       forceReload()
       return false
@@ -987,6 +1238,12 @@
     console.warn(
       `[app-update] Expected build ${expectedBuildId}, but build ${APP_BUILD_ID} is still running`,
     )
+    recordAppUpdateDebugDiagnostic("reload-verification", {
+      expectedBuildId,
+      controllerBuildId,
+      result: "recovery-ui",
+      recoveryAttempted: sessionStorage.getItem(APP_RELOAD_RECOVERY_ATTEMPT_KEY) === "1",
+    })
     return true
   }
 
@@ -1099,11 +1356,30 @@
     }
 
     if (data.type === "APP_CACHE_READY" && typeof data.version === "string") {
+      recordAppUpdateDebugDiagnostic("worker-message", {
+        messageType: data.type,
+        workerBuildId: data.version,
+        controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+      })
       void checkForAppUpdate()
       return
     }
 
+    if (data.type === "APP_CACHE_ACTIVATION_REQUESTED" && typeof data.version === "string") {
+      recordAppUpdateDebugDiagnostic("worker-message", {
+        messageType: data.type,
+        workerBuildId: data.version,
+        controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+      })
+      return
+    }
+
     if (data.type === "APP_CACHE_ACTIVATED" && typeof data.version === "string") {
+      recordAppUpdateDebugDiagnostic("worker-message", {
+        messageType: data.type,
+        workerBuildId: data.version,
+        controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+      })
       reloadIntoBuild(data.version)
     }
   }
@@ -1111,8 +1387,13 @@
   navigator.serviceWorker?.addEventListener("message", serviceWorkerMessageHandler)
 
   serviceWorkerControllerChangeHandler = () => {
+    recordAppUpdateDebugDiagnostic("controller-change", {
+      controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
+    })
     window.setTimeout(() => {
-      void getServiceWorkerVersion(navigator.serviceWorker?.controller).then(reloadIntoBuild)
+      void getServiceWorkerVersion(navigator.serviceWorker?.controller, "controller-change").then(
+        reloadIntoBuild,
+      )
     }, 0)
   }
   navigator.serviceWorker?.addEventListener(

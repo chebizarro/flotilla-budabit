@@ -229,6 +229,9 @@ self.addEventListener("message", event => {
   }
 
   if (data?.type === "SKIP_WAITING") {
+    if (data.diagnostics === true) {
+      event.source?.postMessage({type: "APP_CACHE_ACTIVATION_REQUESTED", version})
+    }
     event.waitUntil(self.skipWaiting())
   }
 })

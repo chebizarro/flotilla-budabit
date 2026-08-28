@@ -9,8 +9,10 @@ import {
   prepareDebugDiagnosticsArtifact,
   refreshDebugDiagnosticsSettings,
   debugDiagnosticsSettings,
+  ensureAppUpdateDebugDiagnosticsCapture,
   getDebugDiagnosticsSnapshot,
   recordDebugDiagnostic,
+  restoreDebugDiagnosticsCapture,
   registerDebugDiagnosticsFinalizer,
   sanitizeDebugDiagnosticValue,
   serializeDebugDiagnostics,
@@ -23,11 +25,18 @@ import {
 describe("debug diagnostics", () => {
   beforeEach(() => {
     const storage = new Map<string, string>()
+    const session = new Map<string, string>()
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => storage.get(key) ?? null,
       removeItem: (key: string) => storage.delete(key),
       setItem: (key: string, value: string) => storage.set(key, value),
     })
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) => session.get(key) ?? null,
+      removeItem: (key: string) => session.delete(key),
+      setItem: (key: string, value: string) => session.set(key, value),
+    })
+    clearDebugDiagnostics()
     refreshDebugDiagnosticsSettings()
   })
 
@@ -37,6 +46,7 @@ describe("debug diagnostics", () => {
       "relay-normalization": false,
       "relay-scheduler": false,
       "publication-lifecycle": false,
+      "app-update": false,
     })
     expect(normalizeDebugDiagnosticsSettings({version: 2, categories: {}})).toEqual(
       defaultDebugDiagnosticsSettings(),
@@ -52,6 +62,7 @@ describe("debug diagnostics", () => {
         "relay-normalization": true,
         "relay-scheduler": false,
         "publication-lifecycle": false,
+        "app-update": false,
       },
     })
   })
@@ -67,6 +78,7 @@ describe("debug diagnostics", () => {
         "relay-normalization": true,
         "relay-scheduler": false,
         "publication-lifecycle": false,
+        "app-update": false,
       },
     })
   })
@@ -145,6 +157,32 @@ describe("debug diagnostics", () => {
     expect(recorder.snapshot()).toMatchObject({
       capture: {id: "capture", startedAt: 100, finishedAt: 125, active: false},
       records: [{category: "relay-normalization", type: "normalized", elapsedMs: 25}],
+    })
+  })
+
+  it("restores an active app-update capture across a tab reload", () => {
+    setDebugDiagnosticCategoryEnabled("app-update", true)
+    expect(ensureAppUpdateDebugDiagnosticsCapture()).toBe(true)
+    const captureId = getDebugDiagnosticsSnapshot().capture.id
+    expect(captureId).toMatch(/^debug-/)
+    expect(
+      recordDebugDiagnostic("app-update", "skip-waiting-posted", {runningBuildId: "build-a"}),
+    ).toBe(true)
+    const persisted = sessionStorage.getItem("budabit/debug-diagnostics/capture:v1")
+    expect(persisted).toContain("skip-waiting-posted")
+
+    clearDebugDiagnostics()
+    sessionStorage.setItem("budabit/debug-diagnostics/capture:v1", persisted!)
+    expect(restoreDebugDiagnosticsCapture()).toBe(true)
+    expect(getDebugDiagnosticsSnapshot()).toMatchObject({
+      capture: {id: captureId, active: true, enabledCategories: ["app-update"]},
+      records: [
+        {
+          category: "app-update",
+          type: "skip-waiting-posted",
+          detail: {runningBuildId: "build-a"},
+        },
+      ],
     })
   })
 

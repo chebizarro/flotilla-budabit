@@ -4,6 +4,7 @@ import {APP_BUILD_HASH, APP_BUILD_ID} from "@app/core/build-info"
 export const DEBUG_DIAGNOSTICS_SCHEMA_VERSION = 3
 export const DEBUG_DIAGNOSTICS_SCHEMA = "budabit-debug-run-v3"
 export const DEBUG_DIAGNOSTICS_SETTINGS_STORAGE_KEY = "budabit/debug-diagnostics/settings:v1"
+export const DEBUG_DIAGNOSTICS_CAPTURE_STORAGE_KEY = "budabit/debug-diagnostics/capture:v1"
 export const DEBUG_DIAGNOSTICS_DEFAULT_BLOSSOM = "https://blossom.budabit.club"
 export const DEBUG_DIAGNOSTICS_DEFAULT_RELAY = "wss://relay.budabit.club"
 
@@ -11,6 +12,7 @@ export const DEBUG_DIAGNOSTIC_CATEGORIES = [
   "relay-normalization",
   "relay-scheduler",
   "publication-lifecycle",
+  "app-update",
 ] as const
 
 export const DEBUG_DIAGNOSTIC_PRESET_IDS = ["quick", "standard", "extended"] as const
@@ -102,6 +104,7 @@ export const defaultDebugDiagnosticsSettings = (): DebugDiagnosticsSettings => (
     "relay-normalization": false,
     "relay-scheduler": false,
     "publication-lifecycle": false,
+    "app-update": false,
   },
 })
 
@@ -342,6 +345,88 @@ export const createDebugDiagnosticsRecorder = ({
     active.set(false)
     notify()
   }
+  const restore = (value: unknown) => {
+    if (!value || typeof value !== "object") return false
+    const snapshot = value as Partial<DebugDiagnosticsSnapshot>
+    const capture = snapshot.capture
+    if (
+      snapshot.schema !== DEBUG_DIAGNOSTICS_SCHEMA ||
+      snapshot.schemaVersion !== DEBUG_DIAGNOSTICS_SCHEMA_VERSION ||
+      !capture?.active ||
+      typeof capture.id !== "string" ||
+      !capture.id ||
+      typeof capture.startedAt !== "number" ||
+      !Number.isFinite(capture.startedAt) ||
+      !DEBUG_DIAGNOSTIC_PRESET_IDS.includes(capture.preset as DebugDiagnosticPreset) ||
+      !Array.isArray(capture.enabledCategories) ||
+      !Array.isArray(snapshot.records)
+    ) {
+      return false
+    }
+
+    const enabledCategories = new Set(
+      capture.enabledCategories.filter((category): category is DebugDiagnosticCategory =>
+        DEBUG_DIAGNOSTIC_CATEGORIES.includes(category as DebugDiagnosticCategory),
+      ),
+    )
+    if (!enabledCategories.has("app-update")) return false
+
+    captureId = capture.id
+    startedAt = capture.startedAt
+    finishedAt = undefined
+    capturePreset = capture.preset
+    captureCategories = Object.fromEntries(
+      DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [category, enabledCategories.has(category)]),
+    ) as Record<DebugDiagnosticCategory, boolean>
+    const presetLimits = DEBUG_DIAGNOSTIC_PRESETS[capturePreset]
+    captureLimits = {
+      maxRecords: maxRecords ?? presetLimits.maxRecords,
+      maxRecordsPerCategory: maxRecordsPerCategory ?? presetLimits.maxRecordsPerCategory,
+    }
+    records = snapshot.records
+      .filter((record): record is DebugDiagnosticRecord =>
+        Boolean(
+          record &&
+          typeof record === "object" &&
+          DEBUG_DIAGNOSTIC_CATEGORIES.includes(record.category) &&
+          typeof record.type === "string" &&
+          typeof record.at === "number" &&
+          Number.isFinite(record.at) &&
+          typeof record.elapsedMs === "number" &&
+          Number.isFinite(record.elapsedMs) &&
+          typeof record.observations === "number" &&
+          Number.isFinite(record.observations),
+        ),
+      )
+      .map(record => ({
+        category: record.category,
+        type: sanitizeString(record.type),
+        at: record.at,
+        elapsedMs: Math.max(0, record.elapsedMs),
+        observations: Math.max(0, Math.floor(record.observations)),
+        ...(record.detail === undefined
+          ? {}
+          : {detail: sanitizeDebugDiagnosticValue(record.detail)}),
+      }))
+    counts = Object.fromEntries(
+      DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [
+        category,
+        records.filter(record => record.category === category).length,
+      ]),
+    ) as Record<DebugDiagnosticCategory, number>
+    observationCounts = Object.fromEntries(
+      DEBUG_DIAGNOSTIC_CATEGORIES.map(category => [
+        category,
+        records
+          .filter(record => record.category === category)
+          .reduce((total, record) => total + record.observations, 0),
+      ]),
+    ) as Record<DebugDiagnosticCategory, number>
+    trimRecords()
+    active.set(true)
+    notify()
+    return true
+  }
   const record = (
     category: DebugDiagnosticCategory,
     type: string,
@@ -427,6 +512,7 @@ export const createDebugDiagnosticsRecorder = ({
     start,
     stop,
     clear,
+    restore,
     record,
     snapshot,
     overview,
@@ -447,21 +533,95 @@ export const registerDebugDiagnosticsFinalizer = (finalizer: DebugDiagnosticsFin
 export const debugDiagnosticsSettings = recorder.settings
 export const debugDiagnosticsActive = recorder.active
 export const debugDiagnosticsRevision = recorder.revision
-export const startDebugDiagnosticsCapture = recorder.start
+const removePersistedDebugDiagnosticsCapture = () => {
+  if (typeof sessionStorage === "undefined") return
+  try {
+    sessionStorage.removeItem(DEBUG_DIAGNOSTICS_CAPTURE_STORAGE_KEY)
+  } catch {
+    // Tab-scoped persistence is optional when browser storage is blocked.
+  }
+}
+
+const persistDebugDiagnosticsCapture = () => {
+  if (typeof sessionStorage === "undefined") return
+  const snapshot = recorder.snapshot()
+  if (!snapshot.capture.active || !snapshot.capture.enabledCategories.includes("app-update")) return
+  try {
+    sessionStorage.setItem(
+      DEBUG_DIAGNOSTICS_CAPTURE_STORAGE_KEY,
+      JSON.stringify({
+        ...snapshot,
+        records: snapshot.records.filter(record => record.category === "app-update"),
+      }),
+    )
+  } catch {
+    // Continue recording in memory when browser storage is unavailable or full.
+  }
+}
+
+export const restoreDebugDiagnosticsCapture = () => {
+  if (typeof sessionStorage === "undefined") return false
+  try {
+    const value = JSON.parse(
+      sessionStorage.getItem(DEBUG_DIAGNOSTICS_CAPTURE_STORAGE_KEY) || "null",
+    )
+    const restored = recorder.restore(value)
+    if (!restored) removePersistedDebugDiagnosticsCapture()
+    return restored
+  } catch {
+    removePersistedDebugDiagnosticsCapture()
+    return false
+  }
+}
+
+export const startDebugDiagnosticsCapture = (id?: string) => {
+  const captureId = recorder.start(id)
+  persistDebugDiagnosticsCapture()
+  return captureId
+}
+export const ensureAppUpdateDebugDiagnosticsCapture = () => {
+  if (!get(debugDiagnosticsSettings).categories["app-update"]) return false
+  if (!get(debugDiagnosticsActive)) startDebugDiagnosticsCapture()
+  return true
+}
 export const stopDebugDiagnosticsCapture = () => {
   if (stopPromise) return stopPromise
   if (!get(debugDiagnosticsActive)) return Promise.resolve(false)
 
   stopPromise = (async () => {
     await Promise.allSettled(Array.from(debugDiagnosticsFinalizers, finalizer => finalizer()))
-    return recorder.stop()
+    const stopped = recorder.stop()
+    removePersistedDebugDiagnosticsCapture()
+    return stopped
   })().finally(() => {
     stopPromise = undefined
   })
   return stopPromise
 }
-export const clearDebugDiagnostics = recorder.clear
-export const recordDebugDiagnostic = recorder.record
+export const clearDebugDiagnostics = () => {
+  recorder.clear()
+  removePersistedDebugDiagnosticsCapture()
+}
+export const recordDebugDiagnostic = (
+  category: DebugDiagnosticCategory,
+  type: string,
+  detail?: unknown,
+  observations = 1,
+) => {
+  const recorded = recorder.record(category, type, detail, observations)
+  if (recorded && category === "app-update") persistDebugDiagnosticsCapture()
+  return recorded
+}
+export const recordAppUpdateDebugDiagnostic = (type: string, detail?: unknown) =>
+  recordDebugDiagnostic("app-update", type, {
+    runningBuildId: APP_BUILD_ID,
+    runningBuildHash: APP_BUILD_HASH,
+    ...(detail && typeof detail === "object" && !Array.isArray(detail)
+      ? (detail as Record<string, unknown>)
+      : {detail}),
+  })
+export const isAppUpdateDebugDiagnosticsActive = () =>
+  get(debugDiagnosticsActive) && recorder.isCategoryEnabled("app-update")
 export const getDebugDiagnosticsSnapshot = recorder.snapshot
 export const getDebugDiagnosticsOverview = recorder.overview
 export const isDebugDiagnosticCategoryEnabled = recorder.isCategoryEnabled

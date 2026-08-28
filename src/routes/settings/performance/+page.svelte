@@ -10,6 +10,7 @@
     debugDiagnosticsActive,
     debugDiagnosticsRevision,
     debugDiagnosticsSettings,
+    ensureAppUpdateDebugDiagnosticsCapture,
     getDebugDiagnosticsOverview,
     getDebugDiagnosticsSnapshot,
     prepareDebugDiagnosticsArtifact,
@@ -74,6 +75,11 @@
       label: "Publication lifecycle",
       description:
         "Destinations, acknowledgements, failures, timeouts, retries, and linked stages.",
+    },
+    "app-update": {
+      label: "App update activation",
+      description:
+        "Enable to start recording service-worker discovery, version checks, activation requests, state changes, controller changes, and reload verification across a deploy.",
     },
   }
 
@@ -177,6 +183,7 @@
 
   const toggleDebugCategory = (category: DebugDiagnosticCategory, enabled: boolean) => {
     setDebugDiagnosticCategoryEnabled(category, enabled)
+    if (category === "app-update" && enabled) ensureAppUpdateDebugDiagnosticsCapture()
   }
 
   const selectDebugPreset = (preset: DebugDiagnosticPreset) => {
@@ -446,7 +453,7 @@
         {/each}
       </div>
 
-      <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+      <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-6">
         <div>
           <dt class="opacity-60">Status</dt>
           <dd>{debugStopping ? "Finishing" : $debugDiagnosticsActive ? "Recording" : "Stopped"}</dd>
@@ -476,6 +483,13 @@
           </dd>
           <dd class="text-xs opacity-60">
             {debugOverview.counts["publication-lifecycle"].toLocaleString()} records
+          </dd>
+        </div>
+        <div>
+          <dt class="opacity-60">App updates</dt>
+          <dd>{debugOverview.observationCounts["app-update"].toLocaleString()} events</dd>
+          <dd class="text-xs opacity-60">
+            {debugOverview.counts["app-update"].toLocaleString()} records
           </dd>
         </div>
       </dl>
@@ -530,7 +544,8 @@
       {#if debugError}<p class="text-sm text-error">{debugError}</p>{/if}
       <p class="text-xs opacity-60">
         Captures remain in this tab until cleared or the app is closed. Sensitive fields and relay
-        query values are removed before records are retained.
+        query values are removed before records are retained. App update captures survive the
+        activation reload in this tab so they can be stopped and uploaded afterward.
       </p>
     </section>
   {/if}
