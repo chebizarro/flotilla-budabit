@@ -42,6 +42,8 @@ import {GIT_PULL_REQUEST, GIT_PULL_REQUEST_UPDATE} from "@nostr-git/core/events"
 import type {Event as NostrEvent} from "nostr-tools"
 import {getDeclaredRepoRelays, requireRepoPublicationScope} from "@app/core/repo-publication"
 import {signEventForPublication} from "@app/core/publication"
+import {inventoryGitDeletion, type DeleteInventoryOutcome} from "@app/core/git-deletion-inventory"
+import type {DeleteRootType} from "@app/core/git-deletion-policy"
 
 export const GRASP_RELAY_ACK_TIMEOUT_MS = 30_000
 
@@ -721,6 +723,52 @@ export type DeleteProgress = {
 type DeleteCallbacks = {
   signal?: AbortSignal
   onProgress?: (progress: DeleteProgress) => void
+  onInventory?: (outcome: DeleteInventoryOutcome) => boolean | Promise<boolean>
+}
+
+const inventoryRelatedGitEvents = async ({
+  root,
+  rootType,
+  relays,
+  repoAddress,
+  signal,
+  onProgress,
+  onInventory,
+}: {
+  root: TrustedEvent
+  rootType: DeleteRootType
+  relays: string[]
+  repoAddress?: string
+} & DeleteCallbacks) => {
+  if (!repoAddress) return undefined
+
+  reportDeleteProgress(onProgress, {
+    label: "Building bounded deletion inventory...",
+    completed: 0,
+    total: 1,
+    current: rootType === "pull-request" ? "pull request" : rootType,
+  })
+  const outcome = await inventoryGitDeletion({
+    context: {
+      rootType,
+      root,
+      repositoryAddress: repoAddress,
+      ownerPubkey: root.pubkey,
+    },
+    relays,
+    timeoutMs: 15_000,
+    maxEventsPerRequest: 2_000,
+    signal,
+    owner: `delete:${rootType}:${root.id}`,
+  })
+  if (onInventory) {
+    if (!(await onInventory(outcome))) {
+      throw new Error("Deletion was cancelled after inventory preview.")
+    }
+  } else if (!outcome.complete) {
+    throw new Error("Deletion inventory is partial; deletion was not started.")
+  }
+  return outcome
 }
 
 const createAbortError = () => new DOMException("Delete operation cancelled", "AbortError")
@@ -944,7 +992,9 @@ const deleteEventsSequentially = ({
     onProgress,
   })
     .then(result => {
-      retainedDeleteOperations.delete(operationKey)
+      if (result.failedBestEffortIds.size === 0) {
+        retainedDeleteOperations.delete(operationKey)
+      }
       return result
     })
     .finally(() => {
@@ -961,6 +1011,7 @@ export const deleteIssueWithLabels = async ({
   repoAddress,
   signal,
   onProgress,
+  onInventory,
 }: {
   issue: TrustedEvent
   relays?: string[]
@@ -975,44 +1026,57 @@ export const deleteIssueWithLabels = async ({
     return {labelsDeleted: 0, labelsFailed: 0}
   }
 
-  reportDeleteProgress(onProgress, {
-    label: "Loading author labels...",
-    completed: 0,
-    total: 1,
-    current: "issue",
-  })
-
   throwIfAborted(signal)
 
-  try {
-    await awaitWithAbort(
-      load({
-        relays: merged,
-        filters: [{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}],
+  const inventory = await inventoryRelatedGitEvents({
+    root: issue,
+    rootType: "issue",
+    relays: merged,
+    repoAddress,
+    signal,
+    onProgress,
+    onInventory,
+  })
+  let relatedEvents: TrustedEvent[]
+  if (inventory) {
+    relatedEvents = inventory.targets
+      .filter(target => target.policy === "best-effort")
+      .map(target => target.event)
+  } else {
+    reportDeleteProgress(onProgress, {
+      label: "Loading author labels...",
+      completed: 0,
+      total: 1,
+      current: "issue",
+    })
+    try {
+      await awaitWithAbort(
+        load({
+          relays: merged,
+          filters: [{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}],
+          signal,
+        }),
         signal,
-      }),
-      signal,
+      )
+    } catch {
+      throwIfAborted(signal)
+    }
+    relatedEvents = (
+      repository.query([{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}], {
+        shouldSort: false,
+      }) as TrustedEvent[]
+    ).filter(
+      event =>
+        event.kind === 1985 &&
+        event.pubkey === issue.pubkey &&
+        event.tags.some(tag => tag[0] === "e" && tag[1] === issue.id),
     )
-  } catch {
-    throwIfAborted(signal)
-    // ignore label load errors; deletion can still proceed
   }
-
-  const labelEvents = (
-    repository.query([{kinds: [1985], "#e": [issue.id], authors: [issue.pubkey]}], {
-      shouldSort: false,
-    }) as TrustedEvent[]
-  ).filter(
-    event =>
-      event.kind === 1985 &&
-      event.pubkey === issue.pubkey &&
-      event.tags.some(tag => tag[0] === "e" && tag[1] === issue.id),
-  )
 
   const result = await deleteEventsSequentially({
     root: issue,
-    events: [...labelEvents, issue],
-    bestEffortEventIds: new Set(labelEvents.map(event => event.id)),
+    events: [...relatedEvents, issue],
+    bestEffortEventIds: new Set(relatedEvents.map(event => event.id)),
     requireNewerDeleteTimestamp: true,
     relays: merged,
     repoAddress,
@@ -1032,67 +1096,68 @@ export const deletePullRequestWithRelated = async ({
   repoAddress,
   signal,
   onProgress,
+  onInventory,
 }: {
   root: TrustedEvent
   relays?: string[]
   repoAddress?: string
-} & DeleteCallbacks): Promise<{deletedEvents: number; relatedDeleted: number}> => {
-  if (!root?.id) return {deletedEvents: 0, relatedDeleted: 0}
+} & DeleteCallbacks): Promise<{
+  deletedEvents: number
+  relatedDeleted: number
+  relatedFailed: number
+}> => {
+  if (!root?.id) return {deletedEvents: 0, relatedDeleted: 0, relatedFailed: 0}
   if (root.kind !== GIT_PULL_REQUEST) {
-    return {deletedEvents: 0, relatedDeleted: 0}
+    return {deletedEvents: 0, relatedDeleted: 0, relatedFailed: 0}
   }
 
   const merged = getScopedRelayUrls(root, relays, repoAddress)
 
   if (merged.length === 0) {
-    return {deletedEvents: 0, relatedDeleted: 0}
+    return {deletedEvents: 0, relatedDeleted: 0, relatedFailed: 0}
   }
-
-  reportDeleteProgress(onProgress, {
-    label: "Loading related events...",
-    completed: 0,
-    total: 1,
-    current: "pull request",
-  })
 
   throwIfAborted(signal)
 
-  const filters: Filter[] = [
-    {
-      kinds: [GIT_STATUS_OPEN, GIT_STATUS_DRAFT, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE],
-      "#e": [root.id],
-    },
-    {
-      kinds: [1985],
-      "#e": [root.id],
-    },
-    {
-      kinds: [COMMENT],
-      "#E": [root.id],
-    },
-    {
-      kinds: [COMMENT],
-      "#e": [root.id],
-    },
-  ]
-
-  filters.push({
-    kinds: [GIT_PULL_REQUEST_UPDATE],
-    "#E": [root.id],
+  const inventory = await inventoryRelatedGitEvents({
+    root,
+    rootType: "pull-request",
+    relays: merged,
+    repoAddress,
+    signal,
+    onProgress,
+    onInventory,
   })
-  filters.push({
-    kinds: [GIT_PULL_REQUEST_UPDATE],
-    "#e": [root.id],
-  })
-
-  try {
-    await awaitWithAbort(load({relays: merged, filters, signal}), signal)
-  } catch {
-    throwIfAborted(signal)
-    // pass
+  let relatedEvents: TrustedEvent[]
+  if (inventory) {
+    relatedEvents = inventory.targets
+      .filter(target => target.policy === "best-effort")
+      .map(target => target.event)
+  } else {
+    reportDeleteProgress(onProgress, {
+      label: "Loading related events...",
+      completed: 0,
+      total: 1,
+      current: "pull request",
+    })
+    const filters: Filter[] = [
+      {
+        kinds: [GIT_STATUS_OPEN, GIT_STATUS_DRAFT, GIT_STATUS_CLOSED, GIT_STATUS_COMPLETE],
+        "#e": [root.id],
+      },
+      {kinds: [1985], "#e": [root.id]},
+      {kinds: [COMMENT], "#E": [root.id]},
+      {kinds: [COMMENT], "#e": [root.id]},
+      {kinds: [GIT_PULL_REQUEST_UPDATE], "#E": [root.id]},
+      {kinds: [GIT_PULL_REQUEST_UPDATE], "#e": [root.id]},
+    ]
+    try {
+      await awaitWithAbort(load({relays: merged, filters, signal}), signal)
+    } catch {
+      throwIfAborted(signal)
+    }
+    relatedEvents = repository.query(filters, {shouldSort: false}) as TrustedEvent[]
   }
-
-  const relatedEvents = repository.query(filters, {shouldSort: false}) as TrustedEvent[]
   const eventsToDelete = new Map<string, TrustedEvent>()
 
   for (const event of relatedEvents) {
@@ -1103,9 +1168,14 @@ export const deletePullRequestWithRelated = async ({
 
   eventsToDelete.set(root.id, root)
 
-  const {deletedEvents} = await deleteEventsSequentially({
+  const bestEffortEventIds = new Set(
+    Array.from(eventsToDelete.keys()).filter(eventId => eventId !== root.id),
+  )
+  const {deletedEvents, failedBestEffortIds} = await deleteEventsSequentially({
     root,
     events: Array.from(eventsToDelete.values()),
+    bestEffortEventIds,
+    requireNewerDeleteTimestamp: true,
     relays: merged,
     repoAddress,
     signal,
@@ -1115,5 +1185,6 @@ export const deletePullRequestWithRelated = async ({
   return {
     deletedEvents,
     relatedDeleted: Math.max(0, deletedEvents - 1),
+    relatedFailed: failedBestEffortIds.size,
   }
 }

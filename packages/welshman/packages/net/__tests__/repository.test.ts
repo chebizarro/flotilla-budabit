@@ -646,34 +646,126 @@ describe("Repository", () => {
       repo = new Repository()
     })
 
-    it("should handle delete events", () => {
+    it.each(["before", "after"] as const)(
+      "should handle delete events published %s their targets",
+      order => {
+        const pubkey = randomHex()
+        const event = createEvent(1, {pubkey, created_at: 100})
+        const deleteEvent = createEvent(DELETE, {
+          pubkey,
+          tags: [["e", event.id]],
+          created_at: 101,
+        })
+
+        if (order === "before") {
+          repo.publish(deleteEvent)
+          repo.publish(event)
+        } else {
+          repo.publish(event)
+          repo.publish(deleteEvent)
+        }
+
+        expect(repo.isDeleted(event)).toBe(true)
+        expect(repo.query([{ids: [event.id]}])).toEqual([])
+      },
+    )
+
+    it("should ignore deletes that are not newer than their targets", () => {
       const pubkey = randomHex()
-      const event = createEvent(1, {pubkey})
+      const event = createEvent(1, {pubkey, created_at: 100})
+      const equalDelete = createEvent(DELETE, {
+        pubkey,
+        tags: [["e", event.id]],
+        created_at: 100,
+      })
+      const olderDelete = createEvent(DELETE, {
+        pubkey,
+        tags: [["e", event.id]],
+        created_at: 99,
+      })
+
+      repo.publish(event)
+      repo.publish(equalDelete)
+      repo.publish(olderDelete)
+
+      expect(repo.isDeleted(event)).toBe(false)
+      expect(repo.query([{ids: [event.id]}])).toEqual([event])
+    })
+
+    it("should allow a newer replacement after deletion by address", () => {
+      const pubkey = randomHex()
+      const event = createEvent(MUTES, {pubkey, created_at: 100})
+      const deleteEvent = createEvent(DELETE, {
+        pubkey,
+        tags: [["a", getAddress(event)]],
+        created_at: 101,
+      })
+      const replacement = createEvent(MUTES, {pubkey, created_at: 102})
+
+      repo.publish(event)
+      repo.publish(deleteEvent)
+      repo.publish(replacement)
+
+      expect(repo.isDeletedByAddress(event)).toBe(true)
+      expect(repo.isDeleted(replacement)).toBe(false)
+      expect(repo.getEvent(getAddress(event))).toBe(replacement)
+    })
+
+    it("should emit only the final state when a target and delete share a batch", () => {
+      const pubkey = randomHex()
+      const event = createEvent(1, {pubkey, created_at: 100})
       const deleteEvent = createEvent(DELETE, {
         pubkey,
         tags: [["e", event.id]],
-        created_at: now() + 100,
+        created_at: 101,
+      })
+      const updateHandler = vi.fn()
+      repo.onUpdate({name: "batched-delete"}, updateHandler)
+
+      repo.batch(() => {
+        repo.publish(event)
+        repo.publish(deleteEvent)
       })
 
-      repo.publish(event)
-      repo.publish(deleteEvent)
-
-      expect(repo.isDeleted(event)).toBe(true)
+      expect(updateHandler).toHaveBeenCalledTimes(1)
+      expect(updateHandler).toHaveBeenCalledWith({
+        added: [deleteEvent],
+        removed: new Set([event.id]),
+      })
     })
 
-    it("should handle delete by address", () => {
+    it.each(["target-first", "delete-first"] as const)(
+      "should restore persisted deletes loaded %s",
+      order => {
+        const pubkey = randomHex()
+        const event = createEvent(1, {pubkey, created_at: 100})
+        const deleteEvent = createEvent(DELETE, {
+          pubkey,
+          tags: [["e", event.id]],
+          created_at: 101,
+        })
+
+        repo.load(order === "target-first" ? [event, deleteEvent] : [deleteEvent, event])
+
+        expect(repo.isDeleted(event)).toBe(true)
+        expect(repo.query([{ids: [event.id]}])).toEqual([])
+      },
+    )
+
+    it("should include deleted events only for audit queries", () => {
       const pubkey = randomHex()
-      const event = createEvent(MUTES, {pubkey})
+      const event = createEvent(1, {pubkey, created_at: 100})
       const deleteEvent = createEvent(DELETE, {
         pubkey,
-        tags: [["a", `10000:${event.pubkey}:`]],
-        created_at: now() + 100,
+        tags: [["e", event.id]],
+        created_at: 101,
       })
 
       repo.publish(event)
       repo.publish(deleteEvent)
 
-      expect(repo.isDeletedByAddress(event)).toBe(true)
+      expect(repo.query([{ids: [event.id]}])).toEqual([])
+      expect(repo.query([{ids: [event.id]}], {includeDeleted: true})).toEqual([event])
     })
 
     it("should ignore delete by id for replaceable events", () => {

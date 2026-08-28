@@ -11,7 +11,9 @@ import {
 import {seedDevSession} from "./helpers/dev-session"
 import {MockRelay} from "./helpers/mock-relay"
 
-test("commits an issue deletion locally only after a real relay acknowledgement", async ({page}) => {
+test("commits an issue deletion locally only after a real relay acknowledgement", async ({
+  page,
+}) => {
   const relayUrl = "wss://issue-deletion.test"
   const identifier = "issue-deletion-fixture"
   const repoAddress = getRepoAddress(TEST_PUBKEYS.devUser, identifier)
@@ -50,6 +52,7 @@ test("commits an issue deletion locally only after a real relay acknowledgement"
 
   await page.getByRole("button", {name: "Open issue actions"}).click()
   await page.getByRole("button", {name: "Delete issue", exact: true}).click()
+  page.once("dialog", dialog => dialog.accept())
   await page
     .getByTestId("modal-root")
     .getByRole("button", {name: "Delete issue", exact: true})

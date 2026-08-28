@@ -6,9 +6,9 @@ import {
   GIT_STATUS_COMPLETE,
   GIT_STATUS_DRAFT,
   GIT_STATUS_OPEN,
+  REACTION,
   THREAD,
   ZAP_GOAL,
-  getTagValue,
   type TrustedEvent,
 } from "@welshman/util"
 import {
@@ -40,7 +40,81 @@ const persistedGitDeleteKinds = new Set([
   GIT_STATUS_COMPLETE,
   GIT_STATUS_APPLIED,
   COMMENT,
+  REACTION,
 ])
+
+export type RepositoryDeleteTarget = {
+  type: "e" | "a"
+  value: string
+  key: `e:${string}` | `a:${string}`
+  kind: number
+  author?: string
+}
+
+export type RepositoryDeleteShape = {
+  repositoryAddress: string
+  targets: RepositoryDeleteTarget[]
+}
+
+const parsePersistedGitKind = (value: string) => {
+  if (!/^\d+$/.test(value)) return
+  const kind = Number(value)
+  return persistedGitDeleteKinds.has(kind) ? kind : undefined
+}
+
+// Mixed deletes carry the target kind in each target's fourth field.
+// Existing homogeneous deletes with one unkeyed k tag remain valid.
+export const parseRepositoryDeleteShape = (
+  event: TrustedEvent,
+): RepositoryDeleteShape | undefined => {
+  if (event.kind !== DELETE) return
+
+  const repoTags = event.tags.filter(tag => tag[0] === "repo")
+  if (repoTags.length !== 1 || repoTags[0].length !== 2 || !repoTags[0][1]) return
+  if (!/^30617:[0-9a-f]{64}:.+$/.test(repoTags[0][1])) return
+
+  const targetTags = event.tags.filter(tag => tag[0] === "e" || tag[0] === "a")
+  if (targetTags.length === 0 || targetTags.some(tag => !tag[1])) return
+  const targetKeys = targetTags.map(tag => `${tag[0]}:${tag[1]}` as `e:${string}` | `a:${string}`)
+  if (new Set(targetKeys).size !== targetKeys.length) return
+
+  const kindTags = event.tags.filter(tag => tag[0] === "k")
+  const legacyKind = kindTags.length === 1 ? parsePersistedGitKind(kindTags[0][1] || "") : undefined
+  const legacy =
+    legacyKind !== undefined &&
+    kindTags[0].length === 2 &&
+    targetTags.every(tag => tag.length >= 2 && tag.length <= 5)
+  const canonical =
+    kindTags.length === 0 &&
+    targetTags.every(
+      tag => tag.length === 4 && tag[2] === "" && parsePersistedGitKind(tag[3]) !== undefined,
+    )
+  if (!legacy && !canonical) return
+
+  const targets = targetTags.map((tag, index) => {
+    const addressAuthor = tag[0] === "a" ? tag[1].split(":", 3)[1] : undefined
+    const taggedAuthor = legacy && /^[0-9a-f]{64}$/.test(tag[4] || "") ? tag[4] : undefined
+    return {
+      type: tag[0] as "e" | "a",
+      value: tag[1],
+      key: targetKeys[index],
+      kind: legacy ? legacyKind! : parsePersistedGitKind(tag[3])!,
+      ...(taggedAuthor || addressAuthor ? {author: taggedAuthor || addressAuthor} : {}),
+    }
+  })
+  if (
+    targets.some(target => {
+      if (target.type !== "a") return false
+      const match = target.value.match(/^(\d+):([0-9a-f]{64}):(.+)$/)
+      return !match || Number(match[1]) !== target.kind
+    })
+  ) {
+    return
+  }
+  if (targets.some(target => target.author && target.author !== event.pubkey)) return
+
+  return {repositoryAddress: repoTags[0][1], targets}
+}
 
 export const isPersistedCommunityDefinitionEvent = (event: TrustedEvent) => {
   if (event.kind !== COMMUNITY_DEFINITION_KIND) return false
@@ -55,15 +129,7 @@ export const isPersistedCommunityDefinitionEvent = (event: TrustedEvent) => {
 }
 
 export const isPersistedGitDeleteEvent = (event: TrustedEvent) => {
-  if (event.kind !== DELETE) return false
-
-  const repoAddress = getTagValue("repo", event.tags)
-  const targetKind = Number(getTagValue("k", event.tags))
-
-  if (!repoAddress) return false
-  if (!Number.isFinite(targetKind)) return false
-
-  return persistedGitDeleteKinds.has(targetKind)
+  return Boolean(parseRepositoryDeleteShape(event))
 }
 
 export const isPersistedCommunityReportDeleteEvent = (event: TrustedEvent) => {

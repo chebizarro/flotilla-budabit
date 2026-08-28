@@ -4,8 +4,6 @@ import {
   first,
   sha256,
   randomId,
-  append,
-  remove,
   uniq,
   parseJson,
   simpleCache,
@@ -600,6 +598,7 @@ export type DeleteParams = {
   event: TrustedEvent
   tags?: string[][]
   created_at?: number
+  repoAddress?: string
 }
 
 type PublishBehavior = {
@@ -636,11 +635,11 @@ const cloneTag = (tag: string[]) => [...tag]
 const sanitizePublishTags = (tags: string[][] = []) =>
   tags.filter(tag => tag[0] !== "-").map(cloneTag)
 
-export const makeDelete = ({event, tags = [], created_at}: DeleteParams) => {
+export const makeDelete = ({event, tags = [], created_at, repoAddress}: DeleteParams) => {
   const thisTags = [["k", String(event.kind)], ...tagEvent(event), ...sanitizePublishTags(tags)]
-  const repoAddress = getRepoAddressForDelete(event)
-  if (repoAddress) {
-    thisTags.push(["repo", repoAddress])
+  const scopedRepoAddress = repoAddress || getRepoAddressForDelete(event)
+  if (scopedRepoAddress) {
+    thisTags.push(["repo", scopedRepoAddress])
   }
   const groupTag = getTag("h", event.tags)
 
@@ -650,19 +649,19 @@ export const makeDelete = ({event, tags = [], created_at}: DeleteParams) => {
 
   return makeEvent(DELETE, {
     tags: uniqTags(thisTags),
-    ...(created_at === undefined ? {} : {created_at}),
+    created_at: Math.max(created_at ?? Math.floor(Date.now() / 1000), event.created_at + 1),
   })
 }
 
-export const makeExactEventDelete = ({event, tags = [], created_at}: DeleteParams) => {
+export const makeExactEventDelete = ({event, tags = [], created_at, repoAddress}: DeleteParams) => {
   const thisTags = [
     ["k", String(event.kind)],
     ["e", event.id],
     ...sanitizePublishTags(tags).filter(tag => tag[0] !== "a"),
   ]
-  const repoAddress = getRepoAddressForDelete(event)
-  if (repoAddress) {
-    thisTags.push(["repo", repoAddress])
+  const scopedRepoAddress = repoAddress || getRepoAddressForDelete(event)
+  if (scopedRepoAddress) {
+    thisTags.push(["repo", scopedRepoAddress])
   }
   const groupTag = getTag("h", event.tags)
   if (groupTag) {
@@ -671,7 +670,7 @@ export const makeExactEventDelete = ({event, tags = [], created_at}: DeleteParam
 
   return makeEvent(DELETE, {
     tags: uniqTags(thisTags),
-    ...(created_at === undefined ? {} : {created_at}),
+    created_at: Math.max(created_at ?? Math.floor(Date.now() / 1000), event.created_at + 1),
   })
 }
 
@@ -745,7 +744,11 @@ export const publishDelete = ({
   const publishRelays = repoAddress
     ? requireRepoPublicationScope({event: params.event, relays, repoAddress})
     : requireScopedPublishRelays(relays)
-  const thunk = publishThunk({event: makeDelete(params), relays: publishRelays, optimistic})
+  const thunk = publishThunk({
+    event: makeDelete({...params, ...(repoAddress ? {repoAddress} : {})}),
+    relays: publishRelays,
+    optimistic,
+  })
 
   logDeleteDebug({
     deleteEvent: thunk.event as TrustedEvent,

@@ -36,10 +36,45 @@ describe("storage git delete persistence", () => {
         tags: [
           ["k", "1618"],
           ["e", "target-1"],
-          ["repo", "30617:alice:repo"],
+          ["repo", `30617:${"a".repeat(64)}:repo`],
         ],
       } as any),
     ).toBe(true)
+  })
+
+  it("persists enriched single-target deletes only for the target author", () => {
+    const author = "a".repeat(64)
+    const target = "c".repeat(64)
+    const repo = `30617:${"b".repeat(64)}:repo`
+    const base = {
+      id: "d".repeat(64),
+      pubkey: author,
+      sig: "b".repeat(128),
+      kind: 5,
+      created_at: 2,
+      content: "",
+    }
+
+    expect(
+      isPersistedGitDeleteEvent({
+        ...base,
+        tags: [
+          ["k", "1111"],
+          ["e", target, "", "", author],
+          ["repo", repo],
+        ],
+      } as any),
+    ).toBe(true)
+    expect(
+      isPersistedGitDeleteEvent({
+        ...base,
+        tags: [
+          ["k", "1111"],
+          ["e", target, "", "", "e".repeat(64)],
+          ["repo", repo],
+        ],
+      } as any),
+    ).toBe(false)
   })
 
   it("does not persist non-repo delete events", () => {
@@ -74,6 +109,50 @@ describe("storage git delete persistence", () => {
           ["repo", "30617:alice:repo"],
         ],
       } as any),
+    ).toBe(false)
+  })
+
+  it("persists canonical mixed e/a targets with per-target kind metadata", () => {
+    const repo = `30617:${"a".repeat(64)}:repo`
+    const state = `30618:${"a".repeat(64)}:repo`
+
+    expect(
+      isPersistedGitDeleteEvent({
+        ...makeEvent(5),
+        tags: [
+          ["repo", repo],
+          ["e", "issue-id", "", "1621"],
+          ["a", state, "", "30618"],
+        ],
+      }),
+    ).toBe(true)
+  })
+
+  it("rejects incomplete, duplicate, and mismatched per-target kind metadata", () => {
+    const repo = `30617:${"a".repeat(64)}:repo`
+    const state = `30618:${"a".repeat(64)}:repo`
+    const base = makeEvent(5)
+    const check = (tags: string[][]) => isPersistedGitDeleteEvent({...base, tags})
+
+    expect(
+      check([
+        ["repo", repo],
+        ["e", "issue-id", "", "1621"],
+        ["a", state],
+      ]),
+    ).toBe(false)
+    expect(
+      check([
+        ["repo", repo],
+        ["e", "issue-id", "", "1621"],
+        ["e", "issue-id", "", "1621"],
+      ]),
+    ).toBe(false)
+    expect(
+      check([
+        ["repo", repo],
+        ["a", state, "", "30617"],
+      ]),
     ).toBe(false)
   })
 })

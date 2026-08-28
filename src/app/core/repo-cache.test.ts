@@ -14,6 +14,7 @@ import {
 } from "./repo-cache"
 
 const secretKey = new Uint8Array(32).fill(7)
+const outsiderSecretKey = new Uint8Array(32).fill(8)
 const owner = finalizeEvent({kind: 1, created_at: 1, tags: [], content: "owner"}, secretKey).pubkey
 const address = `30617:${owner}:repo`
 const otherAddress = `30617:${owner}:other`
@@ -389,8 +390,9 @@ describe("repository cache", () => {
     })
     const root = issue(5)
     const deletion = signEvent(5, [
-      ["a", address],
+      ["repo", address],
       ["e", root.id],
+      ["k", "1621"],
     ])
     const olderActivity = signEvent(
       1111,
@@ -416,9 +418,10 @@ describe("repository cache", () => {
     const firstRoot = issue(5)
     const secondRoot = issue(6)
     const deletion = signEvent(5, [
-      ["a", address],
+      ["repo", address],
       ["e", firstRoot.id],
       ["e", secondRoot.id],
+      ["k", "1621"],
     ])
     const {cache, storage} = makeCache({
       cachePolicy: policy({
@@ -437,6 +440,76 @@ describe("repository cache", () => {
         item => item.event.id === firstRoot.id || item.event.id === secondRoot.id,
       ),
     ).toBe(true)
+  })
+
+  it("admits mixed e/a tombstones and suppresses both targets after reload", async () => {
+    const root = issue(5)
+    const state = signEvent(30618, [["d", "repo"]], "state", 6)
+    const stateAddress = `30618:${owner}:repo`
+    const deletion = signEvent(
+      5,
+      [
+        ["repo", address],
+        ["e", root.id, "", "1621"],
+        ["a", stateAddress, "", "30618"],
+      ],
+      "delete",
+      7,
+    )
+    const first = makeCache()
+    await first.cache.accessRepository(address)
+    await first.cache.storeEvent(address, root)
+    await first.cache.storeEvent(address, state)
+
+    await expect(first.cache.storeEventForKnownRepository(deletion)).resolves.toBe(true)
+    expect(
+      first.storage.state.events.find(item => item.event.id === deletion.id)?.targetIds,
+    ).toEqual([stateAddress, root.id].sort())
+
+    const visible = new Map<string, TrustedEvent>()
+    const second = makeCache({
+      storage: first.storage,
+      publish: event => {
+        if (event.kind !== 5) {
+          visible.set(event.id, event)
+          return
+        }
+        visible.delete(root.id)
+        for (const [id, target] of visible) {
+          if (
+            target.kind === 30618 &&
+            target.tags.some(tag => tag[0] === "d" && tag[1] === "repo")
+          ) {
+            visible.delete(id)
+          }
+        }
+      },
+    })
+
+    await expect(second.cache.hydrateEligible()).resolves.toBe(3)
+    expect(visible.size).toBe(0)
+  })
+
+  it("rejects a foreign tombstone that only claims the repository scope", async () => {
+    const root = issue(5)
+    const forged = finalizeEvent(
+      {
+        kind: 5,
+        created_at: 7,
+        content: "",
+        tags: [
+          ["repo", address],
+          ["e", root.id, "", "1621"],
+        ],
+      },
+      outsiderSecretKey,
+    ) as unknown as TrustedEvent
+    const {cache, storage} = makeCache()
+    await cache.accessRepository(address)
+    await cache.storeEvent(address, root)
+
+    await expect(cache.storeEventForKnownRepository(forged)).resolves.toBe(false)
+    expect(storage.state.events.map(item => item.event.id)).not.toContain(forged.id)
   })
 
   it("rejects oversized records and pruning never invokes an in-memory removal sink", async () => {

@@ -9,6 +9,7 @@ import {
   GIT_STATUS_COMPLETE,
   GIT_STATUS_DRAFT,
   GIT_STATUS_OPEN,
+  REACTION,
   REPORT,
   isRelayUrl,
   normalizeRelayUrl,
@@ -25,6 +26,7 @@ import {
 import {getRepoPublicationAddress} from "@app/core/repo-publication"
 import {userRepoWatch, type RepoWatchItem} from "@app/core/repo-watch"
 import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
+import {parseRepositoryDeleteShape} from "@app/util/storage-events"
 
 export const REPO_CACHE_DB_NAME = "budabit-repository-cache"
 export const REPO_CACHE_DB_VERSION = 1
@@ -130,6 +132,7 @@ const supportedRepositoryCacheKinds = [
   GIT_STATUS_CLOSED,
   GIT_STATUS_COMPLETE,
   REPORT,
+  REACTION,
 ] as const
 const supportedActivityKinds = new Set<number>(supportedRepositoryCacheKinds)
 const repositoryCacheRouteKinds = [
@@ -210,6 +213,11 @@ const getReferenceIds = (event: TrustedEvent) =>
         .filter(Boolean),
     ),
   ).sort()
+
+const getDeleteTargetValues = (event: TrustedEvent) =>
+  parseRepositoryDeleteShape(event)
+    ?.targets.map(target => target.value)
+    .sort() || []
 
 const classifyRepositoryEvent = (event: TrustedEvent): RepositoryCacheEventClass | undefined => {
   if (event.kind === GIT_REPO_ANNOUNCEMENT || event.kind === GIT_REPO_STATE) return "authority"
@@ -413,6 +421,19 @@ export class RepositoryCache {
     if (!eventClass || visited.has(event.id)) return false
     visited.add(event.id)
 
+    if (eventClass === "delete") {
+      const deletion = parseRepositoryDeleteShape(event)
+      if (!deletion) return false
+      if (canonicalizeRepoCacheAddress(deletion.repositoryAddress) !== address) return false
+      const repositoryOwner = address.split(":", 3)[1]
+      if (event.pubkey === repositoryOwner) return true
+      return deletion.targets.every(target => {
+        if (target.author) return target.author === event.pubkey
+        const resolved = this.getCachedEvent(target.value) || this.getEvent?.(target.value)
+        return Boolean(resolved && this.verify(resolved) && resolved.pubkey === event.pubkey)
+      })
+    }
+
     const direct = getDirectRepositoryAddress(event)
     if (direct.invalid) return false
     if (direct.address) return canonicalizeRepoCacheAddress(direct.address) === address
@@ -479,12 +500,20 @@ export class RepositoryCache {
   }
 
   private getEvictionCandidates(records: CachedRepositoryEvent[]) {
-    const retainedIds = new Set(records.map(item => item.event.id))
+    const retainedTargets = new Set<string>()
+    for (const record of records) {
+      retainedTargets.add(record.event.id)
+      try {
+        retainedTargets.add(Address.fromEvent(record.event).toString())
+      } catch {
+        // Regular events have no address deletion identity.
+      }
+    }
     return records
       .filter(
         record =>
           record.eventClass !== "delete" ||
-          !record.targetIds.some(targetId => retainedIds.has(targetId)),
+          !record.targetIds.some(target => retainedTargets.has(target)),
       )
       .sort(
         (left, right) =>
@@ -596,7 +625,7 @@ export class RepositoryCache {
         this.policy.maxRelaysPerEvent,
       ),
       eventClass,
-      targetIds: eventClass === "delete" ? getReferenceIds(plainEvent) : [],
+      targetIds: eventClass === "delete" ? getDeleteTargetValues(plainEvent) : [],
       cachedAt: existing?.cachedAt || now,
       lastAccessedAt: metadata.lastAccessedAt,
     }
@@ -858,7 +887,7 @@ export class RepositoryCache {
       event,
       relays: normalizeProvenance(record.relays, this.policy.maxRelaysPerEvent),
       eventClass,
-      targetIds: eventClass === "delete" ? getReferenceIds(event) : [],
+      targetIds: eventClass === "delete" ? getDeleteTargetValues(event) : [],
     }
     const bytes = getSerializedRecordBytes(recordWithoutBytes)
     if (bytes > this.policy.maxRecordBytes) {
@@ -907,6 +936,7 @@ const getCanonicalRepositoryEvents = (address: string) => {
       {kinds: [GIT_REPO_STATE], authors: [parsed.pubkey], "#d": [parsed.identifier]},
       {"#a": [address]},
       {"#q": [address]},
+      {kinds: [DELETE], "#repo": [address]},
     ],
     {shouldSort: false},
   ) as TrustedEvent[]

@@ -3254,7 +3254,7 @@
             </h1>
           </div>
 
-          {#if $pubkey && ($pubkey === prEvent.pubkey || $pubkey === repoOwnerPubkey)}
+          {#if $pubkey === prEvent.pubkey}
             <EventActions
               event={prEvent as any}
               url={commentRelayHint || repoRelays[0] || ""}

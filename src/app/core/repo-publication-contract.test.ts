@@ -111,15 +111,17 @@ describe("repository publication source contract", () => {
 
   it("completes strict repository inventory before destructive deletion work", () => {
     const source = readProjectFile("../components/DeleteRepoConfirm.svelte")
-    const submit = source.indexOf("const confirmDelete")
-    const inventory = source.indexOf("await fetchCompleteRelayInventory", submit)
-    const metadataPublish = source.indexOf("await publishDeleteEvent(", inventory)
+    const submit = source.indexOf("const deleteRepo")
+    const inventory = source.indexOf("await inventoryGitDeletion", submit)
+    const metadataPublish = source.indexOf("await metadataOperation.runBestEffort", inventory)
     const remoteDelete = source.indexOf("deleteRemoteRepo({", inventory)
     const localDelete = source.indexOf("workerManager.deleteRepo({", inventory)
+    const rootDelete = source.indexOf("await metadataOperation.runRoot", remoteDelete)
 
     expect(inventory).toBeGreaterThan(submit)
     expect(metadataPublish).toBeGreaterThan(inventory)
     expect(remoteDelete).toBeGreaterThan(inventory)
+    expect(rootDelete).toBeGreaterThan(remoteDelete)
     expect(localDelete).toBeGreaterThan(inventory)
     expect(source).not.toContain("await load({relays, filters})")
     expect(source).not.toContain("repository.query(filters")

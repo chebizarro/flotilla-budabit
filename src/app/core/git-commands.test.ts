@@ -28,6 +28,7 @@ const mockSignerSign = vi.fn()
 const mockRetryThunk = vi.fn((thunk: any) => makeMockThunk({...thunk.options, event: thunk.event}))
 const mockWaitForAnyRelayAck = vi.fn()
 const mockAbortThunk = vi.fn()
+const mockInventoryGitDeletion = vi.fn()
 
 vi.mock("@welshman/app", async importOriginal => {
   const actual = await importOriginal<typeof import("@welshman/app")>()
@@ -81,6 +82,10 @@ vi.mock("@app/core/community-relays", () => ({
   getUserDataPublishRelays: (relays: string[]) => [...relays, "wss://community.example.com"],
 }))
 
+vi.mock("@app/core/git-deletion-inventory", () => ({
+  inventoryGitDeletion: (options: unknown) => mockInventoryGitDeletion(options),
+}))
+
 vi.mock("./git-state", () => ({
   GIT_RELAYS: [],
   getRepoAnnouncementPublishRelays: ({repoRelays = []}: {repoRelays?: string[]}) => [
@@ -122,6 +127,7 @@ describe("budabit commands", () => {
     mockWaitForAnyRelayAck.mockReset()
     mockWaitForAnyRelayAck.mockResolvedValue({relay: "wss://relay.example.com/"})
     mockAbortThunk.mockReset()
+    mockInventoryGitDeletion.mockReset()
   })
 
   describe("publishEvent", () => {
@@ -825,6 +831,110 @@ describe("budabit commands", () => {
   })
 
   describe("deleteIssueWithLabels", () => {
+    it("uses the bounded policy inventory for repository-scoped issue cleanup", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const repositoryOwner = "b".repeat(64)
+      const repoAddress = `30617:${repositoryOwner}:repo`
+      const issue = {
+        id: "scoped-issue",
+        kind: 1621,
+        pubkey: "a".repeat(64),
+        tags: [["a", repoAddress]],
+        content: "",
+        created_at: 1,
+        sig: "",
+      } as any
+      const related = [
+        {id: "cover", kind: 1624, tags: [["e", issue.id]]},
+        {id: "status", kind: 1630, tags: [["e", issue.id]]},
+        {id: "comment", kind: 1111, tags: [["E", issue.id]]},
+        {id: "reaction", kind: 7, tags: [["e", issue.id]]},
+      ].map(event => ({
+        ...event,
+        pubkey: issue.pubkey,
+        content: "",
+        created_at: 2,
+        sig: "",
+      })) as any[]
+      mockInventoryGitDeletion.mockResolvedValue({
+        complete: true,
+        requests: [],
+        excludedByKind: {},
+        excludedByReason: {},
+        targets: [
+          ...related.map(event => ({
+            key: `e:${event.id}`,
+            event,
+            targetKind: event.kind,
+            policy: "best-effort",
+            rootType: "issue",
+            relation: "comment",
+            sourceRound: 1,
+            sourceRelays: [],
+          })),
+          {
+            key: `e:${issue.id}`,
+            event: issue,
+            targetKind: issue.kind,
+            policy: "required",
+            rootType: "issue",
+            relation: "root",
+            sourceRound: 0,
+            sourceRelays: [],
+          },
+        ],
+      })
+      const onInventory = vi.fn(() => true)
+
+      await expect(
+        deleteIssueWithLabels({
+          issue,
+          repoAddress,
+          relays: ["wss://relay.example.com"],
+          onInventory,
+        }),
+      ).resolves.toEqual({labelsDeleted: 4, labelsFailed: 0})
+      expect(onInventory).toHaveBeenCalledWith(expect.objectContaining({complete: true}))
+      expect(mockInventoryGitDeletion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({
+            rootType: "issue",
+            ownerPubkey: issue.pubkey,
+            repositoryAddress: repoAddress,
+          }),
+        }),
+      )
+      expect(mockPublishDelete.mock.calls.map(([options]) => options.event.id)).toEqual([
+        ...related.map(event => event.id),
+        issue.id,
+      ])
+    })
+
+    it("requires confirmation before continuing with a partial policy inventory", async () => {
+      const {deleteIssueWithLabels} = await import("./git-commands")
+      const owner = "a".repeat(64)
+      const issue = {
+        id: "partial-issue",
+        kind: 1621,
+        pubkey: owner,
+        tags: [["a", `30617:${"b".repeat(64)}:repo`]],
+        content: "",
+        created_at: 1,
+        sig: "",
+      } as any
+      mockInventoryGitDeletion.mockResolvedValue({complete: false, targets: [], requests: []})
+
+      await expect(
+        deleteIssueWithLabels({
+          issue,
+          repoAddress: issue.tags[0][1],
+          relays: ["wss://relay.example.com"],
+          onInventory: () => false,
+        }),
+      ).rejects.toThrow("cancelled after inventory preview")
+      expect(mockPublishDelete).not.toHaveBeenCalled()
+    })
+
     it("returns labelsDeleted 0 when issue is null", async () => {
       const {deleteIssueWithLabels} = await import("./git-commands")
 
@@ -1271,7 +1381,7 @@ describe("budabit commands", () => {
   })
 
   describe("deletePullRequestWithRelated", () => {
-    it("keeps related pull request deletion failures strict", async () => {
+    it("reports related pull request deletion failures as best-effort", async () => {
       const {deletePullRequestWithRelated} = await import("./git-commands")
       const root = {
         id: "pr-strict-root",
@@ -1296,10 +1406,12 @@ describe("budabit commands", () => {
 
       await expect(
         deletePullRequestWithRelated({root, relays: ["wss://relay.example.com"]}),
-      ).rejects.toThrow("related rejected")
-      expect(mockPublishDelete).toHaveBeenCalledTimes(1)
+      ).resolves.toEqual({deletedEvents: 1, relatedDeleted: 0, relatedFailed: 1})
+      expect(mockPublishDelete).toHaveBeenCalledTimes(2)
       expect(mockPublishDelete).toHaveBeenCalledWith(expect.objectContaining({event: related}))
-      expect(mockRepositoryPublish).not.toHaveBeenCalled()
+      expect(mockRepositoryPublish).toHaveBeenCalledWith(
+        expect.objectContaining({id: `delete-${root.id}`}),
+      )
     })
 
     it("aborts while waiting for relay acknowledgements", async () => {
@@ -1362,7 +1474,7 @@ describe("budabit commands", () => {
         relays: ["wss://relay.example.com"],
       })
 
-      expect(result).toEqual({deletedEvents: 2, relatedDeleted: 1})
+      expect(result).toEqual({deletedEvents: 2, relatedDeleted: 1, relatedFailed: 0})
       expect(mockPublishDelete.mock.calls.map(([options]) => options.event.id)).toEqual([
         comment.id,
         root.id,

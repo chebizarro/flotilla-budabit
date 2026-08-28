@@ -1644,6 +1644,38 @@ describe("commands", () => {
     expect(del.tags.some((t: string[]) => t[0] === "e" && t[1] === event.id)).toBe(true)
   })
 
+  it("makeDelete defaults to a timestamp strictly newer than a future target", async () => {
+    const {makeDelete, makeExactEventDelete} = await import("./commands")
+    const event = {
+      id: "future-event",
+      pubkey: "a".repeat(64),
+      kind: 1,
+      created_at: Math.floor(Date.now() / 1000) + 60,
+      content: "",
+      tags: [],
+      sig: "",
+    } as any
+
+    expect(makeDelete({event}).created_at).toBe(event.created_at + 1)
+    expect(makeExactEventDelete({event}).created_at).toBe(event.created_at + 1)
+  })
+
+  it("makeDelete retains an explicitly validated repository scope", async () => {
+    const {makeDelete} = await import("./commands")
+    const repoAddress = `30617:${"b".repeat(64)}:repo`
+    const event = {
+      id: "direct-root-comment",
+      pubkey: "a".repeat(64),
+      kind: 1111,
+      created_at: 1,
+      content: "",
+      tags: [["E", "issue-id"]],
+      sig: "",
+    } as any
+
+    expect(makeDelete({event, repoAddress}).tags).toContainEqual(["repo", repoAddress])
+  })
+
   it("makeDelete targets a repository announcement by event and coordinate", async () => {
     const {makeDelete} = await import("./commands")
     const event = {

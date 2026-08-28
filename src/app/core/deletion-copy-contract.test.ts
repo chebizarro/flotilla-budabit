@@ -9,11 +9,14 @@ describe("deletion UI copy contracts", () => {
     const pullRequest = readProjectFile("../components/PullRequestDeleteConfirm.svelte")
     const event = readProjectFile("../components/EventDeleteConfirm.svelte")
 
-    expect(issue).toContain("related labels you authored, including title edits")
-    expect(issue).toContain("Replies, description edits, statuses, reactions")
-    expect(issue).not.toContain("Replies, edits, and other related events will remain")
-    expect(pullRequest).toContain("related updates, statuses, labels, and comments you authored")
-    expect(pullRequest).toContain("Events from other authors and other related events will remain")
+    expect(issue).toContain(
+      "labels, description edits, statuses, direct-root comments, and reactions",
+    )
+    expect(issue).toContain("nested legacy replies, and unsupported metadata will remain")
+    expect(pullRequest).toContain(
+      "updates, labels, description edits, statuses, direct-root comments, and reactions",
+    )
+    expect(pullRequest).toContain("nested legacy replies, and unsupported metadata will remain")
     expect(event).toContain("Replies, reactions, and other related events will remain")
     expect(event).toContain("deletion request acknowledged by a relay")
   })
@@ -25,7 +28,9 @@ describe("deletion UI copy contracts", () => {
     )
 
     expect(modal).toContain("Deletion may be partial and cannot be undone")
-    expect(modal).toContain("Comments, labels, patches, reactions")
+    expect(modal).toContain("Foreign events, nested legacy replies, repository stars")
+    expect(modal).toContain("unsafe addressable metadata are not targeted")
+    expect(modal).toContain("announcement is requested last")
     expect(modal).toContain("No remote code hosts were found")
     expect(modal).toContain("remove the local clone")
     expect(modal).not.toContain("Only Nostr events will be deleted")
@@ -56,11 +61,12 @@ describe("deletion UI copy contracts", () => {
     expect(reportMenu).not.toContain("successfully been deleted")
   })
 
-  it("keeps PR deletion reachable and interpolates the reset repository name", () => {
+  it("limits PR deletion to its author and interpolates the reset repository name", () => {
     const pullRequest = readProjectFile("../components/PRView.svelte")
     const reset = readProjectFile("../components/ResetRepoConfirm.svelte")
 
-    expect(pullRequest).toContain(
+    expect(pullRequest).toContain("$pubkey === prEvent.pubkey")
+    expect(pullRequest).not.toContain(
       "$pubkey && ($pubkey === prEvent.pubkey || $pubkey === repoOwnerPubkey)",
     )
     expect(reset).toContain("local repository '${repoName}'")

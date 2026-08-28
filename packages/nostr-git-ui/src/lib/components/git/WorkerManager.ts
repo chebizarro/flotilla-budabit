@@ -811,9 +811,18 @@ export class WorkerManager {
   /**
    * Delete remote repository via provider API
    */
-  async deleteRemoteRepo(params: { remoteUrl: string; token: string }): Promise<any> {
+  async deleteRemoteRepo(params: {
+    remoteUrl: string;
+    token: string;
+    operationId?: string;
+  }): Promise<any> {
     await this.initialize();
     return this.execute("deleteRemoteRepo", params);
+  }
+
+  async cancelOperation(params: { operationId: string; reason?: string }): Promise<any> {
+    await this.initialize();
+    return this.execute("cancelOperation", params);
   }
 
   /**
