@@ -112,6 +112,7 @@ export type GetRepoNotificationReposOptions = {
   watchedRepos: WatchedRepoRef[]
   repoEvents: TrustedEvent[]
   currentPubkey?: string
+  isDeleted?: (event: TrustedEvent) => boolean
 }
 
 export type RepoWatchNotificationInput = {
@@ -500,12 +501,30 @@ const parseRepoAnnouncementRef = (event: TrustedEvent): RepoWatchAddressRef | un
   }
 }
 
-const mapRepoEventsByAddress = (events: TrustedEvent[]) => {
+const isPreferredRepoAnnouncement = (event: TrustedEvent, current: TrustedEvent) =>
+  event.created_at > current.created_at ||
+  (event.created_at === current.created_at && event.id.localeCompare(current.id) < 0)
+
+const mapRepoEventsByAddress = (
+  events: TrustedEvent[],
+  isDeleted: (event: TrustedEvent) => boolean = event => repository.isDeleted(event),
+) => {
   const byAddress = new Map<string, TrustedEvent>()
 
   for (const event of events) {
     const ref = parseRepoAnnouncementRef(event)
-    if (ref) byAddress.set(ref.address, event)
+    if (!ref) continue
+
+    const current = byAddress.get(ref.address)
+    if (!current || isPreferredRepoAnnouncement(event, current)) {
+      byAddress.set(ref.address, event)
+    }
+  }
+
+  for (const [address, event] of byAddress) {
+    if ((event.tags || []).some(tag => tag[0] === "deleted") || isDeleted(event)) {
+      byAddress.delete(address)
+    }
   }
 
   return byAddress
@@ -515,9 +534,10 @@ export const getRepoNotificationRepos = ({
   watchedRepos,
   repoEvents,
   currentPubkey,
+  isDeleted,
 }: GetRepoNotificationReposOptions): RepoWatchNotificationRepo[] => {
   const reposByAddress = new Map<string, RepoWatchNotificationRepo>()
-  const repoEventsByAddress = mapRepoEventsByAddress(repoEvents)
+  const repoEventsByAddress = mapRepoEventsByAddress(repoEvents, isDeleted)
 
   for (const repo of watchedRepos) {
     reposByAddress.set(repo.address, {

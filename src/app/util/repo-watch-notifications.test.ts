@@ -451,6 +451,103 @@ describe("repo watch notifications", () => {
     expect(defaultOwnedRepoNotificationOptions.prs.comments).toBe(true)
   })
 
+  it("selects current announcements independently of relay arrival order", async () => {
+    const {getRepoNotificationRepos} = await import("./repo-watch-notifications")
+    const older = makeEvent({
+      id: "f".repeat(64),
+      kind: GIT_REPO_ANNOUNCEMENT,
+      pubkey: owner,
+      created_at: 10,
+      tags: [["d", repoIdentifier]],
+    })
+    const newer = makeEvent({
+      id: "e".repeat(64),
+      kind: GIT_REPO_ANNOUNCEMENT,
+      pubkey: owner,
+      created_at: 20,
+      tags: [["d", repoIdentifier]],
+    })
+
+    for (const repoEvents of [
+      [newer, older],
+      [older, newer],
+    ]) {
+      const repos = getRepoNotificationRepos({
+        watchedRepos: [makeRepo()],
+        repoEvents,
+        isDeleted: () => false,
+      })
+      expect(repos.find(repo => repo.address === repoAddress)?.repoEvent).toBe(newer)
+    }
+
+    const equalTimestampWinner = {...newer, id: "a".repeat(64)}
+    for (const repoEvents of [
+      [newer, equalTimestampWinner],
+      [equalTimestampWinner, newer],
+    ]) {
+      const repos = getRepoNotificationRepos({
+        watchedRepos: [makeRepo()],
+        repoEvents,
+        isDeleted: () => false,
+      })
+      expect(repos.find(repo => repo.address === repoAddress)?.repoEvent).toBe(
+        equalTimestampWinner,
+      )
+    }
+  })
+
+  it("does not fall back to an older announcement when the current one is deleted", async () => {
+    const {getRepoNotificationRepos} = await import("./repo-watch-notifications")
+    const older = makeEvent({
+      id: "d".repeat(64),
+      kind: GIT_REPO_ANNOUNCEMENT,
+      pubkey: owner,
+      created_at: 10,
+      tags: [["d", repoIdentifier]],
+    })
+    const deleted = makeEvent({
+      id: "c".repeat(64),
+      kind: GIT_REPO_ANNOUNCEMENT,
+      pubkey: owner,
+      created_at: 20,
+      tags: [
+        ["d", repoIdentifier],
+        ["deleted"],
+        ["relays", "wss://deleted.example"],
+      ],
+    })
+
+    const repos = getRepoNotificationRepos({
+      watchedRepos: [makeRepo()],
+      repoEvents: [older, deleted],
+      isDeleted: () => false,
+    })
+
+    expect(repos.find(repo => repo.address === repoAddress)?.repoEvent).toBeUndefined()
+  })
+
+  it("rejects the current announcement when repository deletion state removes it", async () => {
+    const {getRepoNotificationRepos} = await import("./repo-watch-notifications")
+    const current = makeEvent({
+      id: "b".repeat(64),
+      kind: GIT_REPO_ANNOUNCEMENT,
+      pubkey: owner,
+      created_at: 20,
+      tags: [
+        ["d", repoIdentifier],
+        ["relays", "wss://deleted.example"],
+      ],
+    })
+
+    const repos = getRepoNotificationRepos({
+      watchedRepos: [makeRepo()],
+      repoEvents: [current],
+      isDeleted: event => event.id === current.id,
+    })
+
+    expect(repos.find(repo => repo.address === repoAddress)?.repoEvent).toBeUndefined()
+  })
+
   it("respects issue, PR, status, and assignment watch options", async () => {
     const {getRepoWatchNotificationCandidates} = await import("./repo-watch-notifications")
     const issue = makeEvent({
