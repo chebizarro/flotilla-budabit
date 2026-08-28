@@ -1,6 +1,8 @@
 import {describe, expect, it} from "vitest"
 import {
   getDeclaredRepoRelays,
+  getMatchingRepoPublicationAddress,
+  getPreferredRepoPublicationAddress,
   getRepoPublicationAddress,
   getRepoPublicationCoordinates,
   requireRepoPublicationScope,
@@ -64,6 +66,34 @@ describe("repository publication authority", () => {
         repoAddress,
       }),
     ).toThrow("conflicting repository coordinates")
+  })
+
+  it("matches inbound multi-target events without weakening singular publication", () => {
+    const otherAddress = `30617:${otherOwner}:fork`
+    const event = {
+      kind: 1621,
+      tags: [
+        ["a", otherAddress],
+        ["a", repoAddress],
+      ],
+    }
+
+    expect(getMatchingRepoPublicationAddress(event, [repoAddress])).toBe(repoAddress)
+    expect(getPreferredRepoPublicationAddress(event)).toBe(otherAddress)
+    expect(() => getRepoPublicationAddress(event)).toThrow("conflicting repository coordinates")
+  })
+
+  it("ignores malformed extra targets while matching inbound events", () => {
+    const event = {
+      kind: 1618,
+      tags: [
+        ["a", "30617:not-a-pubkey:broken"],
+        ["a", repoAddress],
+      ],
+    }
+
+    expect(getMatchingRepoPublicationAddress(event, [repoAddress])).toBe(repoAddress)
+    expect(() => getRepoPublicationCoordinates(event)).toThrow("must be a valid 30617")
   })
 
   it("rejects malformed coordinate-like tag values", () => {

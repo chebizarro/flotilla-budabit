@@ -581,6 +581,21 @@ describe("routes", () => {
     )
   })
 
+  it("routes multi-target git roots instead of discarding them as ambiguous", async () => {
+    const {getGitEventPath} = await import("./routes")
+    const firstAddress = `30617:${"a".repeat(64)}:first`
+    const secondAddress = `30617:${"b".repeat(64)}:second`
+    const issue = makeEvent({
+      kind: 1621,
+      tags: [
+        ["a", firstAddress],
+        ["a", secondAddress],
+      ],
+    })
+
+    await expect(getGitEventPath(issue as any, [])).resolves.toMatch(/\/issues\/1{64}$/)
+  })
+
   it("resolves git updates and statuses through their root events", async () => {
     const {getGitEventPath} = await import("./routes")
     const owner = "a".repeat(64)

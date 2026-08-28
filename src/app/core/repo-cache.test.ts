@@ -132,6 +132,22 @@ describe("repository cache", () => {
     expect(storage.state.events[0].event.id).toBe(valid.id)
   })
 
+  it("stores a multi-target root for each matching known repository", async () => {
+    const {cache, storage} = makeCache()
+    await cache.accessRepository(address)
+    await cache.accessRepository(otherAddress)
+    const event = signEvent(1621, [
+      ["a", otherAddress],
+      ["a", address],
+    ])
+
+    await expect(cache.storeEvent(address, event)).resolves.toBe(true)
+    await expect(cache.storeEvents([{event, relays: []}])).resolves.toBe(2)
+    expect(storage.state.events.map(item => item.repositoryAddress).sort()).toEqual(
+      [address, otherAddress].sort(),
+    )
+  })
+
   it("keeps writes idempotent and bounds normalized provenance", async () => {
     const {cache, storage} = makeCache()
     await cache.accessRepository(address)

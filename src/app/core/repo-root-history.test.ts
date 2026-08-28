@@ -7,6 +7,7 @@ import {
   createRepoRootResolver,
   createRepoRootHistory,
   getIncompleteRepoRootGapScopes,
+  isAcceptedRepoRootEvent,
   mapRepoRelayWork,
   type RepoRootHistorySnapshot,
 } from "./repo-root-history"
@@ -65,6 +66,25 @@ describe("repository root history", () => {
         {kinds: [5], "#e": ["root"]},
       ]),
     )
+  })
+
+  it("accepts multi-target issues and pull requests when any coordinate matches", () => {
+    const foreignAddress = `30617:${"d".repeat(64)}:fork`
+
+    expect(
+      isAcceptedRepoRootEvent(makeRootEvent({id: "1", addresses: [foreignAddress, address]}), [
+        address,
+      ]),
+    ).toBe(true)
+    expect(
+      isAcceptedRepoRootEvent(
+        makeRootEvent({id: "2", kind: 1618, addresses: [address, foreignAddress]}),
+        [address],
+      ),
+    ).toBe(true)
+    expect(
+      isAcceptedRepoRootEvent(makeRootEvent({id: "3", addresses: [foreignAddress]}), [address]),
+    ).toBe(false)
   })
 
   it("tracks relay cursors independently and exhausts empty EOSE relays", async () => {
@@ -381,7 +401,7 @@ describe("repository root resolution", () => {
     expect(harness.loadGap).toHaveBeenCalledWith(root.id)
   })
 
-  it("rejects foreign and conflicting exact roots before projection", async () => {
+  it("rejects foreign exact roots and accepts multi-target exact roots", async () => {
     const foreign = makeRootEvent({id: "4", addresses: [foreignAddress]})
     const conflicting = makeRootEvent({id: "5", addresses: [address, foreignAddress]})
     const requestFiniteRelay = vi
@@ -397,9 +417,11 @@ describe("repository root resolution", () => {
     await expect(harness.ensureRoot(conflicting.id)).resolves.toEqual({
       status: "complete",
       requestedId: conflicting.id,
+      rootId: conflicting.id,
+      rootKind: 1621,
     })
-    expect(harness.onEvent).not.toHaveBeenCalled()
-    expect(harness.loadGap).not.toHaveBeenCalled()
+    expect(harness.onEvent).toHaveBeenCalledWith(conflicting, relay)
+    expect(harness.loadGap).toHaveBeenCalledWith(conflicting.id)
   })
 
   it("resolves an accepted pull request update to its accepted root", async () => {
@@ -407,6 +429,7 @@ describe("repository root resolution", () => {
     const update = {
       ...makeRootEvent({id: "7", kind: 1619}),
       tags: [
+        ["a", foreignAddress],
         ["a", address],
         ["e", root.id, "", "root"],
       ],

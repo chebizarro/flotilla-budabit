@@ -23,7 +23,7 @@ import {
   GIT_REPO_ANNOUNCEMENT,
   GIT_REPO_STATE,
 } from "@nostr-git/core/events"
-import {getRepoPublicationAddress} from "@app/core/repo-publication"
+import {getInboundRepoPublicationAddresses} from "@app/core/repo-publication"
 import {userRepoWatch, type RepoWatchItem} from "@app/core/repo-watch"
 import {measurePerformanceDiagnosticsWork} from "@app/core/performance-diagnostics"
 import {parseRepositoryDeleteShape} from "@app/util/storage-events"
@@ -198,9 +198,9 @@ const normalizeProvenance = (relays: Iterable<string>, limit: number) =>
 
 const getDirectRepositoryAddress = (event: TrustedEvent) => {
   try {
-    return {address: getRepoPublicationAddress(event), invalid: false}
+    return {addresses: getInboundRepoPublicationAddresses(event), invalid: false}
   } catch {
-    return {address: "", invalid: true}
+    return {addresses: [], invalid: true}
   }
 }
 
@@ -436,7 +436,11 @@ export class RepositoryCache {
 
     const direct = getDirectRepositoryAddress(event)
     if (direct.invalid) return false
-    if (direct.address) return canonicalizeRepoCacheAddress(direct.address) === address
+    if (direct.addresses.length > 0) {
+      return direct.addresses.some(
+        directAddress => canonicalizeRepoCacheAddress(directAddress) === address,
+      )
+    }
     if (eventClass === "authority" || eventClass === "root") return false
 
     for (const reference of getReferenceIds(event)) {
@@ -703,7 +707,13 @@ export class RepositoryCache {
       this.persistMutation(() => {
         const direct = getDirectRepositoryAddress(event)
         if (direct.invalid) return false
-        if (direct.address) return this.storeVerifiedEvent(direct.address, event, relays)
+        if (direct.addresses.length > 0) {
+          let stored = false
+          for (const address of direct.addresses) {
+            stored = this.storeVerifiedEvent(address, event, relays) || stored
+          }
+          return stored
+        }
 
         for (const metadata of this.repositories.values()) {
           if (this.eventBelongsToRepository(event, metadata.address)) {
@@ -728,8 +738,10 @@ export class RepositoryCache {
 
           const direct = getDirectRepositoryAddress(item.event)
           if (direct.invalid) continue
-          if (direct.address) {
-            stored += Number(this.storeVerifiedEvent(direct.address, item.event, item.relays))
+          if (direct.addresses.length > 0) {
+            for (const address of direct.addresses) {
+              stored += Number(this.storeVerifiedEvent(address, item.event, item.relays))
+            }
             continue
           }
 

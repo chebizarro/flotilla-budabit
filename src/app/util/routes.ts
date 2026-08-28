@@ -41,7 +41,7 @@ import {
 } from "@app/core/community"
 import {GIT_PERMALINK_KIND, SMART_WIDGET_KIND} from "@app/core/community-feeds"
 import {COMMIT_COMMENT_KIND} from "@app/core/commit-comments"
-import {getRepoPublicationAddress} from "@app/core/repo-publication"
+import {getInboundRepoPublicationAddresses} from "@app/core/repo-publication"
 import {getEventRelayHints, makeEventNevent, normalizeRelayHints} from "@app/util/event-links"
 
 export const COMMUNITY_EXPLAINER_PATH = "/community-guide"
@@ -547,16 +547,17 @@ const loadReferencedEvent = async (id: string, relays: string[]) => {
 
 const getSharedRepoAddress = (...events: Array<TrustedEvent | undefined>) => {
   try {
-    const addresses = Array.from(
-      new Set(
-        events
-          .filter(Boolean)
-          .map(event => getRepoPublicationAddress(event!))
-          .filter(Boolean),
-      ),
-    )
+    const coordinateSets = events
+      .filter(Boolean)
+      .map(event => getInboundRepoPublicationAddresses(event!))
+      .filter(addresses => addresses.length > 0)
+    if (coordinateSets.length === 0) return ""
 
-    return addresses.length === 1 ? addresses[0] : ""
+    return (
+      coordinateSets[0].find(address =>
+        coordinateSets.slice(1).every(addresses => addresses.includes(address)),
+      ) || ""
+    )
   } catch {
     return ""
   }

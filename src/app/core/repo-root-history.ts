@@ -16,7 +16,7 @@ import {
   type FiniteRelayRequestOptions,
   type FiniteRelayResult,
 } from "@app/core/finite-relay-request"
-import {getRepoPublicationAddress} from "@app/core/repo-publication"
+import {getMatchingRepoPublicationAddress} from "@app/core/repo-publication"
 import {getRelayPolicy} from "@app/core/relay-policy"
 import {normalizeRepoRelay} from "@app/core/repo-relays"
 
@@ -179,8 +179,7 @@ export const isAcceptedRepoRootEvent = (
   if (event.kind !== GIT_ISSUE && event.kind !== GIT_PULL_REQUEST) return false
 
   try {
-    const address = getRepoPublicationAddress(event)
-    return Boolean(address && new Set(addresses).has(address))
+    return Boolean(getMatchingRepoPublicationAddress(event, addresses))
   } catch {
     return false
   }
@@ -196,8 +195,7 @@ const isAcceptedRepoRootLookupEvent = (event: TrustedEvent, addresses: string[])
   }
 
   try {
-    const address = getRepoPublicationAddress(event)
-    return Boolean(address && new Set(addresses).has(address))
+    return Boolean(getMatchingRepoPublicationAddress(event, addresses))
   } catch {
     return false
   }

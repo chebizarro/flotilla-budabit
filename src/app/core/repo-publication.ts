@@ -49,7 +49,7 @@ export const normalizeRepoPublicationRelays = (relays: string[] = []) =>
     ),
   )
 
-export const getRepoPublicationCoordinates = (event: RepoPublicationEvent) => {
+const collectRepoPublicationCoordinates = (event: RepoPublicationEvent, strict: boolean) => {
   const coordinates: string[] = []
 
   for (const tag of event.tags || []) {
@@ -58,16 +58,36 @@ export const getRepoPublicationCoordinates = (event: RepoPublicationEvent) => {
     const value = String(tag[1] || "").trim()
     const isRepoCoordinate = value.startsWith(`${GIT_REPO_ANNOUNCEMENT}:`)
     if (!isRepoCoordinate) {
-      if (value === String(GIT_REPO_ANNOUNCEMENT)) {
+      if (strict && value === String(GIT_REPO_ANNOUNCEMENT)) {
         throw new Error(`Repository ${tag[0]} tag contains a malformed repository coordinate.`)
       }
       continue
     }
 
-    coordinates.push(normalizeRepoCoordinate(value, `Repository ${tag[0]} tag`))
+    try {
+      coordinates.push(normalizeRepoCoordinate(value, `Repository ${tag[0]} tag`))
+    } catch (error) {
+      if (strict) throw error
+    }
   }
 
   return Array.from(new Set(coordinates))
+}
+
+export const getRepoPublicationCoordinates = (event: RepoPublicationEvent) =>
+  collectRepoPublicationCoordinates(event, true)
+
+export const getInboundRepoPublicationCoordinates = (event: RepoPublicationEvent) =>
+  collectRepoPublicationCoordinates(event, false)
+
+export const getMatchingRepoPublicationAddress = (
+  event: RepoPublicationEvent,
+  acceptedAddresses: string[],
+) => {
+  const accepted = new Set(
+    acceptedAddresses.map(address => normalizeRepoCoordinate(address, "Accepted repository")),
+  )
+  return getInboundRepoPublicationCoordinates(event).find(address => accepted.has(address)) || ""
 }
 
 const getAnnouncementCoordinate = (event: RepoPublicationEvent) => {
@@ -86,6 +106,16 @@ const getAnnouncementCoordinate = (event: RepoPublicationEvent) => {
     event.kind === GIT_REPO_ANNOUNCEMENT ? "Repository announcement" : "Repository state",
   )
 }
+
+export const getInboundRepoPublicationAddresses = (event: RepoPublicationEvent) => {
+  const coordinates = getInboundRepoPublicationCoordinates(event)
+  const replacementCoordinate = getAnnouncementCoordinate(event)
+  if (replacementCoordinate) coordinates.push(replacementCoordinate)
+  return Array.from(new Set(coordinates))
+}
+
+export const getPreferredRepoPublicationAddress = (event: RepoPublicationEvent) =>
+  getInboundRepoPublicationAddresses(event)[0] || ""
 
 export const getDeclaredRepoRelays = (event: RepoPublicationEvent) =>
   normalizeRepoPublicationRelays(

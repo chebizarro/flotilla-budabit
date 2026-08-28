@@ -93,7 +93,7 @@
   import {SMART_WIDGET_KIND} from "@app/core/community-feeds"
   import {enableExtension, installWidgetFromEvent} from "@app/core/commands"
   import {activeCommunityReportState} from "@app/core/community-state"
-  import {getRepoPublicationAddress} from "@app/core/repo-publication"
+  import {getPreferredRepoPublicationAddress} from "@app/core/repo-publication"
   import {parseCommunityDefinitionAddress} from "@app/core/community"
   import {
     getCommunityCensorReason,
@@ -424,7 +424,7 @@
 
   const getGitRepoAddress = (evt: TrustedEvent) => {
     try {
-      return getRepoPublicationAddress(evt)
+      return getPreferredRepoPublicationAddress(evt)
     } catch {
       return ""
     }
