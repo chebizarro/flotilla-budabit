@@ -65,12 +65,13 @@ export class Pool {
   }
 
   remove(url: string) {
-    const socket = this._data.get(normalizeRelayUrl(url))
+    const key = normalizeRelayUrl(url)
+    const socket = this._data.get(key)
 
     if (socket) {
       socket.cleanup()
 
-      this._data.delete(normalizeRelayUrl(url))
+      this._data.delete(key)
     }
   }
 

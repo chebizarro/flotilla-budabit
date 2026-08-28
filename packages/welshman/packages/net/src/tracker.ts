@@ -1,14 +1,6 @@
 import {Emitter, addToMapKey} from "@welshman/lib"
 import {normalizeRelayUrl} from "@welshman/util"
 
-const getRelayKey = (relay: string) => {
-  try {
-    return normalizeRelayUrl(relay)
-  } catch {
-    return undefined
-  }
-}
-
 export class Tracker extends Emitter {
   relaysById = new Map<string, Set<string>>()
   idsByRelay = new Map<string, Set<string>>()
@@ -19,20 +11,32 @@ export class Tracker extends Emitter {
     this.setMaxListeners(100)
   }
 
+  private resolveRelayKey = (relay: string) => {
+    // Tracker keys are canonical by construction, so established relay keys
+    // can bypass URL parsing on high-volume event paths.
+    if (this.idsByRelay.has(relay)) return relay
+
+    try {
+      return normalizeRelayUrl(relay)
+    } catch {
+      return undefined
+    }
+  }
+
   getIds = (relay: string) => {
-    const key = getRelayKey(relay)
+    const key = this.resolveRelayKey(relay)
     return (key && this.idsByRelay.get(key)) || new Set<string>()
   }
 
   getRelays = (eventId: string) => this.relaysById.get(eventId) || new Set<string>()
 
   hasRelay = (eventId: string, relay: string) => {
-    const key = getRelayKey(relay)
+    const key = this.resolveRelayKey(relay)
     return Boolean(key && this.relaysById.get(eventId)?.has(key))
   }
 
   addRelay = (eventId: string, relay: string) => {
-    const key = getRelayKey(relay)
+    const key = this.resolveRelayKey(relay)
     if (!key) return
     relay = key
 
@@ -59,7 +63,7 @@ export class Tracker extends Emitter {
   }
 
   removeRelay = (eventId: string, relay: string) => {
-    const key = getRelayKey(relay)
+    const key = this.resolveRelayKey(relay)
     if (!key) return
     relay = key
 
@@ -96,7 +100,7 @@ export class Tracker extends Emitter {
 
     for (const [id, relays] of entries) {
       for (const relay of relays) {
-        const key = getRelayKey(relay)
+        const key = this.resolveRelayKey(relay)
         if (!key) continue
 
         addToMapKey(this.relaysById, id, key)

@@ -300,14 +300,13 @@ export type EventsByIdForUrlOptions = EventsByIdOptions & {
   tracker: Tracker
 }
 
-export const getEventsByIdForUrl = ({
+const getEventsByIdForCanonicalUrl = ({
   url,
   filters,
   tracker,
   repository,
   includeDeleted,
 }: EventsByIdForUrlOptions) => {
-  url = normalizeRelayUrl(url)
   const initialIds = Array.from(tracker.getIds(url))
   const initialFilters = filters.map(filter => ({ids: initialIds, ...filter}))
   const eventsById: EventsById = new Map()
@@ -319,6 +318,9 @@ export const getEventsByIdForUrl = ({
   return eventsById
 }
 
+export const getEventsByIdForUrl = (options: EventsByIdForUrlOptions) =>
+  getEventsByIdForCanonicalUrl({...options, url: normalizeRelayUrl(options.url)})
+
 export const deriveEventsByIdForUrl = ({
   url,
   filters,
@@ -327,11 +329,23 @@ export const deriveEventsByIdForUrl = ({
   includeDeleted,
 }: EventsByIdForUrlOptions) => {
   url = normalizeRelayUrl(url)
-  let eventsById = getEventsByIdForUrl({url, filters, tracker, repository, includeDeleted})
+  let eventsById = getEventsByIdForCanonicalUrl({
+    url,
+    filters,
+    tracker,
+    repository,
+    includeDeleted,
+  })
 
   return readable(eventsById, set => {
     const reset = () => {
-      eventsById = getEventsByIdForUrl({url, filters, tracker, repository, includeDeleted})
+      eventsById = getEventsByIdForCanonicalUrl({
+        url,
+        filters,
+        tracker,
+        repository,
+        includeDeleted,
+      })
       set(eventsById)
     }
 

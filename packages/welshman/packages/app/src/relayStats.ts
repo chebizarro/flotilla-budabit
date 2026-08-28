@@ -143,18 +143,8 @@ export const getRelayQuality = (url: string) => {
 type RelayStatsUpdate = [string, (stats: RelayStats) => void]
 
 const updateRelayStats = batch(1000, (updates: RelayStatsUpdate[]) => {
-  const normalizedUpdates: RelayStatsUpdate[] = []
-
-  for (const [url, update] of updates) {
-    try {
-      normalizedUpdates.push([normalizeRelayUrl(url), update])
-    } catch {
-      console.warn("Attempted to update stats for an invalid relay URL")
-    }
-  }
-
   relayStatsByUrl.update($relayStatsByUrl => {
-    for (const [url, items] of groupBy(([url]) => url, normalizedUpdates)) {
+    for (const [url, items] of groupBy(([url]) => url, updates)) {
       const $relayStatsItem: RelayStats = $relayStatsByUrl.get(url) || makeRelayStats(url)
 
       for (const [_, update] of items) {
@@ -270,13 +260,25 @@ const onSocketStatus = (status: string, url: string) => {
 }
 
 export const trackRelayStats = (socket: Socket) => {
-  socket.on(SocketEvent.Send, onSocketSend)
-  socket.on(SocketEvent.Receive, onSocketReceive)
-  socket.on(SocketEvent.Status, onSocketStatus)
+  let url: string
+  try {
+    url = normalizeRelayUrl(socket.url)
+  } catch {
+    console.warn("Attempted to track statistics for an invalid relay URL")
+    return () => {}
+  }
+
+  const handleSend = (message: ClientMessage) => onSocketSend(message, url)
+  const handleReceive = (message: RelayMessage) => onSocketReceive(message, url)
+  const handleStatus = (status: string) => onSocketStatus(status, url)
+
+  socket.on(SocketEvent.Send, handleSend)
+  socket.on(SocketEvent.Receive, handleReceive)
+  socket.on(SocketEvent.Status, handleStatus)
 
   return () => {
-    socket.off(SocketEvent.Send, onSocketSend)
-    socket.off(SocketEvent.Receive, onSocketReceive)
-    socket.off(SocketEvent.Status, onSocketStatus)
+    socket.off(SocketEvent.Send, handleSend)
+    socket.off(SocketEvent.Receive, handleReceive)
+    socket.off(SocketEvent.Status, handleStatus)
   }
 }

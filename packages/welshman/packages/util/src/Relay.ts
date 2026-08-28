@@ -195,8 +195,6 @@ export const normalizeRelayUrl = (url: string) => {
   if (url === LOCAL_RELAY_URL) return url
 
   const original: unknown = url
-  const inputShape = getRelayInputShape(original)
-  const inputParts = getRelayParts(original)
 
   try {
     if (typeof url !== "string" || !url) throw new TypeError("Invalid relay URL")
@@ -227,6 +225,8 @@ export const normalizeRelayUrl = (url: string) => {
         : suffixWithoutFragment
     const normalized = `${parsed.protocol}//${parsed.host}${pathAndQuery}`
     if (relayNormalizationListeners.size > 0) {
+      const inputShape = getRelayInputShape(original)
+      const inputParts = getRelayParts(original)
       const canonicalParts = getRelayParts(normalized)
       const changed = normalized !== original
       const originalScheme = schemeMatch?.[1]
@@ -263,6 +263,8 @@ export const normalizeRelayUrl = (url: string) => {
     return normalized
   } catch (error) {
     if (relayNormalizationListeners.size > 0) {
+      const inputShape = getRelayInputShape(original)
+      const inputParts = getRelayParts(original)
       emitRelayNormalization(
         {
           source: "welshman.normalizeRelayUrl",

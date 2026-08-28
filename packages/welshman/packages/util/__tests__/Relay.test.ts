@@ -10,6 +10,7 @@ const unsubscribers: Array<() => void> = []
 
 afterEach(() => {
   unsubscribers.splice(0).forEach(unsubscribe => unsubscribe())
+  vi.unstubAllGlobals()
 })
 
 describe("relay identity contract", () => {
@@ -64,6 +65,21 @@ describe("relay identity contract", () => {
 })
 
 describe("relay normalization observations", () => {
+  it("does not parse diagnostic metadata without observers", () => {
+    const NativeURL = URL
+    let constructions = 0
+    class CountingURL extends NativeURL {
+      constructor(url: string | URL, base?: string | URL) {
+        constructions += 1
+        super(url, base)
+      }
+    }
+    vi.stubGlobal("URL", CountingURL)
+
+    expect(normalizeRelayUrl("wss://relay.example/")).toBe("wss://relay.example/")
+    expect(constructions).toBe(1)
+  })
+
   it("reports changed inputs without credentials, query values, or fragments", () => {
     const listener = vi.fn()
     unsubscribers.push(subscribeRelayNormalization(listener))

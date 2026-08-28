@@ -1,4 +1,5 @@
 import {vi, describe, it, expect, beforeEach} from "vitest"
+import {subscribeRelayNormalization} from "@welshman/util"
 import {Tracker} from "../src/tracker"
 
 const relay1 = "wss://relay1.example/"
@@ -96,6 +97,21 @@ describe("Tracker", () => {
     it("should add relay-event pair", () => {
       tracker.track("event1", relay1)
       expect(tracker.hasRelay("event1", relay1)).toBe(true)
+    })
+
+    it("normalizes an established canonical relay only once", () => {
+      const observations = vi.fn()
+      const unsubscribe = subscribeRelayNormalization(observations)
+
+      try {
+        for (let index = 0; index < 100; index++) {
+          tracker.track(`event${index}`, relay1)
+        }
+      } finally {
+        unsubscribe()
+      }
+
+      expect(observations).toHaveBeenCalledOnce()
     })
   })
 
