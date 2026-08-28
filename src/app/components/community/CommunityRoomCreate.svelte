@@ -17,7 +17,7 @@
   import {makeCommunityRoomRoot} from "@app/core/community-rooms"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
     activeExactCommunityDefinition,
@@ -58,8 +58,8 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === community.address &&
-      $activeCommunityAuthorityReadiness.communityAddress === community.address
-      ? $activeCommunityAuthorityReadiness.state
+      $activeCommunityDescriptor?.community.address === community.address
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityReady = $derived(

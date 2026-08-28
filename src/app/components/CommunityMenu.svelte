@@ -28,8 +28,7 @@
     activeExactCommunityDefinition,
     activeExactCommunityPointer,
     activeCommunityAdmissionForms,
-    activeCommunityAdmissionFormReadiness,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityProfileListEvents,
     activeCommunityReportDeleteEvents,
     activeCommunityReportEvents,
@@ -115,13 +114,13 @@
   )
   const mainRelay = $derived(exactDefinition?.relays[0] || "")
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityAddress === community.address
-      ? $activeCommunityAuthorityReadiness.state
+    $activeCommunityDescriptor?.community.address === community.address
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAdmissionFormReadiness = $derived(
-    $activeCommunityAdmissionFormReadiness.communityAddress === community.address
-      ? $activeCommunityAdmissionFormReadiness.state
+    $activeCommunityDescriptor?.community.address === community.address
+      ? $activeCommunityDescriptor.admissionFormReadiness.state
       : "loading",
   )
   const communityAuthorityReady = $derived(communityAuthorityReadiness === "ready")

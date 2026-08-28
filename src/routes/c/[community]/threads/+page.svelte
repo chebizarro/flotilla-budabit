@@ -15,7 +15,7 @@
   import ThreadItem from "@app/components/ThreadItem.svelte"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeExactCommunityDefinition,
     activeExactCommunityPointer,
     activeCommunityProfileListEvents,
@@ -132,8 +132,8 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === communityAddress &&
-      $activeCommunityAuthorityReadiness.communityAddress === communityAddress
-      ? $activeCommunityAuthorityReadiness.state
+      $activeCommunityDescriptor?.community.address === communityAddress
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAuthorityLoading = $derived(

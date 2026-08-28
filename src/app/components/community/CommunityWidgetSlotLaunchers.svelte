@@ -9,6 +9,7 @@
     activeCommunityDescriptor,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
+    isCommunityDescriptorReady,
   } from "@app/core/community-state"
   import {makeCommunityWidgetContext} from "@app/extensions/community-context"
   import {
@@ -42,6 +43,7 @@
   const exactDefinition = $derived(descriptor?.definition)
   const relayHints = $derived(exactCommunity?.relayHints || [])
   const communityRelays = $derived(descriptor?.relays.length ? descriptor.relays : relayHints)
+  const communityReady = $derived(isCommunityDescriptorReady(descriptor, community.address))
   const contextDefinition = $derived(
     exactDefinition ? {...exactDefinition, pubkey: exactDefinition.ownerPubkey} : undefined,
   )
@@ -76,7 +78,7 @@
     widget.slot?.label || widget.content || widget.identifier || "Widget"
 
   const communityContext = $derived.by(() => {
-    if (!exactDefinition || !exactCommunity) {
+    if (!exactDefinition || !exactCommunity || !communityReady) {
       return undefined
     }
 
@@ -93,7 +95,12 @@
     const descriptor = get(activeCommunityDescriptor)
     const exactCommunity = descriptor?.community
     const definition = descriptor?.definition
-    if (!exactCommunity || exactCommunity.address !== community.address || !definition) {
+    if (
+      !exactCommunity ||
+      exactCommunity.address !== community.address ||
+      !definition ||
+      !isCommunityDescriptorReady(descriptor, community.address)
+    ) {
       return undefined
     }
 
@@ -122,7 +129,10 @@
   const curationEvidence = $derived.by(() => {
     const definition = exactDefinition
     const matchesCommunity =
-      definition && exactCommunity && definition.pointer.address === exactCommunity.address
+      communityReady &&
+      definition &&
+      exactCommunity &&
+      definition.pointer.address === exactCommunity.address
     const profileListEvents = matchesCommunity ? $activeCommunityProfileListEvents : []
     const reportState = matchesCommunity ? $activeCommunityReportState : undefined
 
@@ -141,7 +151,7 @@
   })
 
   const openWidget = (widget: SmartWidgetEvent) => {
-    if (!widget.appUrl || !exactCommunity) return
+    if (!widget.appUrl || !exactCommunity || !communityReady) return
 
     pushModal(WidgetModal, {
       widget,
@@ -253,7 +263,7 @@
   })
 </script>
 
-{#if slotWidgets.length > 0}
+{#if communityReady && slotWidgets.length > 0}
   <div class={containerClass} data-widget-slot={slotType}>
     {#each slotWidgets as widget (getWidgetLineId(widget))}
       {@const title = getWidgetTitle(widget)}

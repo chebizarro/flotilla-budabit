@@ -27,6 +27,8 @@ describe("widget grant reactivity contracts", () => {
     expect(modal).toContain("{communityRuntimeContextProvider}")
     expect(launcher).toContain("communityRuntimeContextProvider: getCurrentCommunityRuntimeContext")
     expect(launcher).not.toContain("...(communityRuntimeContext ? {communityRuntimeContext} : {})")
+    expect(launcher).toContain("isCommunityDescriptorReady(descriptor, community.address)")
+    expect(launcher).toContain("{#if communityReady && slotWidgets.length > 0}")
   })
 
   it("keys home and prompt curation by current permission evidence", () => {

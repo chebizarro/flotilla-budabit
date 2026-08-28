@@ -41,7 +41,7 @@
   import {isCalendarEventKind} from "@app/core/calendar-events"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeExactCommunityDefinition,
     activeCommunityProfileListEvents,
     activeExactCommunityRelays,
@@ -122,8 +122,8 @@
     Boolean(communityAddress && !communityBootstrapReady && !$activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
-      ? $activeCommunityAuthorityReadiness.state
+    $activeCommunityDescriptor?.community.address === communityAddress
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAuthorityLoading = $derived(

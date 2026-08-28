@@ -18,7 +18,7 @@
   import CalendarEventItem from "@app/components/CalendarEventItem.svelte"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeExactCommunitySession,
     activeExactCommunityDefinition,
     activeExactCommunityPointer,
@@ -137,8 +137,8 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === communityAddress &&
-      $activeCommunityAuthorityReadiness.communityAddress === communityAddress
-      ? $activeCommunityAuthorityReadiness.state
+      $activeCommunityDescriptor?.community.address === communityAddress
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAuthorityLoading = $derived(

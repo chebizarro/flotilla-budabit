@@ -35,8 +35,7 @@
   import {FORM_RESPONSE_KIND} from "@app/core/community"
   import {
     activeCommunityAdmissionForms,
-    activeCommunityAdmissionFormReadiness,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityBootstrapStatus,
     activeExactCommunityDefinition,
     activeExactCommunityPointer,
@@ -127,13 +126,13 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
-      ? $activeCommunityAuthorityReadiness.state
+    $activeCommunityDescriptor?.community.address === communityAddress
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAdmissionFormReadiness = $derived(
-    $activeCommunityAdmissionFormReadiness.communityAddress === communityAddress
-      ? $activeCommunityAdmissionFormReadiness.state
+    $activeCommunityDescriptor?.community.address === communityAddress
+      ? $activeCommunityDescriptor.admissionFormReadiness.state
       : "loading",
   )
   const communityAccessLoading = $derived(

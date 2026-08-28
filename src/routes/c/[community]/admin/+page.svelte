@@ -23,7 +23,7 @@
   import {pushToast} from "@app/util/toast"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeExactCommunityDefinition,
     activeExactCommunityPointer,
     activeCommunityModeratorRequestReactionEvents,
@@ -125,8 +125,8 @@
     Boolean(communityPubkey && !communityBootstrapReady && $activeCommunityBootstrapStatus.error),
   )
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityAddress === communityAddress
-      ? $activeCommunityAuthorityReadiness.state
+    $activeCommunityDescriptor?.community.address === communityAddress
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAdminLoading = $derived(

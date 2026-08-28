@@ -784,23 +784,61 @@ export type ActiveCommunityDescriptor = {
   admissionFormReadiness: ActiveCommunityPermissionReadiness
 }
 
+export const isCommunityDescriptorReady = (
+  descriptor: ActiveCommunityDescriptor | undefined,
+  communityAddress: string,
+) =>
+  Boolean(
+    descriptor &&
+    descriptor.community.address === communityAddress &&
+    descriptor.definition?.pointer.address === communityAddress &&
+    descriptor.authorityReadiness.communityAddress === communityAddress &&
+    descriptor.authorityReadiness.state === "ready",
+  )
+
+const getDescriptorReadiness = (
+  readiness: ActiveCommunityPermissionReadiness,
+  communityAddress: string,
+  expectedKeyPrefix: string,
+): ActiveCommunityPermissionReadiness =>
+  readiness.communityAddress === communityAddress &&
+  expectedKeyPrefix &&
+  readiness.key.startsWith(expectedKeyPrefix)
+    ? readiness
+    : {communityAddress, key: "", state: "loading"}
+
 export const activeCommunityDescriptor: Readable<ActiveCommunityDescriptor | undefined> = derived(
   [
     activeExactCommunityPointer,
     activeExactCommunityDefinition,
-    activeExactCommunityRelays,
     activeCommunityAuthorityReadiness,
     activeCommunityAdmissionFormReadiness,
+    pubkey,
   ],
-  ([community, definition, relays, authorityReadiness, admissionFormReadiness]) => {
+  ([community, definition, authorityReadiness, admissionFormReadiness, viewerPubkey]) => {
     if (!community) return undefined
+
+    const exactDefinition =
+      definition?.pointer.address === community.address ? definition : undefined
+    const relays = exactDefinition?.relays || community.relayHints
+    const expectedKeyPrefix = exactDefinition
+      ? getCommunityPermissionStatusKeyPrefix(exactDefinition, relays, viewerPubkey || "")
+      : ""
 
     return {
       community,
-      definition: definition?.pointer.address === community.address ? definition : undefined,
+      definition: exactDefinition,
       relays,
-      authorityReadiness,
-      admissionFormReadiness,
+      authorityReadiness: getDescriptorReadiness(
+        authorityReadiness,
+        community.address,
+        expectedKeyPrefix,
+      ),
+      admissionFormReadiness: getDescriptorReadiness(
+        admissionFormReadiness,
+        community.address,
+        expectedKeyPrefix,
+      ),
     }
   },
 )

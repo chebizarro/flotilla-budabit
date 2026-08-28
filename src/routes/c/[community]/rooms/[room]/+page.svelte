@@ -27,7 +27,7 @@
   import RoomName from "@app/components/RoomName.svelte"
   import {
     activeCommunityBootstrapStatus,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityProfileListEvents,
     activeExactCommunityRelays,
     activeCommunityReportState,
@@ -208,8 +208,8 @@
   )
   const communityAuthorityReadiness = $derived(
     $activeExactCommunityPointer?.address === communityAddress &&
-      $activeCommunityAuthorityReadiness.communityAddress === communityAddress
-      ? $activeCommunityAuthorityReadiness.state
+      $activeCommunityDescriptor?.community.address === communityAddress
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAuthorityLoading = $derived(

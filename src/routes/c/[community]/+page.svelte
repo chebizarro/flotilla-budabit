@@ -38,7 +38,7 @@
   import {fade} from "@lib/transition"
   import {normalizeRelays, parseAddressRef} from "@app/core/community"
   import {
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityPermissionStatus,
     activeCommunityProfileListEvents,
     activeCommunityReportState,
@@ -176,8 +176,8 @@
   )
   const communityBootstrapReady = $derived(Boolean(communityPointer && routeCommunityDefinition))
   const communityAuthorityReadiness = $derived(
-    $activeCommunityAuthorityReadiness.communityAddress === communityPointer?.address
-      ? $activeCommunityAuthorityReadiness.state
+    communityPointer && $activeCommunityDescriptor?.community.address === communityPointer.address
+      ? $activeCommunityDescriptor.authorityReadiness.state
       : "loading",
   )
   const communityAuthorityLoading = $derived(

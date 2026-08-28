@@ -94,6 +94,7 @@ vi.mock("@welshman/router", async importOriginal => {
 
 import {
   activeCommunityAdmissionFormStatus,
+  activeCommunityDescriptor,
   activeExactCommunityDefinition,
   activeCommunityBootstrapStatus,
   activeCommunityPermissionStatus,
@@ -105,9 +106,11 @@ import {
   clearCommunityBootstrapCache,
   ensureCommunityBootstrap,
   getCommunityPermissionReadiness,
+  getCommunityPermissionStatusKeyPrefix,
   hasCommunityHydrationCompleted,
   hydrateCommunityEventsWithStatus,
   hydrateCommunityPreferences,
+  isCommunityDescriptorReady,
   loadCommunityDefinitionWithOutboxFallback,
   loadCommunityBootstrap,
   loadCommunityEvents,
@@ -654,6 +657,101 @@ describe("community relay loading", () => {
         expectedKeyPrefix,
       }),
     ).toBe("loading")
+  })
+
+  it("keeps active descriptors coherent while switching same-owner branches", () => {
+    repository.publish(definitionEvent)
+    const definition = get(activeExactCommunityDefinition)!
+    const permissionKeyPrefix = getCommunityPermissionStatusKeyPrefix(
+      definition,
+      definition.relays,
+      "",
+    )
+    activeCommunityPermissionStatus.set({
+      communityAddress: community.address,
+      key: `${permissionKeyPrefix}1`,
+      loading: false,
+      loaded: true,
+      complete: true,
+      hasCachedEvents: true,
+    })
+    expect(get(activeCommunityDescriptor)?.authorityReadiness.state).toBe("ready")
+
+    const sibling = makeCommunityPointer({
+      ownerPubkey: community.ownerPubkey,
+      communityId: getPublicKey(new Uint8Array(32).fill(11)),
+      relayHints: ["wss://sibling-hint.example.com/"],
+    })!
+    const siblingDefinitionEvent = makeEvent({
+      id: "other-definition",
+      kind: COMMUNITY_DEFINITION_KIND,
+      tags: buildCommunityDefinition({
+        communityId: sibling.communityId,
+        name: "Sibling community",
+        relays: ["wss://sibling.example.com"],
+        sections: [{name: "General", kinds: [{kind: 1111}], profileLists: []}],
+      }).tags,
+    })
+    repository.publish(siblingDefinitionEvent)
+
+    const snapshots: Array<{
+      communityAddress: string
+      definitionAddress?: string
+      relays: string[]
+      authorityAddress: string
+      authorityState: string
+      widgetReady: boolean
+    }> = []
+    const unsubscribe = activeCommunityDescriptor.subscribe(descriptor => {
+      if (!descriptor) return
+      snapshots.push({
+        communityAddress: descriptor.community.address,
+        definitionAddress: descriptor.definition?.pointer.address,
+        relays: descriptor.relays,
+        authorityAddress: descriptor.authorityReadiness.communityAddress,
+        authorityState: descriptor.authorityReadiness.state,
+        widgetReady: isCommunityDescriptorReady(descriptor, descriptor.community.address),
+      })
+    })
+
+    setActiveExactCommunityPointer(sibling)
+    const sameIdBranch = makeCommunityPointer({
+      ownerPubkey: getPublicKey(new Uint8Array(32).fill(12)),
+      communityId: community.communityId,
+      relayHints: ["wss://same-id-hint.example.com/"],
+    })!
+    repository.publish(
+      makeEvent({
+        id: "definition-newer",
+        pubkey: sameIdBranch.ownerPubkey,
+        kind: COMMUNITY_DEFINITION_KIND,
+        tags: buildCommunityDefinition({
+          communityId: sameIdBranch.communityId,
+          name: "Same ID branch",
+          relays: ["wss://same-id.example.com"],
+          sections: [{name: "General", kinds: [{kind: 1111}], profileLists: []}],
+        }).tags,
+      }),
+    )
+    setActiveExactCommunityPointer(sameIdBranch)
+    unsubscribe()
+
+    for (const branch of [sibling, sameIdBranch]) {
+      const branchSnapshots = snapshots.filter(
+        snapshot => snapshot.communityAddress === branch.address,
+      )
+      expect(branchSnapshots.length).toBeGreaterThan(0)
+      expect(
+        branchSnapshots.every(
+          snapshot =>
+            (!snapshot.definitionAddress || snapshot.definitionAddress === branch.address) &&
+            snapshot.authorityAddress === branch.address &&
+            snapshot.authorityState === "loading" &&
+            !snapshot.widgetReady &&
+            snapshot.relays.every(relay => !definition.relays.includes(relay)),
+        ),
+      ).toBe(true)
+    }
   })
 
   it("distinguishes complete empty loads from timeouts", async () => {

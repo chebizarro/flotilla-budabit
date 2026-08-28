@@ -27,7 +27,7 @@
   import {makeCanonicalExactCommunityUrl, parseExactCommunityRouteParam} from "@app/util/routes"
   import {
     activeCommunityAdmissionForms,
-    activeCommunityAuthorityReadiness,
+    activeCommunityDescriptor,
     activeCommunityBootstrapStatus,
     activeCommunityModeratorRequestReactionEvents,
     activeCommunityModeratorRequests,
@@ -202,8 +202,8 @@
       $activeExactCommunityPointer &&
       $activeExactCommunityDefinition.pointer.address === exactCommunity?.address &&
       $activeExactCommunityPointer.address === exactCommunity?.address &&
-      $activeCommunityAuthorityReadiness.communityAddress === exactCommunity?.address &&
-      $activeCommunityAuthorityReadiness.state === "ready"
+      $activeCommunityDescriptor?.community.address === exactCommunity?.address &&
+      $activeCommunityDescriptor.authorityReadiness.state === "ready"
       ? filterAuthorizedCommunityTargetingEvents({
           community: $activeExactCommunityPointer!,
           definition: $activeExactCommunityDefinition,
@@ -435,8 +435,8 @@
       $activeCommunityBootstrapStatus.key === exactCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
-      $activeCommunityAuthorityReadiness.communityAddress === definition.pointer.address &&
-      $activeCommunityAuthorityReadiness.state === "ready",
+      $activeCommunityDescriptor?.community.address === definition.pointer.address &&
+      $activeCommunityDescriptor.authorityReadiness.state === "ready",
     )
 
     if (
@@ -471,8 +471,8 @@
       $activeCommunityBootstrapStatus.key === exactCommunityBootstrapKey &&
       $activeCommunityBootstrapStatus.loaded &&
       !$activeCommunityBootstrapStatus.loading &&
-      $activeCommunityAuthorityReadiness.communityAddress === exactDefinition.pointer.address &&
-      $activeCommunityAuthorityReadiness.state === "ready",
+      $activeCommunityDescriptor?.community.address === exactDefinition.pointer.address &&
+      $activeCommunityDescriptor.authorityReadiness.state === "ready",
     )
 
     if (!exactDefinition || !authorityReady || relays.length === 0) {
