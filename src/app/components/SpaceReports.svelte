@@ -24,7 +24,7 @@
     <p class="ellipsize text-sm opacity-75">on {displayRelayUrl(url)}</p>
   </div>
   {#each $reports as event (event.id)}
-    <ReportItem {url} {event} />
+    <ReportItem relays={[url]} {event} />
   {/each}
   <ModalFooter>
     <Button class="btn btn-link" onclick={back}>

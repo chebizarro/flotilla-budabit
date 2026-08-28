@@ -606,6 +606,7 @@
               data-latest-reply={item.id === latestReplyId ? "true" : undefined}>
               <ChannelMessage
                 url={communityOwnerPubkey}
+                communityPubkey={communityOwnerPubkey}
                 event={item.event}
                 operationId={replyProjection.operationIds.get(item.id)}
                 showPubkey

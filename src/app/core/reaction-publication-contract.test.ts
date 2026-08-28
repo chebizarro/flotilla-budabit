@@ -91,6 +91,14 @@ describe("reaction publication source contracts", () => {
       "...(effectiveAllowedAuthors ? {authors: effectiveAllowedAuthors} : {})",
     )
     expect(reportDetails).toContain("const reports = $derived(deriveEventsById")
+    expect(summary).toContain("relays: loadRelays")
+    expect(summary).toContain("relays.length > 0 ? relays : !scopeH && url ? [url] : []")
+    expect(summary).not.toContain('url: url || loadRelays[0] || ""')
+    expect(reportDetails).toContain("<ReportItem {relays}")
+
+    const reportItem = readProjectFile("../components/ReportItem.svelte")
+    expect(reportItem).toContain("publishDelete({event, relays, optimistic: false})")
+    expect(reportItem).not.toContain("relays: [url]")
   })
 
   it("awaits same-author delete history for admitted and cached reactions and reports", () => {

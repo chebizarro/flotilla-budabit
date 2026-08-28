@@ -16,12 +16,13 @@
   import {goToEvent} from "@app/util/routes"
 
   type Props = {
-    url: string
+    relays: string[]
     event: TrustedEvent
     onDelete?: () => void
   }
 
-  const {url, event, onDelete}: Props = $props()
+  const {relays, event, onDelete}: Props = $props()
+  const url = $derived(relays[0] || "")
   const failedDeleteThunks = new Map<string, ReturnType<typeof publishDelete>>()
 
   const etag = getTag("e", event.tags)
@@ -40,7 +41,7 @@
   const deleteReport = async () => {
     if (isDeleting) return
 
-    const deleteKey = JSON.stringify({eventId: event.id, relays: [url]})
+    const deleteKey = JSON.stringify({eventId: event.id, relays})
     let thunk = failedDeleteThunks.get(deleteKey)
     isDeleting = true
 
@@ -48,7 +49,7 @@
       if (thunk) {
         thunk = retryThunk(thunk) as ReturnType<typeof publishDelete>
       } else {
-        thunk = publishDelete({event, relays: [url], optimistic: false})
+        thunk = publishDelete({event, relays, optimistic: false})
       }
 
       await waitForAnyRelayAck(thunk, thunk.options.relays)

@@ -66,7 +66,9 @@
   const eventRouteParam = getTagValue("d", event.tags) || event.id
   const path = community ? makeExactCommunityCalendarPath(community, eventRouteParam) : ""
   const canExport = $derived(Boolean(makeCalendarEventIcs(event)))
-  const actionRelays = $derived(publishRelays ?? (relays.length > 0 ? relays : url ? [url] : []))
+  const actionRelays = $derived(
+    publishRelays ?? (relays.length > 0 ? relays : !scopeH && url ? [url] : []),
+  )
   const reactionRelayTargets = $derived(reactionRelays ?? actionRelays)
 
   const getEventPageUrl = () => new URL(path, window.location.origin).toString()

@@ -1266,6 +1266,7 @@
         <div class:-mt-1={!item.showPubkey}>
           <RoomItem
             url={communityOwnerPubkey}
+            communityPubkey={communityOwnerPubkey}
             {community}
             profileRelays={$activeExactCommunityRelays}
             interactionRelays={$activeExactCommunityRelays}

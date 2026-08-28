@@ -19,13 +19,13 @@
   } from "@app/core/community-permissions"
 
   type Props = {
-    url: string
+    relays: string[]
     event: TrustedEvent
     scopeH?: string
     allowedAuthors?: string[]
   }
 
-  const {url, event, scopeH = "", allowedAuthors = undefined}: Props = $props()
+  const {relays, event, scopeH = "", allowedAuthors = undefined}: Props = $props()
   const activeCommunityReportAuthors = $derived.by(() => {
     const scope = normalizePubkey(scopeH)
     const definition = $activeExactCommunityDefinition
@@ -78,7 +78,7 @@
   </ModalHeader>
   {#each $reports.values() as report (report.id)}
     <div class="card2 card2-sm bg-alt">
-      <ReportItem {url} event={report} {onDelete} />
+      <ReportItem {relays} event={report} {onDelete} />
     </div>
   {/each}
   <Button class="btn btn-primary" onclick={back}>Got it</Button>

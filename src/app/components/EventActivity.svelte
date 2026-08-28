@@ -30,7 +30,7 @@
   } = $props()
 
   const loadRelays = $derived.by(() =>
-    (relays.length > 0 ? relays : url ? [url] : []).filter(Boolean),
+    (relays.length > 0 ? relays : !scopeH && url ? [url] : []).filter(Boolean),
   )
   const rootFilterPlan = $derived.by(() => {
     const rootFilter = {

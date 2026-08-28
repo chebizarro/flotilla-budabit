@@ -37,6 +37,7 @@
 
   interface Props {
     url: string
+    communityPubkey?: string
     community?: CommunityPointer
     event: TrustedEvent
     replyTo?: (event: TrustedEvent) => void
@@ -60,6 +61,7 @@
 
   const {
     url,
+    communityPubkey = "",
     community = undefined,
     event,
     replyTo = undefined,
@@ -115,7 +117,7 @@
   const today = formatTimestampAsDate(now())
   const [_, colorValue] = colors[Math.abs(hash(event.pubkey)) % colors.length]
   const relayTargets = $derived.by(() =>
-    (interactionRelays.length > 0 ? interactionRelays : [url]).filter(Boolean),
+    (interactionRelays.length > 0 ? interactionRelays : scopeH ? [] : [url]).filter(Boolean),
   )
   const actionRelayTargets = $derived(actionRelays ?? relayTargets)
   const profileRelayHints = $derived.by(() =>
@@ -365,7 +367,7 @@
       </div>
       {#if !effectiveReadOnly}
         <CommunityWidgetSlotLaunchers
-          communityPubkey={url}
+          {communityPubkey}
           relayHints={relayTargets}
           slotType="chat-message-actions"
           variant="message-actions"

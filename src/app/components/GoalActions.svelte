@@ -46,7 +46,9 @@
 
   const path = community ? makeExactCommunityGoalPath(community, event.id) : ""
   const h = getTagValue("h", event.tags)
-  const actionRelays = $derived(publishRelays ?? (relays.length > 0 ? relays : url ? [url] : []))
+  const actionRelays = $derived(
+    publishRelays ?? (relays.length > 0 ? relays : !scopeH && url ? [url] : []),
+  )
 
   const deleteReaction = async (reaction: TrustedEvent) =>
     publishReactionDeleteOperation({reaction, relays: actionRelays})

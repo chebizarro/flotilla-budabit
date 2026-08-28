@@ -37,6 +37,7 @@
 
   interface Props {
     url: string
+    communityPubkey?: string
     community?: CommunityPointer
     event: TrustedEvent
     replyTo?: (event: TrustedEvent) => void
@@ -58,6 +59,7 @@
 
   const {
     url,
+    communityPubkey = "",
     community = undefined,
     event,
     replyTo = undefined,
@@ -85,16 +87,30 @@
       ? profileRelays
       : interactionRelays.length > 0
         ? interactionRelays
-        : [url]
+        : scopeH
+          ? []
+          : [url]
     ).filter(Boolean),
   )
   const profileDisplay = $derived(
     deriveBudabitProfileDisplay(event.pubkey, {relays: profileRelayHints}),
   )
   const [_, colorValue] = colors[Math.abs(hash(event.pubkey)) % colors.length]
-  const comments = deriveEventsForUrl(url, [{kinds: [COMMENT], "#e": [event.id]}])
+  let comments = $state<TrustedEvent[]>([])
+
+  $effect(() => {
+    const relay = interactionRelays[0] || profileRelays[0]
+    if (!relay) {
+      comments = []
+      return
+    }
+
+    return deriveEventsForUrl(relay, [{kinds: [COMMENT], "#e": [event.id]}]).subscribe(
+      events => (comments = events),
+    )
+  })
   const relayTargets = $derived.by(() =>
-    (interactionRelays.length > 0 ? interactionRelays : [url]).filter(Boolean),
+    (interactionRelays.length > 0 ? interactionRelays : scopeH ? [] : [url]).filter(Boolean),
   )
   const actionRelayTargets = $derived(actionRelays ?? relayTargets)
   const censorReason = $derived.by(() =>
@@ -259,8 +275,8 @@
         {deleteReaction}
         {createReaction}
         reactionClass="tooltip-right" />
-      {#if path && $comments.length > 0}
-        {@const pubkeys = $comments.map((e: TrustedEvent) => e.pubkey)}
+      {#if path && comments.length > 0}
+        {@const pubkeys = comments.map((e: TrustedEvent) => e.pubkey)}
         {@const isOwn = $pubkey && pubkeys.includes($pubkey)}
         {@const info = displayList(pubkeys.map((pubkey: string) => displayProfileByPubkey(pubkey)))}
         {@const tooltip = `${info} commented`}
@@ -272,7 +288,7 @@
               "btn-primary": isOwn,
             })}>
             <Icon icon={ReplyAlt} />
-            <span>{$comments.length} comment{$comments.length === 1 ? "" : "s"}</span>
+            <span>{comments.length} comment{comments.length === 1 ? "" : "s"}</span>
           </Link>
         </div>
       {/if}
@@ -307,7 +323,7 @@
       </div>
       {#if !readOnly}
         <CommunityWidgetSlotLaunchers
-          communityPubkey={url}
+          {communityPubkey}
           relayHints={relayTargets}
           slotType="chat-message-actions"
           variant="message-actions"

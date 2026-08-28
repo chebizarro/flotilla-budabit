@@ -6,6 +6,10 @@ const activity = read("src/app/components/EventActivity.svelte")
 const activityIO = read("src/app/core/event-activity-io.ts")
 const issues = read("src/routes/git/[id=naddr]/issues/+page.svelte")
 const prs = read("src/routes/git/[id=naddr]/prs/+page.svelte")
+const roomItem = read("src/app/components/RoomItem.svelte")
+const channelMessage = read("src/app/components/ChannelMessage.svelte")
+const goal = read("src/routes/c/[community]/goals/[goal]/+page.svelte")
+const calendar = read("src/routes/c/[community]/calendar/[event]/+page.svelte")
 
 describe("reactive comment counts", () => {
   it("resubscribes activity counts when reactive filters change", () => {
@@ -30,6 +34,22 @@ describe("reactive comment counts", () => {
     expect(issues).toContain("filterVisibleAfterDeletesAndEdits(commentEvents, $editedTargetIds)")
     expect(issues).not.toContain("repoClass.getIssueThread(issue.id)")
     expect(prs).toContain("commentEventsStore ? $commentEventsStore : []")
+  })
+
+  it("uses relay hints rather than community identity for room comment provenance", () => {
+    expect(roomItem).toContain("const relay = interactionRelays[0] || profileRelays[0]")
+    expect(roomItem).toContain("return deriveEventsForUrl(relay")
+    expect(roomItem).not.toContain("deriveEventsForUrl(url")
+  })
+
+  it("passes community owner identity explicitly to message action widgets", () => {
+    expect(channelMessage).toContain("communityPubkey?: string")
+    expect(channelMessage).toContain("{communityPubkey}")
+    expect(channelMessage).not.toContain("communityPubkey={url}")
+    expect(roomItem).toContain("communityPubkey?: string")
+    expect(roomItem).not.toContain("communityPubkey={url}")
+    expect(goal).toContain("communityPubkey={communityOwnerPubkey}")
+    expect(calendar).toContain("communityPubkey={communityOwnerPubkey}")
   })
 
   it("keeps Calendar activity live because its route feed does not carry comments", () => {

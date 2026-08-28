@@ -95,7 +95,7 @@
   }
 
   const loadRelays = $derived.by(() => {
-    const candidates = relays.length > 0 ? relays : url ? [url] : []
+    const candidates = relays.length > 0 ? relays : !scopeH && url ? [url] : []
     return uniq(candidates.map(normalizeRelay).filter(Boolean))
   })
 
@@ -219,7 +219,7 @@
 
   const onReportClick = () =>
     pushModal(ReportDetails, {
-      url: url || loadRelays[0] || "",
+      relays: loadRelays,
       event,
       scopeH,
       allowedAuthors: effectiveReportAllowedAuthors,
