@@ -23,6 +23,15 @@ const mocks = vi.hoisted(() => {
     activeCommunityRelays: createStore([] as string[]),
     loadProfile: vi.fn(),
     forceLoadProfile: vi.fn(),
+    request: vi.fn(),
+    repository: {
+      hasEvent: vi.fn(() => false),
+      publish: vi.fn(),
+    },
+    tracker: {
+      hasRelay: vi.fn(() => false),
+      addRelay: vi.fn(),
+    },
   }
 })
 
@@ -37,7 +46,11 @@ vi.mock("@welshman/app", () => ({
   },
   loadProfile: mocks.loadProfile,
   forceLoadProfile: mocks.forceLoadProfile,
+  repository: mocks.repository,
+  tracker: mocks.tracker,
 }))
+
+vi.mock("@welshman/net", () => ({request: mocks.request}))
 
 vi.mock("@app/core/state", () => ({
   INDEXER_RELAYS: ["wss://indexer.example"],
@@ -58,8 +71,10 @@ describe("Budabit profile resolver", () => {
     mocks.activeCommunityRelays.set([])
     mocks.loadProfile.mockReset()
     mocks.forceLoadProfile.mockReset()
+    mocks.request.mockReset()
     mocks.loadProfile.mockResolvedValue(undefined)
     mocks.forceLoadProfile.mockResolvedValue(undefined)
+    mocks.request.mockResolvedValue([])
   })
 
   it("normalizes profile relay hints without changing url semantics", async () => {
@@ -83,17 +98,46 @@ describe("Budabit profile resolver", () => {
     ])
   })
 
-  it("uses Welshman loadProfile for the first missing-profile attempt", async () => {
+  it("loads explicit hints directly and keeps ambient discovery separate", async () => {
     const {loadBudabitProfile} = await import("./profile-resolver")
 
     await loadBudabitProfile(pubkey, {url: "wss://hint.example"})
 
     expect(mocks.loadProfile).toHaveBeenCalledWith(pubkey, [
       "wss://indexer.example/",
-      "wss://hint.example/",
       "wss://outbox.example/",
     ])
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        relays: ["wss://hint.example/"],
+        filters: [{kinds: [0], authors: [pubkey], limit: 1}],
+        autoClose: true,
+        lifetime: "finite",
+      }),
+    )
     expect(mocks.forceLoadProfile).not.toHaveBeenCalled()
+  })
+
+  it("preserves and bounds explicit hints in caller order", async () => {
+    const {getBudabitExplicitProfileRelays, MAX_EXPLICIT_PROFILE_RELAYS} = await import(
+      "./profile-resolver"
+    )
+
+    expect(
+      getBudabitExplicitProfileRelays({
+        url: "wss://first.example",
+        relays: [
+          "wss://second.example",
+          "wss://third.example",
+          "wss://fourth.example",
+        ],
+      }),
+    ).toEqual(
+      ["wss://first.example/", "wss://second.example/", "wss://third.example/"].slice(
+        0,
+        MAX_EXPLICIT_PROFILE_RELAYS,
+      ),
+    )
   })
 
   it("uses indexer-backed Welshman loadProfile for bare missing profiles", async () => {
@@ -108,7 +152,7 @@ describe("Budabit profile resolver", () => {
     expect(mocks.forceLoadProfile).not.toHaveBeenCalled()
   })
 
-  it("force-loads a missing profile when new relay hints appear", async () => {
+  it("queries only newly introduced explicit hints", async () => {
     const {loadBudabitProfile} = await import("./profile-resolver")
 
     await loadBudabitProfile(pubkey, {url: "wss://hint.example"})
@@ -117,15 +161,14 @@ describe("Budabit profile resolver", () => {
       relays: ["wss://new-hint.example"],
     })
 
-    expect(mocks.forceLoadProfile).toHaveBeenCalledWith(pubkey, [
-      "wss://indexer.example/",
-      "wss://hint.example/",
-      "wss://new-hint.example/",
-      "wss://outbox.example/",
-    ])
+    expect(mocks.request).toHaveBeenCalledTimes(2)
+    expect(mocks.request.mock.calls[1][0]).toEqual(
+      expect.objectContaining({relays: ["wss://new-hint.example/"]}),
+    )
+    expect(mocks.forceLoadProfile).not.toHaveBeenCalled()
   })
 
-  it("force-loads derived missing profiles when fixed relay hints improve", async () => {
+  it("adds fixed explicit hints without repeating ambient discovery", async () => {
     const {deriveBudabitProfile} = await import("./profile-resolver")
 
     const unsubscribeBare = deriveBudabitProfile(pubkey).subscribe(() => {})
@@ -137,11 +180,10 @@ describe("Budabit profile resolver", () => {
       "wss://indexer.example/",
       "wss://outbox.example/",
     ])
-    expect(mocks.forceLoadProfile).toHaveBeenCalledWith(pubkey, [
-      "wss://indexer.example/",
-      "wss://hint.example/",
-      "wss://outbox.example/",
-    ])
+    expect(mocks.forceLoadProfile).not.toHaveBeenCalled()
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({relays: ["wss://hint.example/"]}),
+    )
 
     unsubscribeBare()
     unsubscribeHinted()
@@ -157,10 +199,11 @@ describe("Budabit profile resolver", () => {
     await loadBudabitProfile(pubkey, {url: "wss://hint.example"})
 
     expect(mocks.loadProfile).toHaveBeenCalledTimes(1)
+    expect(mocks.request).toHaveBeenCalledTimes(1)
     expect(mocks.forceLoadProfile).not.toHaveBeenCalled()
   })
 
-  it("does not reload when the profile is already present", async () => {
+  it("returns a cached profile while refreshing a new explicit hint", async () => {
     const {loadBudabitProfile} = await import("./profile-resolver")
     const profile = {name: "Alice"}
 
@@ -169,6 +212,12 @@ describe("Budabit profile resolver", () => {
     await expect(loadBudabitProfile(pubkey, {url: "wss://hint.example"})).resolves.toBe(profile)
     expect(mocks.loadProfile).not.toHaveBeenCalled()
     expect(mocks.forceLoadProfile).not.toHaveBeenCalled()
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({relays: ["wss://hint.example/"]}),
+    )
+
+    await loadBudabitProfile(pubkey, {url: "wss://hint.example"})
+    expect(mocks.request).toHaveBeenCalledTimes(1)
   })
 
   it("retries sparse cached profiles when better relay hints arrive", async () => {
@@ -179,11 +228,9 @@ describe("Budabit profile resolver", () => {
     await loadBudabitProfile(pubkey)
     await loadBudabitProfile(pubkey, {relays: ["wss://hint.example"]})
 
-    expect(mocks.forceLoadProfile).toHaveBeenCalledWith(pubkey, [
-      "wss://indexer.example/",
-      "wss://hint.example/",
-      "wss://outbox.example/",
-    ])
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({relays: ["wss://hint.example/"]}),
+    )
   })
 
   it("retries derived missing profiles when active community relays improve", async () => {

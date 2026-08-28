@@ -27,10 +27,13 @@ export type ProfileResolutionOptions = {
 // Bounded LRUs: profile attempt/completion bookkeeping is keyed by pubkey and
 // pubkey-plus-relay-list permutations, which otherwise grow for the app lifetime.
 const attemptedRelaysByPubkey = new LRUCache<string, Set<string>>(2000)
+const attemptedExplicitRelaysByPubkey = new LRUCache<string, Set<string>>(2000)
 const profileLoadPromisesByKey = new Map<string, Promise<PublishedProfile | undefined>>()
+const explicitProfileLoadPromisesByKey = new Map<string, Promise<void>>()
 const completedProfileLoadTimesByKey = new LRUCache<string, number>(2000)
 const PROFILE_LOAD_RETRY_MS = 60_000
 export const PROFILE_BATCH_CONCURRENCY = 3
+export const MAX_EXPLICIT_PROFILE_RELAYS = 3
 
 export type ProfileBatchTarget = {
   pubkey: string
@@ -137,15 +140,44 @@ export const getBudabitProfileRelays = (
     ...(options.includeActiveCommunityRelays ? activeCommunityRelays : []),
   ])
 
+export const getBudabitExplicitProfileRelays = (options: ProfileResolutionOptions = {}) =>
+  normalizeRelays([options.url || "", ...(options.relays || [])]).slice(
+    0,
+    MAX_EXPLICIT_PROFILE_RELAYS,
+  )
+
 const getBudabitProfileLoadRelays = (
   pubkey: string,
   options: ProfileResolutionOptions = {},
   activeCommunityRelays?: string[],
 ) =>
   normalizeRelays([
-    ...getBudabitProfileRelays(options, activeCommunityRelays),
+    ...INDEXER_RELAYS,
+    ...(options.communityRelays || []),
+    ...(options.includeActiveCommunityRelays
+      ? activeCommunityRelays || getActiveUserCommunityRelays()
+      : []),
     ...getPubkeyOutboxRelays(pubkey),
   ])
+
+const requestNewExplicitProfileRelays = (pubkey: string, relays: string[]) => {
+  const attemptedRelays = attemptedExplicitRelaysByPubkey.get(pubkey) || new Set<string>()
+  const newRelays = relays.filter(relay => !attemptedRelays.has(relay))
+  if (newRelays.length === 0) return undefined
+
+  for (const relay of newRelays) attemptedRelays.add(relay)
+  attemptedExplicitRelaysByPubkey.set(pubkey, attemptedRelays)
+
+  const key = `${pubkey}\n${newRelays.join("\n")}`
+  const inFlight = explicitProfileLoadPromisesByKey.get(key)
+  if (inFlight) return inFlight
+
+  const promise = requestProfileGroup({pubkeys: [pubkey], relays: newRelays})
+    .catch(() => undefined)
+    .finally(() => explicitProfileLoadPromisesByKey.delete(key)) as Promise<void>
+  explicitProfileLoadPromisesByKey.set(key, promise)
+  return promise
+}
 
 const rememberProfileLoadAttempt = (pubkey: string, relays: string[]) => {
   const hasPreviousAttempt = attemptedRelaysByPubkey.has(pubkey)
@@ -167,6 +199,8 @@ export const loadBudabitProfile = async (
   const normalizedPubkey = normalizePubkey(pubkey)
   if (!normalizedPubkey) return undefined
 
+  const explicitRelays = getBudabitExplicitProfileRelays(options)
+  const explicitLoad = requestNewExplicitProfileRelays(normalizedPubkey, explicitRelays)
   const relays = getBudabitProfileLoadRelays(normalizedPubkey, options, activeCommunityRelays)
   const currentProfile = get(profilesByPubkey).get(normalizedPubkey)
   if (hasProfileDisplayData(currentProfile)) return currentProfile
@@ -182,7 +216,8 @@ export const loadBudabitProfile = async (
     if (lastLoadAt && Date.now() - lastLoadAt < PROFILE_LOAD_RETRY_MS) return undefined
   }
 
-  const promise = loader(normalizedPubkey, relays)
+  const promise = Promise.all([loader(normalizedPubkey, relays), explicitLoad])
+    .then(([profile]) => profile)
     .then(profile => {
       completedProfileLoadTimesByKey.set(loadKey, Date.now())
       return profile
@@ -208,9 +243,10 @@ export const deriveBudabitProfile = (
   let lastRequestedRelayKey: string | undefined
 
   const requestLoad = (activeCommunityRelays?: string[]) => {
-    if (hasProfileDisplayData(get(profilesByPubkey).get(normalizedPubkey))) return
-
-    const relays = getBudabitProfileLoadRelays(normalizedPubkey, options, activeCommunityRelays)
+    const currentProfile = get(profilesByPubkey).get(normalizedPubkey)
+    const relays = hasProfileDisplayData(currentProfile)
+      ? getBudabitExplicitProfileRelays(options)
+      : getBudabitProfileLoadRelays(normalizedPubkey, options, activeCommunityRelays)
     const relayKey = relays.join("\n")
     if (relayKey === lastRequestedRelayKey) return
 
@@ -231,9 +267,7 @@ export const deriveBudabitProfile = (
     ([$profile, $activeUserCommunityRelays], set) => {
       set($profile)
 
-      if (!$profile) {
-        requestLoad($activeUserCommunityRelays)
-      }
+      requestLoad($activeUserCommunityRelays)
     },
     undefined as PublishedProfile | undefined,
   )
