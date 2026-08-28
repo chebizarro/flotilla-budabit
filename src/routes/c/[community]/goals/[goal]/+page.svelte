@@ -3,11 +3,11 @@
   import {page} from "$app/stores"
   import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
-  import {sortBy} from "@welshman/lib"
   import {
     COMMENT,
     ZAP_GOAL,
     getTagValue,
+    makeEvent,
     matchFilters,
     type EventContent,
     type Filter,
@@ -15,25 +15,24 @@
   } from "@welshman/util"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
   import Reply from "@assets/icons/reply-2.svg?dataurl"
-  import SortVertical from "@assets/icons/sort-vertical.svg?dataurl"
   import Icon from "@lib/components/Icon.svelte"
   import PageBar from "@lib/components/PageBar.svelte"
   import PageContent from "@lib/components/PageContent.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
-  import Button from "@lib/components/Button.svelte"
   import {scrollToEvent} from "@lib/html"
   import Content from "@app/components/Content.svelte"
   import ChannelMessage from "@app/components/ChannelMessage.svelte"
   import NoteCard from "@app/components/NoteCard.svelte"
   import RoomCompose from "@app/components/RoomCompose.svelte"
   import RoomComposeEdit from "@app/components/RoomComposeEdit.svelte"
+  import RoomComposeParent from "@app/components/RoomComposeParent.svelte"
   import PublishGate from "@app/components/community/PublishGate.svelte"
   import ModeratedContent from "@app/components/community/ModeratedContent.svelte"
   import CommunityMenuButton from "@app/components/CommunityMenuButton.svelte"
   import GoalSummary from "@app/components/GoalSummary.svelte"
   import GoalActions from "@app/components/GoalActions.svelte"
   import PublicationStatus from "@app/components/PublicationStatus.svelte"
-  import {makeComment} from "@app/core/commands"
+  import {makeCommunityGoalReply, readCommunityGoalReply} from "@app/core/community-goals"
   import {
     activeCommunityBootstrapStatus,
     activeCommunityAuthorityReadiness,
@@ -94,6 +93,7 @@
   let historicalLoadRetryVersion = $state(0)
   let showReply = $state(false)
   let showAllReplies = $state(false)
+  let parent: TrustedEvent | undefined = $state()
   let eventToEdit: TrustedEvent | undefined = $state()
   let compose: RoomCompose | undefined = $state()
   let composeElement: HTMLElement | undefined = $state()
@@ -334,14 +334,19 @@
     }),
   )
   const replies = $derived(
-    sortBy(
-      replyEvent => -replyEvent.created_at,
-      filterVisibleAfterDeletesAndEdits(replyProjection.events, $editedTargetIds).filter(
-        event => !isCommunityPersonBanned($activeCommunityReportState, event.pubkey),
-      ),
-    ),
+    filterVisibleAfterDeletesAndEdits(replyProjection.events, $editedTargetIds)
+      .map(event => readCommunityGoalReply(event, communityId, approvedGoal?.id))
+      .filter((reply): reply is NonNullable<ReturnType<typeof readCommunityGoalReply>> =>
+        Boolean(reply),
+      )
+      .filter(reply => !isCommunityPersonBanned($activeCommunityReportState, reply.event.pubkey))
+      .sort((a, b) => a.event.created_at - b.event.created_at),
   )
-  const visibleReplies = $derived(showAllReplies ? replies : replies.slice(0, 4))
+  const visibleReplies = $derived(
+    showAllReplies ? replies : replies.slice(Math.max(replies.length - 4, 0)),
+  )
+  const repliesById = $derived.by(() => new Map(replies.map(reply => [reply.id, reply])))
+  const latestReplyId = $derived(replies.at(-1)?.id || "")
   const canReply = $derived(
     Boolean(
       approvedGoal &&
@@ -405,8 +410,7 @@
         })
         return false
       }
-      eventToEdit = undefined
-      showReply = false
+      closeCommentPrompt()
       return true
     }
 
@@ -414,11 +418,19 @@
 
     try {
       startPublication({
-        event: makeComment({
-          event: approvedGoal,
-          content: trimmed,
-          tags: [["h", communityId], ...tags],
-        }),
+        event: makeEvent(
+          COMMENT,
+          makeCommunityGoalReply({
+            communityPubkey: communityId,
+            goal: approvedGoal,
+            relay: relays[0],
+            content: trimmed,
+            tags,
+            parent: parent
+              ? {id: parent.id, pubkey: parent.pubkey, kind: parent.kind, relay: relays[0]}
+              : undefined,
+          }),
+        ),
         relays,
         label: "Goal comment",
         href: goalPath,
@@ -432,11 +444,12 @@
       return false
     }
 
-    showReply = false
+    closeCommentPrompt()
     return true
   }
 
-  const openReply = async () => {
+  const openCommentPrompt = async (replyParent?: TrustedEvent) => {
+    parent = replyParent
     eventToEdit = undefined
     showReply = true
     await tick()
@@ -445,6 +458,7 @@
   }
 
   const openEditPrompt = async (event: TrustedEvent) => {
+    parent = undefined
     eventToEdit = event
     showReply = true
     await tick()
@@ -452,10 +466,23 @@
     compose?.focus()
   }
 
-  const closeReply = () => {
+  const closeCommentPrompt = () => {
+    parent = undefined
     eventToEdit = undefined
     showReply = false
   }
+
+  const clearParent = () => {
+    parent = undefined
+  }
+
+  const scrollToReplyParent = async (event: TrustedEvent) => {
+    showAllReplies = true
+    await tick()
+    await scrollToEvent(event.id)
+  }
+
+  const openReply = () => openCommentPrompt()
 
   const canEditReply = (event: TrustedEvent) => canEditReplyEvent(event, $pubkey, canReply)
 
@@ -765,16 +792,19 @@
 
     {#if !approvedGoalCensorReason && !showAllReplies && replies.length > visibleReplies.length}
       <div class="flex justify-center">
-        <Button class="btn btn-link" onclick={() => (showAllReplies = true)}>
-          <Icon icon={SortVertical} />
-          Show all {replies.length} replies
-        </Button>
+        <button class="btn btn-link" type="button" onclick={() => (showAllReplies = true)}>
+          Show all {replies.length} comments
+        </button>
       </div>
     {/if}
 
     {#if !approvedGoalCensorReason}
       <div class="col-2">
-        {#each visibleReplies as replyEvent (replyEvent.id)}
+        {#each visibleReplies as item (item.id)}
+          {@const replyEvent = item.event}
+          {@const replyParent = item.parentReplyId
+            ? repliesById.get(item.parentReplyId)?.event
+            : undefined}
           {@const censorReason = getCommunityCensorReason({
             reportState: $activeCommunityReportState,
             eventId: replyEvent.id,
@@ -787,9 +817,12 @@
               <ModeratedContent reason={censorReason} />
             </div>
           {:else}
-            <div class="card2 bg-alt z-feature w-full">
+            <div
+              class="card2 bg-alt z-feature w-full"
+              data-latest-reply={item.id === latestReplyId ? "true" : undefined}>
               <ChannelMessage
                 url={communityId}
+                communityPubkey={communityOwnerPubkey}
                 event={replyEvent}
                 operationId={replyProjection.operationIds.get(replyEvent.id)}
                 showPubkey
@@ -802,8 +835,11 @@
                 reportAllowedAuthors={reportAuthorPubkeys}
                 scopeH={communityId}
                 communitySectionName={commentSectionName}
+                {replyParent}
+                onReplyParentOpen={scrollToReplyParent}
                 canEdit={canEditReply}
-                onEdit={openEditPrompt} />
+                onEdit={openEditPrompt}
+                replyTo={canReply ? event => openCommentPrompt(event) : undefined} />
             </div>
           {/if}
         {:else}
@@ -824,7 +860,15 @@
 
     {#if !approvedGoalCensorReason && showReply}
       <div bind:this={composeElement} class="card2 bg-alt col-3 p-4 shadow-md">
-        <strong>Comment</strong>
+        <div class="flex items-center justify-between gap-2">
+          <strong>{parent ? "Reply" : "Comment"}</strong>
+          <button class="btn btn-link btn-sm" type="button" onclick={closeCommentPrompt}>
+            Cancel
+          </button>
+        </div>
+        {#if parent}
+          <RoomComposeParent event={parent} clear={clearParent} verb="Replying to" />
+        {/if}
         {#if eventToEdit}
           <RoomComposeEdit clear={() => (eventToEdit = undefined)} />
         {/if}
@@ -840,13 +884,10 @@
               : undefined}
             showMenu={false}
             onSubmit={sendReply}
-            onEscape={closeReply}
+            onEscape={closeCommentPrompt}
             content={eventToEdit?.content}
             bind:this={compose} />
         {/key}
-        <div class="flex justify-end">
-          <button class="btn btn-link btn-sm" type="button" onclick={closeReply}>Cancel</button>
-        </div>
       </div>
     {:else if !approvedGoalCensorReason}
       <div class="flex justify-end px-2 pb-2">
