@@ -71,7 +71,13 @@
     <p class="min-w-0 break-words text-xl">{title}</p>
   {/if}
   {#if !censorReason}
-    <Content {event} {url} {communitySectionName} expandMode="inline" />
+    <Content
+      {event}
+      {url}
+      {communitySectionName}
+      expandMode="none"
+      minLength={100}
+      maxLength={200} />
     {#if operationId}
       <PublicationStatus {operationId} class="text-sm" />
     {/if}
