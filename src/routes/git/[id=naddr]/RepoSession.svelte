@@ -34,6 +34,7 @@
   import {notifyCorsProxyIssue} from "@app/util/git-cors-proxy"
   import {pushModal, clearModals} from "@app/util/modal"
   import DeleteRepoConfirm from "@app/components/DeleteRepoConfirm.svelte"
+  import {getRepoRenameAddresses, recordRepoRename} from "@app/util/repo-rename-history"
   import RepoCollectModal from "@app/components/RepoCollectModal.svelte"
   import BranchStateSyncModal from "@app/components/BranchStateSyncModal.svelte"
   import RemoteFixHelperModal from "@app/components/RemoteFixHelperModal.svelte"
@@ -301,9 +302,7 @@
     if (!community) return ""
     const option = repoCommunityOptions.find(item => item.address === community.address)
     const branch = parseCommunityDefinitionAddress(community.address)
-    return branch
-      ? getCommunityOptionLabel(option?.ownerPubkey || branch.ownerPubkey)
-      : ""
+    return branch ? getCommunityOptionLabel(option?.ownerPubkey || branch.ownerPubkey) : ""
   })
   const repoCommunityPointer = $derived.by(() => {
     const community = repoClass?.community
@@ -900,7 +899,7 @@
     return owner ? [owner] : []
   }) as Readable<string[]>
   const repoAddressesStore: Readable<string[]> = derived(repoAddressStore, $repoAddress =>
-    $repoAddress ? [$repoAddress] : [],
+    getRepoRenameAddresses($repoAddress),
   ) as Readable<string[]>
 
   const repoCloneUrlsStore: Readable<string[]> = derived(activeRepoClass, $repo =>
@@ -2462,10 +2461,12 @@
     },
     onSaveComplete: async ({
       renamed,
+      previousName,
       nextName,
       relays,
     }: {
       renamed: boolean
+      previousName: string
       nextName: string
       relays: string[]
     }) => {
@@ -2474,6 +2475,11 @@
         await refreshRepo({throwOnError: true})
         return
       }
+      recordRepoRename({
+        owner: repoPubkey,
+        previousIdentifier: previousName,
+        nextIdentifier: nextName,
+      })
       await navigateToRenamedRepo(nextName, relays)
     },
     disposePublishTransport: disposeRepoSettingsPagePublishTransport,
@@ -2916,8 +2922,10 @@
 
     if (!$repoActivityHydrationReady) return
 
-    const address = getPrimaryBookmarkAddress()
-    hydrateRepoStars({relayHints: getStore(repoRelaysStore), repoAddress: address}).catch(error => {
+    hydrateRepoStars({
+      relayHints: getStore(repoRelaysStore),
+      repoAddresses: getStore(repoAddressesStore),
+    }).catch(error => {
       console.warn("[repo layout] Failed to hydrate repo stars", error)
     })
   })
@@ -3842,10 +3850,12 @@
         },
         onSaveComplete: async ({
           renamed,
+          previousName,
           nextName,
           relays,
         }: {
           renamed: boolean
+          previousName: string
           nextName: string
           relays: string[]
         }) => {
@@ -3854,6 +3864,11 @@
             await refreshRepo({throwOnError: true})
             return
           }
+          recordRepoRename({
+            owner: repoPubkey,
+            previousIdentifier: previousName,
+            nextIdentifier: nextName,
+          })
           await navigateToRenamedRepo(nextName, relays)
         },
         canDelete: !!$pubkey && repoPubkey === $pubkey,
@@ -4003,6 +4018,9 @@
       repoName,
       repoRelays: relays,
       repoAddresses: $repoAddressesStore,
+      observedStars: $activeRepoStars
+        .filter(star => $repoAddressesStore.includes(star.address))
+        .map(star => star.address),
       backPath: `/git`,
       onClose: () => {
         suppressRelaysWarning = false

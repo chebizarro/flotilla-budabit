@@ -9,9 +9,8 @@
   import Icon from "@lib/components/Icon.svelte"
   import AltArrowLeft from "@assets/icons/alt-arrow-left.svg?dataurl"
   import AltArrowRight from "@assets/icons/alt-arrow-right.svg?dataurl"
-  import {chunk} from "@welshman/lib"
   import {publish, PublishStatus} from "@welshman/net"
-  import {repository, pubkey, signer} from "@welshman/app"
+  import {repository, pubkey, signer, tracker} from "@welshman/app"
   import {Address, DELETE, makeEvent, type TrustedEvent} from "@welshman/util"
   import {pushToast} from "@app/util/toast"
   import {clearModals} from "@app/util/modal"
@@ -43,14 +42,14 @@
   import {requireRepoPublicationScope} from "@app/core/repo-publication"
   import {
     buildGraspRepoDeleteRequest,
-    buildRepoDeleteTags,
-    buildRepoOwnedDeleteFilters,
+    buildRepoDeletePlan,
     canDeleteLocalRepoAfterRemoteResults,
+    createRetainedRepoDeleteOperation,
     getGraspRepoDeleteTarget,
     getRepoDeleteAddresses,
   } from "@app/util/repo-delete"
   import type {Repo} from "@nostr-git/ui"
-  import {fetchCompleteRelayInventory} from "@app/util/fetch-relay-events"
+  import {inventoryGitDeletion} from "@app/core/git-deletion-inventory"
 
   type Props = {
     repoClass: Repo
@@ -58,6 +57,7 @@
     repoName: string
     repoRelays: string[]
     repoAddresses?: string[]
+    observedStars?: string[]
     backPath: string
     onClose?: () => void
   }
@@ -68,6 +68,7 @@
     repoName,
     repoRelays,
     repoAddresses = [],
+    observedStars = [],
     backPath,
     onClose,
   }: Props = $props()
@@ -111,12 +112,22 @@
     metadataDeliveriesAttempted: number
     metadataDeliveriesAccepted: number
     metadataFailures: string[]
+    relayOutcomes: Array<{unitId: string; relay: string; status: string; detail?: string}>
     deletedEvents: number
     relays: string[]
     kinds: Array<{label: string; count: number}>
+    acknowledgedKinds: Array<{label: string; count: number}>
+    unconfirmedKinds: Array<{label: string; count: number}>
     remotes: RemoteDeleteResult[]
     localDeleted: boolean
     localError?: string
+    rootAcknowledged: boolean
+    inventoryComplete: boolean
+    partialRelays: string[]
+    foreignCount: number
+    unsupportedCount: number
+    exclusionReasons: Array<{reason: string; count: number}>
+    partialRequests: string[]
   }
 
   const vendorLabels: Record<GitVendor, string> = {
@@ -155,6 +166,48 @@
   let summary = $state<DeleteSummary | null>(null)
   let accessChecks = $state<Record<string, AccessCheck>>({})
   let preflightRunId = 0
+  let deleteController: AbortController | null = null
+
+  const waitForTrackerReadback = (
+    eventId: string,
+    relays: string[],
+    signal: AbortSignal,
+    timeoutMs = 1_500,
+  ) =>
+    new Promise<string[]>((resolve, reject) => {
+      const expected = new Set(relays)
+      const observed = () => relays.filter(relay => tracker.hasRelay(eventId, relay))
+      const cleanup = () => {
+        clearTimeout(timeout)
+        tracker.off?.("add", onAdd)
+        tracker.off?.("load", onLoad)
+        signal.removeEventListener("abort", onAbort)
+      }
+      const finish = () => {
+        const found = observed()
+        if (!found.length) return false
+        cleanup()
+        resolve(found)
+        return true
+      }
+      const onAdd = (id: string, relay: string) => {
+        if (id === eventId && expected.has(relay)) finish()
+      }
+      const onLoad = () => finish()
+      const onAbort = () => {
+        cleanup()
+        reject(signal.reason || new DOMException("Aborted", "AbortError"))
+      }
+      const timeout = setTimeout(() => {
+        cleanup()
+        resolve(observed())
+      }, timeoutMs)
+
+      if (finish()) return
+      tracker.on("add", onAdd)
+      tracker.on("load", onLoad)
+      signal.addEventListener("abort", onAbort, {once: true})
+    })
 
   const canDelete = $derived(!!$pubkey && repoEvent?.pubkey === $pubkey)
   const confirmOk = $derived(repoName.trim().length > 0 && confirmText.trim() === repoName)
@@ -171,6 +224,13 @@
   const deleteDisabled = $derived(!confirmOk || !canDelete || isDeleting || preflightPending)
 
   const back = () => history.back()
+  const cancelOrBack = () => {
+    if (isDeleting) {
+      deleteController?.abort()
+      return
+    }
+    back()
+  }
 
   const parseCloneUrl = (value: string) => {
     const toUrl = (raw: string): URL | null => {
@@ -591,6 +651,7 @@
   })
 
   onDestroy(() => {
+    deleteController?.abort()
     onClose?.()
   })
 
@@ -604,16 +665,25 @@
     }
   })
 
-  const publishDeleteEvent = async (event: any, relays: string[], repoAddress: string) => {
+  const publishDeleteEvent = async (
+    event: any,
+    relays: string[],
+    repoAddress: string,
+    signal?: AbortSignal,
+    commitLocal = true,
+  ) => {
     const publishRelays = requireRepoPublicationScope({event, relays, repoAddress})
     const currentSigner = get(signer)
     if (!currentSigner) throw new Error("No signer available")
-    const signedEvent = await currentSigner.sign(event, {signal: AbortSignal.timeout(30_000)})
+    const signSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000)
+    const signedEvent = await currentSigner.sign(event, {signal: signSignal})
     const results = Object.values(
-      await publish({event: signedEvent, relays: publishRelays, timeout: 10_000}),
+      await publish({event: signedEvent, relays: publishRelays, timeout: 10_000, signal}),
     ) as any[]
     const accepted = results.filter(result => result?.status === PublishStatus.Success)
-    if (accepted.length > 0) repository.publish(signedEvent)
+    if (commitLocal && accepted.length > 0) repository.publish(signedEvent)
     return {
       accepted,
       results,
@@ -641,6 +711,8 @@
     const operationTokens = [...tokens]
 
     isDeleting = true
+    deleteController = new AbortController()
+    const signal = deleteController.signal
     progress = null
     summary = null
 
@@ -653,23 +725,71 @@
         repoAddress,
       })
       const metadataRelays = relays
-      const filters = buildRepoOwnedDeleteFilters({
-        pubkey: ownerPubkey,
-        repoName,
+      const inventory = await inventoryGitDeletion({
+        context: {
+          rootType: "repository",
+          root: repoEvent as TrustedEvent,
+          repositoryAddress: repoAddress,
+          repositoryAddresses: deleteRepoAddresses.filter(address => address !== repoAddress),
+          ownerPubkey,
+        },
+        relays,
+        timeoutMs: 15_000,
+        maxEventsPerRequest: 4_000,
+        signal,
+        owner: `delete:repository:${repoAddress}`,
+      })
+      const partialRelays = Array.from(
+        new Set(
+          inventory.requests
+            .filter(request => request.transport.outcome !== "eose")
+            .map(request => request.relay),
+        ),
+      )
+      const inventoryForeign = inventory.excludedByReason["foreign-author"] || 0
+      const inventoryUnsupported = Object.entries(inventory.excludedByReason).reduce(
+        (sum, [reason, count]) => sum + (reason === "foreign-author" ? 0 : count || 0),
+        0,
+      )
+      const inventoryBestEffort = inventory.targets.filter(
+        target => target.policy === "best-effort",
+      ).length
+      const relationCounts = new Map<string, number>()
+      for (const target of inventory.targets.filter(target => target.policy === "best-effort")) {
+        const group = `${target.relation}/kind ${target.targetKind}`
+        relationCounts.set(group, (relationCounts.get(group) || 0) + 1)
+      }
+      const relationSummary =
+        Array.from(relationCounts, ([relation, count]) => `${relation}: ${count}`).join(", ") ||
+        "none"
+      const exclusionSummary =
+        Object.entries(inventory.excludedByReason)
+          .filter(([, count]) => count)
+          .map(([reason, count]) => `${reason}: ${count}`)
+          .join(", ") || "none"
+      const partialRequests = inventory.requests
+        .filter(request => request.transport.outcome !== "eose")
+        .map(request => `round ${request.round}/chunk ${request.chunk} at ${request.relay}`)
+        .join(", ")
+      if (
+        !window.confirm(
+          `Deletion preview: 1 required repository announcement. Best-effort authored events (${inventoryBestEffort}): ${relationSummary}. Exclusions: ${exclusionSummary}. Inventory is ${inventory.complete ? "complete at EOSE" : `partial: ${partialRequests || "one or more requests"}`}. ${observedStars.length} observed owner star${observedStars.length === 1 ? "" : "s"} will remain unchanged. Physical remotes are handled separately. Continue?`,
+        )
+      ) {
+        throw new Error("Repository deletion cancelled after metadata inventory preview")
+      }
+      const inventoryError = ""
+      const eventsToDelete = inventory.targets.map(target => target.event)
+      const classifiedEvents = inventory.targets
+        .filter(target => target.policy === "best-effort")
+        .map(target => target.event)
+      const deletePlan = buildRepoDeletePlan({
+        root: repoEvent as TrustedEvent,
+        events: eventsToDelete,
+        classifiedEvents,
         repoAddresses: deleteRepoAddresses,
       })
-
-      const inventory = await fetchCompleteRelayInventory({relays, filters})
-      const inventoryError = ""
-      const byId = new Map<string, TrustedEvent>()
-      for (const event of inventory.events) {
-        if (event.pubkey !== ownerPubkey) continue
-        byId.set(event.id, event)
-      }
-
-      const eventsToDelete = Array.from(byId.values())
-      const deleteChunks = metadataRelays.length > 0 ? chunk(300, eventsToDelete) : []
-      const totalSteps = Math.max(deleteChunks.length, 1)
+      const totalSteps = Math.max(deletePlan.units.length + operationTargets.length, 1)
       let completed = 0
 
       progress = {completed, total: totalSteps, label: "Sending delete requests..."}
@@ -677,36 +797,64 @@
       let metadataDeliveriesAttempted = 0
       let metadataDeliveriesAccepted = 0
       const metadataFailures: string[] = []
-      for (const group of deleteChunks) {
-        const tags = buildRepoDeleteTags(group)
-        if (tags.length > 0) {
-          const createdAt = Math.max(
-            Math.floor(Date.now() / 1000),
-            ...group.map(event => event.created_at),
-          )
-          const outcome = await publishDeleteEvent(
-            makeEvent(DELETE, {tags, created_at: createdAt}),
-            metadataRelays,
+      const currentSigner = get(signer)
+      if (!currentSigner) throw new Error("No signer available")
+      const metadataOperation = createRetainedRepoDeleteOperation({
+        plan: deletePlan,
+        relays: metadataRelays,
+        sign: (unit, operationSignal) =>
+          currentSigner.sign(makeEvent(DELETE, {tags: unit.tags, created_at: unit.createdAt}), {
+            signal: operationSignal,
+          }),
+        publish: async (signedEvent, _unit, pendingRelays, operationSignal) => {
+          const publishRelays = requireRepoPublicationScope({
+            event: signedEvent,
+            relays: pendingRelays,
             repoAddress,
-          )
-          metadataDeliveriesAttempted += metadataRelays.length
-          metadataDeliveriesAccepted += outcome.accepted.length
-          for (const result of outcome.results) {
-            if (result?.status !== PublishStatus.Success) {
-              metadataFailures.push(
-                `${result?.relay || "unknown relay"}: ${result?.detail || result?.status || "failed"}`,
-              )
-            }
+          })
+          const results = Object.values(
+            await publish({
+              event: signedEvent,
+              relays: publishRelays,
+              timeout: 10_000,
+              signal: operationSignal,
+            }),
+          ) as any[]
+          completed += 1
+          progress = {completed, total: totalSteps, label: "Sending delete requests..."}
+          return {
+            outcomes: results.map(result => ({
+              relay: result?.relay || "unknown relay",
+              status:
+                result?.status === PublishStatus.Success
+                  ? ("accepted" as const)
+                  : result?.status === "timeout"
+                    ? ("timeout" as const)
+                    : ("failed" as const),
+              detail: result?.detail,
+            })),
           }
-        }
-        completed += 1
-        progress = {completed, total: totalSteps, label: "Sending delete requests..."}
-      }
+        },
+        getReadbackRelays: signedEvent => tracker.getRelays(signedEvent.id),
+        waitForReadback: (signedEvent, pendingRelays, operationSignal) =>
+          waitForTrackerReadback(signedEvent.id, pendingRelays, operationSignal),
+        onAcknowledged: signedEvent => {
+          if (!repository.getEvent(signedEvent.id)) repository.publish(signedEvent as TrustedEvent)
+        },
+        onError: (unit, error) => {
+          metadataFailures.push(
+            `${unit.id}: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        },
+      })
+
+      let metadataOperationResult = await metadataOperation.runBestEffort(signal)
 
       progress = {completed, total: totalSteps, label: "Deleting remote repositories..."}
 
       const remoteResults: RemoteDeleteResult[] = []
       for (const target of operationTargets) {
+        signal.throwIfAborted()
         const access = operationAccess[target.id] || {status: "unknown"}
         if (!operationSelected.has(target.id)) {
           remoteResults.push({
@@ -758,6 +906,8 @@
               makeEvent(DELETE, {tags: request.tags, created_at: request.createdAt}),
               [targetRelay],
               repoAddress,
+              signal,
+              false,
             )
             const accepted = outcome.accepted[0]
             if (!accepted) {
@@ -777,10 +927,26 @@
           } else {
             await tryTokensForHost(operationTokens, target.host, async token => {
               const workerManager: any = repoClass.workerManager as any
-              const result = await workerManager.deleteRemoteRepo({
-                remoteUrl: target.url,
-                token,
-              })
+              const operationId = `repository-delete:${crypto.randomUUID()}`
+              const cancelRemote = () => {
+                void workerManager.cancelOperation?.({
+                  operationId,
+                  reason: "Repository deletion cancelled by user",
+                })
+              }
+              signal.addEventListener("abort", cancelRemote, {once: true})
+              let result: any
+              try {
+                signal.throwIfAborted()
+                result = await workerManager.deleteRemoteRepo({
+                  remoteUrl: target.url,
+                  token,
+                  operationId,
+                })
+                signal.throwIfAborted()
+              } finally {
+                signal.removeEventListener("abort", cancelRemote)
+              }
               if (!result?.success) {
                 throw new Error(result?.error || "Remote deletion failed")
               }
@@ -795,6 +961,7 @@
             detail: successDetail,
           })
         } catch (error) {
+          if (signal.aborted || (error instanceof Error && error.name === "AbortError")) throw error
           remoteResults.push({
             id: target.id,
             label: target.label,
@@ -803,6 +970,24 @@
             detail: error instanceof Error ? error.message : String(error),
           })
         }
+        completed += 1
+        progress = {completed, total: totalSteps, label: "Deleting remote repositories..."}
+      }
+
+      const selectedRemotesSucceeded = remoteResults.every(
+        result =>
+          !operationSelected.has(result.id) ||
+          result.status === "accepted" ||
+          result.status === "deleted",
+      )
+      let rootAcknowledged = false
+      if (selectedRemotesSucceeded) {
+        metadataOperationResult = await metadataOperation.runRoot(signal)
+        rootAcknowledged = metadataOperationResult.rootAcknowledged
+      } else {
+        metadataFailures.push(
+          "Repository announcement preserved because a selected physical remote was not deleted",
+        )
       }
 
       progress = {completed, total: totalSteps, label: "Cleaning up local cache..."}
@@ -811,13 +996,17 @@
       let localError: string | undefined
       const canDeleteLocalRepo = canDeleteLocalRepoAfterRemoteResults({
         inventoryError,
-        metadataDeliveriesAttempted,
-        metadataDeliveriesAccepted,
+        inventoryAccepted: true,
+        rootAcknowledged,
         selectedRemoteIds: operationSelected,
         remoteResults,
       })
       if (!canDeleteLocalRepo) {
-        localError = "Local clone preserved because one or more deletion operations did not succeed"
+        localError = inventoryError
+          ? `Local clone preserved because inventory failed: ${inventoryError}`
+          : !rootAcknowledged
+            ? "Local clone preserved because the repository announcement tombstone is unconfirmed"
+            : "Local clone preserved because a selected physical remote operation failed"
       } else {
         try {
           if (repoClass.key) {
@@ -858,24 +1047,129 @@
       const kinds = Array.from(kindCounts.entries())
         .map(([kind, count]) => ({label: kindLabels.get(kind) || `Kind ${kind}`, count}))
         .sort((a, b) => b.count - a.count)
+      const summarizeUnits = (acknowledged: boolean) => {
+        const counts = new Map<number, number>()
+        for (const unit of deletePlan.units) {
+          if (metadataOperationResult.acknowledged.has(unit.id) !== acknowledged) continue
+          for (const target of unit.targets) {
+            counts.set(target.kind, (counts.get(target.kind) || 0) + 1)
+          }
+        }
+        return Array.from(counts, ([kind, count]) => ({
+          label: kindLabels.get(kind) || `Kind ${kind}`,
+          count,
+        })).sort((left, right) => right.count - left.count)
+      }
+      const getRelayOutcomes = () =>
+        metadataOperationResult.units.flatMap(unit =>
+          unit.outcomes.map(outcome => ({unitId: unit.unitId, ...outcome})),
+        )
+      const relayOutcomes = getRelayOutcomes()
+      metadataDeliveriesAttempted = relayOutcomes.filter(
+        outcome => outcome.status !== "readback",
+      ).length
+      metadataDeliveriesAccepted = relayOutcomes.filter(outcome =>
+        ["accepted", "readback"].includes(outcome.status),
+      ).length
+      metadataFailures.splice(
+        0,
+        metadataFailures.length,
+        ...relayOutcomes
+          .filter(outcome => !["accepted", "readback"].includes(outcome.status))
+          .map(
+            outcome => `${outcome.unitId} · ${outcome.relay}: ${outcome.detail || outcome.status}`,
+          ),
+      )
 
       summary = {
         metadataDeliveriesAttempted,
         metadataDeliveriesAccepted,
         metadataFailures,
+        relayOutcomes,
         deletedEvents: eventsToDelete.length,
         relays: metadataRelays,
         kinds,
+        acknowledgedKinds: summarizeUnits(true),
+        unconfirmedKinds: summarizeUnits(false),
         remotes: remoteResults,
         localDeleted,
         localError,
+        rootAcknowledged,
+        inventoryComplete: inventory.complete,
+        partialRelays,
+        foreignCount: inventoryForeign,
+        unsupportedCount: inventoryUnsupported,
+        exclusionReasons: Object.entries(inventory.excludedByReason)
+          .filter((entry): entry is [string, number] => Boolean(entry[1]))
+          .map(([reason, count]) => ({reason, count})),
+        partialRequests: inventory.requests
+          .filter(request => request.transport.outcome !== "eose")
+          .map(
+            request =>
+              `Round ${request.round}, chunk ${request.chunk}, ${request.relay}: ${request.transport.outcome}`,
+          ),
+      }
+      if (selectedRemotesSucceeded && !metadataOperationResult.complete) {
+        pushToast({
+          theme: "warning",
+          timeout: 0,
+          message: "One or more repository metadata deletion units remain unconfirmed.",
+          action: {
+            message: "Retry metadata",
+            onclick: async () => {
+              try {
+                const retried = await metadataOperation.retry()
+                metadataOperationResult = retried
+                if (summary) {
+                  const retriedOutcomes = getRelayOutcomes()
+                  summary = {
+                    ...summary,
+                    rootAcknowledged: retried.rootAcknowledged,
+                    acknowledgedKinds: summarizeUnits(true),
+                    unconfirmedKinds: summarizeUnits(false),
+                    relayOutcomes: retriedOutcomes,
+                    metadataDeliveriesAttempted: retriedOutcomes.filter(
+                      outcome => outcome.status !== "readback",
+                    ).length,
+                    metadataDeliveriesAccepted: retriedOutcomes.filter(outcome =>
+                      ["accepted", "readback"].includes(outcome.status),
+                    ).length,
+                    metadataFailures: retriedOutcomes
+                      .filter(outcome => !["accepted", "readback"].includes(outcome.status))
+                      .map(
+                        outcome =>
+                          `${outcome.unitId} · ${outcome.relay}: ${outcome.detail || outcome.status}`,
+                      ),
+                  }
+                }
+                pushToast({
+                  theme: retried.complete ? "success" : "warning",
+                  message: retried.complete
+                    ? "Repository metadata deletion requests acknowledged. The preserved local clone was not removed automatically."
+                    : "Some repository metadata deletion requests remain unconfirmed.",
+                })
+              } catch (error) {
+                pushToast({
+                  theme: "error",
+                  message: error instanceof Error ? error.message : "Metadata retry failed",
+                })
+              }
+            },
+          },
+        })
       }
     } catch (error) {
-      pushToast({
-        theme: "error",
-        message: `Failed to delete repository: ${error instanceof Error ? error.message : String(error)}`,
-      })
+      const cancelled = signal.aborted || (error instanceof Error && error.name === "AbortError")
+      pushToast(
+        cancelled
+          ? {message: "Repository deletion cancelled. Already acknowledged requests were retained."}
+          : {
+              theme: "error",
+              message: `Failed to delete repository: ${error instanceof Error ? error.message : String(error)}`,
+            },
+      )
     } finally {
+      deleteController = null
       isDeleting = false
     }
   }
@@ -901,12 +1195,36 @@
       <div>
         <div class="font-medium">Nostr deletion requests</div>
         <div class="text-gray-400">
-          {summary.deletedEvents} events targeted, {summary.metadataDeliveriesAccepted} of
-          {summary.metadataDeliveriesAttempted} relay deliveries accepted
+          {summary.deletedEvents} events targeted, {summary.metadataDeliveriesAccepted} relay confirmations
+          across {summary.metadataDeliveriesAttempted} publish deliveries
         </div>
         <div class="text-gray-400">
           Metadata relays: {summary.relays.join(", ") || "none"}
         </div>
+        <div class={summary.inventoryComplete ? "text-green-400" : "text-yellow-400"}>
+          {summary.inventoryComplete
+            ? "Metadata inventory completed at EOSE"
+            : `Partial metadata inventory${summary.partialRelays.length ? `: ${summary.partialRelays.join(", ")}` : ""}`}
+        </div>
+        <div class={summary.rootAcknowledged ? "text-green-400" : "text-red-400"}>
+          Repository announcement: {summary.rootAcknowledged
+            ? "deletion request acknowledged"
+            : "preserved or unconfirmed"}
+        </div>
+        {#if summary.foreignCount > 0 || summary.unsupportedCount > 0}
+          <div class="text-xs text-gray-400">
+            Bounded exclusions: {summary.foreignCount} foreign, {summary.unsupportedCount}
+            unsupported. These events were not targeted.
+          </div>
+          {#each summary.exclusionReasons as exclusion}
+            <div class="text-xs text-gray-400">
+              {exclusion.reason}: {exclusion.count}
+            </div>
+          {/each}
+        {/if}
+        {#each summary.partialRequests as request}
+          <div class="text-xs text-yellow-400">{request}</div>
+        {/each}
         {#if summary.metadataFailures.length > 0}
           <div class="mt-1 grid gap-1 text-xs text-red-400">
             {#each summary.metadataFailures as failure}
@@ -914,7 +1232,18 @@
             {/each}
           </div>
         {/if}
+        {#if summary.relayOutcomes.length > 0}
+          <div class="mt-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+            Per-relay outcomes
+          </div>
+          <div class="mt-1 grid gap-1 text-xs text-gray-400">
+            {#each summary.relayOutcomes as outcome}
+              <div>{outcome.unitId} · {outcome.relay}: {outcome.status}</div>
+            {/each}
+          </div>
+        {/if}
         {#if summary.kinds.length > 0}
+          <div class="mt-2 text-xs font-medium uppercase tracking-wide text-gray-400">Targeted</div>
           <div class="mt-2 grid gap-1">
             {#each summary.kinds as item}
               <div class="flex items-center justify-between">
@@ -923,6 +1252,26 @@
               </div>
             {/each}
           </div>
+        {/if}
+        {#if summary.acknowledgedKinds.length > 0}
+          <div class="mt-2 text-xs font-medium uppercase tracking-wide text-green-400">
+            Acknowledged
+          </div>
+          {#each summary.acknowledgedKinds as item}
+            <div class="flex items-center justify-between">
+              <span>{item.label}</span><span class="text-gray-400">{item.count}</span>
+            </div>
+          {/each}
+        {/if}
+        {#if summary.unconfirmedKinds.length > 0}
+          <div class="mt-2 text-xs font-medium uppercase tracking-wide text-yellow-400">
+            Unconfirmed
+          </div>
+          {#each summary.unconfirmedKinds as item}
+            <div class="flex items-center justify-between">
+              <span>{item.label}</span><span class="text-gray-400">{item.count}</span>
+            </div>
+          {/each}
         {/if}
       </div>
 
@@ -970,11 +1319,20 @@
     </div>
   {:else}
     <p class="text-sm text-gray-300">
-      Budabit will request deletion of the repository announcement and supported metadata you
-      authored. Comments, labels, patches, reactions, and events from other authors are not directly
-      targeted. Selected remote hosts may also delete hosted code and orphaned events. The local
+      Budabit will inventory and request deletion of the repository announcement and supported
+      metadata you authored. Foreign events, nested legacy replies, repository stars, shared
+      patches, and unsafe addressable metadata are not targeted. Selected remote hosts may also
+      delete hosted code and orphaned events. The announcement is requested last, and the local
       clone is removed only after the required steps succeed.
     </p>
+
+    <div class="text-sm">
+      <div class="font-medium">Repository stars left unchanged</div>
+      <div class="text-gray-400">
+        {observedStars.length} owner star{observedStars.length === 1 ? "" : "s"} observed across current
+        and recorded renamed coordinates.
+      </div>
+    </div>
 
     <div class="space-y-3">
       <div>
@@ -1058,9 +1416,9 @@
         <Icon icon={AltArrowRight} />
       </Button>
     {:else}
-      <Button class="btn btn-link" onclick={back} disabled={isDeleting}>
+      <Button class="btn btn-link" onclick={cancelOrBack}>
         <Icon icon={AltArrowLeft} />
-        Go back
+        {isDeleting ? "Cancel deletion" : "Go back"}
       </Button>
       <Button type="submit" class="btn btn-error" disabled={deleteDisabled}>
         <Spinner loading={isDeleting}>Delete repository</Spinner>
