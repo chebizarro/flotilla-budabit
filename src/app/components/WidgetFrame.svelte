@@ -80,9 +80,9 @@
     const permissions = new Set(widget.permissions || [])
     const allow = new Set(["autoplay", "clipboard-write", "fullscreen"])
 
-    if (permissions.has("media:camera")) allow.add("camera")
-    if (permissions.has("media:microphone")) allow.add("microphone")
-    if (permissions.has("media:display-capture")) allow.add("display-capture")
+    if (permissions.has("media:camera")) allow.add("camera *")
+    if (permissions.has("media:microphone")) allow.add("microphone *")
+    if (permissions.has("media:display-capture")) allow.add("display-capture *")
 
     return Array.from(allow).join("; ")
   })
