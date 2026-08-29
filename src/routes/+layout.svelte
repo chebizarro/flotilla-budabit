@@ -63,7 +63,7 @@
   import {
     ensureAppUpdateDebugDiagnosticsCapture,
     isAppUpdateDebugDiagnosticsActive,
-    recordAppUpdateDebugDiagnostic,
+    recordAppUpdateDebugDiagnostic as writeAppUpdateDebugDiagnostic,
     refreshDebugDiagnosticsSettings,
     restoreDebugDiagnosticsCapture,
   } from "@app/core/debug-diagnostics"
@@ -209,7 +209,13 @@
   let communityAuthWarmupKey = ""
   let builtinExtensionInstallFrame: number | null = null
   let builtinExtensionInstallCancelled = false
+  let appUpdateActivationRequestSequence = 0
   const trackedAppUpdateWorkers = new WeakSet<ServiceWorker>()
+
+  const recordAppUpdateDebugDiagnostic = (type: string, detail?: unknown) => {
+    if (!DIAGNOSTICS_ENABLED) return false
+    return writeAppUpdateDebugDiagnostic(type, detail)
+  }
 
   const describeAppUpdateWorker = (worker?: ServiceWorker | null) => {
     if (!worker) return null
@@ -845,14 +851,18 @@
       if (registration.waiting !== worker) continue
 
       trackAppUpdateWorker(worker, "activation-target")
+      appUpdateActivationRequestSequence += 1
+      const requestId = `${APP_BUILD_ID}:${Date.now()}:${appUpdateActivationRequestSequence}`
       recordAppUpdateDebugDiagnostic("skip-waiting-posted", {
+        requestId,
         expectedBuildId: buildId,
         attempt,
         registration: describeAppUpdateRegistration(registration),
       })
       worker.postMessage({
         type: "SKIP_WAITING",
-        diagnostics: isAppUpdateDebugDiagnosticsActive(),
+        requestId,
+        diagnostics: DIAGNOSTICS_ENABLED && isAppUpdateDebugDiagnosticsActive(),
       })
       return true
     }
@@ -1365,10 +1375,24 @@
       return
     }
 
-    if (data.type === "APP_CACHE_ACTIVATION_REQUESTED" && typeof data.version === "string") {
+    if (
+      [
+        "APP_CACHE_ACTIVATION_REQUESTED",
+        "APP_CACHE_SKIP_WAITING_RECEIVED",
+        "APP_CACHE_SKIP_WAITING_RESOLVED",
+        "APP_CACHE_SKIP_WAITING_REJECTED",
+      ].includes(data.type) &&
+      typeof data.version === "string"
+    ) {
       recordAppUpdateDebugDiagnostic("worker-message", {
         messageType: data.type,
         workerBuildId: data.version,
+        requestId: typeof data.requestId === "string" ? data.requestId : "",
+        durationMs: typeof data.durationMs === "number" ? data.durationMs : undefined,
+        errorName: typeof data.errorName === "string" ? data.errorName : "",
+        errorMessage: typeof data.errorMessage === "string" ? data.errorMessage : "",
+        workerRegistration:
+          data.registration && typeof data.registration === "object" ? data.registration : null,
         controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
       })
       return

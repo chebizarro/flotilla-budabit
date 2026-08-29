@@ -229,10 +229,40 @@ self.addEventListener("message", event => {
   }
 
   if (data?.type === "SKIP_WAITING") {
-    if (data.diagnostics === true) {
-      event.source?.postMessage({type: "APP_CACHE_ACTIVATION_REQUESTED", version})
+    const activationStartedAt = Date.now()
+    const requestId = typeof data.requestId === "string" ? data.requestId.slice(0, 200) : ""
+    const source = event.source
+    const getRegistrationState = () => ({
+      installing: self.registration.installing?.state || "",
+      waiting: self.registration.waiting?.state || "",
+      active: self.registration.active?.state || "",
+    })
+    const reportActivation = (type, detail = {}) => {
+      if (data.diagnostics !== true) return
+      source?.postMessage({
+        type,
+        version,
+        requestId,
+        registration: getRegistrationState(),
+        ...detail,
+      })
     }
-    event.waitUntil(self.skipWaiting())
+
+    reportActivation("APP_CACHE_SKIP_WAITING_RECEIVED")
+    const activation = self.skipWaiting()
+    activation.then(
+      () =>
+        reportActivation("APP_CACHE_SKIP_WAITING_RESOLVED", {
+          durationMs: Date.now() - activationStartedAt,
+        }),
+      error =>
+        reportActivation("APP_CACHE_SKIP_WAITING_REJECTED", {
+          durationMs: Date.now() - activationStartedAt,
+          errorName: typeof error?.name === "string" ? error.name : "",
+          errorMessage: typeof error?.message === "string" ? error.message.slice(0, 500) : "",
+        }),
+    )
+    event.waitUntil(activation)
   }
 })
 

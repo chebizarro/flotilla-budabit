@@ -17,4 +17,17 @@ describe("root debug diagnostics lifecycle", () => {
     expect(source).toContain("onDestroy(uninstallPublicationDebugDiagnostics)")
     expect(source).toContain("uninstallPublicationDebugDiagnostics()")
   })
+
+  it("gates app-update tracing and correlates worker activation outcomes", () => {
+    const layout = readFileSync("src/routes/+layout.svelte", "utf8")
+    const worker = readFileSync("src/service-worker.js", "utf8")
+
+    expect(layout).toContain("if (!DIAGNOSTICS_ENABLED) return false")
+    expect(layout).toContain("diagnostics: DIAGNOSTICS_ENABLED &&")
+    expect(layout).toContain('recordAppUpdateDebugDiagnostic("skip-waiting-posted"')
+    expect(worker).toContain('reportActivation("APP_CACHE_SKIP_WAITING_RECEIVED")')
+    expect(worker).toContain('reportActivation("APP_CACHE_SKIP_WAITING_RESOLVED"')
+    expect(worker).toContain('reportActivation("APP_CACHE_SKIP_WAITING_REJECTED"')
+    expect(worker).toContain("event.waitUntil(activation)")
+  })
 })

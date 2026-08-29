@@ -32,6 +32,12 @@ assert(
   "service worker is missing cross-tab activation signaling",
 )
 assert(
+  serviceWorker.includes("APP_CACHE_SKIP_WAITING_RECEIVED") &&
+    serviceWorker.includes("APP_CACHE_SKIP_WAITING_RESOLVED") &&
+    serviceWorker.includes("APP_CACHE_SKIP_WAITING_REJECTED"),
+  "service worker is missing diagnostic activation outcomes",
+)
+assert(
   serviceWorker.includes("/_app/version.json"),
   "service worker does not gate installation on the published version marker",
 )
