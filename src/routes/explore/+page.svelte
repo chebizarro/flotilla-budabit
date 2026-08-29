@@ -63,6 +63,7 @@
     "idle",
   )
   let enteringCommunityKey = $state("")
+  let enteringSelectorCommunities = $state<SelectorCommunity[]>([])
   let preferredHydrationKey = ""
   let preferredHydrationLoadingKey = $state("")
   let preferredFullHydrationKey = ""
@@ -136,6 +137,7 @@
 
   const enterCommunity = async (community: CommunityPointer) => {
     if (enteringCommunityKey) return
+    enteringSelectorCommunities = [...selectorCommunities]
     enteringCommunityKey = community.address
     try {
       const definition = await loadDefinition(community)
@@ -147,8 +149,10 @@
       communityInput = ""
     } catch {
       pushToast({theme: "error", message: "Community unavailable. Try again."})
-    } finally {
-      if (enteringCommunityKey === community.address) enteringCommunityKey = ""
+      if (enteringCommunityKey === community.address) {
+        enteringCommunityKey = ""
+        enteringSelectorCommunities = []
+      }
     }
   }
 
@@ -265,8 +269,11 @@
       }
     })
   })
+  const displayedSelectorCommunities = $derived(
+    enteringCommunityKey ? enteringSelectorCommunities : selectorCommunities,
+  )
   const showPreferredCommunities = $derived(
-    selectorCommunities.length > 0 || preferredCommunitiesLoading,
+    displayedSelectorCommunities.length > 0 || preferredCommunitiesLoading,
   )
 
   onMount(() => {
@@ -381,12 +388,12 @@
                   <span class="loading loading-spinner loading-xs opacity-60"></span>
                 {/if}
               </div>
-              {#if preferredCommunitiesLoading && selectorCommunities.length === 0}
+              {#if preferredCommunitiesLoading && displayedSelectorCommunities.length === 0}
                 <div class="rounded-box bg-base-100/60 px-3 py-2 text-sm opacity-70">
                   Loading your communities...
                 </div>
               {/if}
-              {#each selectorCommunities as item (item.community.address)}
+              {#each displayedSelectorCommunities as item (item.community.address)}
                 <CommunitySelectorCard
                   community={item.community}
                   definition={item.definition}
