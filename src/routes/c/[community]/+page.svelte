@@ -424,8 +424,9 @@
   const ROOMS_SKELETON_DELAY_MS = 800
   let roomsSkeletonDelayElapsed = $state(false)
   $effect(() => {
-    // Reset whenever the community changes.
+    // Reset whenever the community or permission-wait phase changes.
     void communityPointer?.address
+    void roomsWaitingForPermissions
     roomsSkeletonDelayElapsed = false
     const timer = setTimeout(() => {
       roomsSkeletonDelayElapsed = true
