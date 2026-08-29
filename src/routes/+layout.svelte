@@ -250,6 +250,15 @@
     })
   }
 
+  const configureAppUpdateFetchDiagnostics = (worker?: ServiceWorker | null) => {
+    if (!DIAGNOSTICS_ENABLED || !worker || !isAppUpdateDebugDiagnosticsActive()) return
+    try {
+      worker.postMessage({type: "APP_CACHE_SET_FETCH_DIAGNOSTICS", enabled: true})
+    } catch (error) {
+      recordAppUpdateDebugDiagnostic("fetch-diagnostics-config-error", {error})
+    }
+  }
+
   if (browser && DIAGNOSTICS_ENABLED) {
     recordAppUpdateDebugDiagnostic("layout-loaded", {
       visibilityState: document.visibilityState,
@@ -592,6 +601,7 @@
         trackAppUpdateWorker(registration.active, "active")
         trackAppUpdateWorker(registration.waiting, "waiting")
         trackAppUpdateWorker(registration.installing, "installing")
+        configureAppUpdateFetchDiagnostics(registration.active)
         recordAppUpdateDebugDiagnostic("registration-found", {
           registerIfMissing,
           registration: describeAppUpdateRegistration(registration),
@@ -668,6 +678,46 @@
       } catch (error) {
         recordAppUpdateDebugDiagnostic("worker-version-post-error", {role, error})
         finish("", "post-error")
+      }
+    })
+  }
+
+  const getServiceWorkerFetchActivity = async (
+    worker: ServiceWorker | null | undefined,
+    requestId: string,
+    phase = "before-skip",
+  ) => {
+    if (!DIAGNOSTICS_ENABLED || !worker || !isAppUpdateDebugDiagnosticsActive()) return null
+
+    return await new Promise<unknown>(resolve => {
+      const channel = new MessageChannel()
+      let settled = false
+      const finish = (activity: unknown, outcome = "response") => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        channel.port1.close()
+        recordAppUpdateDebugDiagnostic("active-worker-fetch-activity", {
+          requestId,
+          phase,
+          outcome,
+          activity,
+          worker: describeAppUpdateWorker(worker),
+        })
+        resolve(activity)
+      }
+      const timeout = window.setTimeout(() => finish(null, "timeout"), 2_000)
+
+      channel.port1.onmessage = event => {
+        const data = event.data
+        finish(data?.type === "APP_CACHE_FETCH_ACTIVITY" ? data : null)
+      }
+
+      try {
+        worker.postMessage({type: "APP_CACHE_GET_FETCH_ACTIVITY", requestId}, [channel.port2])
+      } catch (error) {
+        recordAppUpdateDebugDiagnostic("fetch-activity-post-error", {requestId, error})
+        finish(null, "post-error")
       }
     })
   }
@@ -853,6 +903,7 @@
       trackAppUpdateWorker(worker, "activation-target")
       appUpdateActivationRequestSequence += 1
       const requestId = `${APP_BUILD_ID}:${Date.now()}:${appUpdateActivationRequestSequence}`
+      await getServiceWorkerFetchActivity(navigator.serviceWorker.controller, requestId)
       recordAppUpdateDebugDiagnostic("skip-waiting-posted", {
         requestId,
         expectedBuildId: buildId,
@@ -975,9 +1026,16 @@
         )
       }
       const timeout = window.setTimeout(() => {
-        void getServiceWorkerVersion(navigator.serviceWorker.controller, "controller-timeout").then(
-          controllerBuildId => finish(controllerBuildId === buildId),
-        )
+        void getServiceWorkerFetchActivity(
+          navigator.serviceWorker.controller,
+          `${buildId}:controller-timeout`,
+          "controller-timeout",
+        ).finally(() => {
+          void getServiceWorkerVersion(
+            navigator.serviceWorker.controller,
+            "controller-timeout",
+          ).then(controllerBuildId => finish(controllerBuildId === buildId))
+        })
       }, APP_SERVICE_WORKER_ACTIVATION_TIMEOUT)
 
       navigator.serviceWorker.addEventListener("controllerchange", inspectController)
@@ -1395,6 +1453,13 @@
           data.registration && typeof data.registration === "object" ? data.registration : null,
         controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
       })
+      if (data.type === "APP_CACHE_SKIP_WAITING_RECEIVED") {
+        void getServiceWorkerFetchActivity(
+          navigator.serviceWorker?.controller,
+          typeof data.requestId === "string" ? data.requestId : "",
+          "after-received",
+        )
+      }
       return
     }
 

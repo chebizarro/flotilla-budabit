@@ -38,6 +38,10 @@ assert(
   "service worker is missing diagnostic activation outcomes",
 )
 assert(
+  serviceWorker.includes("APP_CACHE_GET_FETCH_ACTIVITY"),
+  "service worker is missing active fetch diagnostics",
+)
+assert(
   serviceWorker.includes("/_app/version.json"),
   "service worker does not gate installation on the published version marker",
 )

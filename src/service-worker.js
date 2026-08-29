@@ -4,6 +4,10 @@ const APP_CACHE_PREFIX = "budabit-app-"
 const APP_CACHE_NAME = `${APP_CACHE_PREFIX}${version}`
 const APP_BASE = new URL(self.registration.scope).pathname.replace(/\/$/, "")
 const CACHE_BATCH_SIZE = 12
+const FETCH_DIAGNOSTICS_AVAILABLE = import.meta.env.VITE_DIAGNOSTICS === "1"
+const activeFetchDiagnostics = new Map()
+let fetchDiagnosticsEnabled = false
+let fetchDiagnosticSequence = 0
 
 const toAppPath = path => {
   const pathname = path.startsWith("/") ? path : `/${path}`
@@ -211,6 +215,47 @@ const respondFromAppCache = async pathname => {
 
 const fetchWithoutCache = request => fetch(new Request(request, {cache: "no-store"}))
 
+const getFetchRequestClass = (request, pathname) => {
+  if (request.mode === "navigate") return "navigation"
+  if (pathname === VERSION_PATH) return "version"
+  if (NETWORK_ONLY_PATHS.has(pathname)) return "worker"
+  if (APP_SHELL_PATH_SET.has(pathname)) return "app-shell"
+  if (pathname.startsWith(IMMUTABLE_PATH_PREFIX)) return "immutable"
+  return "other"
+}
+
+const trackFetchResponse = (request, pathname, response) => {
+  if (!fetchDiagnosticsEnabled) return response
+
+  fetchDiagnosticSequence += 1
+  const id = fetchDiagnosticSequence
+  activeFetchDiagnostics.set(id, {
+    requestClass: getFetchRequestClass(request, pathname),
+    mode: request.mode || "",
+    destination: request.destination || "",
+    startedAt: Date.now(),
+  })
+
+  return Promise.resolve(response).finally(() => activeFetchDiagnostics.delete(id))
+}
+
+const getFetchActivity = () => {
+  const now = Date.now()
+  const requests = Array.from(activeFetchDiagnostics.values(), request => ({
+    requestClass: request.requestClass,
+    mode: request.mode,
+    destination: request.destination,
+    ageMs: Math.max(0, now - request.startedAt),
+  })).slice(0, 20)
+
+  return {
+    enabled: fetchDiagnosticsEnabled,
+    inFlightCount: activeFetchDiagnostics.size,
+    oldestAgeMs: requests.reduce((oldest, request) => Math.max(oldest, request.ageMs), 0),
+    requests,
+  }
+}
+
 self.addEventListener("install", event => {
   event.waitUntil(
     (async () => {
@@ -225,6 +270,21 @@ self.addEventListener("message", event => {
 
   if (data && data.type === "APP_CACHE_GET_VERSION") {
     event.ports?.[0]?.postMessage({type: "APP_CACHE_VERSION", version})
+    return
+  }
+
+  if (data?.type === "APP_CACHE_SET_FETCH_DIAGNOSTICS") {
+    fetchDiagnosticsEnabled = FETCH_DIAGNOSTICS_AVAILABLE && data.enabled === true
+    return
+  }
+
+  if (data?.type === "APP_CACHE_GET_FETCH_ACTIVITY") {
+    event.ports?.[0]?.postMessage({
+      type: "APP_CACHE_FETCH_ACTIVITY",
+      version,
+      requestId: typeof data.requestId === "string" ? data.requestId.slice(0, 200) : "",
+      ...getFetchActivity(),
+    })
     return
   }
 
@@ -291,21 +351,21 @@ self.addEventListener("fetch", event => {
   if (!isWithinAppBase(url.pathname)) return
 
   if (NETWORK_ONLY_PATHS.has(url.pathname)) {
-    event.respondWith(fetchWithoutCache(request))
+    event.respondWith(trackFetchResponse(request, url.pathname, fetchWithoutCache(request)))
     return
   }
 
   if (request.mode === "navigate") {
-    event.respondWith(respondFromAppCache(INDEX_PATH))
+    event.respondWith(trackFetchResponse(request, url.pathname, respondFromAppCache(INDEX_PATH)))
     return
   }
 
   if (APP_SHELL_PATH_SET.has(url.pathname)) {
-    event.respondWith(respondFromAppCache(url.pathname))
+    event.respondWith(trackFetchResponse(request, url.pathname, respondFromAppCache(url.pathname)))
     return
   }
 
   if (stripAppBase(url.pathname).startsWith("/_app/immutable/")) {
-    event.respondWith(appShellMiss(url.pathname))
+    event.respondWith(trackFetchResponse(request, url.pathname, appShellMiss(url.pathname)))
   }
 })
