@@ -41,6 +41,8 @@ Readiness requires all of the following:
 
 The client verifies the registration's exact waiting worker through the version handshake before sending `SKIP_WAITING`. Once validated, the worker calls `skipWaiting()` immediately; cache metadata and cleanup do not gate activation.
 
+After requesting activation, the page waits for `controllerchange` without messaging the old controller or starting another update check. Controller inspection resumes only after the controller changes or the activation timeout expires.
+
 The worker broadcasts activation to every claimed window so each page can reload itself into the verified build.
 
 ## Activation Is A Multi-Tab Transition
