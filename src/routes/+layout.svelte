@@ -987,15 +987,6 @@
       expectedBuildId: buildId,
       controller: describeAppUpdateWorker(navigator.serviceWorker.controller),
     })
-    if (
-      (await getServiceWorkerVersion(navigator.serviceWorker.controller, "controller")) === buildId
-    ) {
-      recordAppUpdateDebugDiagnostic("controller-wait-finished", {
-        expectedBuildId: buildId,
-        result: "already-controlled",
-      })
-      return true
-    }
 
     return await new Promise<boolean>(resolve => {
       let settled = false
@@ -1119,6 +1110,8 @@
   }
 
   const runAppUpdateCheck = async () => {
+    if (appUpdateReloading) return
+
     const published = await fetchAppVersion()
     if (published.retry) {
       scheduleAppUpdateRetry()
@@ -1453,13 +1446,6 @@
           data.registration && typeof data.registration === "object" ? data.registration : null,
         controller: describeAppUpdateWorker(navigator.serviceWorker?.controller),
       })
-      if (data.type === "APP_CACHE_SKIP_WAITING_RECEIVED") {
-        void getServiceWorkerFetchActivity(
-          navigator.serviceWorker?.controller,
-          typeof data.requestId === "string" ? data.requestId : "",
-          "after-received",
-        )
-      }
       return
     }
 

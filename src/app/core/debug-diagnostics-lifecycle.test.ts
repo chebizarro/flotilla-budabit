@@ -33,5 +33,11 @@ describe("root debug diagnostics lifecycle", () => {
     expect(worker).toContain('reportActivation("APP_CACHE_SKIP_WAITING_REJECTED"')
     expect(worker).toContain("const activation = self.skipWaiting()")
     expect(worker).not.toContain("event.waitUntil(activation)")
+    expect(layout).toContain("if (appUpdateReloading) return")
+    const controllerWait = layout.indexOf("const waitForControllerBuild")
+    const controllerListener = layout.indexOf("return await new Promise<boolean>", controllerWait)
+    expect(layout.slice(controllerWait, controllerListener)).not.toContain(
+      "getServiceWorkerVersion",
+    )
   })
 })
