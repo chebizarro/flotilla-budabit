@@ -203,6 +203,7 @@ export type BuildChatNotificationRowsOptions = {
 export type BuildRouteNotificationRowsOptions = {
   paths: Iterable<string>
   excludedPaths?: Set<string>
+  coveredAtByPath?: ReadonlyMap<string, number>
   candidates?: NotificationCandidate[]
   currentPubkey?: string
 }
@@ -3465,6 +3466,15 @@ const getCommunityRouteCandidateDisplay = (
         actionLabel: "Open mention",
       }
     }
+
+    return {
+      type: "community",
+      title: "New room message",
+      preview: getTextPreview(event, "Room message"),
+      action: "posted",
+      contextLabel: "in a room",
+      actionLabel: "Open room message",
+    }
   }
 
   const threadReply = readCommunityThreadReply(event)
@@ -3498,6 +3508,7 @@ const getCommunityRouteCandidateDisplay = (
 export const buildRouteNotificationRows = ({
   paths,
   excludedPaths = new Set<string>(),
+  coveredAtByPath,
   candidates = [],
   currentPubkey,
 }: BuildRouteNotificationRowsOptions): NotificationRow[] => {
@@ -3520,12 +3531,20 @@ export const buildRouteNotificationRows = ({
   }
 
   for (const path of Array.from(paths).sort()) {
-    if (!path || excludedPaths.has(path)) continue
+    if (!path) continue
+
+    const candidateEvent = candidatesByPath.get(path)?.latestEvent
+    const coveredAt = coveredAtByPath?.get(path)
+    if (
+      excludedPaths.has(path) &&
+      (coveredAt === undefined || coveredAt >= (candidateEvent?.created_at || 0))
+    ) {
+      continue
+    }
 
     const source = getRouteNotificationSource(path)
     if (!source) continue
 
-    const candidateEvent = candidatesByPath.get(path)?.latestEvent
     const communityDisplay =
       source === "community"
         ? getCommunityRouteCandidateDisplay(candidateEvent, currentPubkey, path)
@@ -5178,8 +5197,21 @@ export const notificationCenterRows = derived(
       ...$engagementNotificationRows,
     ]
     const excludedPaths = new Set(sourceRows.flatMap(row => [row.path, row.readPath]))
+    const coveredAtByPath = new Map<string, number>()
 
-    if (chatRows.length > 0) excludedPaths.add("/chat")
+    for (const row of sourceRows) {
+      for (const path of [row.path, row.readPath]) {
+        coveredAtByPath.set(path, Math.max(coveredAtByPath.get(path) || 0, row.createdAt))
+      }
+    }
+
+    if (chatRows.length > 0) {
+      excludedPaths.add("/chat")
+      coveredAtByPath.set(
+        "/chat",
+        chatRows.reduce((latest, row) => Math.max(latest, row.createdAt), 0),
+      )
+    }
 
     return sortNotificationRows(
       dedupeNotificationRowsById([
@@ -5187,6 +5219,7 @@ export const notificationCenterRows = derived(
         ...buildRouteNotificationRows({
           paths: $notifications,
           excludedPaths,
+          coveredAtByPath,
           candidates: $notificationCandidates,
           currentPubkey: $pubkey || undefined,
         }),

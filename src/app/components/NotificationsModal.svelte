@@ -232,8 +232,10 @@
         $pubkey || undefined,
         visibleUnreadRows.map(row => row.id),
       )
-      setCheckedAtMany(visibleUnreadRows.map(row => [row.readPath, row.createdAt] as const))
     }
+    setCheckedAtMany(
+      visibleRowsWithoutActorNames.map(row => [row.readPath, row.createdAt] as const),
+    )
   })
 
   $effect(() => {

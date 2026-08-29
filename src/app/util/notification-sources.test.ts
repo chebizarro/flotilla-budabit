@@ -348,6 +348,50 @@ describe("notification sources", () => {
     ])
   })
 
+  it("keeps a newer room fallback visible when an older specific row covers its path", async () => {
+    const {buildRouteNotificationRows} = await import("./notification-sources")
+    const roomMessage = makeEvent({
+      id: "newer-room-message",
+      kind: MESSAGE,
+      pubkey: writer,
+      created_at: 200,
+      content: "the message that lit the room badge",
+      tags: [
+        ["h", notificationCommunity.communityId],
+        ["E", "room-one"],
+      ],
+    })
+    const path = `/c/${communityPubkey}/rooms/room-one`
+    const options = {
+      paths: [path],
+      excludedPaths: new Set([path]),
+      candidates: [{path, latestEvent: roomMessage}],
+      currentPubkey: viewer,
+    }
+
+    expect(
+      buildRouteNotificationRows({
+        ...options,
+        coveredAtByPath: new Map([[path, 100]]),
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        eventId: roomMessage.id,
+        actorPubkey: writer,
+        type: "community",
+        title: "New room message",
+        preview: "the message that lit the room badge",
+        createdAt: 200,
+      }),
+    ])
+    expect(
+      buildRouteNotificationRows({
+        ...options,
+        coveredAtByPath: new Map([[path, 200]]),
+      }),
+    ).toEqual([])
+  })
+
   it("uses the newest route candidate for unread timestamps", async () => {
     const {buildRouteNotificationRows, getLatestNotificationCenterTimestamp} =
       await import("./notification-sources")
