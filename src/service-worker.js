@@ -262,7 +262,6 @@ self.addEventListener("message", event => {
           errorMessage: typeof error?.message === "string" ? error.message.slice(0, 500) : "",
         }),
     )
-    event.waitUntil(activation)
   }
 })
 

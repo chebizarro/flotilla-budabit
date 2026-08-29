@@ -241,6 +241,10 @@ pnpm run deploy:main
 
 Set `BUDABIT_MAIN_DEPLOY_CONFIG` to use a different local deployment config.
 
+To publish an already validated `build/` directory without rebuilding, use
+`pnpm deploy:main:built` or `pnpm deploy:test:built`. These commands verify the
+service-worker contract and reject output configured for the other site.
+
 The wrapper runs six ordered phases:
 
 1. Upload new `/_app/immutable/*` files without deleting old immutable files.

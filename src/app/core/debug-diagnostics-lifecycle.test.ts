@@ -28,6 +28,7 @@ describe("root debug diagnostics lifecycle", () => {
     expect(worker).toContain('reportActivation("APP_CACHE_SKIP_WAITING_RECEIVED")')
     expect(worker).toContain('reportActivation("APP_CACHE_SKIP_WAITING_RESOLVED"')
     expect(worker).toContain('reportActivation("APP_CACHE_SKIP_WAITING_REJECTED"')
-    expect(worker).toContain("event.waitUntil(activation)")
+    expect(worker).toContain("const activation = self.skipWaiting()")
+    expect(worker).not.toContain("event.waitUntil(activation)")
   })
 })
