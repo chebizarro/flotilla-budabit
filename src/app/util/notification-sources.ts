@@ -136,6 +136,7 @@ import {
   repoWatchNotificationHistoryStatus,
 } from "@app/util/repo-watch-notifications"
 import {
+  getInstalledWidgetUpdateNotificationId,
   installedWidgetUpdates,
   type InstalledWidgetUpdate,
 } from "@app/extensions/widget-update-notifications"
@@ -2921,7 +2922,7 @@ export const buildWidgetUpdateNotificationRows = ({
         .join(" ")
 
       return {
-        id: `widget-update:${update.id}:${update.latest.id}`,
+        id: getInstalledWidgetUpdateNotificationId(update),
         actorPubkey: update.latest.pubkey,
         source: "widget",
         sourceLabel: getNotificationSourceLabel("widget"),

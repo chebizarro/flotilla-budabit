@@ -70,6 +70,7 @@
     filterNotificationRows,
     getNotificationRowDisplay,
     NOTIFICATION_ROW_FILTERS,
+    sortNotificationRows,
     type NotificationRow,
     type NotificationRowDisplaySection,
     type NotificationRowFilter,
@@ -86,19 +87,16 @@
   let loadMoreHistoryTimeout: ReturnType<typeof setTimeout> | undefined
   let pendingNavigationKey = $state("")
   let sessionInitialized = $state(false)
-  let sessionNewOrderById = $state<Record<string, number>>({})
-  let nextSessionNewOrder = 0
+  let sessionNewById = $state<Record<string, true>>({})
   const knownRowIds = new Set<string>()
 
   let actorNamesByPubkey = $state<Record<string, string>>({})
   const filteredRows = $derived(
     filterNotificationRows($notificationCenterRows, {filters: rowFilters, term}),
   )
-  const sessionNewRowIds = $derived(new Set(Object.keys(sessionNewOrderById)))
+  const sessionNewRowIds = $derived(new Set(Object.keys(sessionNewById)))
   const newRows = $derived(
-    filteredRows
-      .filter(row => sessionNewRowIds.has(row.id))
-      .sort((a, b) => sessionNewOrderById[b.id] - sessionNewOrderById[a.id]),
+    sortNotificationRows(filteredRows.filter(row => sessionNewRowIds.has(row.id))),
   )
   const activityRows = $derived(filteredRows.filter(row => !sessionNewRowIds.has(row.id)))
   const visibleNewRows = $derived(newRows.slice(0, visibleRowLimit))
@@ -172,11 +170,10 @@
         $notificationCenterRows.map(row => row.id),
       ),
     )
-    sessionNewOrderById = Object.fromEntries(
+    sessionNewById = Object.fromEntries(
       $notificationCenterRows
         .filter(row => unreadIds.has(row.id))
-        .reverse()
-        .map(row => [row.id, ++nextSessionNewOrder]),
+        .map(row => [row.id, true] as const),
     )
     sessionInitialized = true
   })
@@ -206,13 +203,12 @@
       ),
     )
     if (unreadAdditionIds.size > 0) {
-      sessionNewOrderById = {
-        ...sessionNewOrderById,
+      sessionNewById = {
+        ...sessionNewById,
         ...Object.fromEntries(
           additions
             .filter(row => unreadAdditionIds.has(row.id))
-            .reverse()
-            .map(row => [row.id, ++nextSessionNewOrder]),
+            .map(row => [row.id, true] as const),
         ),
       }
     }

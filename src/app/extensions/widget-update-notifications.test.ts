@@ -8,7 +8,9 @@ import type {SmartWidgetEvent} from "./types"
 import {
   buildInstalledWidgetUpdateTargets,
   buildInstalledWidgetUpdates,
+  getInstalledWidgetUpdateNotificationId,
   groupInstalledWidgetUpdateTargetsByRelay,
+  hasUnreadInstalledWidgetUpdates,
 } from "./widget-update-notifications"
 import {getWidgetLineId} from "./widget-identity"
 
@@ -30,12 +32,36 @@ vi.mock("@app/core/state", () => ({
   SMART_WIDGET_RELAYS: ["wss://widgets.example/"],
 }))
 
+vi.mock("@app/util/notification-center", () => ({
+  notificationReadState: readable({version: 3, readRowIdsByPubkey: {}}),
+  setNotificationUnreadHint: vi.fn(),
+  hasUnreadNotificationRowsState: (
+    state: {readRowIdsByPubkey?: Record<string, string[]>} | undefined,
+    pubkey: string | undefined,
+    rowIds: Iterable<string>,
+  ) => {
+    if (!pubkey) return false
+    const readRowIds = new Set(state?.readRowIdsByPubkey?.[pubkey] || [])
+    return Array.from(rowIds).some(rowId => !readRowIds.has(rowId))
+  },
+}))
+
 vi.mock("@app/core/git-commands", () => ({
   postExtensionSettings: vi.fn(),
 }))
 
 vi.mock("@app/core/git-requests", () => ({
   EXTENSION_SETTINGS_DTAG: "extensions",
+}))
+
+vi.mock("./settings", () => ({
+  defaultExtensionWidgets: readable([]),
+  effectiveExtensionSettings: readable({
+    enabled: [],
+    disabledDefaultIds: [],
+    installed: {widget: {}},
+    widgetInstallSources: {},
+  }),
 }))
 
 const widgetPubkey = "a".repeat(64)
@@ -131,6 +157,36 @@ describe("widget update notifications", () => {
         }),
       }),
     ])
+  })
+
+  it("detects an unread widget update using its notification row id", () => {
+    const installed = makeWidget({created_at: 1, version: "1.0.0"})
+    const update = {
+      id: getWidgetLineId(installed),
+      installed,
+      latest: makeWidget({id: "weather-2", created_at: 2, version: "1.1.0"}),
+      relays: ["wss://fallback.example/"],
+      diff: {
+        version: {from: "1.0.0", to: "1.1.0"},
+        appUrlChanged: false,
+        permissionsAdded: [],
+        permissionsRemoved: [],
+        slotChanged: false,
+        widgetTypeChanged: false,
+      },
+    }
+    const rowId = getInstalledWidgetUpdateNotificationId(update)
+
+    expect(
+      hasUnreadInstalledWidgetUpdates({state: undefined, pubkey: "alice", updates: [update]}),
+    ).toBe(true)
+    expect(
+      hasUnreadInstalledWidgetUpdates({
+        state: {version: 3, readRowIdsByPubkey: {alice: [rowId]}},
+        pubkey: "alice",
+        updates: [update],
+      }),
+    ).toBe(false)
   })
 
   it("groups compatible widget targets by their actual source relay", () => {

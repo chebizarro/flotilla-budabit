@@ -79,6 +79,8 @@ vi.mock("@app/util/repo-watch-notifications", () => ({
 
 vi.mock("@app/extensions/widget-update-notifications", () => ({
   installedWidgetUpdates: readable([]),
+  getInstalledWidgetUpdateNotificationId: (update: {id: string; latest: {id: string}}) =>
+    `widget-update:${update.id}:${update.latest.id}`,
 }))
 
 const makeEvent = (overrides: Partial<TrustedEvent> = {}) =>

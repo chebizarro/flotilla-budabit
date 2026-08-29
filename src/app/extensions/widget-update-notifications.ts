@@ -1,4 +1,5 @@
 import {derived, readable, type Readable} from "svelte/store"
+import {pubkey} from "@welshman/app"
 import {request} from "@welshman/net"
 import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
 import {isRelayUrl, normalizeRelayUrl, type Filter, type TrustedEvent} from "@welshman/util"
@@ -8,6 +9,12 @@ import {
   createBackgroundLiveCoordinator,
 } from "@app/core/background-live"
 import {notificationBackgroundEnabled} from "@app/util/notification-background"
+import {
+  hasUnreadNotificationRowsState,
+  notificationReadState,
+  setNotificationUnreadHint,
+  type NotificationReadState,
+} from "@app/util/notification-center"
 import {notificationEventRepository, receiveNotificationEvent} from "@app/util/notification-events"
 import {parseSmartWidget} from "./registry"
 import {
@@ -39,6 +46,20 @@ export type WidgetUpdateRelayGroup = {
   relay: string
   filters: Filter[]
 }
+
+export const getInstalledWidgetUpdateNotificationId = (update: InstalledWidgetUpdate) =>
+  `widget-update:${update.id}:${update.latest.id}`
+
+export const hasUnreadInstalledWidgetUpdates = ({
+  state,
+  pubkey,
+  updates,
+}: {
+  state: Partial<NotificationReadState> | undefined
+  pubkey: string | undefined
+  updates: InstalledWidgetUpdate[]
+}) =>
+  hasUnreadNotificationRowsState(state, pubkey, updates.map(getInstalledWidgetUpdateNotificationId))
 
 const fallbackWidgetUpdateRelays = Array.from(new Set([...SMART_WIDGET_RELAYS, ...INDEXER_RELAYS]))
 const WIDGET_UPDATE_FILTER_CHUNK_SIZE = 100
@@ -299,4 +320,16 @@ export const installedWidgetUpdatesById = derived(
 )
 
 export const setupWidgetUpdateNotifications = () =>
-  installedWidgetUpdates.subscribe(() => undefined)
+  derived(
+    [pubkey, installedWidgetUpdates, notificationReadState],
+    ([$pubkey, $updates, $notificationReadState]) => ({
+      pubkey: $pubkey || undefined,
+      unread: hasUnreadInstalledWidgetUpdates({
+        state: $notificationReadState,
+        pubkey: $pubkey || undefined,
+        updates: $updates,
+      }),
+    }),
+  ).subscribe(({pubkey, unread}) => {
+    if (unread) setNotificationUnreadHint(pubkey, true)
+  })
