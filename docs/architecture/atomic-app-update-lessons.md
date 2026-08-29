@@ -41,7 +41,7 @@ Readiness requires all of the following:
 
 The client verifies the registration's exact waiting worker through the version handshake before sending `SKIP_WAITING`. Once validated, the worker calls `skipWaiting()` immediately; cache metadata and cleanup do not gate activation.
 
-The worker navigates every claimed window after activation so no tab remains on old JavaScript under the new controller.
+The worker broadcasts activation to every claimed window so each page can reload itself into the verified build.
 
 ## Activation Is A Multi-Tab Transition
 
