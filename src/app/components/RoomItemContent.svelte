@@ -1,3 +1,42 @@
+<style lang="postcss">
+  .room-item-content :global(.markdown) {
+    @apply text-sm leading-normal;
+  }
+
+  .room-item-content :global(.markdown > p) {
+    @apply my-1;
+  }
+
+  .room-item-content :global(.markdown > :first-child) {
+    margin-top: 0;
+  }
+
+  .room-item-content :global(.markdown > :last-child) {
+    margin-bottom: 0;
+  }
+
+  .room-item-content :global(.markdown > p > button) {
+    @apply my-1;
+  }
+
+  .room-item-content :global([data-quoted-event-preview]) {
+    @apply line-clamp-2 max-h-12;
+  }
+
+  .room-item-content :global(.content-link-block) {
+    max-width: min(100%, 28rem);
+  }
+
+  .room-item-content :global([data-content-media]),
+  .room-item-content :global([data-markdown-image]) {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: min(16rem, 35vh);
+    object-fit: contain;
+  }
+</style>
+
 <script lang="ts">
   import cx from "classnames"
   import type {ComponentProps} from "svelte"
@@ -29,7 +68,10 @@
   }
 </script>
 
-<div class={cx("w-full min-w-0 text-sm", {"card2 card2-sm bg-alt": props.event.kind !== MESSAGE})}>
+<div
+  class={cx("room-item-content w-full min-w-0 text-sm", {
+    "card2 card2-sm bg-alt": props.event.kind !== MESSAGE,
+  })}>
   {#if path && !isMobile}
     <div
       role="link"

@@ -120,7 +120,7 @@ export function createRenderers(options: RendererOptions = {}): Partial<Renderer
     image(token: Tokens.Image): string {
       const {href, title, text} = token
       const alt = text || title || ""
-      return `<img src="${href}" alt="${alt}" class="my-4 h-auto max-w-full rounded-lg" />`
+      return `<img src="${href}" alt="${alt}" class="my-4 h-auto max-w-full rounded-lg" data-markdown-image />`
     },
 
     link(token: Tokens.Link): string {

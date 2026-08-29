@@ -54,6 +54,7 @@ describe("markdownRenderers", () => {
       expect(html).toContain('src="https://example.com/photo.jpg"')
       expect(html).toContain('alt="Photo alt"')
       expect(html).toContain("rounded-lg")
+      expect(html).toContain("data-markdown-image")
     })
 
     it("uses title as alt when text is empty", () => {

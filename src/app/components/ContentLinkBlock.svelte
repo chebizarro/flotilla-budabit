@@ -70,11 +70,18 @@
   const expand = () => pushModal(ContentLinkDetail, {value, event}, {fullscreen: true})
 </script>
 
-<Link {external} {href} class="my-2 block max-w-lg no-underline hover:no-underline">
+<Link
+  {external}
+  {href}
+  class="content-link-block my-2 block max-w-lg no-underline hover:no-underline">
   <div
     class="overflow-hidden rounded-2xl border border-base-content/10 bg-base-100 leading-normal shadow-sm transition hover:border-primary/30 hover:shadow-md">
     {#if url.match(/\.(mov|webm|mp4)$/)}
-      <video controls src={url} class="max-h-80 w-full bg-base-200 object-contain object-center">
+      <video
+        controls
+        src={url}
+        class="max-h-80 w-full bg-base-200 object-contain object-center"
+        data-content-media>
         <track kind="captions" />
       </video>
     {:else if url.match(/\.(jpe?g|png|gif|webp)$/)}
@@ -82,7 +89,7 @@
         type="button"
         class="block w-full bg-base-200"
         onclick={stopPropagation(preventDefault(expand))}>
-        <ContentLinkBlockImage {value} {event} class="m-auto max-h-80" />
+        <ContentLinkBlockImage {value} {event} class="m-auto max-h-80" data-content-media />
       </button>
     {:else if localPreview}
       <div class="flex min-w-0 flex-col gap-1.5 p-3">

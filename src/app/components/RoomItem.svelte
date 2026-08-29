@@ -184,9 +184,9 @@
 <TapTarget
   data-event={event.id}
   onTap={inert || censorReason ? null : onTap}
-  class="group relative flex w-full cursor-default flex-col p-2 pb-3 text-left hover:bg-base-100/50">
+  class="group relative flex w-full cursor-default flex-col px-2 py-1 text-left hover:bg-base-100/50">
   {#if !inert && !censorReason}
-    <div class="z-10 absolute right-2 top-2 sm:hidden">
+    <div class="z-10 absolute right-2 top-1 sm:hidden">
       <Button
         class="btn btn-neutral btn-xs rounded-full border border-solid border-neutral bg-base-100/90 shadow-sm backdrop-blur"
         onclick={onTap}
@@ -207,18 +207,18 @@
     {:else}
       <div class="w-8 min-w-8 max-w-8"></div>
     {/if}
-    <div class="min-w-0 flex-grow" class:pt-8={!showPubkey && !inert && !censorReason}>
+    <div class="min-w-0 flex-grow">
       {#if showPubkey && !censorReason}
         <div class="flex items-center gap-2 pr-12 sm:pr-32">
           <Button onclick={openProfile} class="text-sm font-bold" style="color: {colorValue}">
             {$profileDisplay}
           </Button>
-          <span class="text-xs opacity-50">
-            {#if formatTimestampAsDate(event.created_at) === today}
-              Today
-            {:else}
-              {formatTimestampAsDate(event.created_at)}
-            {/if}
+          <span class="text-xs opacity-50 sm:hidden"
+            >{formatTimestampAsTime(event.created_at)}</span>
+          <span class="hidden text-xs opacity-50 sm:inline">
+            {#if formatTimestampAsDate(event.created_at) === today}Today{:else}{formatTimestampAsDate(
+                event.created_at,
+              )}{/if}
             at {formatTimestampAsTime(event.created_at)}
           </span>
         </div>
@@ -235,31 +235,8 @@
       </div>
     </div>
   </div>
-  {#if !inert && !readOnly && !censorReason}
-    <div class="ml-10 mt-3 flex items-center gap-2 pl-1 sm:hidden">
-      <div
-        class="join rounded-full border border-solid border-neutral bg-base-100/90 text-xs shadow-sm backdrop-blur"
-        data-stop-link
-        data-stop-tap>
-        {#if ENABLE_ZAPS}
-          <RoomItemZapButton {event} relays={actionRelayTargets} {scopeH} />
-        {/if}
-        <RoomItemEmojiButton {url} {event} relays={actionRelayTargets} {scopeH} />
-        {#if reply}
-          <Button class="btn join-item btn-xs" onclick={reply} aria-label="Reply to message">
-            <Icon icon={Reply} size={4} />
-          </Button>
-        {/if}
-        {#if edit}
-          <Button class="btn join-item btn-xs" onclick={edit} aria-label="Edit message">
-            <Icon icon={Pen} size={4} />
-          </Button>
-        {/if}
-      </div>
-    </div>
-  {/if}
   {#if !censorReason}
-    <div class="ml-10 mt-2 flex flex-wrap items-center gap-2 pl-1">
+    <div class="ml-10 mt-1 flex flex-wrap items-center gap-2 pl-1 empty:hidden">
       <ReactionSummary
         {url}
         relays={relayTargets}
@@ -293,7 +270,8 @@
     </div>
   {/if}
   {#if !inert && !censorReason}
-    <div class="z-10 absolute right-2 top-2 hidden items-center gap-1 text-xs sm:flex">
+    <div
+      class="z-10 pointer-events-none absolute right-2 top-1 hidden items-center gap-1 text-xs opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 sm:flex">
       <div class={actionGroupClass}>
         {#if ENABLE_ZAPS && !readOnly}
           <RoomItemZapButton {event} relays={actionRelayTargets} {scopeH} />

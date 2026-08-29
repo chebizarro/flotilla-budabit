@@ -130,7 +130,11 @@
   {:else}
     <div class="overflow-hidden text-ellipsis break-words">
       {#if showQuoteFallback && leadingQuote}
-        <GitQuoteFallback {event} value={leadingQuote.value} {url} />
+        <GitQuoteFallback
+          {event}
+          value={leadingQuote.value}
+          {url}
+          genericFallback="Reply to another message" />
       {:else}
         {#each shortContent as parsed, i}
           {#if isCommunityLinkToken(parsed)}

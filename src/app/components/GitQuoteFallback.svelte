@@ -18,9 +18,10 @@
     event: TrustedEvent
     value: QuoteValue | null | undefined
     url?: string
+    genericFallback?: string
   }
 
-  const {event, value, url}: Props = $props()
+  const {event, value, url, genericFallback = ""}: Props = $props()
 
   const idOrAddress =
     value?.id ||
@@ -60,5 +61,7 @@
 {:else if commentPreview}
   <span class="opacity-70">{commentPreview}</span>
 {:else if commentRootValue && $quote}
-  <Self event={$quote} value={commentRootValue} {url} />
+  <Self event={$quote} value={commentRootValue} {url} {genericFallback} />
+{:else if genericFallback}
+  <span class="opacity-70">{genericFallback}</span>
 {/if}

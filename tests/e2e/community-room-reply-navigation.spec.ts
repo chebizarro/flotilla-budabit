@@ -196,6 +196,9 @@ test("opens a quoted room parent without reloading the room", async ({page}) => 
   await expect(quoteButton).toBeVisible({timeout: 10_000})
   await expect
     .poll(() => quotePreview.evaluate(element => element.getBoundingClientRect().height))
+    .toBeGreaterThan(24)
+  await expect
+    .poll(() => quotePreview.evaluate(element => element.getBoundingClientRect().height))
     .toBeLessThanOrEqual(49)
   await expect(parentMessage).toHaveCount(0)
 
