@@ -1191,7 +1191,7 @@ const getTargetedOriginalCommunityPath = (
   community: CommunityPointer,
 ): string | undefined => {
   if (event.kind === EVENT_DATE || event.kind === EVENT_TIME) {
-    return makeExactCommunityCalendarPath(community, getTagValue("d", event.tags) || event.id)
+    return makeExactCommunityCalendarPath(community, event.id || getTagValue("d", event.tags))
   }
   if (event.kind === ZAP_GOAL) return makeExactCommunityGoalPath(community, event.id)
 }
@@ -1338,11 +1338,8 @@ const getImportantCommunityRootRow = ({
     const ownerPubkey = getCommunityRootOwnerPubkey({event, root})
     if (ownerPubkey !== currentPubkey) return undefined
 
-    const calendarId =
-      getAddressIdentifier(calendarReply.calendarAddress) || calendarReply.calendarEventId
-
     return {
-      path: makeExactCommunityCalendarPath(ref.community, calendarId),
+      path: makeExactCommunityCalendarPath(ref.community, root.id || calendarReply.calendarEventId),
       title: "New calendar comment",
       preview: getTextPreview(event, "Calendar comment"),
       target: COMMUNITY_WRITE_TARGETS.comment,

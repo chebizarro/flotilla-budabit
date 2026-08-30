@@ -1,7 +1,14 @@
 import {pubkey as activeUserPubkey, publishThunk, repository, signer} from "@welshman/app"
 import {goto} from "$app/navigation"
 import {PublishStatus, load} from "@welshman/net"
-import {matchFilters, sanitizeRelayUrls, type TrustedEvent} from "@welshman/util"
+import {
+  EVENT_DATE,
+  EVENT_TIME,
+  getTagValue,
+  matchFilters,
+  sanitizeRelayUrls,
+  type TrustedEvent,
+} from "@welshman/util"
 import {verifyEvent} from "nostr-tools/pure"
 import {pushToast} from "@app/util/toast"
 import {activeRepoClass} from "@app/core/git-state"
@@ -795,12 +802,14 @@ const getBridgeEventAddress = (event: any) => {
 const normalizeCommunityQueryEventsPayload = (
   payload: unknown,
 ): Required<Pick<CommunityQueryEventsRequest, "descriptors" | "refs" | "limit">> &
-  Pick<CommunityQueryEventsRequest, "since" | "until"> => {
+  Pick<CommunityQueryEventsRequest, "since" | "until" | "calendarStart" | "calendarDate"> => {
   const {descriptors} = normalizeCommunityDescriptorsPayload(payload)
 
   const limitRaw = (payload as any).limit
   const sinceRaw = (payload as any).since
   const untilRaw = (payload as any).until
+  const calendarStartRaw = (payload as any).calendarStart
+  const calendarDateRaw = (payload as any).calendarDate
   const limit =
     typeof limitRaw === "number" && Number.isFinite(limitRaw) && limitRaw > 0
       ? Math.min(Math.floor(limitRaw), MAX_NOSTR_QUERY_LIMIT)
@@ -820,6 +829,16 @@ const normalizeCommunityQueryEventsPayload = (
     limit,
     since,
     until,
+    calendarStart:
+      typeof calendarStartRaw === "number" &&
+      Number.isFinite(calendarStartRaw) &&
+      calendarStartRaw > 0
+        ? Math.floor(calendarStartRaw)
+        : undefined,
+    calendarDate:
+      typeof calendarDateRaw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(calendarDateRaw)
+        ? calendarDateRaw
+        : undefined,
   }
 }
 
@@ -890,7 +909,22 @@ const normalizeCommunityPublishSharedConfigPayload = (
     throw new Error("Invalid config: expected shared config payload")
   }
 
-  return {...scope, config: (payload as any).config}
+  const expectedRevision = (payload as any).expectedRevision
+  if (
+    expectedRevision !== undefined &&
+    expectedRevision !== null &&
+    (typeof expectedRevision !== "string" || !HEX_EVENT_ID.test(expectedRevision))
+  ) {
+    throw new Error("Invalid expectedRevision: expected event ID or null")
+  }
+
+  return {
+    ...scope,
+    config: (payload as any).config,
+    ...(expectedRevision === undefined
+      ? {}
+      : {expectedRevision: expectedRevision?.toLowerCase() ?? null}),
+  }
 }
 
 const makeCommunitySharedConfigIdentifier = ({
@@ -951,6 +985,58 @@ const isPreferredEvent = (candidate: any, current: any | undefined) => {
   }
 
   return String(candidate.id || "") < String(current.id || "")
+}
+
+const sortCommunityQueryEvents = (events: any[]) =>
+  events.sort(
+    (a, b) =>
+      (b.created_at || 0) - (a.created_at || 0) ||
+      String(a.id || "").localeCompare(String(b.id || "")),
+  )
+
+const filterCommunityCalendarWindow = (
+  events: any[],
+  calendarStart?: number,
+  calendarDate?: string,
+) => {
+  if (!calendarStart || !calendarDate) return events
+
+  return events.filter(event => {
+    if (event.kind === EVENT_TIME) {
+      const start = Number(getTagValue("start", event.tags))
+      const end = Number(getTagValue("end", event.tags))
+      const boundary = Number.isFinite(end) && end > 0 ? end : start
+      return !Number.isFinite(boundary) || boundary >= calendarStart
+    }
+    if (event.kind === EVENT_DATE) {
+      const start = getTagValue("start", event.tags) || ""
+      const end = getTagValue("end", event.tags) || ""
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return true
+      return /^\d{4}-\d{2}-\d{2}$/.test(end) && end > start
+        ? calendarDate < end
+        : calendarDate <= start
+    }
+    return true
+  })
+}
+
+const makeCommunityQueryPage = (events: any[], limit: number, complete: boolean) => {
+  const limitedEvents = events.slice(0, limit)
+  const hasMore = !complete || events.length > limit
+  const boundaryTimestamp = Number(limitedEvents.at(-1)?.created_at)
+  const firstOmittedTimestamp = Number(events[limit]?.created_at)
+  const canMoveBelowBoundary =
+    complete &&
+    events.length > limit &&
+    Number.isSafeInteger(boundaryTimestamp) &&
+    boundaryTimestamp > 1 &&
+    firstOmittedTimestamp < boundaryTimestamp
+
+  return {
+    events: limitedEvents,
+    hasMore,
+    ...(canMoveBelowBoundary ? {nextUntil: boundaryTimestamp - 1} : {}),
+  }
 }
 
 const selectLiveStreamReplacements = (events: any[]) => {
@@ -1678,17 +1764,18 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
         priorityAuthRelays: snapshot.relayHints,
         settle: "all",
       })
-      const events = filterCommunityDescriptorEvents(
-        authorizedCachedExactRefEvents as any,
-        snapshot.community.communityId,
-        descriptorInfos.map(info => info.descriptor),
+      const allEvents = sortCommunityQueryEvents(
+        filterCommunityDescriptorEvents(
+          authorizedCachedExactRefEvents as any,
+          snapshot.community.communityId,
+          descriptorInfos.map(info => info.descriptor),
+        ),
       )
-        .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
-        .slice(0, request.limit)
+      const page = makeCommunityQueryPage(allEvents, request.limit, true)
 
       return {
         status: "ok",
-        events,
+        ...page,
         relays: snapshot.relays,
         descriptors: descriptorInfos.map(info => info.descriptor),
         contextSessionId: snapshot.contextSessionId,
@@ -1711,13 +1798,15 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     )
 
     if (request.refs?.length) {
-      const events = filterCommunityDescriptorEvents(
-        exactRefEvents as any,
-        snapshot.community.communityId,
-        descriptorInfos.map(info => info.descriptor),
+      const allEvents = sortCommunityQueryEvents(
+        filterCommunityDescriptorEvents(
+          exactRefEvents as any,
+          snapshot.community.communityId,
+          descriptorInfos.map(info => info.descriptor),
+        ),
       )
-        .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
-        .slice(0, request.limit)
+      const page = makeCommunityQueryPage(allEvents, request.limit, loadedExactRefResult.complete)
+      const events = page.events
 
       if (!exactCommunityRefsCovered(request.refs, events) && !loadedExactRefResult.complete) {
         throw makeCommunityQueryTimeoutError()
@@ -1733,7 +1822,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
 
       return {
         status: "ok",
-        events,
+        ...page,
         relays: snapshot.relays,
         descriptors: descriptorInfos.map(info => info.descriptor),
         contextSessionId: snapshot.contextSessionId,
@@ -1817,14 +1906,23 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
     const admittedOriginalEvents = dedupeEvents([...cachedEvents, ...loadedResult.events]).filter(
       event => matchFilters(plan.localOriginalFilters, event) && admitsOriginalEvent(event),
     )
-    const events = filterCommunityDescriptorEvents(
-      dedupeEvents([...exactRefEvents, ...admittedOriginalEvents]) as any,
-      snapshot.community.communityId,
-      plan.descriptors,
-    ).sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
-    const limitedEvents = events.slice(0, request.limit)
+    const events = sortCommunityQueryEvents(
+      filterCommunityCalendarWindow(
+        filterCommunityDescriptorEvents(
+          dedupeEvents([...exactRefEvents, ...admittedOriginalEvents]) as any,
+          snapshot.community.communityId,
+          plan.descriptors,
+        ),
+        request.calendarStart,
+        request.calendarDate,
+      ),
+    )
+    const complete = loadedTargetingResult.complete && loadedResult.complete
+    const page = makeCommunityQueryPage(events, request.limit, complete)
+    const limitedEvents = page.events
 
     if (
+      !request.calendarStart &&
       limitedEvents.length < request.limit &&
       (!loadedTargetingResult.complete || !loadedResult.complete)
     ) {
@@ -1853,7 +1951,7 @@ registerBridgeHandler("community:queryEvents", async (payload, ext) => {
 
     return {
       status: "ok",
-      events: limitedEvents,
+      ...page,
       relays: snapshot.relays,
       descriptors: plan.descriptors,
       contextSessionId: snapshot.contextSessionId,
@@ -2138,6 +2236,48 @@ registerBridgeHandler("community:publishSharedConfig", async (payload, ext) => {
     await authenticateCommunityRelays(snapshot.publishRelays, {
       priorityRelays: snapshot.relayHints,
     })
+
+    if (request.expectedRevision !== undefined) {
+      const moderatorAuthors = Array.from(
+        new Set(
+          resolved
+            .flatMap(info => info.moderatorPubkeys)
+            .map(normalizePubkey)
+            .filter(Boolean),
+        ),
+      ).sort()
+      const filter = {
+        kinds: [COMMUNITY_SHARED_CONFIG_KIND],
+        authors: moderatorAuthors,
+        "#d": [identifier],
+        limit: MAX_NOSTR_QUERY_LIMIT,
+      }
+      const cachedEvents = queryCachedCommunitySharedConfigEvents({
+        identifier,
+        authors: moderatorAuthors,
+        limit: MAX_NOSTR_QUERY_LIMIT,
+      })
+      const loadedResult = await loadBridgeEventsWithStatus({
+        relays: snapshot.relays,
+        filters: [filter],
+        authenticate: true,
+        priorityAuthRelays: snapshot.relayHints,
+        settle: "all",
+      })
+      if (!loadedResult.complete) throw makeCommunityQueryTimeoutError()
+
+      const selected = selectCommunitySharedConfigEvent(
+        dedupeEvents([...cachedEvents, ...loadedResult.events]),
+        resolved,
+      )
+      const currentRevision = selected?.id || null
+      if (currentRevision !== request.expectedRevision) {
+        throw Object.assign(new Error("Shared community config changed before publishing"), {
+          code: "CONFIG_REVISION_CONFLICT",
+        })
+      }
+    }
+
     const thunk = (publishThunk as any)({event, relays: snapshot.publishRelays})
     await thunk.complete
     const successCount = Object.values(thunk.results || {}).filter(

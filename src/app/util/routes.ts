@@ -173,14 +173,15 @@ export const getExactCommunityEventPath = (
     if (rootKind === THREAD) return makeExactCommunityThreadPath(pointer, rootId)
     if (rootKind === MESSAGE) return makeExactCommunityRoomPath(pointer, rootId)
     if (rootKind === EVENT_DATE || rootKind === EVENT_TIME) {
-      const address = getTagValue("A", event.tags) || getTagValue("a", event.tags) || ""
-      const identifier = getAddressIdentifierForKind(address, rootKind)
-      return makeExactCommunityCalendarPath(pointer, identifier || rootId)
+      return makeExactCommunityCalendarPath(pointer, rootId)
     }
     if (rootKind === ZAP_GOAL) return makeExactCommunityGoalPath(pointer, rootId)
   }
   if (event.kind === EVENT_DATE || event.kind === EVENT_TIME) {
-    return makeExactCommunityCalendarPath(pointer, getTagValue("d", event.tags) || undefined)
+    return makeExactCommunityCalendarPath(
+      pointer,
+      event.id || getTagValue("d", event.tags) || undefined,
+    )
   }
   if (event.kind === ZAP_GOAL) return makeExactCommunityGoalPath(pointer, event.id)
   if (event.kind === SMART_WIDGET_KIND) return makeExactCommunityWidgetPath(pointer)
@@ -317,15 +318,6 @@ const isRoomRootEvent = (event: TrustedEvent) => event.tags.some(tag => tag[0] =
 const getEventRootId = (event: TrustedEvent) =>
   getTagValue("E", event.tags) || getTagValue("e", event.tags)
 
-const getAddressIdentifierForKind = (address: string, kind: number) => {
-  const parts = address.split(":")
-  const kindValue = parts[0] || ""
-  const addressKind = Number.parseInt(kindValue || "", 10)
-  const identifier = parts.slice(2).join(":")
-
-  return addressKind === kind ? identifier : ""
-}
-
 const getExactCommunityPathForKind = ({
   community,
   kind,
@@ -355,7 +347,10 @@ export const getExactCommunityReportTargetPath = (
   community: CommunityPointer,
   target: CommunityReportTargetPathInput,
 ) => {
-  const targetId = target.targetIdentifier || target.targetEventId || ""
+  const targetId =
+    target.targetEventKind === EVENT_DATE || target.targetEventKind === EVENT_TIME
+      ? target.targetEventId || target.targetIdentifier || ""
+      : target.targetIdentifier || target.targetEventId || ""
   const rootId = target.targetRootId || ""
 
   if (target.targetEventKind === COMMENT) {
@@ -473,9 +468,9 @@ const getTargetedPublicationDetailPath = (event: TrustedEvent) => {
   if (!path) return undefined
 
   if (event.kind === EVENT_DATE || event.kind === EVENT_TIME) {
-    const identifier = getTagValue("d", event.tags)
+    const routeParam = event.id || getTagValue("d", event.tags)
 
-    return identifier ? `${path}/${encodeURIComponent(identifier)}` : path
+    return routeParam ? `${path}/${encodeURIComponent(routeParam)}` : path
   }
 
   if (event.kind === ZAP_GOAL) return `${path}/${encodeURIComponent(event.id)}`

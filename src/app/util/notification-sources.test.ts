@@ -2720,7 +2720,7 @@ describe("notification sources", () => {
       expect.objectContaining({
         type: "reaction",
         source: "community",
-        path: expect.stringContaining("/calendar/external-calendar"),
+        path: expect.stringContaining(`/calendar/${calendar.id}`),
         target: expect.objectContaining({eventId: calendar.id}),
       }),
     ])
@@ -2850,7 +2850,7 @@ describe("notification sources", () => {
         expect.objectContaining({
           type: "reaction",
           source: "community",
-          path: expect.stringContaining(`/calendar/cross-kind-calendar-${admittedKind}`),
+          path: expect.stringContaining(`/calendar/${calendar.id}`),
         }),
       ])
     }

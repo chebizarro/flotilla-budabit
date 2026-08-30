@@ -63,7 +63,7 @@
   }: Props = $props()
 
   const h = getTagValue("h", event.tags)
-  const eventRouteParam = getTagValue("d", event.tags) || event.id
+  const eventRouteParam = event.id || getTagValue("d", event.tags)
   const path = community ? makeExactCommunityCalendarPath(community, eventRouteParam) : ""
   const canExport = $derived(Boolean(makeCalendarEventIcs(event)))
   const actionRelays = $derived(

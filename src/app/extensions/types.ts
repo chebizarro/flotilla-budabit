@@ -67,6 +67,7 @@ export type CommunityQuerySharedConfigResponse =
 
 export type CommunityPublishSharedConfigRequest = CommunitySharedConfigScope & {
   config: unknown
+  expectedRevision?: string | null
 }
 
 export type CommunityPublishSharedConfigResponse =
@@ -146,12 +147,16 @@ export type CommunityQueryEventsRequest = {
   limit?: number
   since?: number
   until?: number
+  calendarStart?: number
+  calendarDate?: string
 }
 
 export type CommunityQueryEventsResponse =
   | {
       status: "ok"
       events: unknown[]
+      hasMore: boolean
+      nextUntil?: number
       relays: string[]
       descriptors: CommunityEventDescriptor[]
       contextSessionId: string

@@ -133,9 +133,7 @@ describe("strict community publication source contracts", () => {
       "const defaultPublishRelayHints = $derived(normalizeRelays(defaultDefinition?.relays || []))",
     )
     expect(explore).toContain("publishRelayHints={item.publishRelayHints}")
-    expect(communityHome).toContain(
-      "publishRelayHints={routeCommunityDefinition?.relays || []}",
-    )
+    expect(communityHome).toContain("publishRelayHints={routeCommunityDefinition?.relays || []}")
     expect(communityHome).not.toContain(
       "publishRelayHints={routeCommunityDefinition?.relays || communityPointer.relayHints}",
     )
@@ -278,6 +276,19 @@ describe("strict community publication source contracts", () => {
     expect(calendar).toContain("calendarProjection.events.toSorted(")
     expect(calendarEvent).toContain("directEventFilterPlan.localFilters")
     expect(calendarEvent).toContain("matchFilters(eventFilters, event)")
+  })
+
+  it("keeps exact calendar event IDs canonical while retaining identifier lookup", () => {
+    const calendarEvent = readProjectFile(
+      "../../routes/c/[community]/calendar/[event]/+page.svelte",
+    )
+    const calendarItem = readProjectFile("../components/CalendarEventItem.svelte")
+    const calendarActions = readProjectFile("../components/CalendarEventActions.svelte")
+
+    expect(calendarEvent).not.toContain("replaceState: true")
+    expect(calendarEvent).toContain('getTagValue("d", candidate.tags) === eventParam')
+    expect(calendarItem).toContain('event.id || getTagValue("d", event.tags)')
+    expect(calendarActions).toContain('event.id || getTagValue("d", event.tags)')
   })
 
   it("keeps dependent publications disabled until authored roots are canonical", () => {

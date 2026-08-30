@@ -53,9 +53,10 @@
   }: Props = $props()
 
   const h = getTagValue("h", event.tags)
-  const eventRouteParam = getTagValue("d", event.tags) || event.id
   const eventPath = $derived(
-    community ? makeExactCommunityCalendarPath(community, eventRouteParam) : "",
+    community
+      ? makeExactCommunityCalendarPath(community, event.id || getTagValue("d", event.tags))
+      : "",
   )
   const censorReason = $derived.by(() =>
     communitySectionName

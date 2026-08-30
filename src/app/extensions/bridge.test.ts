@@ -1896,7 +1896,7 @@ describe("ExtensionBridge", () => {
     expect(mocks.loadCommunityEvents).not.toHaveBeenCalled()
   })
 
-  it("only lets descriptor moderators publish shared config", async () => {
+  it("only lets descriptor moderators publish shared config without a revision precondition", async () => {
     const {ExtensionBridge} = await import("./bridge")
     mocks.activeExactCommunityDefinition.set(communityDefinitionWithRelays)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
@@ -1955,6 +1955,101 @@ describe("ExtensionBridge", () => {
       ]),
     )
     expect(publishedTags).not.toContainEqual(["p", communityPubkey])
+  })
+
+  it("publishes shared config when the expected revision is current", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const currentRevision = "a".repeat(64)
+    const currentConfig = makeEvent({
+      id: currentRevision,
+      kind: 30078,
+      pubkey: calendarWriterPubkey,
+      created_at: 100,
+      tags: [
+        [
+          "d",
+          `budabit-community-config:${communityPointer.address}:budabit-calendar-widget:featured-calendar-event`,
+        ],
+        ["descriptor", String(EVENT_TIME)],
+      ],
+    })
+    mocks.activeExactCommunityDefinition.set(communityDefinitionWithRelays)
+    mocks.activeCommunityProfileListEvents.set([calendarProfileList])
+    mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
+    mocks.pubkey.set(calendarWriterPubkey)
+    mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
+      if (filters?.[0]?.kinds?.[0] === 30078) onEvent?.(currentConfig)
+    })
+    mocks.publishThunk.mockReturnValue({
+      complete: Promise.resolve(),
+      results: {"wss://relay.example.com/": {status: "success"}},
+      event: {id: "published-config"},
+    })
+
+    const extension = makeWidgetStorageExtension({
+      widget: {
+        ...makeWidgetStorageExtension().widget,
+        permissions: ["community:publishSharedConfig"],
+      },
+    })
+    const bridge = new ExtensionBridge(extension as any)
+
+    await expect(
+      sendBridgeRequest(bridge, extension, "community:publishSharedConfig", {
+        namespace: "budabit-calendar-widget",
+        key: "featured-calendar-event",
+        descriptors: [{kind: EVENT_TIME}],
+        config: {header: "Updated"},
+        expectedRevision: currentRevision,
+      }),
+    ).resolves.toMatchObject({status: "ok", eventId: "published-config"})
+    expect(mocks.publishThunk).toHaveBeenCalledTimes(1)
+  })
+
+  it("rejects stale shared config revisions without publishing", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const currentConfig = makeEvent({
+      id: "b".repeat(64),
+      kind: 30078,
+      pubkey: calendarWriterPubkey,
+      created_at: 100,
+      tags: [
+        [
+          "d",
+          `budabit-community-config:${communityPointer.address}:budabit-calendar-widget:featured-calendar-event`,
+        ],
+        ["descriptor", String(EVENT_TIME)],
+      ],
+    })
+    mocks.activeExactCommunityDefinition.set(communityDefinitionWithRelays)
+    mocks.activeCommunityProfileListEvents.set([calendarProfileList])
+    mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
+    mocks.pubkey.set(calendarWriterPubkey)
+    mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
+      if (filters?.[0]?.kinds?.[0] === 30078) onEvent?.(currentConfig)
+    })
+
+    const extension = makeWidgetStorageExtension({
+      widget: {
+        ...makeWidgetStorageExtension().widget,
+        permissions: ["community:publishSharedConfig"],
+      },
+    })
+    const bridge = new ExtensionBridge(extension as any)
+
+    await expect(
+      sendBridgeRequest(bridge, extension, "community:publishSharedConfig", {
+        namespace: "budabit-calendar-widget",
+        key: "featured-calendar-event",
+        descriptors: [{kind: EVENT_TIME}],
+        config: {header: "Stale update"},
+        expectedRevision: "c".repeat(64),
+      }),
+    ).resolves.toEqual({
+      error: "Shared community config changed before publishing",
+      code: "CONFIG_REVISION_CONFLICT",
+    })
+    expect(mocks.publishThunk).not.toHaveBeenCalled()
   })
 
   it("lets a moderator of any requested descriptor publish shared config", async () => {
@@ -2396,10 +2491,96 @@ describe("ExtensionBridge", () => {
     expect(result.events.map((event: TrustedEvent) => event.id)).toEqual(
       Array.from({length: 5}, (_, index) => `enough-direct-1-${index}`),
     )
+    expect(result).toMatchObject({hasMore: true})
+    expect(result).not.toHaveProperty("nextUntil")
     const directLoads = mocks.loadCommunityEvents.mock.calls.filter(
       call => call[1]?.[0]?.kinds?.[0] === 1,
     )
     expect(directLoads).toHaveLength(3)
+  })
+
+  it("sorts community query pages by timestamp then id without an unsafe tie cursor", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const directDefinition = makeDefinition([
+      {
+        name: "Events and meetups",
+        kinds: [{kind: 1}],
+        profileLists: [
+          {address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`},
+        ],
+      },
+    ])
+    const events = ["f", "1", "8"].map(id =>
+      makeEvent({
+        id: id.repeat(64),
+        pubkey: calendarMemberPubkey,
+        created_at: 100,
+        kind: 1,
+        tags: [["h", communityId]],
+      }),
+    )
+    mocks.activeExactCommunityDefinition.set(directDefinition)
+    mocks.activeCommunityProfileListEvents.set([calendarProfileList])
+    mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
+    mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
+      if (filters?.[0]?.kinds?.[0] === 1) events.forEach(onEvent)
+    })
+
+    const extension = makeWidgetStorageExtension({
+      widget: {...makeWidgetStorageExtension().widget, permissions: ["community:queryEvents"]},
+    })
+    const bridge = new ExtensionBridge(extension as any)
+    const result = await sendBridgeRequest(bridge, extension, "community:queryEvents", {
+      descriptors: [{kind: 1}],
+      limit: 2,
+    })
+
+    expect(result.events.map((event: TrustedEvent) => event.id)).toEqual([
+      "1".repeat(64),
+      "8".repeat(64),
+    ])
+    expect(result).toMatchObject({status: "ok", hasMore: true})
+    expect(result).not.toHaveProperty("nextUntil")
+  })
+
+  it("returns nextUntil only when a complete page can move below its timestamp boundary", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const directDefinition = makeDefinition([
+      {
+        name: "Events and meetups",
+        kinds: [{kind: 1}],
+        profileLists: [
+          {address: `${PROFILE_LIST_KIND}:${calendarWriterPubkey}:Events and meetups`},
+        ],
+      },
+    ])
+    const events = [30, 20, 10].map(created_at =>
+      makeEvent({
+        id: String(created_at).padStart(64, "0"),
+        pubkey: calendarMemberPubkey,
+        created_at,
+        kind: 1,
+        tags: [["h", communityId]],
+      }),
+    )
+    mocks.activeExactCommunityDefinition.set(directDefinition)
+    mocks.activeCommunityProfileListEvents.set([calendarProfileList])
+    mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
+    mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
+      if (filters?.[0]?.kinds?.[0] === 1) events.forEach(onEvent)
+    })
+
+    const extension = makeWidgetStorageExtension({
+      widget: {...makeWidgetStorageExtension().widget, permissions: ["community:queryEvents"]},
+    })
+    const bridge = new ExtensionBridge(extension as any)
+
+    await expect(
+      sendBridgeRequest(bridge, extension, "community:queryEvents", {
+        descriptors: [{kind: 1}],
+        limit: 2,
+      }),
+    ).resolves.toMatchObject({status: "ok", hasMore: true, nextUntil: 19})
   })
 
   it("continues wrapper discovery to an authorized later page", async () => {
@@ -2774,6 +2955,65 @@ describe("ExtensionBridge", () => {
       status: "ok",
       events: [calendarEvent],
     })
+  })
+
+  it("finds an old-published upcoming event behind a full page of completed events", async () => {
+    const {ExtensionBridge} = await import("./bridge")
+    const completed = Array.from({length: 500}, (_, index) =>
+      makeEvent({
+        id: `completed-${index}`,
+        pubkey: calendarWriterPubkey,
+        created_at: 2000 - index,
+        kind: EVENT_TIME,
+        tags: [
+          ["d", `completed-${index}`],
+          ["start", "800"],
+          ["end", "900"],
+        ],
+      }),
+    )
+    const upcoming = makeEvent({
+      id: "old-published-upcoming",
+      pubkey: calendarWriterPubkey,
+      created_at: 100,
+      kind: EVENT_TIME,
+      tags: [
+        ["d", "old-published-upcoming"],
+        ["start", "1500"],
+        ["end", "2000"],
+      ],
+    })
+    const publications = [...completed, upcoming]
+
+    mocks.activeExactCommunityDefinition.set(communityDefinition)
+    mocks.activeCommunityProfileListEvents.set([calendarProfileList])
+    mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
+    mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
+      const filter = filters?.[0] || {}
+      if (filter.kinds?.[0] !== EVENT_TIME || filter["#d"]) return
+
+      publications
+        .filter(event => filter.until === undefined || event.created_at <= filter.until)
+        .slice(0, filter.limit)
+        .forEach(onEvent)
+    })
+
+    const extension = makeWidgetStorageExtension({
+      widget: {
+        ...makeWidgetStorageExtension().widget,
+        permissions: ["community:queryEvents"],
+      },
+    })
+    const bridge = new ExtensionBridge(extension as any)
+
+    await expect(
+      sendBridgeRequest(bridge, extension, "community:queryEvents", {
+        descriptors: [{kind: EVENT_TIME}],
+        limit: 500,
+        calendarStart: 1000,
+        calendarDate: "2026-08-30",
+      }),
+    ).resolves.toMatchObject({status: "ok", events: [upcoming], hasMore: true})
   })
 
   it("returns exact referenced community events from writer outboxes without targeting events", async () => {

@@ -1,6 +1,5 @@
 <script lang="ts">
   import {onDestroy, tick} from "svelte"
-  import {goto} from "$app/navigation"
   import {page} from "$app/stores"
   import {pubkey, repository} from "@welshman/app"
   import {deriveEventsAsc, deriveEventsById} from "@welshman/store"
@@ -577,19 +576,6 @@
     window.addEventListener("hashchange", syncHashTarget)
 
     return () => window.removeEventListener("hashchange", syncHashTarget)
-  })
-
-  $effect(() => {
-    void historicalLoadRetryVersion
-
-    if (!routeCommunity || !event || !isEventIdParam) return
-
-    const identifier = getTagValue("d", event.tags)
-    if (!identifier || identifier === eventParam) return
-
-    goto(`${makeExactCommunityCalendarPath(routeCommunity, identifier)}${window.location.hash}`, {
-      replaceState: true,
-    })
   })
 
   $effect(() => {

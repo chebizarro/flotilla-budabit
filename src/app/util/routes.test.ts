@@ -406,7 +406,7 @@ describe("routes", () => {
           ],
         }) as any,
       ),
-    ).toBe(`/c/${community.naddr}/calendar/calendar-1`)
+    ).toBe(`/c/${community.naddr}/calendar/${"1".repeat(64)}`)
   })
 
   it("loads targeting events before falling back to external links", async () => {
