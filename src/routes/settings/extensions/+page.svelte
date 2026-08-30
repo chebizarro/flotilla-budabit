@@ -405,29 +405,34 @@
     ])
 
     try {
-      const publishRelays = normalizeRelays([
+      const communityPublishRelays = getWidgetTargetPublishRelays({
+        communityOptions: widgetCommunityOptions,
+        communityAddresses,
+      })
+      const cleanupRelays = normalizeRelays([
         ...baseRelays,
         ...targetEvents.flatMap(getWidgetTargetEventRelayHints),
+        ...communityPublishRelays,
         ...getWidgetTargetPublishRelays({
           communityOptions: widgetCommunityOptions,
-          communityAddresses: [...previousCommunityAddresses, ...communityAddresses],
+          communityAddresses: previousCommunityAddresses,
         }),
       ])
       const deleteThunks = targetEvents.map(event => {
-        const thunk = publishDelete({event, relays: publishRelays})
+        const thunk = publishDelete({event, relays: cleanupRelays})
         if (thunk?.event) repository.publish(thunk.event as TrustedEvent)
         return thunk
       })
 
       const ownWidgetRepublish =
-        widgetPubkey === normalizePubkey($pubkey)
+        widgetPubkey === normalizePubkey($pubkey) && communityAddresses.length > 0
           ? publishWidgetEventToTargets({
               event: {
                 kind: SMART_WIDGET_KIND,
                 content: widget.content,
                 tags: (widget.tags || []).filter(tag => tag[0] !== "h"),
               },
-              baseRelays: publishRelays,
+              baseRelays: [],
               communityOptions: widgetCommunityOptions,
               communityAddresses,
             })
@@ -435,10 +440,10 @@
       const targetingThunk = communityAddresses.length
         ? publishWidgetTargetingEvent({
             widget,
-            baseRelays: publishRelays,
+            baseRelays: [],
             communityOptions: widgetCommunityOptions,
             communityAddresses,
-            originalRelay: getWidgetOriginalRelayHints(widget)[0] || publishRelays[0],
+            originalRelay: communityPublishRelays[0],
           })
         : undefined
 

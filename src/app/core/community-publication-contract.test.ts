@@ -115,6 +115,7 @@ describe("strict community publication source contracts", () => {
     const badges = readProjectFile("../../routes/c/[community]/badges/+page.svelte")
     const badgeAward = readProjectFile("../components/CommunityBadgeAwardForm.svelte")
     const widgets = readProjectFile("../../routes/c/[community]/widgets/+page.svelte")
+    const widgetSettings = readProjectFile("../../routes/settings/extensions/+page.svelte")
     const explore = readProjectFile("../../routes/explore/+page.svelte")
     const communityHome = readProjectFile("../../routes/c/[community]/+page.svelte")
 
@@ -126,6 +127,9 @@ describe("strict community publication source contracts", () => {
     expect(widgets).toContain("const baseRelays: string[] = []")
     expect(widgets).not.toContain("SMART_WIDGET_RELAYS")
     expect(widgets).not.toContain("Router.get().FromUser()")
+    expect(widgetSettings).toContain("const communityPublishRelays = getWidgetTargetPublishRelays")
+    expect(widgetSettings).toContain("baseRelays: []")
+    expect(widgetSettings).not.toContain("baseRelays: publishRelays")
     expect(explore).toContain(
       "const previewPublishRelayHints = $derived(normalizeRelays(previewDefinition?.relays || []))",
     )
