@@ -479,6 +479,7 @@ export const getEnabledCommunitySlotWidgetsWithSharedConfig = ({
       isAuthorizedCommunitySharedConfigEvent({
         event,
         descriptorAuthorities,
+        allowDescriptorChanges: true,
       }),
     )
     .map(parseCommunitySharedConfigRef)

@@ -69,6 +69,29 @@ describe("community shared config authority", () => {
     ).toBe(true)
   })
 
+  it("accepts historical descriptor tags only while the author remains a current moderator", () => {
+    const moderator = "a".repeat(64)
+
+    expect(
+      isAuthorizedCommunitySharedConfigEvent({
+        event: {pubkey: moderator, tags: [["descriptor", "31923"]]},
+        descriptorAuthorities: [
+          {descriptor: {kind: 11, subtype: "room"}, moderatorPubkeys: [moderator]},
+        ],
+        allowDescriptorChanges: true,
+      }),
+    ).toBe(true)
+    expect(
+      isAuthorizedCommunitySharedConfigEvent({
+        event: {pubkey: "b".repeat(64), tags: [["descriptor", "31923"]]},
+        descriptorAuthorities: [
+          {descriptor: {kind: 11, subtype: "room"}, moderatorPubkeys: [moderator]},
+        ],
+        allowDescriptorChanges: true,
+      }),
+    ).toBe(false)
+  })
+
   it("treats date and time calendar descriptors as one authority family", () => {
     const dateModerator = "a".repeat(64)
     const timeModerator = "b".repeat(64)

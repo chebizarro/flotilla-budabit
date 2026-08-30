@@ -1975,7 +1975,7 @@ describe("ExtensionBridge", () => {
     })
     mocks.activeExactCommunityDefinition.set(communityDefinitionWithRelays)
     mocks.activeCommunityProfileListEvents.set([calendarProfileList])
-    mocks.activeCommunityRelays.set(["wss://relay.example.com/"])
+    mocks.activeCommunityRelays.set(["wss://hint.example.com/"])
     mocks.pubkey.set(calendarWriterPubkey)
     mocks.load.mockImplementation(async ({filters, onEvent}: any) => {
       if (filters?.[0]?.kinds?.[0] === 30078) onEvent?.(currentConfig)
@@ -2004,6 +2004,11 @@ describe("ExtensionBridge", () => {
       }),
     ).resolves.toMatchObject({status: "ok", eventId: "published-config"})
     expect(mocks.publishThunk).toHaveBeenCalledTimes(1)
+    expect(mocks.loadCommunityEventsWithStatus).toHaveBeenCalledWith(
+      ["wss://relay.example.com/"],
+      expect.any(Array),
+      expect.objectContaining({authenticate: true}),
+    )
   })
 
   it("rejects stale shared config revisions without publishing", async () => {

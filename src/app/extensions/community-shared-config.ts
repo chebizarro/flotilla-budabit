@@ -35,10 +35,12 @@ export const isAuthorizedCommunitySharedConfigEvent = ({
   event,
   descriptorAuthorities,
   requireExactDescriptors = false,
+  allowDescriptorChanges = false,
 }: {
   event: {pubkey?: string; tags?: string[][]}
   descriptorAuthorities: CommunitySharedConfigDescriptorAuthority[]
   requireExactDescriptors?: boolean
+  allowDescriptorChanges?: boolean
 }) => {
   const author = normalizePubkey(event.pubkey || "")
   if (!author) return false
@@ -58,6 +60,10 @@ export const isAuthorizedCommunitySharedConfigEvent = ({
     authorityByDescriptor.set(key, moderators)
   }
   const declaredKeys = new Set(parsed.descriptors.map(getCommunitySharedConfigDescriptorKey))
+
+  if (allowDescriptorChanges) {
+    return Array.from(authorityByDescriptor.values()).some(moderators => moderators.has(author))
+  }
 
   if (
     requireExactDescriptors &&

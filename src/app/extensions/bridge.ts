@@ -1127,7 +1127,7 @@ const selectCommunitySharedConfigEvent = (
       isAuthorizedCommunitySharedConfigEvent({
         event,
         descriptorAuthorities: resolved,
-        requireExactDescriptors: true,
+        allowDescriptorChanges: true,
       }),
     )
     .reduce(
@@ -2087,6 +2087,8 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
       namespace: request.namespace,
       key: request.key,
     })
+    const sharedConfigRelays =
+      snapshot.publishRelays.length > 0 ? snapshot.publishRelays : snapshot.relays
     const sharedConfigFilter = {
       kinds: [COMMUNITY_SHARED_CONFIG_KIND],
       authors: moderatorAuthors,
@@ -2097,7 +2099,7 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
       identifier,
       resolved.map(info => getCommunitySharedConfigDescriptorKey(info.descriptor)).sort(),
       moderatorAuthors,
-      snapshot.relays.slice().sort(),
+      sharedConfigRelays.slice().sort(),
     ])
     const refreshedResult = sharedConfigRefreshCache.getLatest(refreshKey)
     const cachedEvents = dedupeEvents([
@@ -2113,7 +2115,7 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
     if (cachedSelected) {
       void refreshCommunitySharedConfig({
         refreshKey,
-        relays: snapshot.relays,
+        relays: sharedConfigRelays,
         relayHints: snapshot.relayHints,
         filter: sharedConfigFilter,
       })
@@ -2131,7 +2133,7 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
         status: "ok",
         event: cachedSelected,
         config: parseSharedConfigContent(cachedSelected),
-        relays: snapshot.relays,
+        relays: sharedConfigRelays,
         contextSessionId: snapshot.contextSessionId,
         contextVersion: snapshot.contextVersion,
       }
@@ -2139,7 +2141,7 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
 
     const loadedResult = await refreshCommunitySharedConfig({
       refreshKey,
-      relays: snapshot.relays,
+      relays: sharedConfigRelays,
       relayHints: snapshot.relayHints,
       filter: sharedConfigFilter,
     })
@@ -2165,7 +2167,7 @@ registerBridgeHandler("community:querySharedConfig", async (payload, ext) => {
     return {
       status: "ok",
       ...(selected ? {event: selected, config: parseSharedConfigContent(selected)} : {}),
-      relays: snapshot.relays,
+      relays: sharedConfigRelays,
       contextSessionId: snapshot.contextSessionId,
       contextVersion: snapshot.contextVersion,
     }
@@ -2258,7 +2260,7 @@ registerBridgeHandler("community:publishSharedConfig", async (payload, ext) => {
         limit: MAX_NOSTR_QUERY_LIMIT,
       })
       const loadedResult = await loadBridgeEventsWithStatus({
-        relays: snapshot.relays,
+        relays: snapshot.publishRelays,
         filters: [filter],
         authenticate: true,
         priorityAuthRelays: snapshot.relayHints,

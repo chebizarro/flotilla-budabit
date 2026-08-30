@@ -414,7 +414,7 @@ describe("community widget slots", () => {
     expect(selected).toEqual([exact])
   })
 
-  it("rejects configs authored by a moderator of an unrelated descriptor", () => {
+  it("rejects configs whose author is no longer a current moderator", () => {
     const communityPubkey = communityOwner
     const unrelatedModerator = "d".repeat(64)
     const widget = makeWidget(
@@ -443,15 +443,50 @@ describe("community widget slots", () => {
         communityAddress,
         sharedConfigEvents: [event],
         authorizedPubkeys: new Set([communityPubkey, unrelatedModerator]),
-        descriptorAuthorities: [
-          {descriptor: {kind: 1}, moderatorPubkeys: [communityPubkey]},
-          {descriptor: {kind: 2}, moderatorPubkeys: [unrelatedModerator]},
-        ],
+        descriptorAuthorities: [{descriptor: {kind: 1}, moderatorPubkeys: [communityPubkey]}],
         installedWidgets: {[getWidgetLineId(widget)]: widget},
         enabledIds: new Set([getWidgetLineId(widget)]),
         slotType: "community-home-after-quicklinks",
       }),
     ).toEqual([])
+  })
+
+  it("keeps a widget enabled when a current moderator's descriptor tags are historical", () => {
+    const moderator = "d".repeat(64)
+    const widget = makeWidget(
+      "featured-calendar-event",
+      "community-home-after-quicklinks",
+      undefined,
+      undefined,
+      1,
+      {permissions: ["community:querySharedConfig"]},
+    )
+    const event = {
+      kind: COMMUNITY_SHARED_CONFIG_KIND,
+      pubkey: moderator,
+      tags: [
+        [
+          "d",
+          `budabit-community-config:${communityAddress}:budabit-calendar-widget:featured-calendar-event`,
+        ],
+        ["a", communityAddress],
+        ["namespace", "budabit-calendar-widget"],
+        ["key", "featured-calendar-event"],
+        ["descriptor", "1"],
+      ],
+    }
+
+    expect(
+      getEnabledCommunitySlotWidgetsWithSharedConfig({
+        communityAddress,
+        sharedConfigEvents: [event],
+        authorizedPubkeys: new Set([moderator]),
+        descriptorAuthorities: [{descriptor: {kind: 2}, moderatorPubkeys: [moderator]}],
+        installedWidgets: {[getWidgetLineId(widget)]: widget},
+        enabledIds: new Set([getWidgetLineId(widget)]),
+        slotType: "community-home-after-quicklinks",
+      }),
+    ).toEqual([widget])
   })
 
   it("author-filters recovery and retries empty or incomplete loads", () => {
