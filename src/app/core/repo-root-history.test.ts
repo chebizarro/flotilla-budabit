@@ -424,6 +424,26 @@ describe("repository root resolution", () => {
     expect(harness.loadGap).toHaveBeenCalledWith(conflicting.id)
   })
 
+  it("retries a completed exact lookup without recreating the resolver", async () => {
+    const root = makeRootEvent({id: "8"})
+    const requestFiniteRelay = vi
+      .fn()
+      .mockResolvedValueOnce(result(relay, "eose"))
+      .mockResolvedValueOnce(result(relay, "eose", [root]))
+    const harness = makeResolver({requestFiniteRelay})
+
+    await expect(harness.ensureRoot(root.id)).resolves.toEqual({
+      status: "complete",
+      requestedId: root.id,
+    })
+    await expect(harness.ensureRoot(root.id, undefined, true)).resolves.toMatchObject({
+      status: "complete",
+      requestedId: root.id,
+      rootId: root.id,
+    })
+    expect(requestFiniteRelay).toHaveBeenCalledTimes(2)
+  })
+
   it("resolves an accepted pull request update to its accepted root", async () => {
     const root = makeRootEvent({id: "6", kind: 1618})
     const update = {

@@ -2,8 +2,10 @@ import {expect, test} from "@playwright/test"
 import {nip19} from "nostr-tools"
 import {
   BASE_TIMESTAMP,
+  TEST_COMMITS,
   TEST_PUBKEYS,
   createIssue,
+  createPullRequest,
   createRepoAnnouncement,
   encodeRepoNaddr,
   getRepoAddress,
@@ -62,6 +64,36 @@ const reply = makeComment(
 const naddr = encodeRepoNaddr(TEST_PUBKEYS.alice, identifier, [relayUrl])
 const issuePath = `/git/${naddr}/issues/${issue.id}`
 
+const pullRequest = signTestEvent(
+  createPullRequest({
+    repoAddress,
+    subject: "Quoted pull request comments",
+    content: "Pull request body",
+    tipCommitOid: TEST_COMMITS.second,
+    pubkey: TEST_PUBKEYS.charlie,
+    created_at: BASE_TIMESTAMP + 40,
+  }),
+)
+const makePrComment = (content: string, createdAt: number) =>
+  signTestEvent({
+    kind: 1111,
+    created_at: createdAt,
+    content,
+    pubkey: TEST_PUBKEYS.bob,
+    tags: [
+      ["E", pullRequest.id, relayUrl, pullRequest.pubkey],
+      ["K", "1618"],
+      ["P", pullRequest.pubkey, relayUrl],
+      ["e", pullRequest.id, relayUrl, pullRequest.pubkey],
+      ["k", "1618"],
+      ["p", pullRequest.pubkey, relayUrl],
+      ["q", repoAddress, relayUrl],
+    ],
+  })
+const prTarget = makePrComment("Target pull request comment", BASE_TIMESTAMP + 41)
+const latePrComment = makePrComment("Late pull request comment", BASE_TIMESTAMP + 42)
+const prPath = `/git/${naddr}/prs/${pullRequest.id}`
+
 test("focuses a quoted issue comment without recreating the repository route", async ({page}) => {
   const mockRelay = new MockRelay({
     seedEvents: [announcement, issue, parent, ...fillers, reply],
@@ -110,4 +142,23 @@ test("focuses a quoted issue comment without recreating the repository route", a
     )
     .toBeLessThan(24)
   await expect(page.locator("body")).toHaveAttribute("data-git-quote-document", "original")
+})
+
+test("does not re-scroll a pull request target when later comments arrive", async ({page}) => {
+  const mockRelay = new MockRelay({seedEvents: [announcement, pullRequest, prTarget]})
+  await page.addInitScript(() => localStorage.clear())
+  await mockRelay.setup(page)
+  await page.goto(`${prPath}#comment-${prTarget.id}`)
+
+  const target = page.locator(`[data-event="${prTarget.id}"]`).first()
+  const scroller = page.locator('[data-component="PageContent"]')
+  await expect(target).toBeInViewport({timeout: 15_000})
+
+  await scroller.evaluate(element => element.scrollTo({top: 0, behavior: "auto"}))
+  await expect(target).not.toBeInViewport()
+  await mockRelay.injectEvents([latePrComment])
+  await expect(page.locator(`[data-event="${latePrComment.id}"]`).first()).toHaveCount(1)
+  await page.waitForTimeout(250)
+
+  await expect(target).not.toBeInViewport()
 })

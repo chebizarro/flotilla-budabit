@@ -374,13 +374,19 @@ export const createRepoRootResolver =
       }
     }
 
-    return (id: string, signal?: AbortSignal): Promise<EnsureRepoRootResult> => {
+    return (id: string, signal?: AbortSignal, retry = false): Promise<EnsureRepoRootResult> => {
       const requestedId = String(id || "").trim()
       if (!requestedId) {
         return Promise.resolve({status: "complete", requestedId} as EnsureRepoRootResult)
       }
       if (signal?.aborted || options.signal.aborted) {
         return Promise.resolve({status: "aborted", requestedId})
+      }
+
+      if (retry) {
+        exactResultsById.clear()
+        inFlight.get(requestedId)?.controller.abort()
+        inFlight.delete(requestedId)
       }
 
       let pending = inFlight.get(requestedId)

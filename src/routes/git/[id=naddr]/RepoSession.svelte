@@ -460,7 +460,34 @@
     string,
     Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>
   >()
-  let gapFillQueue = Promise.resolve()
+  type GapFillPriority = "background" | "foreground"
+  type GapFillTask = {
+    priority: GapFillPriority
+    state: "queued" | "running"
+    run: () => Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>
+    resolve: (results: import("@app/core/finite-relay-request").FiniteRelayResult[]) => void
+    reject: (error: unknown) => void
+  }
+  const gapFillQueue: GapFillTask[] = []
+  const gapFillTaskByRootId = new Map<string, GapFillTask>()
+  let gapFillRunning = false
+
+  const runNextGapFill = () => {
+    if (gapFillRunning) return
+    const nextIndex = gapFillQueue.findIndex(task => task.priority === "foreground")
+    const task = gapFillQueue.splice(nextIndex >= 0 ? nextIndex : 0, 1)[0]
+    if (!task) return
+
+    gapFillRunning = true
+    task.state = "running"
+    void task
+      .run()
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        gapFillRunning = false
+        runNextGapFill()
+      })
+  }
   const getGapResults = (rootId: string, relays: string[]) =>
     relays.flatMap(relay => {
       const result = gapResultsByRootId.get(rootId)?.get(relay)
@@ -529,7 +556,7 @@
     )
   }
 
-  const loadRootGaps = (rootIds: string[]) => {
+  const loadRootGaps = (rootIds: string[], priority: GapFillPriority = "background") => {
     const controller = repoRootHistoryController
     if (!controller || controller.signal.aborted) return Promise.resolve([])
     const relays = normalizeScopeValues(($repoRelaysStore || []).filter(Boolean))
@@ -540,6 +567,8 @@
     const missing = roots.filter(rootId => {
       const existing = gapFillByRootId.get(rootId)
       if (existing) {
+        const task = gapFillTaskByRootId.get(rootId)
+        if (priority === "foreground" && task?.state === "queued") task.priority = "foreground"
         pending.add(existing.then(() => getGapResults(rootId, relays)))
       }
       return !existing
@@ -555,9 +584,22 @@
         rootIds: missing,
         getOutcome: (rootId, relay) => gapResultsByRootId.get(rootId)?.get(relay)?.outcome,
       })
-      const promise = gapFillQueue
-        .catch(() => undefined)
-        .then(() =>
+      let resolveTask!: (
+        results: import("@app/core/finite-relay-request").FiniteRelayResult[],
+      ) => void
+      let rejectTask!: (error: unknown) => void
+      const promise = new Promise<import("@app/core/finite-relay-request").FiniteRelayResult[]>(
+        (resolve, reject) => {
+          resolveTask = resolve
+          rejectTask = reject
+        },
+      )
+      const task: GapFillTask = {
+        priority,
+        state: "queued",
+        resolve: resolveTask,
+        reject: rejectTask,
+        run: () =>
           mapRepoRelayWork(scopes, scope =>
             loadRepoRootGap({
               relays: [scope.relay],
@@ -566,38 +608,37 @@
               priority: RELAY_REQUEST_PRIORITY.foreground,
               onEvent: receiveRepoLiveEvent,
             }).then(results => ({scope, results})),
-          ),
-        )
-        .then(scopeResults => {
-          const results = scopeResults.flatMap(group => group.results)
-          if (repoRootHistoryController !== controller || controller.signal.aborted) return results
-          for (const {scope, results: scopeRelayResults} of scopeResults) {
-            for (const rootId of scope.rootIds) {
-              const resultsByRelay = gapResultsByRootId.get(rootId) || new Map()
-              for (const result of scopeRelayResults) resultsByRelay.set(result.relay, result)
-              gapResultsByRootId.set(rootId, resultsByRelay)
-              if (relays.every(relay => resultsByRelay.get(relay)?.outcome === "eose")) {
-                completedGapRootIds.add(rootId)
+          ).then(scopeResults => {
+            const results = scopeResults.flatMap(group => group.results)
+            if (repoRootHistoryController !== controller || controller.signal.aborted)
+              return results
+            for (const {scope, results: scopeRelayResults} of scopeResults) {
+              for (const rootId of scope.rootIds) {
+                const resultsByRelay = gapResultsByRootId.get(rootId) || new Map()
+                for (const result of scopeRelayResults) resultsByRelay.set(result.relay, result)
+                gapResultsByRootId.set(rootId, resultsByRelay)
+                if (relays.every(relay => resultsByRelay.get(relay)?.outcome === "eose")) {
+                  completedGapRootIds.add(rootId)
+                }
               }
             }
+            return missing.flatMap(rootId => getGapResults(rootId, relays))
+          }),
+      }
+      gapFillQueue.push(task)
+      for (const rootId of missing) gapFillTaskByRootId.set(rootId, task)
+      const cleanup = () => {
+        for (const rootId of missing) {
+          if (gapFillByRootId.get(rootId) === rootPromises.get(rootId)) {
+            gapFillByRootId.delete(rootId)
           }
-          return missing.flatMap(rootId => getGapResults(rootId, relays))
-        })
-      gapFillQueue = promise
-        .then(
-          () => undefined,
-          () => undefined,
-        )
-        .finally(() => {
-          for (const rootId of missing) {
-            if (gapFillByRootId.get(rootId) === rootPromises.get(rootId)) {
-              gapFillByRootId.delete(rootId)
-            }
-          }
-          if (repoRootHistoryController === controller && !controller.signal.aborted) {
-            publishGapStatus()
-          }
-        })
+          if (gapFillTaskByRootId.get(rootId) === task) gapFillTaskByRootId.delete(rootId)
+        }
+        if (repoRootHistoryController === controller && !controller.signal.aborted) {
+          publishGapStatus()
+        }
+      }
+      void promise.then(cleanup, cleanup)
       for (const rootId of missing) {
         const rootPromise = promise.then(() => getGapResults(rootId, relays))
         rootPromises.set(rootId, rootPromise)
@@ -605,12 +646,13 @@
       }
       publishGapStatus()
       pending.add(promise)
+      runNextGapFill()
     }
 
     return Promise.all(pending).then(resultGroups => resultGroups.flat())
   }
 
-  const ensureRoot = async (id: string, signal?: AbortSignal) => {
+  const ensureRoot = async (id: string, signal?: AbortSignal, retry = false) => {
     if (!repoRootResolver && !layoutLoadController.signal.aborted) {
       await new Promise<void>(resolve => {
         const finish = () => {
@@ -625,7 +667,7 @@
     const controller = repoRootHistoryController
     const resolver = repoRootResolver
     if (!controller || !resolver) return {status: "unavailable", requestedId: id} as const
-    const result = await resolver(id, signal)
+    const result = await resolver(id, signal, retry)
     if (repoRootHistoryController === controller && result.rootId) {
       ensuredRoot = {requestedId: id, rootId: result.rootId}
     }
@@ -678,7 +720,7 @@
       getEvent: eventId => repository.getEvent(eventId) as TrustedEvent | undefined,
       isDeleted: event => isDeletedRepositoryEvent(event),
       onEvent: receiveRepoLiveEvent,
-      loadGap: rootId => loadRootGaps([rootId]),
+      loadGap: rootId => loadRootGaps([rootId], "foreground"),
     })
     repoRootResolverWaiters.forEach(resolve => resolve())
     void history.loadRecent()

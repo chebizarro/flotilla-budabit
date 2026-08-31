@@ -748,12 +748,22 @@ const getCanonicalRouteContext = (url: URL) => {
 const isSameRouteContext = (target: URL, current: URL) =>
   getCanonicalRouteContext(target) === getCanonicalRouteContext(current)
 
-const setCurrentTargetHash = (hash: string) => {
+const setCurrentTargetHash = (hash: string, suppressNativeScroll = false) => {
   if (!hash) return
 
   const current = new URL(window.location.href)
   if (current.hash !== hash) {
-    window.location.hash = hash
+    if (!suppressNativeScroll) {
+      window.location.hash = hash
+      return
+    }
+
+    const next = new URL(current)
+    next.hash = hash
+    window.history.pushState(window.history.state, "", next)
+    window.dispatchEvent(
+      new HashChangeEvent("hashchange", {oldURL: current.href, newURL: next.href}),
+    )
     return
   }
 
@@ -812,15 +822,18 @@ const goToEventTarget = async (
 
   const href = `${target.pathname}${target.search}${target.hash}`
   const focusEvent = isEventTargetHash(target.hash)
+  const routeOwnsFocus = target.pathname.startsWith("/git/") && target.hash.startsWith("#comment-")
   const sameContext = isSameRouteContext(target, new URL(window.location.href))
 
   if (sameContext) {
-    if (target.hash) setCurrentTargetHash(target.hash)
+    if (target.hash) setCurrentTargetHash(target.hash, routeOwnsFocus)
   } else {
-    await goto(href, options)
+    await goto(href, routeOwnsFocus ? {...options, noScroll: true} : options)
   }
 
-  return focusEvent ? waitAndScrollToEvent(id, {behavior: sameContext ? "auto" : "smooth"}) : true
+  return focusEvent && !routeOwnsFocus
+    ? waitAndScrollToEvent(id, {behavior: sameContext ? "auto" : "smooth"})
+    : true
 }
 
 export const goToEventIdPath = (id: string, path: string, options: Record<string, any> = {}) => {

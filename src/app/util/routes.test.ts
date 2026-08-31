@@ -698,6 +698,17 @@ describe("routes", () => {
     expect(waitAndScrollToEventMock).toHaveBeenCalledWith(rootId, {behavior: "smooth"})
   })
 
+  it("leaves git comment hash scrolling to the destination thread", async () => {
+    const {goToEventPath} = await import("./routes")
+    const comment = makeEvent({kind: 1111})
+    const path = `/git/repository/prs/root#comment-${comment.id}`
+
+    await expect(goToEventPath(comment as any, path)).resolves.toBe(true)
+
+    expect(gotoMock).toHaveBeenCalledWith(path, {noScroll: true})
+    expect(waitAndScrollToEventMock).not.toHaveBeenCalled()
+  })
+
   it("routes git permalinks to their exact code targets", async () => {
     const {getGitEventPath} = await import("./routes")
     const owner = "a".repeat(64)

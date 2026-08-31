@@ -48,6 +48,8 @@
     status: "loading" | "complete" | "partial" | "failed" | "unavailable" | "aborted"
     rootId?: string
   }>({requestedId: "", status: "loading"})
+  let prResolutionAttempt = $state(0)
+  let consumedPrResolutionAttempt = 0
   let resolvedRoot = $state({requestedId: "", rootId: ""})
   let previousPrId = ""
   let showScrollButton = $state(false)
@@ -95,6 +97,7 @@
     const cacheHydrationPending = $repoCacheHydrationPendingStore
     const cacheHydrationFailed = $repoCacheHydrationFailedStore
     const relays = repoRelays
+    const retryAttempt = prResolutionAttempt
     void requestedRepoEvent
     void $requestedRootEventStore.get(requestedRootReference)
     if (previousPrId !== currentPrId) {
@@ -139,7 +142,9 @@
     prResolution = {requestedId: currentPrId, status: "loading"}
     const controller = new AbortController()
     let cancelled = false
-    void repoRootHistory.ensureRoot(currentPrId, controller.signal).then(result => {
+    const retry = retryAttempt > consumedPrResolutionAttempt
+    if (retry) consumedPrResolutionAttempt = retryAttempt
+    void repoRootHistory.ensureRoot(currentPrId, controller.signal, retry).then(result => {
       if (cancelled || prId !== currentPrId || result.status === "aborted") return
       if (result.rootId) resolvedRoot = {requestedId: currentPrId, rootId: result.rootId}
       prResolution = {
@@ -187,6 +192,10 @@
   const scrollToTop = () => {
     scrollParent?.scrollTo({top: 0, behavior: "smooth"})
   }
+
+  const retryPrResolution = () => {
+    prResolutionAttempt += 1
+  }
 </script>
 
 <svelte:head>
@@ -197,16 +206,25 @@
   {#if isHiddenRoot && prEvent}
     <div class="p-4 text-center text-muted-foreground">This pull request was hidden as spam.</div>
   {:else if pr && resolvedPrEvent}
-    <PRView {pr} prEvent={resolvedPrEvent} repo={repoClass} {repoRelays} {prEditRelays} />
+    <PRView
+      {pr}
+      prEvent={resolvedPrEvent}
+      repo={repoClass}
+      {repoRelays}
+      {prEditRelays}
+      threadTargetReady={prResolutionStatus !== "loading"} />
   {:else if prResolutionStatus === "loading"}
     <div class="p-4 text-center" role="status">Loading pull request...</div>
   {:else if prResolution.rootId}
     <div class="p-4 text-center" role="status">This repository item is not a pull request.</div>
   {:else}
     <div class="p-4 text-center text-muted-foreground">
-      {prResolutionStatus === "complete"
-        ? "Pull request not found in the current repository history."
-        : "Pull request unavailable."}
+      <p>
+        {prResolutionStatus === "complete"
+          ? "Pull request not found in the current repository history."
+          : "Pull request unavailable."}
+      </p>
+      <Button class="btn btn-sm mt-3" onclick={retryPrResolution}>Retry</Button>
     </div>
   {/if}
 </div>

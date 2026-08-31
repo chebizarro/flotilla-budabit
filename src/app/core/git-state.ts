@@ -136,6 +136,7 @@ export type RepoRootHistoryContext = {
   ensureRoot: (
     id: string,
     signal?: AbortSignal,
+    retry?: boolean,
   ) => Promise<import("@app/core/repo-root-history").EnsureRepoRootResult>
 }
 

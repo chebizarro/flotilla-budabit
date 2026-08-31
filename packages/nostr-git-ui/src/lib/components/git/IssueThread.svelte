@@ -67,6 +67,7 @@
     createReaction?: (comment: CommentEvent, template: ReactionTemplate) => void | Promise<void>;
     onInlineCommentOpen?: (comment: CommentEvent) => void;
     getShareRelays?: (event: CommentEvent) => string[];
+    targetReady?: boolean;
   }
 
   const {
@@ -91,6 +92,7 @@
     createReaction,
     onInlineCommentOpen,
     getShareRelays,
+    targetReady = true,
   }: Props = $props();
 
   let newComment = $state("");
@@ -98,6 +100,9 @@
   let replyParent = $state<CommentEvent | null>(null);
   let editingComment = $state<CommentEvent | null>(null);
   let threadElement = $state<HTMLElement | null>(null);
+  let commentHashRequest = $state({ hash: "", request: 0 });
+  let commentHashGeneration = 0;
+  let completedCommentHashRequest = 0;
 
   const threadRootId = $derived(externalRoot?.value || issueId);
 
@@ -265,28 +270,41 @@
     }
   };
 
-  const scrollToCommentHash = async () => {
-    if (typeof window === "undefined") return;
-    const hash = window.location.hash || "";
-    if (!hash.startsWith("#comment-")) return;
-    const targetId = hash.slice(1);
-    await tick();
-    const el = document.getElementById(targetId);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  };
-
   $effect(() => {
-    void commentsParsed.length;
-    void scrollToCommentHash();
+    if (typeof window === "undefined") return;
+    const handler = () => {
+      commentHashRequest = {
+        hash: window.location.hash || "",
+        request: ++commentHashGeneration,
+      };
+    };
+    handler();
+    window.addEventListener("hashchange", handler);
+    return () => window.removeEventListener("hashchange", handler);
   });
 
   $effect(() => {
-    if (typeof window === "undefined") return;
-    const handler = () => void scrollToCommentHash();
-    window.addEventListener("hashchange", handler);
-    return () => window.removeEventListener("hashchange", handler);
+    const { hash, request } = commentHashRequest;
+    const ready = targetReady;
+    void commentsParsed.length;
+    if (
+      !ready ||
+      request === 0 ||
+      request === completedCommentHashRequest ||
+      !hash.startsWith("#comment-")
+    ) {
+      return;
+    }
+
+    const targetId = hash.slice(1);
+    void tick().then(() => {
+      if (commentHashRequest.request !== request || !targetReady) return;
+      const el = document.getElementById(targetId);
+      if (!el) return;
+
+      completedCommentHashRequest = request;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   });
 
   async function submitCommentPayload({ content, tags = [] }: RichContentPayload) {

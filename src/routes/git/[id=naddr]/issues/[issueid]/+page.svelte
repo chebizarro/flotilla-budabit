@@ -125,6 +125,8 @@
     issueId: "",
     status: "loading",
   })
+  let issueResolutionAttempt = $state(0)
+  let consumedIssueResolutionAttempt = 0
   const issueResolutionStatus = $derived(
     issueResolution.issueId === issueId ? issueResolution.status : "loading",
   )
@@ -135,6 +137,7 @@
     const cacheHydrationPending = $repoCacheHydrationPendingStore
     const cacheHydrationFailed = $repoCacheHydrationFailedStore
     const relays = repoBoundRelays
+    const retryAttempt = issueResolutionAttempt
     void issueEvent
 
     if (!currentIssueId) {
@@ -177,8 +180,10 @@
     issueResolution = {issueId: currentIssueId, status: "loading"}
     const controller = new AbortController()
     let cancelled = false
+    const retry = retryAttempt > consumedIssueResolutionAttempt
+    if (retry) consumedIssueResolutionAttempt = retryAttempt
 
-    void repoRootHistory.ensureRoot(currentIssueId, controller.signal).then(result => {
+    void repoRootHistory.ensureRoot(currentIssueId, controller.signal, retry).then(result => {
       if (cancelled || issueId !== currentIssueId || result.status === "aborted") return
       issueResolution = {
         issueId: currentIssueId,
@@ -202,6 +207,10 @@
       controller.abort()
     }
   })
+
+  const retryIssueResolution = () => {
+    issueResolutionAttempt += 1
+  }
   // Filter helpers used when refreshing labels/description updates after publishing
   const getLabelFilter = (): Filter => ({kinds: [1985], "#e": [issueEvent?.id ?? ""]})
   const getCoverLetterFilter = (): Filter => ({
@@ -1187,6 +1196,7 @@
         deleteReaction={deleteCommentReaction}
         createReaction={createCommentReaction}
         ownerPubkey={currentRepoOwner}
+        targetReady={issueResolutionStatus !== "loading"}
         enableReplies />
     </Card>
   </div>
@@ -1210,5 +1220,11 @@
         ? "Issue not found in the current repository history."
         : "Issue unavailable."}
     </p>
+    <button
+      type="button"
+      class="mt-3 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+      onclick={retryIssueResolution}>
+      Retry
+    </button>
   </div>
 {/if}

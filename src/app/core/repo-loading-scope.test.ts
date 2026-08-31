@@ -48,7 +48,7 @@ describe("authoritative repository loading scope", () => {
 
     expect(issueDetail).toContain('constissueId=$derived($page.params.issueid??"")')
     expect(issueResolution).toContain(
-      "repoRootHistory.ensureRoot(currentIssueId,controller.signal)",
+      "repoRootHistory.ensureRoot(currentIssueId,controller.signal,retry)",
     )
     expect(issueResolution).toContain("controller.abort()")
     expect(issueResolution).toContain("voidissueEvent")
@@ -59,7 +59,7 @@ describe("authoritative repository loading scope", () => {
     expect(issueDetail).not.toContain("issueResolutionNonce")
     expect(issueDetail).not.toContain("announcementLiveCoveragePartial")
 
-    expect(prDetail).toContain("repoRootHistory.ensureRoot(currentPrId,controller.signal)")
+    expect(prDetail).toContain("repoRootHistory.ensureRoot(currentPrId,controller.signal,retry)")
     expect(prDetail).toContain("controller.abort()")
     expect(prDetail).not.toContain("LOAD_TIMEOUT_MS")
     expect(prDetail).not.toContain("makeLoader")
@@ -129,7 +129,9 @@ describe("authoritative repository loading scope", () => {
     expect(layout).toContain('owner:"repo-foreground:stable"')
     expect(layout).toContain('owner:"repo-foreground:announcement"')
     expect(layout).toContain('owner:"repo-foreground:exact-thread"')
-    expect(layout).toContain("gapFillQueue.catch(()=>undefined).then")
+    expect(layout).toContain('gapFillQueue.findIndex(task=>task.priority==="foreground")')
+    expect(layout).toContain('loadRootGaps([rootId],"foreground")')
+    expect(layout).toContain('priority==="foreground"&&task?.state==="queued"')
     expect(layout).toContain(
       '$repoRootHistoryState.status==="idle"||$repoRootHistoryState.status==="loading"||$repoAnnouncementStatus==="loading"',
     )

@@ -171,9 +171,17 @@
     repo: Repo
     repoRelays: string[]
     prEditRelays: string[]
+    threadTargetReady?: boolean
   }
 
-  const {pr, prEvent, repo: repoClass, repoRelays, prEditRelays}: Props = $props()
+  const {
+    pr,
+    prEvent,
+    repo: repoClass,
+    repoRelays,
+    prEditRelays,
+    threadTargetReady = true,
+  }: Props = $props()
   const hiddenRepoEventIdsStore = hasContext(HIDDEN_ROOT_IDS_KEY)
     ? getContext<Readable<Set<string>>>(HIDDEN_ROOT_IDS_KEY)
     : undefined
@@ -4391,6 +4399,7 @@
             createReaction={createCommentReaction}
             ownerPubkey={repoOwnerPubkey}
             onInlineCommentOpen={openPrInlineCommentLocation}
+            targetReady={threadTargetReady}
             enableReplies />
         {/if}
       </div>
