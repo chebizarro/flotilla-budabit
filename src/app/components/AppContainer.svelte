@@ -31,6 +31,7 @@
       pathname.startsWith("/communities/") ||
       pathname === "/explore" ||
       pathname.startsWith("/explore/") ||
+      pathname.startsWith("/ops/") ||
       pathname === "/people" ||
       pathname.startsWith("/people/") ||
       pathname === "/git" ||
