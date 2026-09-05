@@ -9,6 +9,7 @@
   import Magnifier from "@assets/icons/magnifier.svg?dataurl"
   import Compass from "@assets/icons/compass.svg?dataurl"
   import Home from "@assets/icons/home.svg?dataurl"
+  import Widget from "@assets/icons/widget.svg?dataurl"
   import UserRounded from "@assets/icons/user-rounded.svg?dataurl"
   import ImageIcon from "@lib/components/ImageIcon.svelte"
   import PrimaryNavItem from "@lib/components/PrimaryNavItem.svelte"
@@ -63,6 +64,9 @@
       </PrimaryNavItem>
       <PrimaryNavItem title="Explore" href="/explore" prefix="/explore" class="tooltip-right">
         <ImageIcon alt="Explore" src={Compass} size={7} />
+      </PrimaryNavItem>
+      <PrimaryNavItem title="Ops Widgets" href="/ops/widgets" prefix="/ops" class="tooltip-right">
+        <ImageIcon alt="Ops Widgets" src={Widget} size={7} />
       </PrimaryNavItem>
       <PrimaryNavItem
         title="Notifications"
@@ -126,6 +130,9 @@
     </PrimaryNavItem>
     <PrimaryNavItem compact title="Explore" href="/explore" prefix="/explore">
       <ImageIcon alt="Explore" src={Compass} size={5} />
+    </PrimaryNavItem>
+    <PrimaryNavItem compact title="Ops Widgets" href="/ops/widgets" prefix="/ops">
+      <ImageIcon alt="Ops Widgets" src={Widget} size={5} />
     </PrimaryNavItem>
     <PrimaryNavItem compact title="Git" href={gitPath} prefix="/git">
       <ImageIcon alt="Git" src={Git} size={5} />
