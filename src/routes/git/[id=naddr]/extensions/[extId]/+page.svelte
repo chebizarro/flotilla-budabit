@@ -1,7 +1,8 @@
 <style>
   .extension-panel {
     width: 100%;
-    flex: 0 0 auto;
+    /* Fill the repository viewport, while allowing content-sized widgets to grow. */
+    flex: 1 0 auto;
     border: 1px solid hsl(var(--ng-border, 214 30% 84%));
     border-radius: 12px;
     overflow: hidden;
@@ -36,7 +37,7 @@
 
   .extension-iframe {
     width: 100%;
-    flex: 0 0 auto;
+    flex: 1 0 auto;
     height: var(--extension-height, 600px);
     min-height: 0;
     border: none;
