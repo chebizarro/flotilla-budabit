@@ -23,7 +23,7 @@ import {mkdirSync, writeFileSync} from "node:fs"
 import {dirname} from "node:path"
 import {describe, expect, it} from "vitest"
 import {getEventHash, getPublicKey} from "nostr-tools"
-import {DELETE, type TrustedEvent} from "@welshman/util"
+import {DELETE, EVENT_DATE, EVENT_TIME, type TrustedEvent} from "@welshman/util"
 import {
   COMMUNITY_DEFINITION_KIND,
   COMMUNITY_SECTION_GENERAL,
@@ -37,12 +37,13 @@ import {
   buildCommunityDefinition,
   makeCommunityPointer,
   parseCommunityDefinition,
-  parseTargetedPublication,
   selectCurrentCommunityDefinitions,
   type CommunityDefinition,
 } from "./community"
 import {
+  canWriteCommunityCalendarTarget,
   canWriteCommunityTarget,
+  filterAuthorizedCommunityTargetingEvents,
   getCommunityWriteTarget,
   getCommunityWriteTargetSections,
 } from "./community-permissions"
@@ -265,12 +266,17 @@ const clientAdmits = (oracle: Oracle, candidate: TrustedEvent): boolean => {
   }
 
   if (candidate.kind === 30222) {
-    const wrapper = parseTargetedPublication(candidate)
-    if (!wrapper) return false
-    if (!wrapper.communities.some(community => community.address === ADDRESS)) return false
-    const target = getCommunityWriteTarget(wrapper.kind)
-    if (!target) return false
-    return canWriteCommunityTarget({...common, userPubkey: candidate.pubkey, target})
+    return (
+      filterAuthorizedCommunityTargetingEvents({
+        ...common,
+        community: pointer,
+        events: [candidate],
+      }).length > 0
+    )
+  }
+
+  if (candidate.kind === EVENT_DATE || candidate.kind === EVENT_TIME) {
+    return canWriteCommunityCalendarTarget({...common, userPubkey: candidate.pubkey})
   }
 
   const target = getCommunityWriteTarget(candidate.kind, deriveSubtype(candidate))
@@ -586,6 +592,48 @@ const buildScenarios = (): Scenario[] => {
     )
   }
 
+  for (const kinds of [[EVENT_DATE], [EVENT_TIME], [EVENT_DATE, EVENT_TIME]]) {
+    const authority = [
+      event(
+        COMMUNITY_DEFINITION_KIND,
+        OWNER,
+        buildCommunityDefinition({
+          communityId: COMMUNITY_ID,
+          name: "Calendar grants",
+          relays: [RELAY],
+          sections: kinds.map(kind => ({
+            name: kind === EVENT_DATE ? "All-day events" : "Timed events",
+            kinds: [{kind}],
+            profileLists: [{address: shardAddress(OWNER, `calendar-${kind}`)}],
+            badges: [],
+            retention: [],
+          })),
+        }).tags,
+      ),
+      ...kinds.map((kind, index) =>
+        shard(OWNER, `calendar-${kind}`, [index === 0 ? MEMBER : MEMBER2]),
+      ),
+    ]
+    const candidates = Object.entries({
+      owner: OWNER,
+      member: MEMBER,
+      member2: MEMBER2,
+      outsider: OUTSIDER,
+    }).flatMap(([label, pubkey]) =>
+      [EVENT_DATE, EVENT_TIME].flatMap(kind => [
+        Object.assign(wrapper(pubkey, kind), {__label: `${label} ${kind} wrapper`}),
+        Object.assign(
+          event(kind, pubkey, [
+            ["d", "calendar"],
+            ["h", COMMUNITY_ID],
+          ]),
+          {__label: `${label} ${kind} direct`},
+        ),
+      ]),
+    )
+    scenarios.push(buildScenario(`calendar grants ${kinds.join(",")}`, authority, candidates))
+  }
+
   return scenarios
 }
 
@@ -831,6 +879,21 @@ describe("community policy vectors", () => {
     const bans = scenarios.find(item => item.name === "owner person-bans a member")!
     expect(bans.cases.find(item => item.name === "member thread")!.expect).toBe("reject")
     expect(bans.cases.find(item => item.name === "member2 thread")!.expect).toBe("reject")
+  })
+
+  it("admits both calendar formats with either grant, including split sections", () => {
+    for (const kinds of [[EVENT_DATE], [EVENT_TIME], [EVENT_DATE, EVENT_TIME]]) {
+      const scenario = scenarios.find(item => item.name === `calendar grants ${kinds.join(",")}`)!
+      const find = (label: string) => scenario.cases.find(item => item.name === label)!.expect
+      for (const kind of [EVENT_DATE, EVENT_TIME]) {
+        for (const shape of ["wrapper", "direct"]) {
+          expect(find(`owner ${kind} ${shape}`)).toBe("accept")
+          expect(find(`member ${kind} ${shape}`)).toBe("accept")
+          expect(find(`member2 ${kind} ${shape}`)).toBe(kinds.length === 2 ? "accept" : "reject")
+          expect(find(`outsider ${kind} ${shape}`)).toBe("reject")
+        }
+      }
+    }
   })
 
   it("writes vectors when POLICY_VECTORS_OUT is set", () => {
