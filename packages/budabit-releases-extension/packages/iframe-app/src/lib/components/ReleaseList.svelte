@@ -22,24 +22,53 @@
     onCreateRelease: () => void;
     onImport: (release: ForgeRelease) => void;
   } = $props();
+  const PAGE = 20;
+  // Signed Nostr releases and the forge's own listing are separate tabs: the
+  // forge tab is unverified and never part of authority, but reads the same.
+  let tab = $state<'nostr' | 'forge'>('nostr');
   let version = $state(''),
     platform = $state('all'),
     days = $state('all'),
     page = $state(1);
+  const forgeName = $derived(forge.repo ? forgeLabel(forge.repo) : '');
+  const since = $derived(days === 'all' ? 0 : Date.now() / 1000 - Number(days) * 86400);
+  const needle = $derived(version.trim().toLowerCase());
   const platforms = $derived([...new Set(list.events.flatMap((e) => tagValues(e, 'f')))].sort());
   const filtered = $derived(
     list.events.filter((e) => {
       const item = parseReleaseListItem(e);
       return (
-        item.version.toLowerCase().includes(version.trim().toLowerCase()) &&
+        item.version.toLowerCase().includes(needle) &&
         (platform === 'all' || tagValues(e, 'f').includes(platform)) &&
-        (days === 'all' || e.created_at >= Date.now() / 1000 - Number(days) * 86400)
+        e.created_at >= since
       );
     })
   );
-  const pages = $derived(Math.max(1, Math.ceil(filtered.length / 20)));
+  const forgeFiltered = $derived(
+    forge.releases.filter(
+      (r) =>
+        `${r.tag} ${r.name}`.toLowerCase().includes(needle) && (r.publishedAt ?? 0) >= since
+    )
+  );
+  const showForge = $derived(tab === 'forge' && !!forge.repo);
+  const pages = $derived(
+    Math.max(1, Math.ceil((showForge ? forgeFiltered : filtered).length / PAGE))
+  );
   const current = $derived(Math.min(page, pages));
+  const firstLine = (text: string) => text.split('\n')[0] ?? '';
+  function select(next: 'nostr' | 'forge') {
+    tab = next;
+    page = 1;
+  }
 </script>
+
+{#snippet pager()}
+  {#if pages > 1}<nav aria-label="Release pages">
+      <button disabled={current === 1} onclick={() => (page = current - 1)}>Previous</button> Page {current}
+      of {pages}
+      <button disabled={current === pages} onclick={() => (page = current + 1)}>Next</button>
+    </nav>{/if}
+{/snippet}
 
 <div class="release-list">
   <header>
@@ -48,104 +77,134 @@
         >New Release</button
       >{/if}
   </header>
-  <p>
-    Only applications and releases signed by current repository maintainers are shown; a release
-    must name an application they published.
-  </p>
-  {#if list.stalled}
-    <div role="alert" class="notice">
-      Relay results are incomplete on every relay{list.error ? `: ${list.error}` : '.'} Nothing is
-      known about the release history, so publication is disabled until at least one relay answers.
-      <button onclick={onRetry}>Retry discovery</button>
-    </div>
-  {:else if list.partial || list.error}
-    <div role="note" class="notice">
-      Some relays did not answer{list.error ? `: ${list.error}` : '.'} Releases known only to them are
-      not shown, and a new publication will not reach them.
-      <button onclick={onRetry}>Retry discovery</button>
+  {#if forge.repo}
+    <div class="tabs" role="tablist" aria-label="Release sources">
+      <button
+        role="tab"
+        aria-selected={!showForge}
+        class:active={!showForge}
+        onclick={() => select('nostr')}>Nostr <span class="count">{list.events.length}</span></button
+      >
+      <button role="tab" aria-selected={showForge} class:active={showForge} onclick={() => select('forge')}
+        >{forgeName} <span class="count">{forge.releases.length}</span>
+        <span class="unverified">unverified</span></button
+      >
     </div>
   {/if}
-  {#if list.loading}<p role="status">Loading releases…</p>{/if}
-  {#if list.events.length}
-    <div class="filters">
-      <input
-        type="search"
-        aria-label="Filter version"
-        placeholder="Filter version…"
-        bind:value={version}
-        oninput={() => (page = 1)}
-      />
-      <select aria-label="Filter platform" bind:value={platform} onchange={() => (page = 1)}
-        ><option value="all">All platforms</option>{#each platforms as p}<option value={p}
-            >{platformLabel([p])}</option
-          >{/each}</select
-      >
-      <select aria-label="Filter date" bind:value={days} onchange={() => (page = 1)}
-        ><option value="all">Any time</option><option value="30">Last 30 days</option><option
-          value="90">Last 90 days</option
-        ><option value="365">Last year</option></select
-      >
-    </div>
-    <ul>
-      {#each filtered.slice((current - 1) * 20, current * 20) as event (event.id)}
-        {@const item = parseReleaseListItem(event)}
-        <li>
-          <button class="release-card" onclick={() => onViewRelease(event)}>
-            <strong>{item.version}</strong>
-            <span>{item.channel} · {formatDate(item.createdAt)} · {item.assetCount} assets</span>
-            <span>{item.appId}</span><span title={item.pubkey}
-              >Publisher: {item.pubkey.slice(0, 16)}…</span
-            >
-            <span>{event.content.split('\n')[0]}</span>
-          </button>
-        </li>
-      {/each}
-    </ul>
-    {#if !filtered.length}<p>No matching releases.</p>{/if}
-    {#if pages > 1}<nav aria-label="Release pages">
-        <button disabled={current === 1} onclick={() => (page = current - 1)}>Previous</button> Page {current}
-        of {pages}
-        <button disabled={current === pages} onclick={() => (page = current + 1)}>Next</button>
-      </nav>{/if}
-  {:else if !list.loading && !list.stalled}<p>
-      No authorized releases found for this repository.
-    </p>{/if}
-  {#if forge.repo}
-    <section class="forge" aria-label="Forge releases">
-      <h3>Releases on {forgeLabel(forge.repo)} <span class="unverified">unverified</span></h3>
-      <p>
-        Listed from
-        <a href={forge.repo.webUrl} target="_blank" rel="noopener noreferrer"
-          >{forge.repo.owner}/{forge.repo.name}</a
+  {#if !showForge}
+    <p>
+      Only applications and releases signed by current repository maintainers are shown; a release
+      must name an application they published.
+    </p>
+    {#if list.stalled}
+      <div role="alert" class="notice">
+        Relay results are incomplete on every relay{list.error ? `: ${list.error}` : '.'} Nothing is
+        known about the release history, so publication is disabled until at least one relay answers.
+        <button onclick={onRetry}>Retry discovery</button>
+      </div>
+    {:else if list.partial || list.error}
+      <div role="note" class="notice">
+        Some relays did not answer{list.error ? `: ${list.error}` : '.'} Releases known only to them
+        are not shown, and a new publication will not reach them.
+        <button onclick={onRetry}>Retry discovery</button>
+      </div>
+    {/if}
+    {#if list.loading}<p role="status">Loading releases…</p>{/if}
+    {#if list.events.length}
+      <div class="filters">
+        <input
+          type="search"
+          aria-label="Filter version"
+          placeholder="Filter version…"
+          bind:value={version}
+          oninput={() => (page = 1)}
+        />
+        <select aria-label="Filter platform" bind:value={platform} onchange={() => (page = 1)}
+          ><option value="all">All platforms</option>{#each platforms as p}<option value={p}
+              >{platformLabel([p])}</option
+            >{/each}</select
         >
-        without authentication. These are not Nostr-signed and are not part of the release history
-        above. A maintainer can import one to publish it as a signed release.
-      </p>
-      <button onclick={onRefreshForge} disabled={forge.loading}>Refresh</button>
-      {#if forge.loading}<p>Loading forge releases…</p>{/if}
-      {#if forge.error}<p class="issue">{forge.error}</p>{/if}
-      {#if !forge.loading && !forge.error && forge.releases.length === 0}<p>No releases found.</p>{/if}
-      {#if forge.releases.length}
-        <ul>
-          {#each forge.releases as release (release.id)}
-            <li class="forge-card">
-              <strong>{release.name}</strong>
-              <span
-                >{release.tag}{release.prerelease ? ' · pre-release' : ''}{release.publishedAt
-                  ? ` · ${formatDate(release.publishedAt)}`
-                  : ''} · {release.assets.length} assets</span
+        <select aria-label="Filter date" bind:value={days} onchange={() => (page = 1)}
+          ><option value="all">Any time</option><option value="30">Last 30 days</option><option
+            value="90">Last 90 days</option
+          ><option value="365">Last year</option></select
+        >
+      </div>
+      <ul>
+        {#each filtered.slice((current - 1) * PAGE, current * PAGE) as event (event.id)}
+          {@const item = parseReleaseListItem(event)}
+          <li>
+            <button class="release-card" onclick={() => onViewRelease(event)}>
+              <strong>{item.version}</strong>
+              <span>{item.channel} · {formatDate(item.createdAt)} · {item.assetCount} assets</span>
+              <span>{item.appId}</span><span title={item.pubkey}
+                >Publisher: {item.pubkey.slice(0, 16)}…</span
               >
-              {#if release.url}<a href={release.url} target="_blank" rel="noopener noreferrer"
-                  >View on {forgeLabel(forge.repo)}</a
-                >{/if}
-              {#if isMaintainer}<button onclick={() => onImport(release)}
-                  >Import as Nostr release</button
-                >{/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
+              <span>{firstLine(event.content)}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+      {#if !filtered.length}<p>No matching releases.</p>{/if}
+      {@render pager()}
+    {:else if !list.loading && !list.stalled}<p>
+        No authorized releases found for this repository.
+      </p>{/if}
+  {:else if forge.repo}
+    <p>
+      Listed from
+      <a href={forge.repo.webUrl} target="_blank" rel="noopener noreferrer"
+        >{forge.repo.owner}/{forge.repo.name}</a
+      >
+      without authentication. These are not Nostr-signed and are not part of the signed release
+      history; a maintainer can import one to publish it as a signed release.
+      <button onclick={onRefreshForge} disabled={forge.loading}>Refresh</button>
+    </p>
+    {#if forge.loading}<p role="status">Loading {forgeName} releases…</p>{/if}
+    {#if forge.error}<p class="issue">{forge.error}</p>{/if}
+    {#if forge.releases.length}
+      <div class="filters">
+        <input
+          type="search"
+          aria-label="Filter version"
+          placeholder="Filter version…"
+          bind:value={version}
+          oninput={() => (page = 1)}
+        />
+        <select aria-label="Filter date" bind:value={days} onchange={() => (page = 1)}
+          ><option value="all">Any time</option><option value="30">Last 30 days</option><option
+            value="90">Last 90 days</option
+          ><option value="365">Last year</option></select
+        >
+      </div>
+      <ul>
+        {#each forgeFiltered.slice((current - 1) * PAGE, current * PAGE) as release (release.id)}
+          <li>
+            <div class="release-card forge-card">
+              <strong>{release.tag}</strong>
+              <span
+                >{release.prerelease ? 'pre-release' : 'release'} · {release.publishedAt
+                  ? formatDate(release.publishedAt)
+                  : 'unpublished'} · {release.assets.length} assets</span
+              >
+              <span>{release.name}</span>
+              <span>Publisher: {forge.repo.owner}/{forge.repo.name} on {forgeName}</span>
+              <span>{firstLine(release.notes)}</span>
+              <div class="actions">
+                {#if release.url}<a href={release.url} target="_blank" rel="noopener noreferrer"
+                    >View on {forgeName}</a
+                  >{/if}
+                {#if isMaintainer}<button onclick={() => onImport(release)}
+                    >Import as Nostr release</button
+                  >{/if}
+              </div>
+            </div>
+          </li>
+        {/each}
+      </ul>
+      {#if !forgeFiltered.length}<p>No matching releases.</p>{/if}
+      {@render pager()}
+    {:else if !forge.loading && !forge.error}<p>No releases found on {forgeName}.</p>{/if}
   {/if}
 </div>
 
@@ -182,6 +241,36 @@
     opacity: 0.5;
     cursor: default;
   }
+  .tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin: 0.75rem 0;
+    border-bottom: 1px solid var(--ext-border);
+  }
+  [role='tab'] {
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    background: transparent;
+    color: var(--ext-text-secondary);
+    margin-bottom: -1px;
+  }
+  [role='tab'].active {
+    border-color: var(--ext-border);
+    background: var(--ext-surface);
+    color: var(--ext-text);
+  }
+  .count {
+    color: var(--ext-text-muted);
+  }
+  .unverified {
+    font-size: 0.75rem;
+    color: var(--ext-warning-text);
+    background: var(--ext-warning-bg);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    margin-left: 0.25rem;
+  }
   .filters {
     display: flex;
     gap: 0.5rem;
@@ -197,6 +286,7 @@
   .release-card {
     display: block;
     width: 100%;
+    box-sizing: border-box;
     text-align: left;
     padding: 1rem;
   }
@@ -208,41 +298,23 @@
     margin-top: 0.2rem;
     overflow-wrap: anywhere;
   }
-  strong {
+  .forge-card {
+    border: 1px solid var(--ext-border);
+    border-radius: 6px;
+    background: var(--ext-surface);
+  }
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+  }
+  .actions a {
     color: var(--ext-accent);
   }
-  .forge {
-    margin-top: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--ext-border);
-  }
-  .forge h3 {
-    margin: 0 0 0.5rem;
-  }
-  .unverified {
-    font-size: 0.75rem;
-    font-weight: normal;
-    color: var(--ext-warning-text);
-    background: var(--ext-warning-bg);
-    border-radius: 4px;
-    padding: 0.1rem 0.4rem;
-    vertical-align: middle;
-  }
-  .forge ul {
-    list-style: none;
-    padding: 0;
-    margin: 0.5rem 0 0;
-  }
-  .forge-card {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 0.75rem;
-    align-items: center;
-    padding: 0.6rem 0;
-    border-bottom: 1px solid var(--ext-border);
-  }
-  .forge-card span {
-    color: var(--ext-text-muted);
+  strong {
+    color: var(--ext-accent);
   }
   .issue {
     color: var(--ext-danger-text);

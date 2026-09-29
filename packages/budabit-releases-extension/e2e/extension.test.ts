@@ -626,12 +626,15 @@ test('lists GitHub releases as unverified and imports one as a signed Nostr rele
       ]),
     })
   );
+  // Forge releases live on their own tab and never join the signed list.
+  await expect(widget.getByRole('tab', { name: /^Nostr/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(widget.locator('.release-card')).toHaveCount(1);
+  await widget.getByRole('tab', { name: /GitHub/ }).click();
   await widget.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(widget.getByRole('heading', { name: /Releases on GitHub/ })).toBeVisible();
   await expect(widget.locator('.forge-card')).toHaveCount(1);
   await expect(widget.locator('.forge-card')).toContainText('v2.0.0');
-  // Forge releases never join the signed list.
-  await expect(widget.locator('.release-card')).toHaveCount(1);
+  await expect(widget.locator('.forge-card')).toContainText('Publisher: owner/repo on GitHub');
+  await expect(widget.getByRole('tab', { name: /GitHub/ })).toContainText('1');
   await widget.getByRole('button', { name: 'Import as Nostr release', exact: true }).click();
   await expect(widget.getByLabel('Version', { exact: true })).toHaveValue('2.0.0');
   await expect(widget.getByLabel('Release notes', { exact: true })).toHaveValue('Notes for two');
