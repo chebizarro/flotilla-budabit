@@ -48,19 +48,9 @@
   {#if list.partial || list.error}
     <div role="alert" class="notice">
       {list.error || 'Relay results are incomplete. This is not the full release history.'}
-      {#if list.incompleteRelays.length}
-        Required relays without a complete answer: {list.incompleteRelays.join(', ')}.
-      {/if}
       Publication is disabled until discovery completes.
       <button onclick={onRetry}>Retry discovery</button>
     </div>
-  {:else if list.degradedRelays.length}
-    <p class="notice soft">
-      Optional relays did not answer completely: {list.degradedRelays.join(', ')}. The repository's
-      own relays did, so publication stays enabled; releases known only to those relays may be
-      missing.
-      <button onclick={onRetry}>Retry discovery</button>
-    </p>
   {/if}
   {#if list.loading}<p role="status">Loading releases…</p>{/if}
   {#if list.events.length}
@@ -176,10 +166,6 @@
     background: var(--ext-warning-bg);
     color: var(--ext-warning-text);
     border-radius: 6px;
-  }
-  .notice.soft {
-    background: var(--ext-surface-2);
-    color: var(--ext-text-secondary);
   }
   nav {
     text-align: center;

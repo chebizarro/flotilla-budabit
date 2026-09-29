@@ -20,7 +20,7 @@ function host(events: NostrEvent[] = [], cache: unknown = null) {
   const unsubscribe = vi.fn(async () => ({ status: 'ok' }));
   const sub = { subscriptionId: 'host-id', unsubscribe };
   const subscribe = vi.fn(async () => sub);
-  const request = vi.fn(async (action: string, _payload?: unknown) =>
+  const request = vi.fn(async (action: string) =>
     action === 'nostr:query'
       ? { status: 'ok', complete: true, events }
       : { status: 'ok', data: cache }
@@ -133,30 +133,6 @@ describe('release list lifecycle and trust', () => {
     await session.dispose();
     expect(state.events).toEqual([]);
     expect(errors).toHaveBeenCalledWith(expect.objectContaining({ message: 'permission denied' }));
-  });
-  it('keeps publication enabled when only best-effort relays time out, naming them', async () => {
-    const h = host();
-    const release = releaseFixture();
-    h.request.mockImplementation(async (action: string, payload?: unknown) => {
-      if (action !== 'nostr:query') return { status: 'ok', data: null };
-      // Only the repository's own relay answers completely; public fallbacks time out.
-      const relay = (payload as { relays: string[] }).relays[0];
-      return relay === 'wss://relay.example'
-        ? { status: 'ok', complete: true, events: [signed(), release] }
-        : { status: 'ok', complete: false, events: [] };
-    });
-    let state!: ListState;
-    const session = startReleaseList(h.bridge, testRepo(), (next) => (state = next));
-    await session.ready;
-    expect(state.partial).toBe(false);
-    expect(state.error).toBe('');
-    expect(state.incompleteRelays).toEqual([]);
-    expect(state.degradedRelays).toEqual(
-      expect.arrayContaining(['wss://relay.zapstore.dev', 'wss://nos.lol'])
-    );
-    expect(state.degradedRelays).not.toContain('wss://relay.example');
-    expect(state.events.map((e) => e.id)).toEqual([release.id]);
-    await session.dispose();
   });
   it('buffers host events before the host-generated ID arrives and marks partial queries', async () => {
     const h = host(),

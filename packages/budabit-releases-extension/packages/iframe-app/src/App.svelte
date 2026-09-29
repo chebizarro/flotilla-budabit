@@ -29,8 +29,6 @@
     events: [],
     loading: true,
     partial: false,
-    incompleteRelays: [],
-    degradedRelays: [],
     error: '',
   });
   let list = $state.raw<ListState>(emptyList());

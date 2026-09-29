@@ -18,7 +18,7 @@ See [import provenance](IMPORT.md) and the [workspace guide](../../docs/developm
 
 Legacy releases without an exact application `a` link, or applications linked only by a repository URL/display name, are excluded rather than presented as trusted releases.
 
-Discovery always includes `wss://relay.zapstore.dev` and `wss://relay.budabit.club` (where the Workflows tab publishes every run and artifact) ahead of the repository's own relays. Completeness is judged on the **required** relays only — the repository's own relays, or `wss://relay.budabit.club` when it declares none — each of which gets one retry. The zapstore and generic fallbacks are best-effort: when one of them times out the list names it and stays publishable, because a single flaky public relay must not disable every release.
+Discovery always includes `wss://relay.zapstore.dev` and `wss://relay.budabit.club` (where the Workflows tab publishes every run and artifact) ahead of the repository's own relays.
 
 ## Develop and verify
 
@@ -57,7 +57,7 @@ The widget declares `nostr:sign`, `nostr:publish`, `nostr:query`, `nostr:subscri
 
 ## Create a release
 
-1. Sign in as a current repository owner/maintainer and wait for discovery on the repository's required relays to complete.
+1. Sign in as a current repository owner/maintainer and wait for complete discovery.
 2. Choose an existing application (including its publisher) or create one under your key. New applications, and existing ones you own via **Update application metadata**, take the store-listing fields zapstore renders: summary, Markdown description, HTTPS icon and screenshot URLs (Blossom recommended), website, repository URL, SPDX license and tags. Platform (`f`) tags are derived from the selected assets.
 3. Select a specific authenticated workflow run. Its artifacts are the kind 1063 events signed by the run's delegated publisher key, plus maintainer attestations co-signed in the Workflows tab. Verify local artifact copies, then select assets.
 4. Review identifier/version, MIME type, platform and APK metadata. The MIME type and platforms are pre-filled from the filename per NIP-82 and editable; assets with conformance errors cannot be included. Asset identifier/version may legitimately differ from the release. APKs require a version code and certificate SHA-256 metadata from a trusted inspection tool; the widget does **not** validate the APK certificate itself. Desktop and CLI assets (`.dmg`, `.pkg`, `.msi`, `.AppImage`, `.flatpak`, statically linked ELF/Mach-O/PE executables, `.vsix`, `.crx`, `.xpi`, `.wasm`) follow the same `32267` → `30063` → `3063` shape as mobile apps; native executables must declare at least one `f` platform because their MIME type does not.
@@ -65,7 +65,7 @@ The widget declares `nostr:sign`, `nostr:publish`, `nostr:query`, `nostr:subscri
 
 Publishing is **not atomic**. On a partial/unknown outcome, return with the same account and use **Resume publication** to resend the saved event IDs without new signatures. Local acceptance markers are not treated as proof of relay persistence. Signing timeouts do not cancel a host signer prompt, but no events are published before all signatures are verified and the journal is saved.
 
-Every publication attempt, including same-session retries, re-discovers current application authority. A saved application event participates in replacement reconciliation; it cannot override a newer revocation. Incomplete discovery on a required relay or lost authority blocks publication. Invalid recovery data offers **Retry recovery** and a confirmed **Discard local recovery data** action. Discard affects only this repository/account's journal, does not undo published events, and loses identical-ID retry capability for that batch.
+Every publication attempt, including same-session retries, re-discovers current application authority. A saved application event participates in replacement reconciliation; it cannot override a newer revocation. Incomplete discovery or lost authority blocks publication. Invalid recovery data offers **Retry recovery** and a confirmed **Discard local recovery data** action. Discard affects only this repository/account's journal, does not undo published events, and loses identical-ID retry capability for that batch.
 
 There is **one active recovery batch per repository/account**. Every preparation gets a distinct batch ID, and its initial save atomically claims an empty slot. Concurrent creators may both finish signing, but only the winner can start publication. Progress saves, completion and discard compare the exact observed storage revision; stale sessions cannot overwrite/delete a later batch or recreate a cleared slot. A conflict reloads recovery state and requires a new user action, including fresh discard confirmation. Existing valid journals remain resumable without new signatures.
 
@@ -84,7 +84,7 @@ Manifest generation writes unsigned kind `30033` metadata to `dist/widget/` and 
 
 - Up to eight relays, five 100-event pages per relay, inclusive timestamp cursors. Overflow at a shared second is reported incomplete instead of silently skipping events.
 - Relay EOSE means completion of that bounded response, not global history completeness or proof that no newer revision exists elsewhere.
-- Incomplete discovery on any required relay disables new publication and prevents starting/resuming a saved batch; best-effort relays only produce a named notice. Detail keeps unresolved asset IDs visible and offers retry; known application revocations invalidate even an already open detail view.
+- Any incomplete discovery disables new publication and prevents starting/resuming a saved batch. Detail keeps unresolved asset IDs visible and offers retry; known application revocations invalidate even an already open detail view.
 - Notes allow passive Markdown, not media or automatic third-party resource loads. HTTPS links open only on user activation.
 - Legacy unlinked pipeline artifacts rely on a unique delegation within completed current-maintainer discovery across repositories, not a global guarantee that a publisher key has never been reused.
 - Cached releases are hints, not application authority. See [storage](docs/storage.md).

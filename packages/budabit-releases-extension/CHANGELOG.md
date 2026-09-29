@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Workflows compatibility and NIP-82 packaging
 
-- Judge discovery completeness on required relays only (the repository's own relays, or `wss://relay.budabit.club` when none are declared), with one retry each. Best-effort relays (zapstore, sharegap, nos.lol) that time out are named in a non-blocking notice instead of disabling publication; previously any one of up to eight relays missing the host's 5 s timeout showed "Relay results are incomplete" and blocked every release.
-
 - Discover runs and artifacts on `wss://relay.budabit.club`, accept runs referencing the repository by its legacy `30618` state coordinate, and accept runs pinned to a branch head (empty or absent `commit` tag, as the Workflows tab writes it); a present `commit` must be a full SHA.
 - Accept maintainer co-signed kind 1063 attestations produced by the Workflows tab's Attestations view: a copy of a worker hash is folded into that artifact (`attestedBy`), a maintainer-only hash referencing exactly one authenticated run becomes its own artifact. Outsider copies are ignored.
 - Add `assets.ts`: NIP-82 Appendix A/C classification. Infer the MIME type and platforms of CI artifacts from their filenames, refuse generic archives, `.deb`/`.rpm` packages, unknown platform identifiers, platform/MIME mismatches and native executables without an `f` tag, and warn about unclassified MIME types. The artifact selector exposes MIME/platform controls and blocks non-conforming selections; `buildAssetEvent` re-checks before signing.
