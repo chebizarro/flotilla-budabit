@@ -65,6 +65,7 @@ describe('offline manifest generation', () => {
           '3063',
           '1063',
           '5401',
+          '30617',
         ]);
         expect(JSON.stringify(event)).not.toContain('${');
       } finally {

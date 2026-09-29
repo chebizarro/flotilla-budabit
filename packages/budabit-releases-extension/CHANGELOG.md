@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Workflows compatibility and NIP-82 packaging
 
+- Discover and publish on the relays the repository announcement declares (NIP-34 `relays`) plus the store relays, instead of the relay hints the host derives from the naddr. Hints only locate the announcement (kind `30617`, now declared in the manifest); an unreachable hint no longer blocks the release history or publication. If the announcement cannot be read — including on hosts still running a manifest without kind `30617` — the host's hints stay in use and the reason is shown.
 - Remove `wss://nos.lol` from the discovery relays: it never sends EOSE for any subscription, so the host reported it as timed out on every load and the widget showed "Relay results are incomplete" and disabled publication regardless of results. An incomplete result now names the relays the host reports as timed out or failed instead of a generic message.
 - Discover runs and artifacts on `wss://relay.budabit.club`, accept runs referencing the repository by its legacy `30618` state coordinate, and accept runs pinned to a branch head (empty or absent `commit` tag, as the Workflows tab writes it); a present `commit` must be a full SHA.
 - Accept maintainer co-signed kind 1063 attestations produced by the Workflows tab's Attestations view: a copy of a worker hash is folded into that artifact (`attestedBy`), a maintainer-only hash referencing exactly one authenticated run becomes its own artifact. Outsider copies are ignored.

@@ -72,7 +72,16 @@ const attacker = releaseFixture(
   },
   2
 );
-const data: NostrEvent[] = [app, asset, release, run, artifact, attacker];
+// The widget reads the announcement's NIP-34 `relays` and discovers there, not on the host's hints.
+const announcement = signed({
+  kind: 30617,
+  created_at: now,
+  tags: [
+    ['d', repo.repoName],
+    ['relays', ...repo.repoRelays],
+  ],
+});
+const data: NostrEvent[] = [announcement, app, asset, release, run, artifact, attacker];
 const subscriptions = new Map<string, Filter>();
 let viewer = repo.userPubkey,
   hasRepo = true,

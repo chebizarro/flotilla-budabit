@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   assetDownloadUrl,
   buildApplicationEvent,
   buildAssetEvent,
   buildReleaseEvent,
+  declaredRelays,
   formatBytes,
   formatDate,
   getRelays,
@@ -12,6 +13,7 @@ import {
   parseAsset,
   parseReleaseListItem,
   platformLabel,
+  resolveRepoRelays,
   shortHash,
 } from './releases.js';
 import { signed, testPubkey, testRepo, releaseFixture } from './test-fixtures.js';
@@ -157,6 +159,18 @@ describe('NIP-82 parsers, builders and display helpers', () => {
     expect(() => buildApplicationEvent({ ...minimal, iconUrl: 'http://x/i.png' })).toThrow('HTTPS');
     expect(() => buildApplicationEvent({ ...minimal, name: ' ' })).toThrow('name');
   });
+  it('reads NIP-34 relays tags whether multi-value or repeated', () => {
+    const announcement = signed({
+      kind: 30617,
+      tags: [
+        ['d', 'repo'],
+        ['relays', 'wss://a.example', 'wss://b.example'],
+        ['relays', 'wss://a.example'],
+        ['relays', 'not a relay'],
+      ],
+    });
+    expect(declaredRelays(announcement)).toEqual(['wss://a.example', 'wss://b.example']);
+  });
   it('always discovers on the zapstore and Budabit relays ahead of repository relays', () => {
     expect(getRelays(['wss://repo.example']).slice(0, 3)).toEqual([
       'wss://relay.zapstore.dev',
@@ -245,5 +259,68 @@ describe('NIP-82 parsers, builders and display helpers', () => {
           events: [event],
         }))
       ).rejects.toThrow('current authorized');
+  });
+});
+
+describe('repository relay resolution', () => {
+  type QueryPayload = { relays: string[]; filter: Record<string, unknown> };
+  const announcement = (relays: string[], created_at = 100, n = 1) =>
+    signed({ kind: 30617, created_at, tags: [['d', 'repo'], ['relays', ...relays]] }, n);
+  const bridgeWith = (respond: (payload: QueryPayload) => unknown) =>
+    ({
+      request: vi.fn(async (_: string, payload: unknown) => respond(payload as QueryPayload)),
+    }) as unknown as WidgetBridge;
+  // Context exactly as a host sends it: hints double as the relay list until the announcement is read.
+  const host = { ...testRepo(), repoRelays: ['wss://hint.example'], relaySource: 'host' as const };
+
+  it('uses the newest announcement copy and keeps the host hints only for the lookup', async () => {
+    const seen: Array<{ relay: string; kinds: unknown; d: unknown }> = [];
+    const bridge = bridgeWith(({ relays, filter }) => {
+      seen.push({ relay: relays[0]!, kinds: filter.kinds, d: filter['#d'] });
+      // Completeness is irrelevant to the lookup; any verified copy carries the tag.
+      return {
+        status: 'ok',
+        complete: false,
+        events:
+          relays[0] === 'wss://hint.example'
+            ? [announcement(['wss://old.example'], 50)]
+            : [announcement(['wss://declared.example'], 100)],
+      };
+    });
+    const { context, notice } = await resolveRepoRelays(bridge, host);
+    expect(notice).toBe('');
+    expect(context.repoRelays).toEqual(['wss://declared.example']);
+    expect(context.relaySource).toBe('announcement');
+    expect(context.relayHints).toEqual(['wss://hint.example']);
+    expect(seen.map((s) => s.relay)).toContain('wss://hint.example');
+    expect(seen.every((s) => JSON.stringify(s.kinds) === '[30617]' && JSON.stringify(s.d) === '["repo"]')).toBe(true);
+    expect(getRelays(context.repoRelays)).not.toContain('wss://hint.example');
+  });
+
+  it('keeps the host relays and says why when the announcement cannot be read', async () => {
+    const rejected = await resolveRepoRelays(bridgeWith(() => ({ error: 'Unsupported kind: 30617' })), host);
+    expect(rejected.context.repoRelays).toEqual(['wss://hint.example']);
+    expect(rejected.context.relaySource).toBe('host');
+    expect(rejected.notice).toContain('Unsupported kind: 30617');
+    const missing = await resolveRepoRelays(
+      bridgeWith(() => ({ status: 'ok', complete: true, events: [] })),
+      host
+    );
+    expect(missing.context.relaySource).toBe('host');
+    expect(missing.notice).toContain('not found');
+    // Another author's announcement, or one for another repository, never counts.
+    const foreign = await resolveRepoRelays(
+      bridgeWith(() => ({
+        status: 'ok',
+        complete: true,
+        events: [
+          announcement(['wss://x.example'], 100, 2),
+          signed({ kind: 30617, tags: [['d', 'other'], ['relays', 'wss://x.example']] }),
+        ],
+      })),
+      host
+    );
+    expect(foreign.context.relaySource).toBe('host');
+    expect(foreign.context.repoRelays).toEqual(['wss://hint.example']);
   });
 });

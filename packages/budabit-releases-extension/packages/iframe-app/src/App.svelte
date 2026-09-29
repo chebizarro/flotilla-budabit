@@ -9,6 +9,7 @@
     type RepoContext,
   } from './lib/context.js';
   import { startReleaseList, type ListState } from './lib/list-controller.js';
+  import { resolveRepoRelays } from './lib/releases.js';
   import { coordinate } from './lib/trust.js';
   import ReleaseList from './lib/components/ReleaseList.svelte';
   import ReleaseDetail from './lib/components/ReleaseDetail.svelte';
@@ -17,6 +18,10 @@
   // ── Bridge + context ──────────────────────────────────────────────────────
   let bridge = $state<WidgetBridge | null>(null);
   let repoContext = $state<RepoContext | null>(null);
+  /** Context exactly as the host sent it; `repoContext` carries the announcement's relays instead. */
+  let hostContext: RepoContext | null = null;
+  let resolvingRelays = $state(false);
+  let relayNotice = $state('');
   let contextError = $state('');
   let contextRevision = 0;
 
@@ -57,14 +62,48 @@
   // ── Bridge lifecycle ──────────────────────────────────────────────────────
 
   function receiveContext(input: unknown) {
+    const next = normalizeContext(input, hostContext?.userPubkey);
+    if (JSON.stringify(next) === JSON.stringify(hostContext)) return;
     contextRevision++;
     contextError = '';
-    const next = normalizeContext(input, repoContext?.userPubkey);
-    if (JSON.stringify(next) === JSON.stringify(repoContext)) return;
-    repoContext = next;
+    const previous = hostContext;
+    const resolved = repoContext;
+    hostContext = next;
     view = 'list';
     selectedEvent = null;
     list = emptyList();
+    if (!next || !bridge) {
+      repoContext = next;
+      relayNotice = '';
+      return;
+    }
+    // The announcement's relays only change with the repository or the host's hints.
+    if (
+      resolved &&
+      previous &&
+      next.repoAddress === previous.repoAddress &&
+      JSON.stringify(next.relayHints) === JSON.stringify(previous.relayHints)
+    ) {
+      repoContext = { ...next, repoRelays: resolved.repoRelays, relaySource: resolved.relaySource };
+      return;
+    }
+    const revision = contextRevision;
+    repoContext = null;
+    resolvingRelays = true;
+    resolveRepoRelays(bridge, next)
+      .then(({ context, notice }) => {
+        if (revision !== contextRevision) return;
+        repoContext = context;
+        relayNotice = notice;
+      })
+      .catch((err) => {
+        if (revision !== contextRevision) return;
+        repoContext = next;
+        relayNotice = `Repository announcement lookup failed (${err instanceof Error ? err.message : String(err)}); discovery and publication use the host's relay hints.`;
+      })
+      .finally(() => {
+        if (revision === contextRevision) resolvingRelays = false;
+      });
   }
 
   onMount(() => {
@@ -158,8 +197,12 @@
     <div class="initializing">Initializing…</div>
   {:else if !repoContext}
     <div class="no-context">
-      <p>Waiting for repository context…</p>
-      <p class="hint">Open this widget inside a Budabit repository tab.</p>
+      {#if resolvingRelays}
+        <p role="status">Reading the repository announcement…</p>
+      {:else}
+        <p>Waiting for repository context…</p>
+        <p class="hint">Open this widget inside a Budabit repository tab.</p>
+      {/if}
       {#if contextError}<pre class="debug-log" role="alert">{contextError}</pre>{/if}
     </div>
   {:else if view === 'detail' && selectedEvent}
@@ -195,6 +238,7 @@
       onCancel={handleBack}
     />
   {:else}
+    {#if relayNotice}<p role="status">{relayNotice}</p>{/if}
     <ReleaseList
       {list}
       onRetry={() => retryDiscovery++}

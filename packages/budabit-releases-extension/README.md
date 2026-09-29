@@ -18,7 +18,7 @@ See [import provenance](IMPORT.md) and the [workspace guide](../../docs/developm
 
 Legacy releases without an exact application `a` link, or applications linked only by a repository URL/display name, are excluded rather than presented as trusted releases.
 
-Discovery always includes `wss://relay.zapstore.dev` and `wss://relay.budabit.club` (where the Workflows tab publishes every run and artifact) ahead of the repository's own relays.
+Discovery and publication use the relays the repository announcement declares (NIP-34 `relays`), always behind `wss://relay.zapstore.dev` and `wss://relay.budabit.club` (where the Workflows tab publishes every run and artifact). The relay hints the host derives from the naddr are only used to read the announcement (kind `30617`): an unreachable hint must not block the release history. If the announcement cannot be read — for example on a host still running a manifest without kind `30617` — the hints stay in use and the widget says why.
 
 ## Develop and verify
 
@@ -53,7 +53,7 @@ Unit coverage measures executable domain TypeScript, not uninstrumented Svelte m
 
 Use Budabit with bridge integration `c97928826`, independent relay-page fix `a8716cfb9`, **and atomic recovery storage `28ba443db`**, or an implementation of the [same wire contract](docs/host-bridge.md). `c97928826` alone could falsely report completeness because the shared Welshman loader deduplicated across relay pages. Older hosts lacking explicit query completeness show a partial-results warning and cannot initiate a new publication. Without atomic storage support, creation/recovery fails closed before signing; browsing remains available. Atomic storage requires Web Locks on the host origin (HTTPS or localhost). The actual repo-tab surface is supported; it must not be assumed identical to ordinary `WidgetFrame`.
 
-The widget declares `nostr:sign`, `nostr:publish`, `nostr:query`, `nostr:subscribe`, **`nostr:unsubscribe`**, `storage:get`, `storage:set` and **`storage:compareAndSet`**, with kinds `32267, 30063, 3063, 1063, 5401`. Deploy the updated permission manifest as well as the HTML, and close/reload older widget and Budabit tabs before publishing; older code may still perform unconditional journal writes.
+The widget declares `nostr:sign`, `nostr:publish`, `nostr:query`, `nostr:subscribe`, **`nostr:unsubscribe`**, `storage:get`, `storage:set` and **`storage:compareAndSet`**, with kinds `32267, 30063, 3063, 1063, 5401, 30617`. Deploy the updated permission manifest as well as the HTML, and close/reload older widget and Budabit tabs before publishing; older code may still perform unconditional journal writes.
 
 ## Create a release
 

@@ -39,6 +39,67 @@ export function getRelays(repoRelays: string[] | undefined): string[] {
   return normalizeRelays(merged).slice(0, MAX_QUERY_RELAYS);
 }
 
+export const REPO_ANNOUNCEMENT_KIND = 30617;
+
+/** NIP-34 `relays` values of a repository announcement (one multi-value tag or several). */
+export function declaredRelays(announcement: NostrEvent): string[] {
+  return normalizeRelays(
+    announcement.tags.filter((tag) => tag[0] === 'relays').flatMap((tag) => tag.slice(1))
+  );
+}
+
+export interface RepoRelayResolution {
+  context: RepoContext;
+  /** Why the host's relay hints remain in use; empty once the announcement was read. */
+  notice: string;
+}
+
+/**
+ * Discovery and publication use the relays the repository announcement
+ * declares (NIP-34 `relays`) plus the store relays — never the hints the host
+ * derived from the naddr. Hints only say where the announcement can be found,
+ * and an unreachable hint must not block the release history or publication.
+ * The announcement is read from those hints and the store relays; the newest
+ * verified copy wins, and completeness is irrelevant because any copy carries
+ * the tag. A host whose widget manifest predates kind 30617 rejects the
+ * lookup; the host's relays are then kept and the caller shows why.
+ */
+export async function resolveRepoRelays(
+  bridge: WidgetBridge,
+  repo: RepoContext
+): Promise<RepoRelayResolution> {
+  const hints = repo.relayHints;
+  const keepHost = (reason: string): RepoRelayResolution => ({
+    context: { ...repo, repoRelays: hints, relaySource: 'host' },
+    notice: `${reason}; discovery and publication use the host's relay hints until it can be read.`,
+  });
+  const lookup = normalizeRelays([...hints, ...FALLBACK_RELAYS]).slice(0, MAX_QUERY_RELAYS);
+  if (!lookup.length) return keepHost('No relays to read the repository announcement from');
+  const result = await queryAll(bridge, lookup, {
+    kinds: [REPO_ANNOUNCEMENT_KIND],
+    authors: [repo.repoPubkey],
+    '#d': [repo.repoName],
+  });
+  const announcement = result.events
+    .filter(
+      (e) =>
+        e.kind === REPO_ANNOUNCEMENT_KIND &&
+        e.pubkey === repo.repoPubkey &&
+        tagValue(e, 'd') === repo.repoName
+    )
+    .sort((a, b) => b.created_at - a.created_at)[0];
+  if (!announcement)
+    return keepHost(
+      result.errors?.length
+        ? `Repository announcement could not be read (${result.errors.join('; ')})`
+        : 'Repository announcement was not found on its relay hints'
+    );
+  return {
+    context: { ...repo, repoRelays: declaredRelays(announcement), relaySource: 'announcement' },
+    notice: '',
+  };
+}
+
 export async function queryEvents(
   bridge: WidgetBridge,
   relays: string[],
