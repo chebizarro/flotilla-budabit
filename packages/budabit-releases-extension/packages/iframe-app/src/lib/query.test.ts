@@ -34,6 +34,25 @@ describe('bounded relay discovery', () => {
       'wss://stalled.example: no EOSE before the host timeout',
       'wss://closed.example: connection failed or subscription closed',
     ]);
+    expect(result.completedRelays).toEqual([]);
+    expect(result.incompleteRelays).toEqual(['wss://stalled.example', 'wss://closed.example']);
+  });
+  it('reports which relays completed so callers can proceed on the answered ones', async () => {
+    const event = signed();
+    const request = vi.fn(async (_: string, p: { relays: string[] }) =>
+      p.relays[0] === 'wss://good.example'
+        ? { status: 'ok', complete: true, events: [event] }
+        : { status: 'ok', complete: false, events: [], timedOutRelays: p.relays }
+    );
+    const result = await queryAll(
+      { request } as unknown as WidgetBridge,
+      ['wss://good.example', 'wss://dead.example'],
+      { kinds: [32267] }
+    );
+    expect(result.complete).toBe(false);
+    expect(result.completedRelays).toEqual(['wss://good.example']);
+    expect(result.incompleteRelays).toEqual(['wss://dead.example']);
+    expect(result.events).toEqual([event]);
   });
   it('uses inclusive per-relay cursors, deduplicates boundaries, and rejects out-of-filter events', async () => {
     const batch = Array.from({ length: 100 }, (_, index) =>

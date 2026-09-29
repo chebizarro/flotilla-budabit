@@ -84,7 +84,7 @@ Manifest generation writes unsigned kind `30033` metadata to `dist/widget/` and 
 
 - Up to eight relays, five 100-event pages per relay, inclusive timestamp cursors. Overflow at a shared second is reported incomplete instead of silently skipping events.
 - Relay EOSE means completion of that bounded response, not global history completeness or proof that no newer revision exists elsewhere.
-- Any incomplete discovery disables new publication and prevents starting/resuming a saved batch. Detail keeps unresolved asset IDs visible and offers retry; known application revocations invalidate even an already open detail view.
+- Relays that answered are authoritative for what they hold. Relays that did not answer are named; releases known only to them are not shown and a new publication will not reach them. Only a discovery that no relay completed disables new publication and starting/resuming a saved batch. Detail keeps unresolved asset IDs visible and offers retry; known application revocations invalidate even an already open detail view.
 - Notes allow passive Markdown, not media or automatic third-party resource loads. HTTPS links open only on user activation.
 - Legacy unlinked pipeline artifacts rely on a unique delegation within completed current-maintainer discovery across repositories, not a global guarantee that a publisher key has never been reused.
 - Cached releases are hints, not application authority. See [storage](docs/storage.md).

@@ -13,6 +13,7 @@ import {
   parseAsset,
   parseReleaseListItem,
   platformLabel,
+  queryEvents,
   resolveRepoRelays,
   shortHash,
 } from './releases.js';
@@ -158,6 +159,29 @@ describe('NIP-82 parsers, builders and display helpers', () => {
     const minimal = { appId: 'app', name: 'App', repoAddress: 'a', repoRelay: '' };
     expect(() => buildApplicationEvent({ ...minimal, iconUrl: 'http://x/i.png' })).toThrow('HTTPS');
     expect(() => buildApplicationEvent({ ...minimal, name: ' ' })).toThrow('name');
+  });
+  it('proceeds on the relays that answered and fails only when none did', async () => {
+    const event = signed();
+    const some = {
+      request: async (_: string, p: unknown) =>
+        (p as { relays: string[] }).relays[0] === 'wss://relay.zapstore.dev'
+          ? { status: 'ok', complete: true, events: [event] }
+          : { status: 'ok', complete: false, events: [], timedOutRelays: (p as { relays: string[] }).relays },
+    } as unknown as WidgetBridge;
+    await expect(queryEvents(some, getRelays(['wss://dead.example']), { kinds: [32267] })).resolves.toEqual([
+      event,
+    ]);
+    const none = {
+      request: async (_: string, p: unknown) => ({
+        status: 'ok',
+        complete: false,
+        events: [event],
+        timedOutRelays: (p as { relays: string[] }).relays,
+      }),
+    } as unknown as WidgetBridge;
+    await expect(queryEvents(none, ['wss://dead.example'], { kinds: [32267] })).rejects.toThrow(
+      'incomplete on every relay: wss://dead.example: no EOSE'
+    );
   });
   it('reads NIP-34 relays tags whether multi-value or repeated', () => {
     const announcement = signed({

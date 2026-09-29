@@ -34,6 +34,7 @@
     events: [],
     loading: true,
     partial: false,
+    stalled: false,
     error: '',
   });
   let list = $state.raw<ListState>(emptyList());

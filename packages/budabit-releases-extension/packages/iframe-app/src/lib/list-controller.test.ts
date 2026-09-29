@@ -20,7 +20,7 @@ function host(events: NostrEvent[] = [], cache: unknown = null) {
   const unsubscribe = vi.fn(async () => ({ status: 'ok' }));
   const sub = { subscriptionId: 'host-id', unsubscribe };
   const subscribe = vi.fn(async () => sub);
-  const request = vi.fn(async (action: string) =>
+  const request = vi.fn(async (action: string, _payload?: unknown) =>
     action === 'nostr:query'
       ? { status: 'ok', complete: true, events }
       : { status: 'ok', data: cache }
@@ -154,6 +154,25 @@ describe('release list lifecycle and trust', () => {
     await session.ready;
     expect(state.events).toHaveLength(1);
     expect(state.partial).toBe(true);
+    expect(state.stalled).toBe(true);
+    await session.dispose();
+  });
+  it('is partial but not stalled when at least one relay completes', async () => {
+    const h = host();
+    h.request.mockImplementation(async (action: string, payload?: unknown) => {
+      if (action !== 'nostr:query') return { status: 'ok', data: null };
+      const relays = (payload as { relays: string[] }).relays;
+      return relays[0] === 'wss://relay.zapstore.dev'
+        ? { status: 'ok', complete: true, events: [signed(), releaseFixture()] }
+        : { status: 'ok', complete: false, events: [], timedOutRelays: relays };
+    });
+    let state!: ListState;
+    const session = startReleaseList(h.bridge, testRepo(), (next) => (state = next));
+    await session.ready;
+    expect(state.events).toHaveLength(1);
+    expect(state.partial).toBe(true);
+    expect(state.stalled).toBe(false);
+    expect(state.error).toContain('wss://relay.example: no EOSE');
     await session.dispose();
   });
 });
