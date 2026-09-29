@@ -21,7 +21,6 @@
   /** Context exactly as the host sent it; `repoContext` carries the announcement's relays instead. */
   let hostContext: RepoContext | null = null;
   let resolvingRelays = $state(false);
-  let relayNotice = $state('');
   let contextError = $state('');
   let contextRevision = 0;
 
@@ -75,7 +74,6 @@
     list = emptyList();
     if (!next || !bridge) {
       repoContext = next;
-      relayNotice = '';
       return;
     }
     // The announcement's relays only change with the repository or the host's hints.
@@ -91,16 +89,20 @@
     const revision = contextRevision;
     repoContext = null;
     resolvingRelays = true;
+    // Falling back to the host's hints is fine for users; the reason is for the console.
     resolveRepoRelays(bridge, next)
-      .then(({ context, notice }) => {
+      .then(({ context, notice, queried }) => {
         if (revision !== contextRevision) return;
         repoContext = context;
-        relayNotice = notice;
+        if (notice)
+          console.warn(`[releases] ${next.repoAddress}: ${notice} (queried ${queried.join(', ')})`);
       })
       .catch((err) => {
         if (revision !== contextRevision) return;
         repoContext = next;
-        relayNotice = `Repository announcement lookup failed (${err instanceof Error ? err.message : String(err)}); discovery and publication use the host's relay hints.`;
+        console.warn(
+          `[releases] ${next.repoAddress}: repository announcement lookup failed (${err instanceof Error ? err.message : String(err)}); discovery and publication use the host's relay hints.`
+        );
       })
       .finally(() => {
         if (revision === contextRevision) resolvingRelays = false;
@@ -239,7 +241,6 @@
       onCancel={handleBack}
     />
   {:else}
-    {#if relayNotice}<p role="status">{relayNotice}</p>{/if}
     <ReleaseList
       {list}
       onRetry={() => retryDiscovery++}
