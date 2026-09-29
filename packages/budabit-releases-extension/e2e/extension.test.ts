@@ -32,6 +32,10 @@ test.beforeEach(async ({ page, context }) => {
   await context.route('https://**/*', (route) =>
     route.fulfill({ contentType: 'text/plain', body: 'test' })
   );
+  // The fixture repository names github.com; answer its releases API with nothing by default.
+  await context.route('https://api.github.com/**', (route) =>
+    route.fulfill({ contentType: 'application/json', body: '[]' })
+  );
   await page.goto('/test-host/');
   await expect(
     page.frameLocator('iframe').getByRole('button', { name: 'New Release', exact: true })
@@ -589,4 +593,54 @@ test('does not reuse a stale file-check result after retrying asset metadata', a
   await expect(widget.getByRole('status')).toContainText('mismatch');
   await finishFileRead(widget);
   await expect(widget.getByRole('status')).toContainText('mismatch');
+});
+
+test('lists GitHub releases as unverified and imports one as a signed Nostr release', async ({
+  page,
+}) => {
+  const widget = page.frameLocator('iframe');
+  await page.route('https://api.github.com/**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 7,
+          tag_name: 'v2.0.0',
+          name: 'Two',
+          body: 'Notes for two',
+          html_url: 'https://github.com/owner/repo/releases/tag/v2.0.0',
+          draft: false,
+          prerelease: false,
+          published_at: '2026-09-01T00:00:00Z',
+          assets: [
+            {
+              name: 'app-2.0.0-linux-x86_64.AppImage',
+              size: 4,
+              content_type: 'application/octet-stream',
+              browser_download_url:
+                'https://github.com/owner/repo/releases/download/v2.0.0/app-2.0.0-linux-x86_64.AppImage',
+              digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+            },
+          ],
+        },
+      ]),
+    })
+  );
+  await widget.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(widget.getByRole('heading', { name: /Releases on GitHub/ })).toBeVisible();
+  await expect(widget.locator('.forge-card')).toHaveCount(1);
+  await expect(widget.locator('.forge-card')).toContainText('v2.0.0');
+  // Forge releases never join the signed list.
+  await expect(widget.locator('.release-card')).toHaveCount(1);
+  await widget.getByRole('button', { name: 'Import as Nostr release', exact: true }).click();
+  await expect(widget.getByLabel('Version', { exact: true })).toHaveValue('2.0.0');
+  await expect(widget.getByLabel('Release notes', { exact: true })).toHaveValue('Notes for two');
+  await expect(widget.getByText('Checksum published by GitHub')).toBeVisible();
+  await widget
+    .getByRole('combobox', { name: 'Application', exact: true })
+    .selectOption({ index: 1 });
+  await widget.getByRole('checkbox', { name: 'Include app-2.0.0-linux-x86_64.AppImage' }).check();
+  await widget.getByRole('button', { name: 'Publish Release', exact: true }).click();
+  await expect(widget.locator('.release-card')).toHaveCount(2);
+  await expect(widget.locator('.release-card').first()).toContainText('2.0.0');
 });

@@ -2,18 +2,25 @@
   import type { NostrEvent } from 'budabit-sdk';
   import { formatDate, parseReleaseListItem, platformLabel, tagValues } from '../releases.js';
   import type { ListState } from '../list-controller.js';
+  import { forgeLabel, type ForgeRelease, type ForgeState } from '../forge.js';
   let {
     list,
+    forge,
     onRetry,
+    onRefreshForge,
     isMaintainer,
     onViewRelease,
     onCreateRelease,
+    onImport,
   }: {
     list: ListState;
+    forge: ForgeState;
     onRetry: () => void;
+    onRefreshForge: () => void;
     isMaintainer: boolean;
     onViewRelease: (event: NostrEvent) => void;
     onCreateRelease: () => void;
+    onImport: (release: ForgeRelease) => void;
   } = $props();
   let version = $state(''),
     platform = $state('all'),
@@ -103,6 +110,43 @@
   {:else if !list.loading && !list.stalled}<p>
       No authorized releases found for this repository.
     </p>{/if}
+  {#if forge.repo}
+    <section class="forge" aria-label="Forge releases">
+      <h3>Releases on {forgeLabel(forge.repo)} <span class="unverified">unverified</span></h3>
+      <p>
+        Listed from
+        <a href={forge.repo.webUrl} target="_blank" rel="noopener noreferrer"
+          >{forge.repo.owner}/{forge.repo.name}</a
+        >
+        without authentication. These are not Nostr-signed and are not part of the release history
+        above. A maintainer can import one to publish it as a signed release.
+      </p>
+      <button onclick={onRefreshForge} disabled={forge.loading}>Refresh</button>
+      {#if forge.loading}<p>Loading forge releases…</p>{/if}
+      {#if forge.error}<p class="issue">{forge.error}</p>{/if}
+      {#if !forge.loading && !forge.error && forge.releases.length === 0}<p>No releases found.</p>{/if}
+      {#if forge.releases.length}
+        <ul>
+          {#each forge.releases as release (release.id)}
+            <li class="forge-card">
+              <strong>{release.name}</strong>
+              <span
+                >{release.tag}{release.prerelease ? ' · pre-release' : ''}{release.publishedAt
+                  ? ` · ${formatDate(release.publishedAt)}`
+                  : ''} · {release.assets.length} assets</span
+              >
+              {#if release.url}<a href={release.url} target="_blank" rel="noopener noreferrer"
+                  >View on {forgeLabel(forge.repo)}</a
+                >{/if}
+              {#if isMaintainer}<button onclick={() => onImport(release)}
+                  >Import as Nostr release</button
+                >{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 </div>
 
 <style>
@@ -166,6 +210,42 @@
   }
   strong {
     color: var(--ext-accent);
+  }
+  .forge {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--ext-border);
+  }
+  .forge h3 {
+    margin: 0 0 0.5rem;
+  }
+  .unverified {
+    font-size: 0.75rem;
+    font-weight: normal;
+    color: var(--ext-warning-text);
+    background: var(--ext-warning-bg);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    vertical-align: middle;
+  }
+  .forge ul {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+  }
+  .forge-card {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    align-items: center;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--ext-border);
+  }
+  .forge-card span {
+    color: var(--ext-text-muted);
+  }
+  .issue {
+    color: var(--ext-danger-text);
   }
   .notice {
     padding: 0.75rem;

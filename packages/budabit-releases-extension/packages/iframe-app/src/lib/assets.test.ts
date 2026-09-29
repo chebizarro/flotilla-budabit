@@ -41,6 +41,10 @@ describe('NIP-82 asset classification', () => {
     expect(platformsFromFilename('app-1.2.0-darwin-arm64.dmg', 'application/x-apple-diskimage')).toEqual(['darwin-arm64']);
     expect(platformsFromFilename('tool_linux_amd64', 'application/x-executable')).toEqual(['linux-x86_64']);
     expect(platformsFromFilename('tool-windows-x64.exe')).toEqual(['windows-x86_64']);
+    // Architecture tokens that themselves contain separators.
+    expect(platformsFromFilename('app-2.0.0-linux-x86_64.AppImage', 'application/vnd.appimage')).toEqual(['linux-x86_64']);
+    expect(platformsFromFilename('tool_darwin_x86_64', 'application/x-mach-binary')).toEqual(['darwin-x86_64']);
+    expect(platformsFromFilename('app-armeabi-v7a-release.apk', 'application/vnd.android.package-archive')).toEqual(['android-armeabi-v7a']);
     expect(platformsFromFilename('app-arm64-v8a-release.apk', 'application/vnd.android.package-archive')).toEqual(['android-arm64-v8a']);
     // Architecture alone: restricted to the MIME type's OS family, never guessed across families.
     expect(platformsFromFilename('app-arm64.dmg', 'application/x-apple-diskimage')).toEqual(['darwin-arm64']);
@@ -62,9 +66,10 @@ describe('NIP-82 asset classification', () => {
       mimeType: 'application/x-mach-binary',
       inferredMimeType: false,
     });
+    // OS and architecture named in the filename are inferred even without a MIME type.
     expect(classifyArtifact({ filename: 'tool-linux-x86_64', mimeType: undefined })).toMatchObject({
       mimeType: 'application/octet-stream',
-      platforms: [],
+      platforms: ['linux-x86_64'],
     });
     expect(
       classifyArtifact({ filename: 'app-linux-x86_64.AppImage', mimeType: '', platforms: ['linux-aarch64'] })

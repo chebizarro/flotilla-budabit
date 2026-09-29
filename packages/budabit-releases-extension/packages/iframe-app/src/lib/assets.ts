@@ -128,14 +128,22 @@ function joinPlatform(os: PlatformOs, arch: string): string {
  * "every architecture of the implied platform".
  */
 export function platformsFromFilename(filename: string, mimeType?: string): string[] {
-  const tokens = (filename.split(/[/\\]/).pop() ?? '')
+  // `x86_64` and `armeabi-v7a` contain separators, and `_`/`-` also separate
+  // words (`tool_linux_amd64`): consider the parts and adjacent pairs alike.
+  const parts = (filename.split(/[/\\]/).pop() ?? '')
     .toLowerCase()
     .replace(/\.[a-z0-9]+$/, '')
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
+  const tokens = [
+    ...parts,
+    ...parts.slice(1).flatMap((part, i) => [`${parts[i]}_${part}`, `${parts[i]}-${part}`]),
+  ];
   const allowedOs = (mimeType && NIP82_MIME_TYPES[mimeType]?.os) || undefined;
   const namedOs = tokens.map((t) => OS_TOKENS[t]).filter((os): os is PlatformOs => !!os);
   const candidates = namedOs.filter((os) => !allowedOs || allowedOs.includes(os));
+  // A filename naming an OS the MIME type cannot target is contradictory: guess nothing.
+  if (namedOs.length && !candidates.length) return [];
   // Without an OS token, fall back to the MIME type's OS family; WASI is only
   // ever chosen when the filename names it, as plain `.wasm` targets browsers.
   const osList = candidates.length ? candidates : (allowedOs ?? []).filter((os) => os !== 'wasi');

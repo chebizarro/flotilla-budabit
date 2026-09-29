@@ -79,6 +79,8 @@ const announcement = signed({
   tags: [
     ['d', repo.repoName],
     ['relays', ...repo.repoRelays],
+    ['clone', 'https://github.com/owner/repo.git'],
+    ['web', 'https://github.com/owner/repo'],
   ],
 });
 const data: NostrEvent[] = [announcement, app, asset, release, run, artifact, attacker];

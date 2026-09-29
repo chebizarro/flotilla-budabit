@@ -160,6 +160,10 @@ export interface Artifact {
   variant?: string;
   /** Maintainers who co-signed this hash from the Workflows "Attestations" tab. */
   attestedBy?: string[];
+  /** Forge release this asset was imported from (`<kind>:<host>/<owner>/<name>#<id>`). */
+  forgeRelease?: string;
+  /** Who published the checksum in `sha256` when it was not verified here (e.g. "GitHub"). */
+  checksumFrom?: string;
   // Enriched from pipeline run context
   pipelineRunId?: string;
   workflowName?: string;

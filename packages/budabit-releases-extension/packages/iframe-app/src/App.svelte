@@ -10,6 +10,13 @@
   } from './lib/context.js';
   import { startReleaseList, type ListState } from './lib/list-controller.js';
   import { resolveRepoRelays } from './lib/releases.js';
+  import {
+    fetchForgeReleases,
+    forgeRepoFromUrls,
+    type ForgeImport,
+    type ForgeRelease,
+    type ForgeState,
+  } from './lib/forge.js';
   import { coordinate } from './lib/trust.js';
   import ReleaseList from './lib/components/ReleaseList.svelte';
   import ReleaseDetail from './lib/components/ReleaseDetail.svelte';
@@ -39,6 +46,38 @@
   let list = $state.raw<ListState>(emptyList());
   let retryDiscovery = $state(0);
   const currentAuthority = () => list;
+
+  // ── Forge releases (GitHub/GitLab/Gitea, read-only, never authority) ────────
+  const emptyForge = (): ForgeState => ({ releases: [], loading: false, error: '' });
+  let forge = $state<ForgeState>(emptyForge());
+  let forgeRefresh = $state(0);
+  let importRelease = $state<ForgeImport | null>(null);
+  // Re-fetch only when the repository's own URLs change, not on every context push.
+  const forgeKey = $derived(JSON.stringify(repoContext?.repoUrls ?? []));
+  $effect(() => {
+    void forgeRefresh;
+    const repo = forgeRepoFromUrls(JSON.parse(forgeKey) as string[]);
+    if (!repo) {
+      forge = emptyForge();
+      return;
+    }
+    const controller = new AbortController();
+    forge = { repo, releases: [], loading: true, error: '' };
+    fetchForgeReleases(repo, { signal: controller.signal })
+      .then(({ kind, releases }) => {
+        if (!controller.signal.aborted) forge = { repo, kind, releases, loading: false, error: '' };
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted)
+          forge = {
+            repo,
+            releases: [],
+            loading: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+      });
+    return () => controller.abort();
+  });
   const currentEvent = $derived(
     selectedEvent && !list.loading
       ? list.events.find((e) => coordinate(e) === coordinate(selectedEvent!))
@@ -180,12 +219,20 @@
   }
 
   function handleCreateRelease() {
+    importRelease = null;
+    view = 'create';
+  }
+
+  function handleImport(release: ForgeRelease) {
+    if (!forge.repo || !forge.kind) return;
+    importRelease = { repo: forge.repo, kind: forge.kind, release };
     view = 'create';
   }
 
   function handleBack() {
     view = 'list';
     selectedEvent = null;
+    importRelease = null;
   }
 
   function handleCreateSuccess() {
@@ -237,16 +284,20 @@
       {bridge}
       repo={repoContext}
       existingApps={list.apps}
+      {importRelease}
       onSuccess={handleCreateSuccess}
       onCancel={handleBack}
     />
   {:else}
     <ReleaseList
       {list}
+      {forge}
       onRetry={() => retryDiscovery++}
+      onRefreshForge={() => forgeRefresh++}
       {isMaintainer}
       onViewRelease={handleViewRelease}
       onCreateRelease={handleCreateRelease}
+      onImport={handleImport}
     />
   {/if}
 </div>
