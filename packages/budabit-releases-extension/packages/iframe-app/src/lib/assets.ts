@@ -128,9 +128,7 @@ function joinPlatform(os: PlatformOs, arch: string): string {
  * "every architecture of the implied platform".
  */
 export function platformsFromFilename(filename: string, mimeType?: string): string[] {
-  const tokens = filename
-    .split(/[/\\]/)
-    .pop()!
+  const tokens = (filename.split(/[/\\]/).pop() ?? '')
     .toLowerCase()
     .replace(/\.[a-z0-9]+$/, '')
     .split(/[^a-z0-9]+/)
@@ -177,7 +175,7 @@ export function classifyArtifact(artifact: {
   const fromName = mimeTypeFromFilename(artifact.filename);
   const mimeType = isNip82MimeType(declared)
     ? declared
-    : (fromName ?? declared ?? 'application/octet-stream');
+    : (fromName ?? declared);
   const declaredPlatforms = (artifact.platforms ?? []).filter(Boolean);
   const platforms = declaredPlatforms.length
     ? declaredPlatforms
@@ -201,7 +199,7 @@ export interface AssetIssues {
 export function assetIssues(artifact: Artifact): AssetIssues {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const mimeType = artifact.mimeType?.trim() ?? '';
+  const mimeType = artifact.mimeType.trim();
   const platforms = [...new Set((artifact.platforms ?? []).filter(Boolean))];
   if (!HEX_KEY.test(artifact.sha256) || !safeAssetUrl(artifact.url))
     errors.push('Asset needs a valid SHA-256 and HTTPS URL');
