@@ -10,9 +10,10 @@ flotilla-budabit/
 ├── packages/
 │   ├── nostr-git-core/     # Core Git/Nostr library (NIP-34 implementation)
 │   ├── nostr-git-ui/       # Svelte 5 UI components for Git features
-│   ├── budabit-kanban-extension/  # Kanban board extension
 │   ├── budabit-pipelines-extension/  # Pipelines extension package
-│   └── flotilla-extension-template/
+│   ├── budabit-releases-extension/   # Releases extension package
+│   ├── welshman/           # Vendored Nostr workspace source
+│   └── flotilla-extension-template/  # In-tree template, SDK, and scaffold CLI
 ├── docs/                   # Project and architecture documentation
 ```
 
@@ -278,14 +279,24 @@ Notification settings are always available. Git email digest providers are disco
 
 ```
 Root Application
-├── @welshman/* (external) - Core Nostr functionality
+├── @welshman/* (vendored workspace) - Core Nostr functionality
 ├── @nostr-git/core (workspace) - Git/Nostr core library
 │   └── Uses: isomorphic-git, nostr-tools, comlink
 └── @nostr-git/ui (workspace) - Git/Nostr UI components
     └── Depends on: @nostr-git/core (workspace)
 ```
 
-The repository also contains extension packages such as `budabit-kanban-extension`, `budabit-pipelines-extension`, and `flotilla-extension-template`. They are development/distribution packages, not bundled built-ins in the app shell.
+The repository also contains `budabit-releases-extension`,
+`budabit-pipelines-extension`, and `flotilla-extension-template` as ordinary
+tracked workspaces. Their child packages share the root lockfile, and Releases
+and Pipelines link to the local `budabit-sdk` in the template. These are
+development/distribution packages, not bundled built-ins in the app shell.
+Core/UI are in-tree libraries and Welshman is a vendored subtree. There are no
+Git submodules. See the [workspace guide](../development/workspaces.md).
+
+Kanban is developed and tested in its [standalone repository](https://grasp.budabit.club/npub16p8v7varqwjes5hak6q7mz6pygqm4pwc6gve4mrned3xs8tz42gq7kfhdw/budabit-kanban-extension.git),
+outside Budabit's workspace and bootstrap. The host continues to support its
+Smart Widget protocol through the same extension bridge.
 
 **Data Flow:**
 

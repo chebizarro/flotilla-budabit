@@ -1,13 +1,8 @@
 import path from "node:path"
-import {existsSync} from "node:fs"
 import {fileURLToPath} from "node:url"
 import {defineConfig} from "vitest/config"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const kanbanRoot = path.resolve(__dirname, "packages/budabit-kanban-extension")
-// Keep the optional local project, but never load its config in CI. Vitest
-// resolves project configs even when the CLI selects only --project=main.
-const includeKanban = !process.env.CI && existsSync(path.join(kanbanRoot, "vitest.config.ts"))
 
 const rootAliases = {
   "@src": path.resolve(__dirname, "src"),
@@ -82,24 +77,12 @@ export default defineConfig({
           include: ["src/**/*.{test,spec}.ts"],
         },
       },
-      ...(includeKanban
-        ? [
-            {
-              extends: "./packages/budabit-kanban-extension/vitest.config.ts",
-              root: kanbanRoot,
-              test: {
-                name: "budabit-kanban-extension",
-                include: ["packages/shared/src/**/*.{test,spec}.ts"],
-              },
-            },
-          ]
-        : []),
       {
         extends: "./packages/budabit-pipelines-extension/vitest.config.ts",
         root: path.resolve(__dirname, "packages/budabit-pipelines-extension"),
         test: {
           name: "budabit-pipelines-extension",
-          include: ["packages/shared/src/**/*.{test,spec}.ts"],
+          include: ["packages/iframe-app/src/**/*.{test,spec}.ts"],
         },
       },
       {
@@ -107,7 +90,23 @@ export default defineConfig({
         root: path.resolve(__dirname, "packages/flotilla-extension-template"),
         test: {
           name: "flotilla-extension-template",
-          include: ["packages/shared/src/**/*.{test,spec}.ts"],
+          include: ["packages/{shared,manifest,test-utils,worker}/src/**/*.{test,spec}.ts"],
+        },
+      },
+      {
+        extends: "./packages/flotilla-extension-template/packages/sdk/vitest.config.ts",
+        root: path.resolve(__dirname, "packages/flotilla-extension-template/packages/sdk"),
+        test: {
+          name: "budabit-sdk",
+          include: ["src/**/*.test.ts"],
+        },
+      },
+      {
+        extends: "./packages/budabit-releases-extension/vitest.config.ts",
+        root: path.resolve(__dirname, "packages/budabit-releases-extension"),
+        test: {
+          name: "budabit-releases-extension",
+          include: ["packages/iframe-app/src/**/*.{test,spec}.ts"],
         },
       },
     ],

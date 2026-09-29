@@ -1,8 +1,8 @@
 <style>
   .extension-panel {
     width: 100%;
-    height: calc(100vh - 4rem);
-    min-height: 600px;
+    /* Fill the repository viewport, while allowing content-sized widgets to grow. */
+    flex: 1 0 auto;
     border: 1px solid hsl(var(--ng-border, 214 30% 84%));
     border-radius: 12px;
     overflow: hidden;
@@ -37,7 +37,8 @@
 
   .extension-iframe {
     width: 100%;
-    flex: 1 1 auto;
+    flex: 1 0 auto;
+    height: var(--extension-height, 600px);
     min-height: 0;
     border: none;
     display: block;
@@ -69,6 +70,9 @@
     SECURE_EMBED_URL_REQUIREMENT,
   } from "@app/extensions/url-policy"
   import {postRepoTabContext, postRepoTabInit} from "@app/extensions/repo-tab-context"
+  import {activeUserCommunityRefs, activePreferredCommunities} from "@app/core/community-state"
+  import {selectRepoCiWatchers} from "@app/extensions/ci-watchers"
+  import {MAX_REPO_TAB_RESIZE_HEIGHT} from "@app/extensions/host-capabilities"
   import {theme} from "@app/util/theme"
   import ExtensionIcon from "@app/components/ExtensionIcon.svelte"
   import Spinner from "@lib/components/Spinner.svelte"
@@ -96,14 +100,21 @@
 
     const routeSegment = normalizeRepoTabRouteSegment(extRouteSegment)
 
+    // Prefer enabled widgets: a disabled default must not shadow an enabled
+    // extension claiming the same repo-tab path. Fall back to the first
+    // disabled match so its path still renders the "Disabled" card.
+    let disabledMatch: {id: string; extension: SmartWidgetEvent} | undefined
+
     for (const [widgetId, installedWidget] of Object.entries(settings.installed.widget || {})) {
       if (installedWidget.slot?.type !== "repo-tab") continue
-      if (normalizeRepoTabRouteSegment(installedWidget.slot.path) === routeSegment) {
+      if (normalizeRepoTabRouteSegment(installedWidget.slot.path) !== routeSegment) continue
+      if (settings.enabled.includes(widgetId)) {
         return {id: widgetId, extension: installedWidget as SmartWidgetEvent}
       }
+      disabledMatch ??= {id: widgetId, extension: installedWidget as SmartWidgetEvent}
     }
 
-    return undefined
+    return disabledMatch
   })
   const resolvedExtId = $derived(resolvedExtension?.id || extRouteSegment)
   const extension = $derived(resolvedExtension?.extension)
@@ -142,6 +153,7 @@
   let error = $state<string | null>(null)
   let retryCount = $state(0)
   let iframeSrc = $state<string | undefined>(undefined)
+  let iframeHeight = $state<number | undefined>(undefined)
   let initializedOrigin = ""
 
   // Tracks which extension entrypoint the iframe is currently bound to so
@@ -157,6 +169,7 @@
       ready = false
       currentFrameKey = undefined
       iframeSrc = undefined
+      iframeHeight = undefined
       return
     }
 
@@ -177,13 +190,30 @@
       error = null
       loading = true
       retryCount = 0
+      iframeHeight = undefined
       currentFrameKey = frameKey
-      iframeSrc = secureExtEntrypoint
+      const frameUrl = new URL(secureExtEntrypoint)
+      // Pass the initial deep link without requiring cross-origin parent reads.
+      if (/^#run-[0-9a-f]{64}$/.test(window.location.hash)) {
+        frameUrl.hash = window.location.hash
+      }
+      iframeSrc = frameUrl.toString()
     }
   })
 
   function buildRepoContext(): RepoContext | undefined {
-    return buildRepoExtensionContext(repoClass, naddr, repoRelays)
+    const context = buildRepoExtensionContext(repoClass, naddr, repoRelays)
+    if (!context) return undefined
+    return {
+      ...context,
+      ciWatchers: $pubkey
+        ? selectRepoCiWatchers(
+            $activeUserCommunityRefs,
+            $activePreferredCommunities,
+            repoClass.community,
+          )
+        : [],
+    }
   }
 
   function createExtensionInstance(): LoadedWidgetExtension | null {
@@ -199,6 +229,11 @@
       id: identifier,
       origin,
       repoContext,
+      onResizeRequest: ({height}) => {
+        if (height !== undefined) {
+          iframeHeight = Math.min(MAX_REPO_TAB_RESIZE_HEIGHT, Math.max(1, Math.ceil(height)))
+        }
+      },
       widget: {
         id: `ext-${identifier}`,
         kind: 30033,
@@ -319,6 +354,7 @@
     extInstance = null
     ready = false
     retryCount++
+    iframeHeight = undefined
     // Force iframe reload by updating src with cache buster
     if (secureExtEntrypoint) {
       const url = new URL(secureExtEntrypoint)
@@ -450,7 +486,9 @@
     </div>
   </Card>
 {:else}
-  <div class="extension-panel">
+  <div
+    class="extension-panel"
+    style:--extension-height={iframeHeight === undefined ? undefined : `${iframeHeight}px`}>
     {#if error}
       <div class="extension-error">
         <div class="flex items-center justify-between gap-4">
@@ -474,6 +512,7 @@
         class="extension-iframe"
         class:loading
         sandbox={REPO_TAB_SANDBOX}
+        allow="clipboard-write"
         onload={handleIframeLoad}
         onerror={handleIframeError}></iframe>
     {/key}

@@ -10,7 +10,10 @@
     "nostr:subscribe",
     "nostr:sign",
     "nostr:nip44Encrypt",
-    "ui:toast"
+    "nostr:nip44Decrypt",
+    "ui:toast",
+    "ui:navigate",
+    "ui:resize"
   ],
   "entrypoint": "http://localhost:5173/",
   "slot": {

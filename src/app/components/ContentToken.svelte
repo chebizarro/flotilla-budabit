@@ -1,12 +1,13 @@
 <style>
   .payment-card {
+    /* An explicit preferred width keeps size containment from collapsing DM bubbles. */
     container-type: inline-size;
   }
   .payment-card :global(.payment-primary) {
     flex: 1 0 100%;
   }
   .payment-card :global(.payment-secondary) {
-    flex: 1 1 0;
+    flex: 1 0 auto;
   }
   @container (min-width: 350px) {
     .payment-card :global(.payment-primary) {
@@ -25,6 +26,15 @@
   import PaymentQRCode from "@app/components/PaymentQRCode.svelte"
   import WalletPay from "@app/components/WalletPay.svelte"
   import CashuTokenRedeemFlow from "@app/components/CashuTokenRedeemFlow.svelte"
+  import CashuTokenStatus from "@app/components/CashuTokenStatus.svelte"
+  import ClickHelp from "@lib/components/ClickHelp.svelte"
+  import {
+    cashuInitialized,
+    cashuTokenStatuses,
+    cashuTokenDisplayKey,
+    loadCashuTokenStatus,
+    checkCashuTokenStatus,
+  } from "@app/core/cashu"
   import {
     getCashuMintDisplayName,
     getCashuTokenInfo,
@@ -35,11 +45,32 @@
   import {pushModal} from "@app/util/modal"
   import {copyToClipboard} from "@lib/html"
   import {CASHU_WALLET_ENABLED} from "@app/core/feature-flags"
+  import type {CashuTokenStatus as TokenStatus} from "@app/core/cashu-token-status"
 
   const {value}: {value: string} = $props()
   const uid = $props.id()
   let now = $state(Date.now())
   const cashu = $derived(getCashuTokenInfo(value))
+  let lastStatus: {key: string; status: TokenStatus} | undefined = $state()
+  const statusKey = $derived(cashu ? cashuTokenDisplayKey(cashu.token) : "")
+  const tokenStatus = $derived(
+    $cashuInitialized
+      ? $cashuTokenStatuses[statusKey] ||
+          (lastStatus?.key === statusKey ? lastStatus.status : undefined)
+      : undefined,
+  )
+  $effect(() => {
+    if (!$cashuInitialized) lastStatus = undefined
+    else if ($cashuTokenStatuses[statusKey])
+      lastStatus = {key: statusKey, status: $cashuTokenStatuses[statusKey]}
+  })
+  const received = $derived(tokenStatus?.received?.amount ?? null)
+  const unavailable = $derived(
+    tokenStatus?.check?.state === "spent" ||
+      tokenStatus?.outgoing?.state === "spent" ||
+      tokenStatus?.outgoing?.state === "reclaimed",
+  )
+  const hideTokenActions = $derived(received !== null || unavailable)
   const invoice = $derived(getLightningInvoiceInfo(value))
   const payload = $derived(cashu ? cashu.token.replace(/^cashu:/i, "") : invoice?.invoice || value)
   const payment = $derived(invoice ? $invoicePayments[invoice.paymentHash] : undefined)
@@ -60,7 +91,7 @@
 
   let showQR = $state(false)
   let copied = $state(false)
-  let received = $state<number | null>(null)
+  let statusError = $state("")
   let copyError = $state("")
   let copyTimer: ReturnType<typeof setTimeout> | undefined
   onDestroy(() => clearTimeout(copyTimer))
@@ -69,8 +100,27 @@
     void value
     showQR = false
     copied = false
-    received = null
+    statusError = ""
     copyError = ""
+  })
+  $effect(() => {
+    if (!cashu || !$cashuInitialized) return
+    const token = cashu.token
+    let controller = new AbortController()
+    const refresh = () => {
+      controller.abort()
+      if (document.hidden) return
+      controller = new AbortController()
+      void loadCashuTokenStatus(token, {signal: controller.signal})?.catch(() => {})
+    }
+    refresh()
+    window.addEventListener("focus", refresh)
+    document.addEventListener("visibilitychange", refresh)
+    return () => {
+      controller.abort()
+      window.removeEventListener("focus", refresh)
+      document.removeEventListener("visibilitychange", refresh)
+    }
   })
   $effect(() => {
     if (!invoice) return
@@ -112,13 +162,17 @@
   const receive = (event: Event) => {
     stop(event)
     if (!cashu) return
-    const original = value
-    pushModal(CashuTokenRedeemFlow, {
-      token: cashu.token,
-      onredeemed: ({amount}: {amount: number}) => {
-        if (value === original) received = amount
-      },
-    })
+    pushModal(CashuTokenRedeemFlow, {token: cashu.token})
+  }
+  const checkToken = async (event: Event) => {
+    stop(event)
+    if (!cashu) return
+    statusError = ""
+    try {
+      await checkCashuTokenStatus(cashu.token)
+    } catch {
+      statusError = "Unlock your wallet, then try checking again."
+    }
   }
 </script>
 
@@ -128,8 +182,8 @@
     aria-label={cashu ? "Cashu token" : "Lightning invoice"}
     data-payment-card={cashu ? "cashu" : "lightning"}
     data-stop-tap
-    class="payment-card my-2 inline-flex w-full max-w-[26rem] flex-col gap-4 overflow-hidden rounded-2xl border border-base-content/10 bg-base-100 p-4 text-left align-top text-sm leading-normal shadow-sm">
-    <span class="flex items-center justify-between gap-2">
+    class="payment-card my-2 inline-flex w-[26rem] max-w-full flex-col gap-4 overflow-hidden rounded-2xl border border-base-content/10 bg-base-100 p-4 text-left align-top text-sm leading-normal shadow-sm">
+    <span class="flex flex-wrap items-center justify-between gap-2">
       <span class="flex items-center gap-2 text-xs font-medium text-base-content/70">
         <span
           class="flex size-8 shrink-0 items-center justify-center rounded-xl bg-warning/10 text-warning">
@@ -137,10 +191,12 @@
         </span>
         {cashu ? "Cashu token" : "Lightning invoice"}
       </span>
-      {#if received !== null || paid}
+      {#if cashu && tokenStatus && (tokenStatus.received || tokenStatus.receiving || tokenStatus.outgoing || tokenStatus.check)}
+        <CashuTokenStatus status={tokenStatus} />
+      {:else if paid}
         <span
           class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-1 text-xs font-medium text-success"
-          ><Check size={12} />{cashu ? "Received" : "Paid"}</span>
+          ><Check size={12} />Paid</span>
       {:else if pending}
         <span class="rounded-full bg-warning/10 px-2 py-1 text-xs text-warning">Pending</span>
       {:else if invoice}
@@ -179,10 +235,16 @@
       {#if cashu && CASHU_WALLET_ENABLED && cashu.unit === "sat"}
         <Button
           class="payment-primary btn btn-primary btn-sm min-h-10 grow justify-center gap-2"
-          onclick={receive}
-          disabled={received !== null}>
-          {#if received !== null}<Check size={15} />Received{:else}<Wallet size={15} />Receive in
-            Cashu{/if}
+          onclick={tokenStatus?.outgoing && received === null && !tokenStatus.receiving
+            ? checkToken
+            : receive}
+          disabled={received === null && (unavailable || tokenStatus?.checking)}>
+          {#if received !== null}<Check size={15} />View receipt
+          {:else if tokenStatus?.outgoing?.state === "reclaimed"}Returned to wallet
+          {:else if unavailable}Already redeemed
+          {:else if tokenStatus?.receiving}Check receipt
+          {:else if tokenStatus?.outgoing}{tokenStatus.checking ? "Checking…" : "Check status"}
+          {:else}<Wallet size={15} />Receive in Cashu{/if}
         </Button>
       {:else if invoice}
         <Button
@@ -194,25 +256,33 @@
               : "Pay with wallet"}{/if}
         </Button>
       {/if}
-      <Button
-        class="payment-secondary btn btn-ghost btn-sm min-h-10 justify-center gap-1.5"
-        onclick={copy}
-        aria-label={cashu ? "Copy Cashu token" : "Copy Lightning invoice"}>
-        {#if copied}<Check size={14} />{:else}<Copy size={14} />{/if}{copied ? "Copied" : "Copy"}
-      </Button>
-      <Button
-        class="payment-secondary btn btn-ghost btn-sm min-h-10 justify-center gap-1.5"
-        aria-expanded={showQR}
-        aria-controls={uid + "-qr"}
-        onclick={event => {
-          stop(event)
-          showQR = !showQR
-        }}>
-        <QrCode size={14} />{showQR ? "Hide QR" : "Show QR"}
-      </Button>
+      {#if !hideTokenActions}<Button
+          class="payment-secondary btn btn-ghost btn-sm min-h-10 justify-center gap-1.5"
+          onclick={copy}
+          aria-label={cashu ? "Copy Cashu token" : "Copy Lightning invoice"}>
+          {#if copied}<Check size={14} />{:else}<Copy size={14} />{/if}{copied ? "Copied" : "Copy"}
+        </Button>
+        <Button
+          class="payment-secondary btn btn-ghost btn-sm min-h-10 justify-center gap-1.5"
+          aria-expanded={showQR}
+          aria-controls={uid + "-qr"}
+          onclick={event => {
+            stop(event)
+            showQR = !showQR
+          }}>
+          <QrCode size={14} />{showQR ? "Hide QR" : "Show QR"}
+        </Button>{/if}
     </span>
 
-    {#if showQR}
+    {#if tokenStatus?.checkError || statusError}
+      <span class="text-warning"
+        ><ClickHelp
+          label="Couldn't check status"
+          text={statusError ||
+            "The mint couldn't be reached. Any status shown is from the last successful check. Try again shortly."} /></span>
+    {/if}
+
+    {#if showQR && !hideTokenActions}
       <span id={uid + "-qr"}>
         {#key payload}<PaymentQRCode
             value={invoice ? payload.toUpperCase() : payload}

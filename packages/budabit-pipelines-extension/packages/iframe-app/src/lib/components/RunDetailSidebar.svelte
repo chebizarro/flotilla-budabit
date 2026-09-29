@@ -1,7 +1,9 @@
 <script lang="ts">
+  import {getContext} from 'svelte'
+  import {HOST_ACTIONS, type HostActions} from '../host-actions'
   import {ChevronDown, Copy, ExternalLink, GitBranch, GitCommit, Server} from '@lucide/svelte'
   import {shortId} from '../presentation'
-  import {isFreeRun, publicLinkForRun} from '../workflows'
+  import {isFreeRun} from '../workflows'
   import ReclaimBadge from './ReclaimBadge.svelte'
   import type {WorkflowRun, LoomWorker, ReclaimUiState} from '../types'
 
@@ -26,6 +28,7 @@
     copyText,
     onReclaim,
   }: Props = $props()
+  const hostActions = getContext<HostActions>(HOST_ACTIONS)
 
   const fmt = (n: number | null | undefined, sign: '' | '+' | '−' = '') =>
     n === null || n === undefined ? '—' : `${sign}${n.toLocaleString()} sats`
@@ -62,14 +65,12 @@
           onclick={() => void copyText(run.id, 'Run ID')}>
           <Copy class="h-3 w-3" />
         </button>
-        <a
+        <button
           class="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           title="Open event"
-          href={publicLinkForRun(run.id)}
-          target="_blank"
-          rel="noreferrer">
+          onclick={() => hostActions.openEvent(run.id)}>
           <ExternalLink class="h-3 w-3" />
-        </a>
+        </button>
       </div>
       {#if run.workflowPath}
         <div class="truncate text-xs text-muted-foreground" title={run.workflowPath}>
@@ -98,14 +99,12 @@
             onclick={() => void copyText(worker.pubkey, 'Worker pubkey')}>
             <Copy class="h-3 w-3" />
           </button>
-          <a
+          <button
             class="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             title="Open profile"
-            href={`nostr:${worker.pubkey}`}
-            target="_blank"
-            rel="noreferrer">
+            onclick={() => hostActions.openProfile(worker.pubkey)}>
             <ExternalLink class="h-3 w-3" />
-          </a>
+          </button>
         </div>
         <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {#if worker.architecture}<span>{worker.architecture}</span>{/if}
@@ -122,13 +121,16 @@
           {#if isFreeRun(run)}
             <span class="font-mono font-semibold text-green-400 group-open:hidden">free</span>
           {:else}
-            <span class="font-mono font-semibold text-foreground group-open:hidden">{fmt(actualCost)}</span>
+            <span class="font-mono font-semibold text-foreground group-open:hidden">{actualCost === null ? 'Unconfirmed' : fmt(actualCost)}</span>
           {/if}
           <ChevronDown class="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-180" />
         </span>
       </summary>
 
       <div class="mt-3 space-y-1.5">
+        {#if actualCost === null && prepaidAmount !== null}
+          <p class="pb-2 text-xs text-muted-foreground">Prepayment is a token attached to the request. It does not confirm that the worker received or redeemed it.</p>
+        {/if}
         <div class="flex items-center justify-between text-xs">
           <span class="text-muted-foreground">Prepayment</span>
           <span class="font-mono text-red-400">{plain(prepaidAmount, '−')}</span>
@@ -151,7 +153,7 @@
     </details>
 
     {#if reclaim}
-      <section class="flex items-center justify-between gap-2 pt-3">
+      <section class="flex flex-wrap items-center justify-between gap-2 pt-3">
         <span class="text-xs font-semibold text-muted-foreground">
           {reclaim.kind === 'change' ? 'Change' : 'Refund'}
         </span>
@@ -161,8 +163,15 @@
           amount={reclaim.amount}
           rateLimitUntil={reclaim.rateLimitUntil}
           error={reclaim.error}
+          manualOnly={reclaim.manualOnly}
           interactive
           onclick={onReclaim} />
+        {#if reclaim.manualOnly}
+          <p class="w-full text-xs text-muted-foreground">Returns the original payment only if it is still unspent. A successful reclaim makes that token unusable by the worker; this does not send a job cancellation.</p>
+        {/if}
+        {#if reclaim.status === 'failed' && reclaim.error}
+          <p class="w-full break-words text-xs text-red-300">{reclaim.error}</p>
+        {/if}
       </section>
     {/if}
   </div>

@@ -1,5 +1,6 @@
 import {pubkey as activeUserPubkey, publishThunk, repository, signer} from "@welshman/app"
-import {goto} from "$app/navigation"
+import {goto, replaceState} from "$app/navigation"
+import {page} from "$app/stores"
 import {PublishStatus} from "@welshman/net"
 import {
   EVENT_DATE,
@@ -2445,6 +2446,12 @@ registerBridgeHandler("ui:navigate", async (payload, ext) => {
   // if (ext) console.log(`[bridge] ui:navigate from ${ext.id}`, payload)
   try {
     const path = typeof payload?.path === "string" ? payload.path.trim() : ""
+    // Fragment updates stay on the host page and preserve router history state.
+    // Widgets cannot mutate parent.location from their sandbox.
+    if (path.startsWith("#")) {
+      replaceState(path, get(page).state)
+      return {status: "ok"}
+    }
     if (!path || !path.startsWith("/") || path.startsWith("//")) {
       throw new Error("Invalid navigation path")
     }
@@ -2715,6 +2722,7 @@ registerBridgeHandler("context:getRepo", (payload, ext) => {
         naddr: ext.repoContext.naddr,
         relays: ext.repoContext.relays,
         maintainers: ext.repoContext.maintainers,
+        ciWatchers: ext.repoContext.ciWatchers,
         address: getRepoAddress(ext.repoContext), // Canonical "30617:pubkey:name" format
         // The push-based context:update event is the primary carrier of the
         // signed-in user's pubkey, but it can be lost if the host sends it
@@ -2777,6 +2785,7 @@ registerBridgeHandler("nostr:nip44Encrypt", async (payload, ext) => {
       throw new Error("Invalid plaintext: expected string")
     }
 
+    assertExpectedScope(payload, ext, true)
     const $signer = signer.get()
     if (!$signer) {
       throw new Error("No active signer available")
@@ -2786,9 +2795,39 @@ registerBridgeHandler("nostr:nip44Encrypt", async (payload, ext) => {
     }
 
     const ciphertext = await $signer.nip44.encrypt(recipientPubkey, plaintext)
+    assertExpectedScope(payload, ext, true)
     return {status: "ok", ciphertext}
   } catch (err: any) {
     console.error("Error in nostr:nip44Encrypt bridge handler:", err)
+    return {error: err.message}
+  }
+})
+
+registerBridgeHandler("nostr:nip44Decrypt", async (payload, ext) => {
+  if (ext) console.log(`[bridge] nostr:nip44Decrypt from ${ext.id}`)
+  try {
+    const {senderPubkey, ciphertext} = payload || {}
+    if (typeof senderPubkey !== "string" || senderPubkey.length !== 64) {
+      throw new Error("Invalid senderPubkey: expected 64-char hex string")
+    }
+    if (typeof ciphertext !== "string") {
+      throw new Error("Invalid ciphertext: expected string")
+    }
+
+    assertExpectedScope(payload, ext, true)
+    const $signer = signer.get()
+    if (!$signer) {
+      throw new Error("No active signer available")
+    }
+    if (!$signer.nip44) {
+      throw new Error("Active signer does not support NIP-44 decryption")
+    }
+
+    const plaintext = await $signer.nip44.decrypt(senderPubkey, ciphertext)
+    assertExpectedScope(payload, ext, true)
+    return {status: "ok", plaintext}
+  } catch (err: any) {
+    console.error("Error in nostr:nip44Decrypt bridge handler:", err)
     return {error: err.message}
   }
 })

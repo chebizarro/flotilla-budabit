@@ -1,0 +1,43 @@
+name: Contributor bootstrap
+
+on:
+  push:
+    branches: [dev, main, master]
+  pull_request:
+    branches: [dev, main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify self-contained checkout
+        run: |
+          test ! -e .gitmodules
+          test -z "$(git ls-files --stage | grep '^160000 ' || true)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - run: pnpm install --frozen-lockfile
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+      - run: pnpm check
+      - run: pnpm exec vitest run --project=main tests/ci-extensions.test.ts
+      - run: pnpm build:extensions
+      - run: pnpm check:extensions
+      - run: pnpm test:extensions
+      - run: pnpm --filter budabit-releases-extension run lint
+      - run: pnpm --filter budabit-releases-extension run test:coverage
+      - run: pnpm build
+      - name: Verify bootstrap leaves tracked files clean
+        run: git diff --exit-code --ignore-submodules=none

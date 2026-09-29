@@ -5,8 +5,8 @@ Budabit is a community-first Nostr client for social Git collaboration.
 ## Prerequisites
 
 - **Node.js**: This project requires Node.js LTS (Jod) as specified in `.nvmrc`
-- **pnpm**: Package manager for Node.js
-- **Git**: For cloning and submodule management
+- **pnpm**: Version **10.12.4**, pinned in `package.json`
+- **Git**: For cloning and contributing
 
 ## Setup Instructions
 
@@ -36,8 +36,8 @@ node --version
 ### 2. Install pnpm
 
 ```bash
-# Install pnpm globally
-npm install -g pnpm
+# Install the version pinned by this repository
+npm install -g pnpm@10.12.4
 
 # Verify installation
 pnpm --version
@@ -46,29 +46,30 @@ pnpm --version
 ### 3. Clone the Repository
 
 ```bash
-# Clone the repository
-git clone https://github.com/Pleb5/flotilla-budabit.git budabit
+# Clone the development branch, including all package sources
+git clone --branch dev https://github.com/Pleb5/flotilla-budabit.git budabit
 cd budabit
+# Create a branch for your contribution
+git switch -c my-feature
 ```
 
-### 4. Initialize Git Submodules
+Budabit is a self-contained monorepo: **Releases, Pipelines, the extension
+template/SDK, nostr-git core/UI, and Welshman** are ordinary tracked source under
+`packages/`. A plain clone includes everything; no Git submodule initialization
+is required. All packages use the root pnpm workspace and lockfile. See the
+[workspace guide](docs/development/workspaces.md) for package commands and ownership.
 
-This project includes multiple Git submodules (nostr-git core/ui and extension workspaces):
+Kanban is maintained in its [standalone repository](https://grasp.budabit.club/npub16p8v7varqwjes5hak6q7mz6pygqm4pwc6gve4mrned3xs8tz42gq7kfhdw/budabit-kanban-extension.git)
+and is not part of Budabit's clone, workspace, or test setup.
+
+### 4. Install Dependencies
 
 ```bash
-# Sync submodule remotes from .gitmodules and fetch pinned commits
-git submodule sync --recursive
-git submodule update --init --recursive
+# Install all workspaces (also builds core/UI and the local bridge/SDK exports)
+pnpm install --frozen-lockfile
 ```
 
-### 5. Install Dependencies
-
-```bash
-# Install all dependencies
-pnpm install
-```
-
-### 6. Start Development Server
+### 5. Start Development Server
 
 ```bash
 # Start the app and rebuild local core/UI dependencies as they change
@@ -174,12 +175,11 @@ pnpm install
 rm -rf .svelte-kit
 ```
 
-**Submodule mismatch errors**: Make sure submodule remotes are synced and pinned commits are fetched:
-
-```bash
-git submodule sync --recursive
-git submodule update --init --recursive
-```
+**Old checkout migration**: Current revisions have no Git submodules. If an old
+checkout reports `not our ref` or untracked files blocking a rebase, follow the
+[migration guide](CONTRIBUTING.md#updating-and-migrating-older-checkouts) before
+crossing the template/core/UI conversions. A fresh plain clone of `dev` avoids
+legacy submodule worktrees.
 
 **Node.js version issues**: Ensure you're using the correct Node.js version:
 
@@ -191,14 +191,14 @@ node --version
 nvm use lts/jod
 ```
 
-**Submodule issues**: If submodules are in a broken local state:
+**Sharp/libvips installation errors**: A system-installed libvips can trigger a
+Sharp source build and a missing `node-gyp` error. Use the prebuilt binaries:
 
 ```bash
-# Remove and reinitialize submodules
-git submodule deinit -f --all
-git submodule sync --recursive
-git submodule update --init --recursive
+SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --frozen-lockfile
 ```
+
+The production install script already sets this variable.
 
 ## Development
 
@@ -219,6 +219,12 @@ pnpm lint
 # Format code
 pnpm format
 ```
+
+For widget development, use `pnpm dev:releases`, `pnpm dev:pipelines`, or
+`pnpm dev:template` in another terminal. `pnpm build:extensions`,
+`pnpm check:extensions`, and `pnpm test:extensions` cover the in-tree widgets and
+template/SDK. Widget HTML is built separately from the host app; installing a
+published Smart Widget still uses the normal extension flow.
 
 For testing the dev server from a phone over a VPS tunnel (with remote console/network debugging, including ocmux profile setup), see `docs/ops/phone-dev-vps.md`.
 
@@ -252,11 +258,9 @@ If you want the shortest path for running your own instance, read `docs/ops/self
 To run your own Budabit instance, it's as simple as:
 
 ```sh
-# Install dependencies (including submodules)
-git clone https://github.com/Pleb5/flotilla-budabit.git budabit
+# Clone production and its package sources
+git clone --branch master https://github.com/Pleb5/flotilla-budabit.git budabit
 cd budabit
-git submodule sync --recursive
-git submodule update --init --recursive
 
 # Build for production (installs deps, rebuilds native modules, then runs build.sh)
 pnpm run build-in-production
@@ -267,14 +271,15 @@ npx serve -s build
 
 `build-in-production.sh` wraps the full production flow, including dependency install and native rebuilds.
 
-For frequent self-hosted updates:
+For self-hosted updates without local source commits (branding can stay in `.env`):
 
 ```sh
-git pull --rebase
-git submodule sync --recursive
-git submodule update --init --recursive
+git pull --ff-only
 pnpm run build-in-production
 ```
+
+For deployments with local commits or an old submodule layout, use the
+[contributor update/migration procedure](CONTRIBUTING.md#updating-and-migrating-older-checkouts).
 
 Or, if you prefer to use a container, build and run the local Dockerfile. The runtime image exposes port `1847` and honors `PORT`:
 

@@ -2,6 +2,7 @@
   import {ChevronRight, Clock, GitBranch, GitCommit, RotateCw} from '@lucide/svelte'
   import {formatDuration, formatExactTime, formatTimeAgo, getStatusBadge, getStatusColor, getStatusIcon, shortId} from '../presentation'
   import {statusLabel} from '../workflows'
+  import {deliveryStatusLabel} from '../run-delivery'
   import UserDisplay from './UserDisplay.svelte'
   import type {WorkflowRun} from '../types'
 
@@ -10,19 +11,28 @@
     selected?: boolean
     divider?: boolean
     refreshing?: boolean
+    now?: number
     onSelect: () => void
   }
 
-  const {run, selected = false, divider = false, refreshing = false, onSelect}: Props = $props()
+  const {run, selected = false, divider = false, refreshing = false, now = Date.now(), onSelect}: Props = $props()
 
   const visualOpts = $derived({inferred: run.inferredFailure})
   const StatusIcon = $derived(getStatusIcon(run.status, visualOpts))
   const spinning = $derived(run.status === 'running' || run.status === 'in_progress')
 </script>
 
-<button
+<div
+  role="button"
+  tabindex="0"
   class={`group flex w-full items-start gap-4 px-4 py-3 text-left transition-colors hover:bg-accent/40 sm:items-center ${divider ? 'border-t border-border' : ''} ${selected ? 'bg-accent/30' : ''}`}
-  onclick={onSelect}>
+  onclick={onSelect}
+  onkeydown={event => {
+    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault()
+      onSelect()
+    }
+  }}>
   <div class={`shrink-0 pt-0.5 sm:pt-0 ${getStatusColor(run.status, visualOpts)}`}>
     {#if spinning}
       <RotateCw class="h-5 w-5 animate-spin" />
@@ -79,8 +89,8 @@
         {/if}
       </div>
 
-      <span class={`hidden w-24 shrink-0 items-center justify-center rounded-full border px-2 py-0.5 font-medium md:inline-flex ${getStatusBadge(run.status, visualOpts)}`}>
-        {statusLabel(run.status)}
+      <span class={`inline-flex shrink-0 items-center justify-center rounded-full border px-2 py-0.5 font-medium ${getStatusBadge(run.status, visualOpts)}`}>
+        {deliveryStatusLabel(run, now) ?? statusLabel(run.status)}
       </span>
     </div>
   </div>
@@ -88,4 +98,4 @@
   <div class="shrink-0 pt-0.5 text-muted-foreground transition-colors group-hover:text-foreground sm:pt-0">
     <ChevronRight class="h-5 w-5" />
   </div>
-</button>
+</div>

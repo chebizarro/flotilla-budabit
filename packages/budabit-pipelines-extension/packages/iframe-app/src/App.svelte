@@ -1,12 +1,16 @@
 <script lang="ts">
-  import {untrack} from 'svelte'
+  import {setContext, untrack} from 'svelte'
+  import {copyToClipboard, eventPath, HOST_ACTIONS, navigateHost, profilePath, type HostActions} from './lib/host-actions'
+  import EventActions from './lib/components/EventActions.svelte'
+  import WorkerFailure from './lib/components/WorkerFailure.svelte'
+  import RunDeliveryNotice from './lib/components/RunDeliveryNotice.svelte'
+  import {deliveryStatusLabel, runDeliveryState} from './lib/run-delivery'
+  import {readRunIdFromUrl, writeRunIdToUrl} from './lib/run-fragment'
   import type {WidgetBridge} from 'budabit-sdk'
   import {
     AlertCircle,
     ArrowLeft,
     ChevronDown,
-    Copy,
-    ExternalLink,
     FileCheck,
     Play,
     RotateCw,
@@ -16,10 +20,8 @@
   import {friendlyErrorMessage, normalizeRepo} from './lib/context'
   import {
     eventTagValue,
-    externalUrlForEvent,
     isFreeRun,
     mergeEventIntoDetail,
-    publicLinkForRun,
     statusLabel,
   } from './lib/workflows'
   import {
@@ -40,6 +42,7 @@
     getSelectedWorker,
     getVisibleMintOptions,
     isFreeWorker,
+    workerSubmissionBlock,
   } from './lib/submission'
   import RunSubmissionForm from './lib/components/RunSubmissionForm.svelte'
   import ConsoleOutput from './lib/components/ConsoleOutput.svelte'
@@ -74,12 +77,14 @@
   } from './lib/view-model'
   import {buildRunnerScriptTemplate} from './lib/runner-script'
   import {loadRepoMetadata} from './lib/repo'
+  import CiWatcherControls from './lib/components/CiWatcherControls.svelte'
   import {getJobGroups, parseActLog, parseWorkflowJobsFromYaml} from './lib/cicd'
   import {parseCashuTokenAmount} from './lib/payment'
   import {
     STALE_PENDING_MS,
     classifyReclaimError,
     getReclaimCandidate,
+    getUnacknowledgedReclaimCandidate,
     isP2PKLocked,
     loadRateLimit,
     loadRedeemed,
@@ -103,6 +108,20 @@
   } from './lib/types'
 
   let bridge = $state<WidgetBridge | null>(null)
+  let contentElement: HTMLDivElement | undefined = $state()
+  const hostActions: HostActions = {
+    openEvent: id => void openHostPath(eventPath(id, repo?.repoRelays)),
+    openProfile: pubkey => void openHostPath(profilePath(pubkey)),
+  }
+  setContext(HOST_ACTIONS, hostActions)
+
+  async function openHostPath(path: string) {
+    try {
+      await navigateHost(bridge, path)
+    } catch (error) {
+      await showToast(error instanceof Error ? error.message : 'Unable to open in Budabit', 'error')
+    }
+  }
   let repoCtx = $state<RepoContext | null>(null)
   let repo = $derived(normalizeRepo(repoCtx))
 
@@ -213,6 +232,15 @@
   const FALLBACK_RELAYS = ['wss://relay.budabit.club', 'wss://nos.lol']
 
   let liveDurationSeconds = $state<number | null>(null)
+  let runNow = $state(Date.now())
+
+  // Waiting states and manual recovery become visible without needing a new event.
+  $effect(() => {
+    if (!workflowRuns.some(run => run.status === 'pending')) return
+    runNow = Date.now()
+    const timer = setInterval(() => {runNow = Date.now()}, 1000)
+    return () => clearInterval(timer)
+  })
 
   const selectedWorker = $derived(getSelectedWorker(rerunDraft, discoveredWorkers))
   const compatibleMints = $derived.by(() => getCompatibleMints(selectedWorker, walletMints))
@@ -275,23 +303,24 @@
       if (redeemedEntry) {
         map[run.id] = {
           kind: redeemedEntry.kind,
-          status: 'redeemed',
+          status: typeof redeemedEntry.amount === 'number' ? 'redeemed' : 'spent',
           amount: redeemedEntry.amount,
         }
         continue
       }
-      const candidate = getReclaimCandidate(run, userPubkey, reclaimRedeemed)
+      const candidate = getReclaimCandidate(run, userPubkey, reclaimRedeemed, runNow)
+        ?? getUnacknowledgedReclaimCandidate(run, userPubkey, reclaimRedeemed, runNow)
       if (candidate) {
         map[run.id] = limited
-          ? {kind: candidate.kind, status: 'rateLimited', rateLimitUntil: reclaimRateLimit.until}
-          : {kind: candidate.kind, status: 'idle'}
+          ? {kind: candidate.kind, manualOnly: candidate.manualOnly, status: 'rateLimited', rateLimitUntil: reclaimRateLimit.until}
+          : {kind: candidate.kind, manualOnly: candidate.manualOnly, status: 'idle'}
       }
     }
     return map
   })
 
   const eligibleReclaimCount = $derived(
-    Object.values(reclaimByRunId).filter(s => s.status === 'idle').length
+    Object.values(reclaimByRunId).filter(s => s.status === 'idle' && !s.manualOnly).length
   )
 
   const selectedReclaim = $derived(
@@ -311,9 +340,10 @@
       ? selectedReclaim.amount
       : changeAmount
   )
-  const actualCost = $derived(prepaidAmount !== null ? prepaidAmount - (effectiveChange ?? 0) : null)
+  const paymentSettled = $derived(!!selectedRunDetail?.run.loomResultEvent || !!selectedRunDetail?.run.workflowLogEvent || selectedReclaim?.status === 'redeemed')
+  const actualCost = $derived(paymentSettled && prepaidAmount !== null ? prepaidAmount - (effectiveChange ?? 0) : null)
 
-  async function attemptReclaim(runId: string): Promise<void> {
+  async function attemptReclaim(runId: string, allowUnacknowledged = false): Promise<void> {
     if (!bridge) return
     if (reclaimInFlight.has(runId)) return
     if (reclaimRateLimit.until > Date.now()) return
@@ -323,6 +353,7 @@
     const run = workflowRuns.find(r => r.id === runId)
     if (!run || !userPubkey) return
     const candidate = getReclaimCandidate(run, userPubkey, reclaimRedeemed)
+      ?? (allowUnacknowledged ? getUnacknowledgedReclaimCandidate(run, userPubkey, reclaimRedeemed) : null)
     if (!candidate) return
 
     reclaimInFlight.add(runId)
@@ -330,7 +361,7 @@
     // even before async work starts (P2PK decode, mint roundtrip).
     reclaimTransient = {
       ...reclaimTransient,
-      [runId]: {kind: candidate.kind, status: 'pending'},
+      [runId]: {kind: candidate.kind, manualOnly: candidate.manualOnly, status: 'pending'},
     }
 
     try {
@@ -344,6 +375,16 @@
         return
       }
 
+      // A late worker response may have arrived while decoding the token.
+      if (candidate.manualOnly) {
+        const latest = workflowRuns.find(r => r.id === runId)
+        if (!latest || !getUnacknowledgedReclaimCandidate(latest, repoCtx?.userPubkey, reclaimRedeemed)) {
+          const next = {...reclaimTransient}
+          delete next[runId]
+          reclaimTransient = next
+          return
+        }
+      }
       const result = await receiveReclaimToken(bridge!, candidate.token)
       const tokenHash = await sha256Hex(candidate.token)
       const amount = result.kind === 'redeemed' ? result.amount : undefined
@@ -386,6 +427,7 @@
           ...reclaimTransient,
           [runId]: {
             kind: candidate.kind,
+            manualOnly: candidate.manualOnly,
             status: 'failed',
             error: classified.message,
           },
@@ -398,7 +440,7 @@
 
   async function reclaimAllEligible() {
     const ids = workflowRuns
-      .filter(run => reclaimByRunId[run.id]?.status === 'idle')
+      .filter(run => reclaimByRunId[run.id]?.status === 'idle' && !reclaimByRunId[run.id]?.manualOnly)
       .map(run => run.id)
     for (const id of ids) {
       if (reclaimRateLimit.until > Date.now()) break
@@ -424,7 +466,7 @@
     if (!value) return
 
     try {
-      await navigator.clipboard.writeText(value)
+      await copyToClipboard(value)
       await showToast(`${label} copied`, 'success')
     } catch {
       await showToast(`Unable to copy ${label.toLowerCase()}`, 'error')
@@ -606,45 +648,6 @@
     applySubmissionReset()
   }
 
-  const RUN_HASH_PREFIX = '#run-'
-
-  function readRunIdFromUrl(): string | null {
-    try {
-      const parentHash = window.parent?.location?.hash
-      if (parentHash?.startsWith(RUN_HASH_PREFIX)) {
-        return parentHash.slice(RUN_HASH_PREFIX.length) || null
-      }
-    } catch {
-      // cross-origin read blocked — fall through to iframe hash
-    }
-    if (window.location.hash.startsWith(RUN_HASH_PREFIX)) {
-      return window.location.hash.slice(RUN_HASH_PREFIX.length) || null
-    }
-    return null
-  }
-
-  function writeRunIdToUrl(id: string | null) {
-    const parentTarget = id ? RUN_HASH_PREFIX + id : '#'
-    try {
-      if (window.parent && window.parent !== window) {
-        // Cross-origin hash-only navigation via string assignment to
-        // `location` is permitted by the HTML spec (same-document nav).
-        // Reading `location.hash` cross-origin is NOT permitted, so we
-        // can't use the property setter — hence this form.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ;(window.parent as any).location = parentTarget
-      }
-    } catch {
-      // cross-origin write blocked — rely on iframe hash below
-    }
-    try {
-      const baseUrl = window.location.pathname + window.location.search
-      history.replaceState(null, '', id ? `${baseUrl}${RUN_HASH_PREFIX}${id}` : baseUrl)
-    } catch {
-      // ignore
-    }
-  }
-
   function applyWorkflowFallback() {
     if (!workflowFallback?.content) return
     try {
@@ -729,6 +732,11 @@
 
   async function generatePaymentToken() {
     if (!bridge) return
+    const accessBlock = workerSubmissionBlock(selectedWorker)
+    if (accessBlock) {
+      signerError = accessBlock
+      return
+    }
 
     generatingPaymentToken = true
     walletError = null
@@ -857,6 +865,12 @@
 
     if (!bridge || !repo || !rerunDraft) {
       signerError = 'Missing required context to submit run. Please try refreshing the page.'
+      return
+    }
+
+    const accessBlock = workerSubmissionBlock(selectedWorker)
+    if (accessBlock) {
+      signerError = accessBlock
       return
     }
 
@@ -1042,10 +1056,13 @@
 
   // Sync selected run <-> URL hash so refresh + share preserves state.
   $effect(() => {
-    const initial = readRunIdFromUrl()
-    if (initial && !selectedRunId && bridge && repo) {
-      void openRunById(initial)
-    }
+    if (!bridge || !repo) return
+    // Hydrate once per context, not every selection change (which would reopen
+    // the previous hash while the detail view is closing).
+    untrack(() => {
+      const initial = readRunIdFromUrl()
+      if (initial && !selectedRunId) void openRunById(initial)
+    })
     const onHashChange = () => {
       const next = readRunIdFromUrl()
       if (next === selectedRunId) return
@@ -1057,8 +1074,9 @@
   })
 
   $effect(() => {
+    if (!bridge || !repo) return
     if (readRunIdFromUrl() === selectedRunId) return
-    writeRunIdToUrl(selectedRunId)
+    writeRunIdToUrl(bridge, selectedRunId)
   })
 
   // Refresh the wallet once when the bridge becomes ready. untrack(): the
@@ -1132,12 +1150,14 @@
     })
 
     // Detail merging still needs the raw event stream.
-    const detailSub = repoEvents$(repoAddress, relays, trustedAuthors, viewerPubkey).subscribe(event => {
+    // Cached events replay synchronously during subscription. Reading/writing
+    // detail here must not make the subscription effect depend on that detail.
+    const detailSub = repoEvents$(repoAddress, relays, trustedAuthors, viewerPubkey).subscribe(event => untrack(() => {
       const detail = selectedRunDetail
       if (!detail) return
       const updated = mergeEventIntoDetail(detail, event)
       if (updated !== detail) selectedRunDetail = updated
-    })
+    }))
 
     // Worker discovery — kind 10100 stream, deduped by pubkey, latest wins.
     // The viewer pubkey lets the stream resolve advertised freelists and flag
@@ -1363,7 +1383,7 @@
     const anyPending = Object.values(reclaimTransient).some(s => s.status === 'pending')
     if (anyPending) return
     const states = reclaimByRunId
-    const next = workflowRuns.find(run => states[run.id]?.status === 'idle')
+    const next = workflowRuns.find(run => states[run.id]?.status === 'idle' && !states[run.id]?.manualOnly)
     if (next) void attemptReclaim(next.id)
   })
 
@@ -1380,6 +1400,7 @@
 
   $effect(() => {
     return setupWidgetLifecycle({
+      contentElement,
       onBridgeChange: nextBridge => {
         bridge = nextBridge
       },
@@ -1402,7 +1423,7 @@
   })
 </script>
 
-<div class="min-h-screen w-full bg-background p-4 text-foreground">
+<div bind:this={contentElement} class="w-full bg-background p-4 text-foreground">
   <div class="w-full space-y-4">
     <!-- Tab Switcher -->
     <div class="flex items-center gap-1 border-b border-border">
@@ -1430,6 +1451,12 @@
         </div>
       {/if}
     {:else}
+    {#if bridge && repo?.repoAddress && repo.userPubkey}
+      {#key `${repo.userPubkey}:${repo.repoAddress}`}
+        <CiWatcherControls {bridge} userPubkey={repo.userPubkey} repoAddress={repo.repoAddress}
+          repoRelays={repo.repoRelays} watchers={repo.ciWatchers} />
+      {/key}
+    {/if}
     {#if !selectedRunId && repoMetadataError}
       <div class="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
         Repo metadata: {repoMetadataError}
@@ -1546,15 +1573,16 @@
 
         <div class="overflow-hidden rounded-lg border border-border bg-card">
           <div class="flex flex-wrap items-center gap-3 border-b border-border bg-card/60 px-3 py-2">
-            <button class="inline-flex items-center gap-2 rounded-md border border-green-700 bg-green-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-green-500" onclick={openNewRunForm}>
+            <button class="inline-flex shrink-0 items-center gap-2 rounded-md border border-green-700 bg-green-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-green-500" onclick={openNewRunForm}>
               <Play class="h-4 w-4" />
               New run
             </button>
             <input
-              class="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground"
+              class="min-w-0 basis-full rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:min-w-64 sm:flex-1"
               bind:value={searchTerm}
               type="text"
-              placeholder="Search runs, commits, branches, actors…" />
+              aria-label="Search runs, commits, branches, or actors"
+              placeholder="Search runs…" />
             {#if jobRunnersListUrl}
               <a
                 class="shrink-0 text-xs text-primary hover:underline"
@@ -1563,7 +1591,7 @@
                 rel="noreferrer"
                 title="Show job runs only by the owner, the maintainers, or the profiles in this list">Job runners</a>
             {/if}
-            <div class="flex items-center gap-1">
+            <div class="flex flex-wrap items-center gap-1">
               <FilterDropdown
                 label="Workflow"
                 options={workflowOptions}
@@ -1644,6 +1672,7 @@
             {#each filteredRuns as run, i (run.id)}
               <RunListItem
                 {run}
+                now={runNow}
                 selected={selectedRunId === run.id}
                 divider={i > 0}
                 refreshing={detailRefreshing}
@@ -1746,9 +1775,7 @@
               </div>
             </div>
 
-            {#if run.status === 'failure' && !run.workflowLogEvent && run.loomResultEvent}
-              <p class="text-xs text-yellow-400">Error (workflow result event missing — status inferred from loom result)</p>
-            {/if}
+            <WorkerFailure {run} />
 
             {#if rerunDraft}
               <div class="rounded-lg border border-border bg-card p-4">
@@ -1840,28 +1867,34 @@
                       {:else}
                         <StatusIcon class="h-3.5 w-3.5" />
                       {/if}
-                      {statusLabel(run.status)}
+                      {deliveryStatusLabel(run, runNow) ?? statusLabel(run.status)}
                     </span>
                   </div>
                   <div class="space-y-1">
-                    <div class="text-xs text-muted-foreground">Total duration</div>
+                    <div class="text-xs text-muted-foreground">{runDeliveryState(run, runNow) ? 'Waiting since submission' : 'Total duration'}</div>
                     <div class="text-sm font-medium">
-                      {isActiveRunStatus(run.status) && liveDurationSeconds !== null
-                        ? formatDuration(liveDurationSeconds)
-                        : formatDuration(run.duration)}
+                      {runDeliveryState(run, runNow)
+                        ? formatDuration(Math.max(0, Math.floor((runNow - (run.loomJobEvent ? run.loomJobEvent.created_at * 1000 : run.createdAt)) / 1000)))
+                        : isActiveRunStatus(run.status) && liveDurationSeconds !== null
+                          ? formatDuration(liveDurationSeconds)
+                          : formatDuration(run.duration)}
                     </div>
                   </div>
                   <div class="space-y-1">
-                    <div class="text-xs text-muted-foreground">Total cost</div>
+                    <div class="text-xs text-muted-foreground">{paymentSettled ? 'Total cost' : 'Prepayment'}</div>
                     <div class="text-sm font-medium">
                       {#if isFreeRun(run)}
                         <span class="text-green-400">free</span>
                       {:else}
-                        {actualCost !== null ? `${actualCost.toLocaleString()} sats` : '—'}
+                        {paymentSettled
+                          ? actualCost !== null ? `${actualCost.toLocaleString()} sats` : '—'
+                          : prepaidAmount !== null ? `${prepaidAmount.toLocaleString()} sats · unconfirmed` : '—'}
                       {/if}
                     </div>
                   </div>
                 </div>
+
+                <RunDeliveryNotice {run} now={runNow} />
 
                 {#if usingWorkflowFallback && workflowFallback}
                   <div class="rounded-lg border-2 border-yellow-500/40 bg-yellow-500/10 p-4 text-yellow-200">
@@ -1935,8 +1968,8 @@
                             ? 'bg-sky-500/5'
                             : 'bg-emerald-500/5'}
                       <div class={`overflow-hidden rounded-md border ${headerTone.split(' ')[0]}`}>
-                        <div class={`flex items-center justify-between gap-3 border-b px-3 py-2 ${headerTone}`}>
-                          <div class="min-w-0 flex-1">
+                        <div class={`flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2 ${headerTone}`}>
+                          <div class="min-w-0 basis-full sm:flex-1 sm:basis-0">
                             <div class={`text-sm font-medium ${titleTone}`}>{block.label}</div>
                             {#if block.event}
                               <div class={`mt-0.5 break-all font-mono text-[11px] ${subTone}`}>
@@ -1947,22 +1980,7 @@
                             {/if}
                           </div>
                           {#if block.event}
-                            <div class="flex shrink-0 items-center gap-2">
-                              <button class="inline-flex items-center gap-1 text-xs text-primary hover:underline" onclick={() => void copyText(block.event?.id, `${block.label} ID`)}>
-                                <Copy class="h-3 w-3" />
-                                Copy
-                              </button>
-                              <a class="inline-flex items-center gap-1 text-xs text-primary hover:underline" href={publicLinkForRun(block.event.id)} target="_blank" rel="noreferrer">
-                                Open
-                                <ExternalLink class="h-3 w-3" />
-                              </a>
-                              {#if externalUrlForEvent(block.event)}
-                                <a class="inline-flex items-center gap-1 text-xs text-primary hover:underline" href={externalUrlForEvent(block.event)} target="_blank" rel="noreferrer">
-                                  Output
-                                  <ExternalLink class="h-3 w-3" />
-                                </a>
-                              {/if}
-                            </div>
+                            <EventActions event={block.event} label={block.label} {copyText} openEvent={hostActions.openEvent} />
                           {/if}
                         </div>
                         {#if block.event}
@@ -1981,7 +1999,7 @@
                 changeAmount={effectiveChange}
                 {actualCost}
                 reclaim={selectedReclaim}
-                onReclaim={() => void attemptReclaim(run.id)}
+                onReclaim={() => void attemptReclaim(run.id, true)}
                 {copyText} />
             </div>
           </div>

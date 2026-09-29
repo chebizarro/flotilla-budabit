@@ -1,4 +1,4 @@
-import type { WidgetBridge } from 'budabit-sdk';
+import type { WidgetBridge, RepoCiWatcher } from 'budabit-sdk';
 
 export interface RepoContext {
   contextId?: string;
@@ -10,6 +10,7 @@ export interface RepoContext {
     repoAddress?: string;
     repoRelays: string[];
     maintainers?: string[];
+    ciWatchers?: RepoCiWatcher[];
   };
 }
 
@@ -21,6 +22,7 @@ export interface RepoContextNormalized {
   repoAddress?: string;
   repoRelays: string[];
   maintainers?: string[];
+  ciWatchers?: RepoCiWatcher[];
 }
 
 export interface NostrEvent {
@@ -89,6 +91,12 @@ export interface LoomWorker {
   maxDuration?: number;
   maxConcurrentJobs?: number;
   currentQueueDepth?: number;
+  /** Paid access is restricted; payment does not bypass this list. */
+  requiresWhitelist?: boolean;
+  whitelistEventAddress?: string;
+  /** Undefined means the private/unavailable list could not be checked. */
+  whitelistedForUser?: boolean;
+  whitelistPending?: boolean;
   /**
    * Address of the worker's advertised NIP-51 freelist event
    * (naddr / nevent / kind:pubkey[:d_tag]), when the operator opted into
@@ -137,6 +145,7 @@ export type ReclaimStatus =
   | 'idle'
   | 'pending'
   | 'redeemed'
+  | 'spent'
   | 'rateLimited'
   | 'failed'
   | 'p2pkUnsupported';
@@ -146,6 +155,7 @@ export interface ReclaimUiState {
   status: ReclaimStatus;
   amount?: number;
   error?: string;
+  manualOnly?: boolean;
   /** Unix ms when a rate-limit cooldown lifts. */
   rateLimitUntil?: number;
 }

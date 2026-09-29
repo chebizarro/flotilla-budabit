@@ -23,6 +23,127 @@ resolves full keyset IDs through Coco before decoding compact tokens. The
 independently packaged pipelines iframe's metadata-only parser supports both
 its existing v3 numeric SDK and the host's v5 `Amount` API.
 
+## Token receipts and redemption status
+
+Chat cards look up local receive/send operations by a fingerprint of the mint,
+unit and sorted proofs. Receipts survive component remounts and reloads, including
+re-encoded copies of a token and indexed receipts beyond the recent-history page. A
+successful receipt records the amount after fees; it is not a current-balance
+claim. Duplicate receives reuse the saved operation, including its recovery
+outputs, and concurrent attempts are serialized within the wallet and across
+browser tabs where Web Locks are available.
+
+Outgoing tokens show **Not checked** until there is mint evidence. Opening or
+refocusing wallet history checks at most ten unresolved tokens from the last
+seven days, with a persisted one-minute throttle shared across tabs and requests
+batched by mint. **Check
+status** performs a read-only NUT-07 check. Partial/pending responses and failed
+checks retain their distinct meaning; only a complete, validated all-spent
+response finalizes a send. The timestamped display cache stores fingerprints and
+amounts, not proof secrets, and is removed when replacing or clearing the wallet.
+Chat previews do not fetch mint keys or check unfamiliar tokens automatically.
+
+**Received** means this wallet has a durable receipt. **Redeemed** means the mint
+confirmed the original token was spent, without identifying the recipient.
+Short labels open click/tap explanations, with keyboard dismissal, in both chat
+and wallet history. Browser coverage uses a synthetic mint and isolated wallets
+(`tests/e2e/cashu-receipts.spec.ts`); it does not move real funds.
+
+### Storage and active-use limits
+
+`budabit-cashu-status-v1` is a separate, optional IndexedDB database:
+
+- `checks`: at most **2,000** token summaries/attempt timestamps. Writes are
+  per-record and transactional across tabs, with oldest-first eviction. Nonfinal
+  observations expire after **30 days** (ignored on read, pruned on first use/write).
+  Spent observations can remain until cap eviction. Cached observations never
+  establish a local receipt or replace recovery material.
+- `operations`: a rebuildable fingerprint → operation-ID index, at most one
+  receive and one send reference per token identity. It contains no proof secrets
+  or duplicated recovery outputs. Its size follows wallet history rather than the
+  disposable observation cap. Lookup reads the actual SDK operation and verifies
+  the fingerprint before presenting a receipt. Previews perform point lookups only;
+  an index miss stays unknown. New SDK operation events maintain the index, and a
+  displayed history row can supply its send ID for a verified point lookup.
+  **Only an explicit receive action** can search older receive operations; it never
+  scans sends or indexes unrelated historical receipts.
+- `meta`: a wallet-lifetime epoch. Reset changes it transactionally, rejecting
+  stale writers from other tabs. Wallet clear/replacement/restore clear both
+  derived stores; lock/reload close the connection and cancel obsolete work.
+
+The legacy `budabit_cashu_token_checks_v1` localStorage blob is validated, trimmed,
+and migrated once, then removed only after commit. Malformed or oversized blobs
+(over two million characters) are disposable and discarded rather than parsed.
+Quota/unavailable-cache failures fall back to bounded in-memory observations and
+explicit receipt reconciliation; they cannot turn a completed receive into a failure.
+Constructing the tracker does not open the status database. Opening is demand-driven;
+legacy migration and pruning wait for observation use at background priority.
+
+The tracker retains at most **128** raw-token previews and status/observation
+entries, with a combined **500,000-character** raw-token budget and at most **256**
+in-memory throttle entries. It does not retain full per-mint operation histories.
+Mounted cards may keep their own small display result after tracker eviction.
+
+These limits are shared by mobile and desktop, without viewport/device detection:
+
+- No interval polling. Mounted wallet history reacts to focus, visibility return,
+  and network reconnection. Mounted chat cards only read local data. There is no
+  focus/history-event sweep over all previously encountered tokens.
+- Preview admission is limited to **128 tasks** and **500,000 queued characters**;
+  optional index writes have a **128-task** cap. Previews and explicit historical
+  reconciliation pages use `scheduler.postTask({priority: "background"})`, with
+  `requestIdleCallback` (500 ms admission timeout) and timer fallbacks. Cancellation
+  removes queued work; an in-progress database read finishes before cancellation
+  is observed. Explicit indexed lookups bypass optional preview admission.
+- Historical receipt reconciliation uses primary-key pagination, at most **50 keys
+  per page**, **1,000 hydrated rows per action**, and a **500 ms soft elapsed budget**
+  checked between reads. A single in-flight read/hash cannot be preempted. Hitting
+  a budget or backgrounding the receive sheet leaves status unresolved and offers
+  **Continue checking**. A miss is actionable only after the search completes.
+  Resume cursors are memory-only, bounded to 16 identities, and discarded on reload.
+- Automatic checks skip hidden/offline views and `Save-Data` connections, cancel
+  on backgrounding or leaving history, and release paused attempts for resumption.
+- One automatic mint batch at a time, at most **1,000 proofs per mint batch**,
+  **100 proofs per request**, and a **10-second batch deadline**. Larger tokens
+  remain explicitly checkable. Complete validated responses are required before
+  summarizing; partial network responses never imply redemption.
+- Explicit checks remain available despite connectivity hints, coalesce recent
+  clicks, and retain the last successful observation if the mint cannot be reached.
+- These rules govern optional redemption checks, not SDK issuance/payment recovery.
+
+Eviction may require another status check; it never deletes wallet proofs or
+durable receive operations. Receipts remain browser-local: a seed backup recovers
+funds, not this device's complete transaction history. Neither cache is a promise
+against browser-origin eviction or clearing site data.
+
+### Startup boundary and diagnostics
+
+The root admits wallet initialization at background priority. It loads balances and
+trusted mints and retains SDK recovery of interrupted operations. It does **not**
+open the derived status cache, load display history/top-up lists, rebuild receipt
+indexes, or check redemption of already-created pending sends. History/top-up views
+own demand-driven background refreshes and cancel queued work on hide/unmount.
+Explicit financial actions can refresh their resulting display data immediately.
+
+This is not a constant-time guarantee for the entire wallet: essential SDK recovery,
+balance/proof reads, and a one-time legacy wallet migration may depend on wallet size.
+The existing saved-top-up listing, including older finalized-with-error operations,
+also depends on history size when the top-up feature is used. It is not run at root
+startup or by events without a mounted top-up view.
+
+Test builds with `VITE_DIAGNOSTICS=1` expose **Cashu wallet** under Settings →
+Performance Diagnostics → Debug info. Enable that category and start recording
+before reproducing wallet activity. Active performance captures additionally include
+`cashu:*` records when `VITE_PERFORMANCE_DIAGNOSTICS=1`; this includes initialization
+competing with an armed Community Home or `/git` startup capture. The probes do not
+start wallet work or their own polling/persistence loop.
+
+Records cover startup, send/receive, invoice preparation/payment/check/cancellation,
+top-up creation/claim, restore/recovery, SDK event categories, lookup row budgets,
+cache work, mint-check proof counts, queue delay, elapsed time and outcomes. Closed
+field/value allowlists exclude token/proof material, IDs, seeds, invoices, mint URLs,
+amounts and raw errors. Existing recorder limits, download and publication apply.
+
 ## Storage migration and recovery material
 
 The live database remains **`budabit-coco-wallet`**. The mnemonic and the
@@ -70,6 +191,18 @@ before retrying a blocked upgrade.
    failing with `Missing NUT-20 mint quote key` after migration.
    Schema 32.3 repairs quote-only references from the legacy mint-quote table,
    including wallets that already ran 32.2 without marking those keys.
+4. **Optional pending-send checks:** `startup.checkPendingSends: false` skips the
+   send recovery sweep's `pending` query/checks only. Init/executing send recovery,
+   orphan-reservation cleanup, melt/mint recovery and default settlement processors
+   retain their SDK behavior. The default remains upstream-compatible for other
+   callers, and an explicit send recovery call can still check pending sends.
+5. **Interrupted send token commit:** execution can save proofs as `inflight`
+   before committing the pending token. Recovery now returns exact-match inputs
+   owned by that send to `ready`, and reconciles already-saved swap outputs with
+   the mint before returning unspent outputs to `ready`. Pending/unknown output
+   states keep the operation recoverable rather than hiding it as cancelled.
+   Outputs reserved by a different operation are not released. Tests cover both
+   token-commit and subsequent recovery-commit failure followed by reload.
 
 The current patched native database version is **323**. Future adapter upgrades
 must account for these intermediate versions, metadata and legacy-key marker.
@@ -95,6 +228,27 @@ are migrated; all newly created top-ups use the durable flow below.
 
 ## Operations and UI
 
+- The Send tab lists **Saved outgoing tokens** directly from durable Coco send
+  operations. A Balance shortcut opens the same view. Leaving Send, closing the
+  wallet, or reloading keeps every saved token available to reopen and copy.
+  Tokens remain browser-local, in the same proof database as the rest of the wallet.
+- Saved sends use the existing `state` index and stable `(state, primary key)`
+  cursors: at most **25 operations per page**, plus one lookahead key. Pages group
+  unresolved states and skip terminal history, independently of the 100-entry
+  recent-history view. Display/status-cache eviction never removes a saved token.
+  Reads are view-owned and local; reopening a token does not contact its mint.
+  Explicit **Check status** reuses the existing bounded status tracker.
+- Creation returns the persisted token even if a history display refresh fails or
+  execution throws after committing it. Ambiguous results retain their operation
+  ID and are shown as unconfirmed. Retries reconcile the same operation rather
+  than creating another send. Send preparation/execution, explicit recovery, and
+  cancellation are serialized within the manager and across tabs using Web Locks
+  where available.
+- Interrupted preparations offer **Resume creation** and **Cancel preparation**.
+  Executing sends offer **Retry interrupted sends**, using Coco's recovery sweep
+  with optional pending-token redemption checks disabled. Unresolved results stay
+  visible; recovery may restore funds instead of producing a token. Cancelling a
+  preparation releases reservations and does not revoke an already-created token.
 - New Lightning top-ups create a **locked canonical quote**, then prepare a
   deterministic mint operation and persist its outputs before displaying the
   invoice. Identity is `{mintUrl, quoteId}`; operations are reused across polling,
@@ -119,8 +273,8 @@ are migrated; all newly created top-ups use the durable flow below.
   error and executes the same operation/outputs. Successful finalized operations
   are never requeued, since their proofs may already have been spent. This also
   handles errored operations persisted by earlier Budabit bundles.
-- Default mint settlement and melt recovery remain enabled. Only automatic
-  polling of externally spent send proofs is disabled, as before. Coco can
+- Default mint settlement and melt recovery remain enabled. Automatic polling
+  and the startup sweep of already-created outgoing tokens are disabled. Coco can
   perform startup recovery before `initializeCoco()` returns even when ongoing
   processors/watchers are disabled.
 - Reset/reload disposes the previous manager before closing its repositories;
@@ -151,6 +305,11 @@ with actual secp256k1 blind signatures and DLEQ. They exercise:
 - Production-default background processing for incomplete preparation and
   terminal issuance errors, including reload and successful later recovery;
   quote-only v1 migration and forward repair from native version 322.
+- 1,206 historical receive records and 1,206 sends with no startup status-cache
+  opening/history hydration/pending-send check; indexed preview misses; resumable
+  explicit receipt budgets without a second redemption; interrupted-send recovery.
+- Scheduler/idle/timer cancellation, diagnostics build/capture gates and allowlists,
+  plus the synthetic browser continuation and diagnostics-settings flow.
 
 ```sh
 pnpm exec vitest run --project=main src/app/core/cashu-*.test.ts \

@@ -40,7 +40,7 @@ export const eventStore = new EventStore();
 export const pool = new RelayPool();
 
 /** Well-known relays that index profile/metadata events for everyone. */
-const PROFILE_LOOKUP_RELAYS = ['wss://purplepag.es', 'wss://index.hzrd149.com'];
+export const PROFILE_LOOKUP_RELAYS = ['wss://purplepag.es', 'wss://index.hzrd149.com'];
 
 /**
  * Default relays loom-workers publish to — loom jobs/results and kind:10100
@@ -63,6 +63,14 @@ export const LOOM_WORKER_RELAYS = [
 eventStore.eventLoader = createEventLoaderForStore(eventStore, pool, {
   lookupRelays: PROFILE_LOOKUP_RELAYS,
   bufferTime: 250,
+  // Never flush by size: applesauce-loaders@5.1.0's batchLoader flushes
+  // SYNCHRONOUSLY when the buffer hits bufferSize, and the pointer whose
+  // queue push trips the flush subscribes to the batch subject one statement
+  // too late — it waits on a batch that never contains its event and the
+  // profile/mailbox never resolves (the fetched event is dropped before it
+  // reaches the store). A cap that can't be reached keeps every flush on the
+  // 250ms timer, which is always async and therefore race-free.
+  bufferSize: Number.MAX_SAFE_INTEGER,
 });
 
 function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
@@ -234,13 +242,18 @@ function buildRepoEventGraph(
   const workerEvents$ = combineLatest([workers$, jobIds$]).pipe(
     switchMap(([workers, jobIds]) => {
       if (!workers.size || !jobIds.size) return EMPTY;
-      return pool
-        .subscription(relays, {
+      // Replies may only reach the worker's own outboxes. Follow their NIP-65
+      // lists as well as repository/default relays, including for historical jobs.
+      return outboxRelays$([...workers]).pipe(
+        startWith([]),
+        map(extra => [...new Set([...relays, ...extra])]),
+        distinctUntilChanged(sameRelaySet),
+        switchMap(replyRelays => pool.subscription(replyRelays, {
           kinds: [KIND_LOOM_RESULT, KIND_LOOM_STATUS],
           authors: [...workers],
           '#e': [...jobIds],
-        })
-        .pipe(onlyEvents());
+        }).pipe(onlyEvents())),
+      );
     }),
   );
 

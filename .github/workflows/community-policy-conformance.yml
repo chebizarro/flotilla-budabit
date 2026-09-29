@@ -16,11 +16,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: false
-      # Kanban is optional and must not be fetched or tested in CI.
-      - name: Checkout CI submodules (excluding Kanban)
-        run: git submodule update --init --recursive -- packages/flotilla-extension-template
       - uses: actions/setup-node@v4
         with:
           node-version: 22

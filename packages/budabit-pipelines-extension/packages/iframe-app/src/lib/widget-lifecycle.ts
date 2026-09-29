@@ -2,8 +2,10 @@ import { createWidgetBridge, type WidgetBridge } from 'budabit-sdk';
 import { watchHostTheme } from '../host-theme';
 import { getHostOrigin, transformHostContext } from './context';
 import type { RepoContext } from './types';
+import {observeContentHeight} from './content-height';
 
 interface WidgetLifecycleArgs {
+  contentElement?: HTMLElement;
   onBridgeChange: (bridge: WidgetBridge | null) => void;
   onRepoContextChange: (repoContext: RepoContext | null) => void;
   onRepoChange: () => void;
@@ -32,6 +34,7 @@ export function setupWidgetLifecycle(args: WidgetLifecycleArgs) {
   const { onBridgeChange, onRepoContextChange, onRepoChange, onUnmount } = args;
 
   let contextReceived = false;
+  let repoIdentity: string | undefined;
 
   const bridge = createWidgetBridge({
     targetWindow: window.parent,
@@ -43,14 +46,19 @@ export function setupWidgetLifecycle(args: WidgetLifecycleArgs) {
 
   // Match the host application's theme (light/dark + background)
   const offTheme = watchHostTheme(bridge);
+  const offHeight = args.contentElement ? observeContentHeight(bridge, args.contentElement) : () => {};
 
   const handleRepoContext = (input: unknown, options: { resetRunState: boolean }) => {
     contextReceived = true;
     const nextRepoCtx = input ? transformHostContext(input) : null;
     onRepoContextChange(nextRepoCtx);
-    if (options.resetRunState) {
+    const identity = nextRepoCtx?.repo
+      ? `${nextRepoCtx.repo.repoPubkey}:${nextRepoCtx.repo.repoName}|${nextRepoCtx.userPubkey || ''}`
+      : undefined;
+    if (options.resetRunState && identity !== repoIdentity) {
       onRepoChange();
     }
+    repoIdentity = identity;
   };
 
   const offInit = bridge.onEvent('widget:init', (payload: any) => {
@@ -108,6 +116,7 @@ export function setupWidgetLifecycle(args: WidgetLifecycleArgs) {
     cancelled = true;
     if (pollTimer) clearTimeout(pollTimer);
     offTheme();
+    offHeight();
     offInit();
     offUnmounting();
     offContext();
