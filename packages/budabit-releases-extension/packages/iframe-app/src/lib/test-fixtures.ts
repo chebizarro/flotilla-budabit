@@ -28,6 +28,7 @@ export const testRepo = (): RepoContext => ({
   repoRelays: ['wss://relay.example'],
   relayHints: ['wss://hint.example'],
   relaySource: 'announcement',
+  repoUrls: [],
   maintainers: [testPubkey()],
   userPubkey: testPubkey(),
 });

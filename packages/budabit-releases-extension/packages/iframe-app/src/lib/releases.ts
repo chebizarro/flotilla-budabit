@@ -48,6 +48,19 @@ export function declaredRelays(announcement: NostrEvent): string[] {
   );
 }
 
+/** Clone and web URLs a repository announcement declares (NIP-34 `clone`/`web`, multi-value). */
+export function announcementUrls(announcement: NostrEvent): string[] {
+  return [
+    ...new Set(
+      announcement.tags
+        .filter((tag) => tag[0] === 'clone' || tag[0] === 'web')
+        .flatMap((tag) => tag.slice(1))
+        .map((url) => url.trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
 export interface RepoRelayResolution {
   context: RepoContext;
   /** Why the host's relay hints remain in use (for the console); empty once the announcement was read. */
@@ -98,7 +111,12 @@ export async function resolveRepoRelays(
         : 'Repository announcement was not found on its relay hints'
     );
   return {
-    context: { ...repo, repoRelays: declaredRelays(announcement), relaySource: 'announcement' },
+    context: {
+      ...repo,
+      repoRelays: declaredRelays(announcement),
+      relaySource: 'announcement',
+      repoUrls: announcementUrls(announcement),
+    },
     notice: '',
     queried: lookup,
   };

@@ -12,6 +12,8 @@ export interface RepoContext {
   /** Relays the host derived for the repository (naddr hints, community relays); only used to find the announcement. */
   relayHints: string[];
   relaySource: 'announcement' | 'host';
+  /** Clone/web URLs the announcement declares; identify the forge (GitHub/GitLab/Gitea) copy. */
+  repoUrls: string[];
   maintainers: string[];
   userPubkey: string;
 }
@@ -92,6 +94,7 @@ export function normalizeContext(input: unknown, previousViewer = ''): RepoConte
     repoRelays: hostRelays,
     relayHints: hostRelays,
     relaySource: 'host',
+    repoUrls: [],
     maintainers: [...new Set([pubkey, ...maintainers])],
     userPubkey: typeof viewer === 'string' && HEX_KEY.test(viewer) ? viewer : '',
   };

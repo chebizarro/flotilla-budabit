@@ -116,11 +116,13 @@ export async function preparePublication(
     (publishesApplication && frozen.appPubkey !== repo.userPubkey)
   )
     throw new Error('Unauthorized application publisher');
-  if (
-    new Set(frozen.artifacts.map((a) => a.pipelineRunId)).size !== 1 ||
-    !frozen.artifacts[0]?.pipelineRunId
-  )
-    throw new Error('Select artifacts from one authenticated run');
+  // One release describes one build: every asset comes from the same
+  // authenticated run, or from the same forge release being imported.
+  const sources = new Set(
+    frozen.artifacts.map((a) => (a.pipelineRunId ? `run:${a.pipelineRunId}` : a.forgeRelease))
+  );
+  if (sources.size !== 1 || sources.has(undefined))
+    throw new Error('Select artifacts from one authenticated run or one forge release');
   const created_at = Math.floor(Date.now() / 1000);
   if (!frozen.newApplication) {
     await assertActive(bridge, repo, signal);

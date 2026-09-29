@@ -2,8 +2,9 @@
   import type { WidgetBridge } from 'budabit-sdk';
   import type { RepoContext } from '../context.js';
   import type { PipelineArtifactData } from '../pipelines.js';
-  import type { ApplicationMetadata, SoftwareApplication } from '../types.js';
+  import type { ApplicationMetadata, Artifact, SoftwareApplication } from '../types.js';
   import { CHANNELS } from '../types.js';
+  import { forgeArtifacts, forgeLabel, versionFromTag, type ForgeImport } from '../forge.js';
   import { loadPipelineArtifacts } from '../pipelines.js';
   import { appCoordinate } from '../trust.js';
   import { assetIssues } from '../assets.js';
@@ -23,16 +24,23 @@
     bridge,
     repo,
     existingApps,
+    importRelease = null,
     onSuccess,
     onCancel,
   }: {
     bridge: WidgetBridge;
     repo: RepoContext;
     existingApps: SoftwareApplication[];
+    /** A forge release to import: prefills the form and supplies the assets instead of a run. */
+    importRelease?: ForgeImport | null;
     onSuccess: () => void;
     onCancel: () => void;
   } = $props();
   const controller = new AbortController();
+  const source: 'run' | 'forge' = importRelease ? 'forge' : 'run';
+  const forgeAssets = $state<Artifact[]>(
+    importRelease ? forgeArtifacts(importRelease.repo, importRelease.kind, importRelease.release) : []
+  );
   onDestroy(() => controller.abort());
   let pipelineData = $state<PipelineArtifactData | null>(null);
   let loading = $state(true);
@@ -47,11 +55,12 @@
   let imagesText = $state('');
   let tagsText = $state('');
   let runId = $state('');
-  let version = $state('');
-  let channel = $state<string>('main');
-  let notes = $state('');
+  let version = $state(importRelease ? versionFromTag(importRelease.release.tag) : '');
+  let channel = $state<string>(importRelease?.release.prerelease ? 'beta' : 'main');
+  let notes = $state(importRelease?.release.notes ?? '');
   let selectedIds = $state(new Set<string>());
-  let verifiedIds = $state(new Set<string>());
+  // A checksum the forge publishes counts as verified; the rest are hashed in the selector.
+  let verifiedIds = $state(new Set(forgeAssets.filter((a) => a.sha256).map((a) => a.eventId)));
   let submitting = $state(false);
   let progress = $state('');
   let journal = $state.raw<PublicationJournal | null>(null);
@@ -63,7 +72,9 @@
   const app = $derived(existingApps.find((a) => appCoordinate(a) === appChoice));
   const canEditApp = $derived(!!app && app.pubkey === repo.userPubkey);
   const publishesApp = $derived(!app || (canEditApp && editApp));
-  const artifacts = $derived(pipelineData?.artifactsByRun.get(runId) ?? []);
+  const artifacts = $derived(
+    source === 'forge' ? forgeAssets : (pipelineData?.artifactsByRun.get(runId) ?? [])
+  );
   // NIP-82 conformance can change after selection (MIME/platform edits); block the
   // form, not only the checkbox, so a stale selection never reaches the signer.
   const selectionBlocked = $derived(
@@ -73,8 +84,8 @@
     !loading &&
       !submitting &&
       !journal &&
-      !loadFailure &&
-      !!pipelineData &&
+      loadFailure !== 'journal' &&
+      (source === 'forge' || (!loadFailure && !!pipelineData)) &&
       !!version.trim() &&
       selectedIds.size > 0 &&
       !selectionBlocked &&
@@ -125,7 +136,7 @@
         if (disposed) return;
         journal = saved;
         recoveryRevision = saved?.revision;
-        if (!saved) {
+        if (!saved && source === 'run') {
           stage = 'pipeline';
           const data = await loadPipelineArtifacts(bridge, repo);
           if (!disposed) pipelineData = data;
@@ -241,7 +252,9 @@
   <button onclick={onCancel} disabled={submitting}>← Releases</button>
   <h2>New Release</h2>
   <p>Signing as <code>{repo.userPubkey}</code></p>
-  {#if loading}<p>Loading authenticated pipeline runs…</p>{/if}
+  {#if loading}<p>
+      {source === 'forge' ? 'Checking for a saved publication…' : 'Loading authenticated pipeline runs…'}
+    </p>{/if}
   {#if journal || loadFailure === 'journal'}
     <section aria-label="Publication recovery">
       {#if journal}
@@ -277,9 +290,21 @@
         >
       {/if}
     </section>
-  {:else if loadFailure === 'pipeline'}
+  {:else if loadFailure === 'pipeline' && source === 'run'}
     <button onclick={() => retryLoad++}>Retry loading runs</button>
   {:else}
+    {#if importRelease}
+      <p class="import-note">
+        Importing {forgeLabel(importRelease.repo)} release
+        {#if importRelease.release.url}<a
+            href={importRelease.release.url}
+            target="_blank"
+            rel="noopener noreferrer">{importRelease.release.tag}</a
+          >{:else}<code>{importRelease.release.tag}</code>{/if}
+        as a Nostr release signed with your key. Review the version, notes and assets before
+        publishing.
+      </p>
+    {/if}
     <form
       onsubmit={(e) => {
         e.preventDefault();
@@ -358,7 +383,7 @@
           channel.
         </p>
         <label>Release notes <textarea bind:value={notes} rows="6"></textarea></label>
-        <label
+        {#if source === 'run'}<label
           >Authenticated pipeline run <select
             bind:value={runId}
             onchange={() => {
@@ -373,9 +398,18 @@
                   : 'branch head'} · {new Date(run.createdAt * 1000).toLocaleString()}</option
               >{/each}
           </select></label
-        >
+        >{/if}
       </fieldset>
-      {#if runId}{#key runId}<ArtifactSelector
+      {#if source === 'forge'}<ArtifactSelector
+          {artifacts}
+          {selectedIds}
+          {verifiedIds}
+          disabled={submitting}
+          source="forge"
+          sourceName={importRelease ? forgeLabel(importRelease.repo) : ''}
+          onToggle={toggle}
+          onVerified={verified}
+        />{:else if runId}{#key runId}<ArtifactSelector
             {artifacts}
             {selectedIds}
             {verifiedIds}
