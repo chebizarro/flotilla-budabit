@@ -75,7 +75,9 @@ export function replacements(events: Iterable<NostrEvent>): NostrEvent[] {
 
 /** Repository announcements an application explicitly binds itself to via `a` tags. */
 export const boundRepositories = (event: NostrEvent): string[] =>
-  event.tags.filter((t) => t[0] === 'a' && t[1]?.startsWith('30617:')).map((t) => t[1]!);
+  event.tags.flatMap((t) =>
+    t[0] === 'a' && typeof t[1] === 'string' && t[1].startsWith('30617:') ? [t[1]] : []
+  );
 
 /**
  * The maintainer signature is the authority. Store-published applications
@@ -116,7 +118,9 @@ export function authorizedRelease(
   // for someone else's application by copying its identifier.
   const links = [
     ...new Set(
-      event.tags.filter((t) => t[0] === 'a' && t[1]?.startsWith('32267:')).map((t) => t[1]!)
+      event.tags.flatMap((t) =>
+        t[0] === 'a' && typeof t[1] === 'string' && t[1].startsWith('32267:') ? [t[1]] : []
+      )
     ),
   ];
   if (links.length > 1) return false;
