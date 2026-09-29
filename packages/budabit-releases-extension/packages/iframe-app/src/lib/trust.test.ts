@@ -4,6 +4,7 @@ import {
   authorizedRelease,
   boundRepositories,
   replacements,
+  repositoryKey,
   verifiedEvent,
 } from './trust.js';
 import { appMatchesRepo, loadRepoApps, parseApplication } from './releases.js';
@@ -30,20 +31,26 @@ describe('release authority', () => {
     event.content = 'tampered';
     expect(verifiedEvent(event)).toBeNull();
   });
-  it('trusts maintainer-signed applications unless they bind to another repository', () => {
-    const repo = testRepo();
+  it('associates maintainer-signed applications by binding or by the announced repository URL', () => {
+    const repo = { ...testRepo(), repoUrls: ['https://github.com/Owner/Repo.git'] };
     expect(authorizedApplication(signed(), repo)).toBe(true);
     expect(authorizedApplication(signed({}, 2), repo)).toBe(false);
-    // Store-published (zapstore/zsp) applications carry no Budabit coordinate.
-    const unbound = signed({
-      tags: [
-        ['d', 'app'],
-        ['name', 'App'],
-        ['repository', 'https://github.com/owner/app'],
-      ],
-    });
+    // Store-published (zapstore/zsp) applications carry no Budabit coordinate:
+    // their `repository` URL must be one the announcement declares.
+    const withRepository = (repository: string) =>
+      signed({ tags: [['d', 'app'], ['name', 'App'], ['repository', repository]] });
+    const unbound = withRepository('https://github.com/owner/repo');
     expect(boundRepositories(unbound)).toEqual([]);
     expect(authorizedApplication(unbound, repo)).toBe(true);
+    expect(authorizedApplication(withRepository('git@github.com:owner/repo.git'), repo)).toBe(true);
+    // Another repository of the same maintainer, or no repository at all, never shows here.
+    expect(authorizedApplication(withRepository('https://github.com/owner/other'), repo)).toBe(false);
+    expect(authorizedApplication(withRepository('https://github.com/owner/repo'), testRepo())).toBe(false);
+    expect(authorizedApplication(signed({ tags: [['d', 'app'], ['name', 'App']] }), repo)).toBe(false);
+    expect(repositoryKey('https://GitHub.com/Owner/Repo.git/')).toBe('github.com/owner/repo');
+    expect(repositoryKey('ssh://git@example.org/a/b')).toBe('example.org/a/b');
+    expect(repositoryKey('ftp://x/y')).toBeUndefined();
+    expect(repositoryKey('nonsense')).toBeUndefined();
     expect(
       authorizedApplication(
         signed({
