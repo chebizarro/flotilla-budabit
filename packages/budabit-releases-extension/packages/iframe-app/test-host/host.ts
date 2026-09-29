@@ -250,7 +250,13 @@ document.querySelector('#replace')!.addEventListener('click', () => {
       push('nostr:subscription:event', { subscriptionId: id, event: next });
 });
 document.querySelector('#revoke')!.addEventListener('click', () => {
-  const next = signed({ ...app, created_at: now + 2, tags: app.tags.filter((t) => t[0] !== 'a') });
+  // A maintainer revokes an application here by binding it to another repository;
+  // merely dropping the link would leave it admitted on the maintainer signature.
+  const next = signed({
+    ...app,
+    created_at: now + 2,
+    tags: [...app.tags.filter((t) => t[0] !== 'a'), ['a', `30617:${repo.repoPubkey}:other`]],
+  });
   data.push(next);
   for (const [id, filter] of subscriptions)
     if (matchFilter(filter, next))

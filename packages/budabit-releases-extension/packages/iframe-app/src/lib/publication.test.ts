@@ -180,12 +180,14 @@ describe('NIP-82 publication', () => {
       h.fail(true);
       await expect(publishJournal(h.b, testRepo(), journal)).rejects.toThrow('timed out');
       const before = h.published.length;
+      // Revocation: the maintainer binds the application to another repository.
       h.setApps([
         signed({
           created_at: Math.floor(Date.now() / 1000) + 1,
           tags: [
             ['d', 'app'],
             ['name', 'App'],
+            ['a', `30617:${testPubkey()}:other`],
           ],
         }),
       ]);

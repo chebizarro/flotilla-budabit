@@ -42,8 +42,8 @@
       >{/if}
   </header>
   <p>
-    Only verified signatures from current repository maintainers, linked to an exact application
-    coordinate, are shown. Legacy releases without that link are excluded.
+    Only applications and releases signed by current repository maintainers are shown; a release
+    must name an application they published.
   </p>
   {#if list.partial || list.error}
     <div role="alert" class="notice">

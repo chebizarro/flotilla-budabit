@@ -73,15 +73,28 @@ export function replacements(events: Iterable<NostrEvent>): NostrEvent[] {
   );
 }
 
+/** Repository announcements an application explicitly binds itself to via `a` tags. */
+export const boundRepositories = (event: NostrEvent): string[] =>
+  event.tags.filter((t) => t[0] === 'a' && t[1]?.startsWith('30617:')).map((t) => t[1]!);
+
+/**
+ * The maintainer signature is the authority. Store-published applications
+ * (zapstore, zsp) carry `repository`/`name` but no Budabit coordinate, so an
+ * `a` link to this repository is a binding, not a requirement: an application
+ * is shown unless it binds itself to a different repository. URL basenames and
+ * display names never establish identity either way.
+ */
 export function authorizedApplication(event: NostrEvent, repo: RepoContext): boolean {
-  return (
-    event.kind === 32267 &&
-    !!verifiedEvent(event) &&
-    repo.maintainers.includes(event.pubkey) &&
-    !!tag(event, 'd') &&
-    !!tag(event, 'name') &&
-    event.tags.some((t) => t[0] === 'a' && t[1] === repo.repoAddress)
-  );
+  if (
+    event.kind !== 32267 ||
+    !verifiedEvent(event) ||
+    !repo.maintainers.includes(event.pubkey) ||
+    !tag(event, 'd') ||
+    !tag(event, 'name')
+  )
+    return false;
+  const bound = boundRepositories(event);
+  return bound.length === 0 || bound.includes(repo.repoAddress);
 }
 
 export function authorizedRelease(
@@ -91,16 +104,26 @@ export function authorizedRelease(
 ): boolean {
   if (event.kind !== 30063 || !verifiedEvent(event) || !repo.maintainers.includes(event.pubkey))
     return false;
-  const links = event.tags.filter((t) => t[0] === 'a' && t[1]?.startsWith('32267:'));
-  const app = apps.find((a) => appCoordinate(a) === links[0]?.[1]);
-  const version = tag(event, 'version');
+  // Older store releases carry only `d` = `<identifier>@<version>`.
+  const d = tag(event, 'd') ?? '';
+  const at = d.indexOf('@');
+  const appId = tag(event, 'i') ?? (at > 0 ? d.slice(0, at) : '');
+  const version = tag(event, 'version') ?? (at > 0 ? d.slice(at + 1) : '');
+  if (!appId || !version || d !== `${appId}@${version}`) return false;
+  // NIP-82 names the application by `i`; store publishers omit the `a`
+  // coordinate, which then defaults to the signer's own application. A present
+  // coordinate must agree with `i`, so an unrelated key cannot claim a release
+  // for someone else's application by copying its identifier.
+  const links = [
+    ...new Set(
+      event.tags.filter((t) => t[0] === 'a' && t[1]?.startsWith('32267:')).map((t) => t[1]!)
+    ),
+  ];
+  if (links.length > 1) return false;
+  const app = apps.find((a) => appCoordinate(a) === (links[0] ?? `32267:${event.pubkey}:${appId}`));
   return (
-    links.length === 1 &&
     !!app &&
-    tag(event, 'i') === app.appId &&
-    !!version &&
-    tag(event, 'd') === `${app.appId}@${version}` &&
-    !!tag(event, 'c') &&
+    app.appId === appId &&
     event.tags.some((t) => t[0] === 'e' && HEX_KEY.test(t[1] ?? ''))
   );
 }

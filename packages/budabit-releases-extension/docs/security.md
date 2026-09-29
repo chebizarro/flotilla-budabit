@@ -4,12 +4,12 @@
 
 1. Budabit supplies the exact repository coordinate and current owner/maintainers. The host and its repository authority are part of the trust boundary.
 2. The widget verifies serialized Nostr event signatures itself, without inheriting cached verification flags. Internally owned events and their tags are immutable; a module-private WeakSet permits reusing their verified state without redoing cryptography on every authorization check. Raw copies and matching IDs do not inherit trust.
-3. An application must be signed by a current owner/maintainer and carry the exact repository `a` link. URL basenames, shared display names and owner-key substrings never establish identity.
-4. A release must be signed by a current owner/maintainer and link exactly to a discovered application via `32267:<publisher>:<identifier>`. Its `i`, `version`, `d` and channel/reference metadata must agree. An unrelated key cannot gain release authority by copying `i`.
+3. An application must be signed by a current owner/maintainer. An `a` link to a repository announcement is a binding: when present it must name this repository; when absent (store-published applications) the maintainer signature alone admits it. URL basenames, shared display names and owner-key substrings never establish identity.
+4. A release must be signed by a current owner/maintainer and resolve to a discovered application: its `a` coordinate `32267:<publisher>:<identifier>` when present (at most one), otherwise the signer's own application named by `i`. `i`, `version` and `d` must agree. An unrelated key cannot gain release authority by copying `i`.
 5. Addressable replacements are reconciled by `(kind,pubkey,d)`, newest timestamp then lowest ID. Replacements are processed before authorization filtering, so removing an application/release link removes an older authorized revision from view. The authority controller remains active across navigation, including open detail; asset replies cannot restore revoked detail.
 6. Asset signatures and IDs are verified. A maintainer's explicit release reference endorses the referenced metadata; assets may have different publishers, identifiers and versions. Their bytes remain a separate verification step.
 
-Legacy unlinked releases are excluded. Older cached events are reverified and re-authorized; caches never supply application authority. EOSE is not proof of an honest relay or global latestness. A compromised maintainer or host can still endorse malicious software.
+Releases naming an application no current maintainer has published are excluded. Older cached events are reverified and re-authorized; caches never supply application authority. EOSE is not proof of an honest relay or global latestness. A compromised maintainer or host can still endorse malicious software.
 
 ## Pipeline provenance
 

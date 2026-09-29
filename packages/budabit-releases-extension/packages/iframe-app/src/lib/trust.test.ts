@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { authorizedApplication, authorizedRelease, replacements, verifiedEvent } from './trust.js';
+import {
+  authorizedApplication,
+  authorizedRelease,
+  boundRepositories,
+  replacements,
+  verifiedEvent,
+} from './trust.js';
 import { appMatchesRepo, loadRepoApps, parseApplication } from './releases.js';
 import { signed, releaseFixture, testPubkey, testRepo } from './test-fixtures.js';
 import type { WidgetBridge } from 'budabit-sdk';
@@ -24,10 +30,35 @@ describe('release authority', () => {
     event.content = 'tampered';
     expect(verifiedEvent(event)).toBeNull();
   });
-  it('requires exact repo link and authorized app signer', () => {
+  it('trusts maintainer-signed applications unless they bind to another repository', () => {
     const repo = testRepo();
     expect(authorizedApplication(signed(), repo)).toBe(true);
     expect(authorizedApplication(signed({}, 2), repo)).toBe(false);
+    // Store-published (zapstore/zsp) applications carry no Budabit coordinate.
+    const unbound = signed({
+      tags: [
+        ['d', 'app'],
+        ['name', 'App'],
+        ['repository', 'https://github.com/owner/app'],
+      ],
+    });
+    expect(boundRepositories(unbound)).toEqual([]);
+    expect(authorizedApplication(unbound, repo)).toBe(true);
+    expect(
+      authorizedApplication(
+        signed({
+          tags: [
+            ['d', 'app'],
+            ['name', 'App'],
+            ['a', `30617:${repo.repoPubkey}:other`],
+          ],
+        }),
+        repo
+      )
+    ).toBe(false);
+    expect(
+      authorizedApplication(signed({ tags: [['d', 'app'], ['a', repo.repoAddress]] }), repo)
+    ).toBe(false);
     expect(
       appMatchesRepo(
         { ...parseApplication(signed()), repoAddress: `30617:${repo.repoPubkey}:other` },
@@ -46,13 +77,43 @@ describe('release authority', () => {
       )
     ).toBe(false);
   });
-  it('rejects correctly signed outsider releases and unlinked releases', () => {
+  it('resolves releases by `i` when the publisher omits the application coordinate', () => {
     const apps = [parseApplication(signed())];
+    const withoutA = releaseFixture().tags.filter((t) => t[0] !== 'a');
     expect(authorizedRelease(releaseFixture(), testRepo(), apps)).toBe(true);
     expect(authorizedRelease(releaseFixture({}, 2), testRepo(), apps)).toBe(false);
+    // zapstore-published releases: `i` names the signer's own application.
+    expect(authorizedRelease(releaseFixture({ tags: withoutA }), testRepo(), apps)).toBe(true);
+    // Another maintainer copying `i` resolves to their own (non-existent) application.
+    const twoMaintainers = { ...testRepo(), maintainers: [testPubkey(), testPubkey(2)] };
+    expect(authorizedRelease(releaseFixture({ tags: withoutA }, 2), twoMaintainers, apps)).toBe(
+      false
+    );
+    // A present coordinate must agree with `i`, and only one may be given.
     expect(
       authorizedRelease(
-        releaseFixture({ tags: releaseFixture().tags.filter((t) => t[0] !== 'a') }),
+        releaseFixture({ tags: [...withoutA, ['a', `32267:${testPubkey()}:other`]] }),
+        testRepo(),
+        apps
+      )
+    ).toBe(false);
+    expect(
+      authorizedRelease(
+        releaseFixture({ tags: [...releaseFixture().tags, ['a', `32267:${testPubkey()}:other`]] }),
+        testRepo(),
+        apps
+      )
+    ).toBe(false);
+    expect(
+      authorizedRelease(
+        releaseFixture({ tags: withoutA.filter((t) => t[0] !== 'e') }),
+        testRepo(),
+        apps
+      )
+    ).toBe(false);
+    expect(
+      authorizedRelease(
+        releaseFixture({ tags: withoutA.map((t) => (t[0] === 'd' ? ['d', 'app@2'] : t)) }),
         testRepo(),
         apps
       )

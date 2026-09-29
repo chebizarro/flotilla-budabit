@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NostrEvent, WidgetBridge } from 'budabit-sdk';
 import { startReleaseList, type ListState } from './list-controller.js';
-import { releaseFixture, signed, testRepo } from './test-fixtures.js';
+import { releaseFixture, signed, testRepo, testPubkey } from './test-fixtures.js';
 import { verifyEvent } from 'nostr-tools/pure';
 
 vi.mock('nostr-tools/pure', async (original) => {
@@ -105,12 +105,14 @@ describe('release list lifecycle and trust', () => {
     expect(state.events.map((e) => e.id)).toEqual([newer.id]);
     h.send(releaseFixture({ created_at: 102 }), 'other-subscription');
     expect(state.events).toHaveLength(1);
+    // Revocation: the maintainer binds the application to another repository.
     h.send(
       signed({
         created_at: 103,
         tags: [
           ['d', 'app'],
           ['name', 'App'],
+          ['a', `30617:${testPubkey()}:other`],
         ],
       })
     );
