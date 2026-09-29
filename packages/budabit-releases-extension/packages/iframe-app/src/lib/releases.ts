@@ -50,8 +50,10 @@ export function declaredRelays(announcement: NostrEvent): string[] {
 
 export interface RepoRelayResolution {
   context: RepoContext;
-  /** Why the host's relay hints remain in use; empty once the announcement was read. */
+  /** Why the host's relay hints remain in use (for the console); empty once the announcement was read. */
   notice: string;
+  /** Relays the announcement was looked up on. */
+  queried: string[];
 }
 
 /**
@@ -69,11 +71,12 @@ export async function resolveRepoRelays(
   repo: RepoContext
 ): Promise<RepoRelayResolution> {
   const hints = repo.relayHints;
+  const lookup = normalizeRelays([...hints, ...FALLBACK_RELAYS]).slice(0, MAX_QUERY_RELAYS);
   const keepHost = (reason: string): RepoRelayResolution => ({
     context: { ...repo, repoRelays: hints, relaySource: 'host' },
     notice: `${reason}; discovery and publication use the host's relay hints until it can be read.`,
+    queried: lookup,
   });
-  const lookup = normalizeRelays([...hints, ...FALLBACK_RELAYS]).slice(0, MAX_QUERY_RELAYS);
   if (!lookup.length) return keepHost('No relays to read the repository announcement from');
   const result = await queryAll(bridge, lookup, {
     kinds: [REPO_ANNOUNCEMENT_KIND],
@@ -97,6 +100,7 @@ export async function resolveRepoRelays(
   return {
     context: { ...repo, repoRelays: declaredRelays(announcement), relaySource: 'announcement' },
     notice: '',
+    queried: lookup,
   };
 }
 
