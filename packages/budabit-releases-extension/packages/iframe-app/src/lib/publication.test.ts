@@ -313,6 +313,8 @@ describe('NIP-82 publication', () => {
     const h = host(),
       d = draft();
     d.artifacts[0]!.mimeType = 'application/vnd.android.package-archive';
+    // NIP-82 platform/MIME consistency is checked too; keep the fixture on Android.
+    d.artifacts[0]!.platforms = ['android-arm64-v8a'];
     await expect(preparePublication(h.b, testRepo(), d)).rejects.toThrow('APK requires');
     expect(h.calls).toEqual([]);
     d.artifacts[0]!.versionCode = 1;

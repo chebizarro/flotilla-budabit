@@ -4,17 +4,20 @@ import { authorizedApplication, authorizedRelease, replacements, verifiedEvent }
 import { HEX_KEY } from './context.js';
 import { safeAssetUrl } from './binary.js';
 import { queryAll } from './query.js';
+import { assetIssues, unionPlatforms } from './assets.js';
 import type {
   SoftwareRelease,
   SoftwareAsset,
   SoftwareApplication,
   ReleaseListItem,
   Artifact,
+  ApplicationMetadata,
 } from './types.js';
 import { APP_KIND, RELEASE_KIND, ASSET_KIND } from './types.js';
 
 export const FALLBACK_RELAYS = [
   'wss://relay.zapstore.dev', // where zapstore-published apps/releases live
+  'wss://relay.budabit.club', // where the Workflows tab always publishes runs and artifacts
   'wss://relay.sharegap.net',
   'wss://nos.lol',
 ];
@@ -24,11 +27,12 @@ const MAX_QUERY_RELAYS = 8;
 
 export function getRelays(repoRelays: string[] | undefined): string[] {
   // The zapstore relay comes first — it's where zapstore-published apps,
-  // releases, and assets actually live — followed by the repo's own relays,
-  // then generic fallbacks. Capped to the host's per-subscription relay limit,
-  // so with many repo relays the generic fallbacks are dropped first.
-  const [zapstoreRelay, ...genericFallbacks] = FALLBACK_RELAYS;
-  const merged = [zapstoreRelay, ...(repoRelays ?? []), ...genericFallbacks];
+  // releases, and assets actually live — then the Budabit relay every
+  // Workflows run and CI artifact is published to, followed by the repo's own
+  // relays, then generic fallbacks. Capped to the host's per-subscription relay
+  // limit, so with many repo relays the generic fallbacks are dropped first.
+  const [zapstoreRelay, budabitRelay, ...genericFallbacks] = FALLBACK_RELAYS;
+  const merged = [zapstoreRelay, budabitRelay, ...(repoRelays ?? []), ...genericFallbacks];
   return normalizeRelays(merged).slice(0, MAX_QUERY_RELAYS);
 }
 
@@ -272,24 +276,41 @@ export async function loadReleaseDetail(
 /**
  * Build an unsigned kind 32267 Software Application event.
  */
-export function buildApplicationEvent(opts: {
-  appId: string;
-  name: string;
-  description?: string;
-  summary?: string;
-  repoAddress: string; // 30617:pubkey:identifier
-  repoRelay: string;
-  repositoryUrl?: string;
-  license?: string;
-}): Record<string, unknown> {
+export function buildApplicationEvent(
+  opts: ApplicationMetadata & {
+    appId: string;
+    name: string;
+    repoAddress: string; // 30617:pubkey:identifier
+    repoRelay: string;
+  }
+): Record<string, unknown> {
+  const appId = opts.appId.trim();
+  const name = opts.name.trim();
+  if (!appId || !name) throw new Error('Application needs an identifier and a name');
+  const https = (label: string, value: string | undefined): string | undefined => {
+    if (!value?.trim()) return undefined;
+    const url = safeAssetUrl(value.trim());
+    if (!url) throw new Error(`${label} must be an HTTPS URL`);
+    return url;
+  };
   const tags: string[][] = [
-    ['d', opts.appId],
-    ['name', opts.name],
+    ['d', appId],
+    ['name', name],
     ['a', opts.repoAddress, opts.repoRelay],
   ];
-  if (opts.summary) tags.push(['summary', opts.summary]);
-  if (opts.repositoryUrl) tags.push(['repository', opts.repositoryUrl]);
-  if (opts.license) tags.push(['license', opts.license]);
+  if (opts.summary?.trim()) tags.push(['summary', opts.summary.trim()]);
+  const icon = https('Icon', opts.iconUrl);
+  if (icon) tags.push(['icon', icon]);
+  for (const image of [...new Set((opts.imageUrls ?? []).map((u) => https('Screenshot', u)))])
+    if (image) tags.push(['image', image]);
+  for (const tag of [...new Set((opts.tags ?? []).map((t) => t.trim()).filter(Boolean))])
+    tags.push(['t', tag]);
+  const website = https('Website', opts.websiteUrl);
+  if (website) tags.push(['url', website]);
+  if (opts.repositoryUrl?.trim()) tags.push(['repository', opts.repositoryUrl.trim()]);
+  // Only platforms with restrictions; platform-agnostic software omits `f` entirely.
+  for (const platform of unionPlatforms(opts.platforms)) tags.push(['f', platform]);
+  if (opts.license?.trim()) tags.push(['license', opts.license.trim()]);
 
   return {
     kind: APP_KIND,
@@ -310,33 +331,25 @@ export function buildAssetEvent(opts: {
   commitId?: string;
   variant?: string;
 }): Record<string, unknown> {
-  const artifact = opts.artifact;
-  if (!HEX_KEY.test(artifact.sha256) || !safeAssetUrl(artifact.url))
-    throw new Error('Asset needs a valid SHA-256 and HTTPS URL');
-  if (!artifact.mimeType.includes('/')) throw new Error('Asset needs a MIME type');
-  if (artifact.size !== undefined && (!Number.isSafeInteger(artifact.size) || artifact.size < 0))
-    throw new Error('Invalid asset size');
-  if (
-    artifact.mimeType === 'application/vnd.android.package-archive' &&
-    (!Number.isSafeInteger(artifact.versionCode) ||
-      (artifact.versionCode ?? -1) < 0 ||
-      !artifact.apkCertificateHashes?.length ||
-      artifact.apkCertificateHashes.some((h) => !HEX_KEY.test(h)))
-  ) {
-    throw new Error('APK requires version_code and apk_certificate_hash metadata');
-  }
+  const artifact: Artifact = {
+    ...opts.artifact,
+    platforms: opts.artifact.platforms?.length ? opts.artifact.platforms : opts.platforms,
+  };
+  // NIP-82 Appendix A/C conformance (MIME, platform, APK metadata) is enforced
+  // here as well as in the selector so a stale UI state can never sign an asset
+  // no store would render.
+  const issues = assetIssues(artifact);
+  if (issues.errors.length) throw new Error(issues.errors[0]);
   const tags: string[][] = [
     ['i', artifact.appId || opts.appId],
     ['version', artifact.version || opts.version],
-    ['m', opts.artifact.mimeType],
-    ['x', opts.artifact.sha256],
+    ['m', artifact.mimeType],
+    ['x', artifact.sha256],
     ['filename', artifact.filename],
   ];
-  if (opts.artifact.url) tags.push(['url', opts.artifact.url]);
-  if (opts.artifact.size != null) tags.push(['size', String(opts.artifact.size)]);
-  if (artifact.platforms ?? opts.platforms) {
-    for (const p of artifact.platforms ?? opts.platforms ?? []) tags.push(['f', p]);
-  }
+  if (artifact.url) tags.push(['url', artifact.url]);
+  if (artifact.size != null) tags.push(['size', String(artifact.size)]);
+  for (const p of unionPlatforms(artifact.platforms)) tags.push(['f', p]);
   const commitId = opts.artifact.commitId ?? opts.commitId;
   if (commitId) tags.push(['commit', commitId]);
   if (opts.variant) tags.push(['variant', opts.variant]);

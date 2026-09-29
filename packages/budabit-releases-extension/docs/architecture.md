@@ -8,6 +8,7 @@ Budabit repo-tab + bridge → SDK postMessage transport → Svelte widget
        └─ repo-scoped local storage                   ├─ query.ts: bounded complete/partial discovery
                                                      ├─ list-controller.ts: subscription/cache lifecycle
                                                      ├─ pipelines.ts: authenticated run/artifact selection
+                                                     ├─ assets.ts: NIP-82 MIME/platform inference + conformance
                                                      ├─ publication.ts: pinned signing + signed journal
                                                      ├─ binary.ts: safe URLs/local-file SHA-256
                                                      └─ markdown.ts: sanitized release notes
@@ -15,7 +16,7 @@ Budabit repo-tab + bridge → SDK postMessage transport → Svelte widget
 
 The iframe never opens relay WebSockets or imports Welshman. It uses `nostr-tools` for cryptographic/event checks and `@noble/hashes` for incremental local-file hashing. The in-tree `budabit-sdk` workspace supplies transport and manifest tools. Local adapters validate host responses beyond the SDK's typed action map, including complete/partial queries and atomic storage. Subscription IDs are assigned by the host.
 
-Kinds: application `32267`, release `30063`, asset `3063`, pipeline run `5401`, legacy build artifact `1063`, widget manifest `30033`. `releases.ts` parses/builds NIP-82 metadata and provides bounded data-loading/formatting helpers.
+Kinds: application `32267`, release `30063`, asset `3063`, workflow run `5401`, build artifact `1063`, widget manifest `30033`. `releases.ts` parses/builds NIP-82 metadata and provides bounded data-loading/formatting helpers. `assets.ts` holds the NIP-82 Appendix A/C tables: `classifyArtifact` fills the MIME type and platforms CI artifacts rarely declare, and `assetIssues` is the single conformance check used by the selector UI and by `buildAssetEvent` before signing, so mobile and non-mobile assets are packaged identically.
 
 `App.svelte` owns the repository authority controller across list/detail/create navigation; views consume its current application/release state rather than owning the only subscription. Detail follows its canonical release coordinate and checks current authority before and after asset loading. Revocation removes the detail's download surface.
 

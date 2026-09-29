@@ -10,12 +10,15 @@ See [import provenance](IMPORT.md) and the [workspace guide](../../docs/developm
 
 - Application (`32267`) and release (`30063`) signatures, current repository owner/maintainer authorship, and exact repository/application coordinates.
 - Addressable replacement order: newest timestamp, then lowest event ID on a timestamp tie, within each publisher's namespace. An open detail view stays subscribed: replacements update the view, and application revocation removes downloads.
-- Pipeline run (`5401`) signer and artifact (`1063`) publisher delegation, checked for reuse across all discovered repository scopes of current maintainers. Artifacts are selected from **one run**, not voted across historical filenames.
+- Workflow run (`5401`) signer and artifact (`1063`) publisher delegation, checked for reuse across all discovered repository scopes of current maintainers. Runs may reference the repository by its `30617` announcement or legacy `30618` state coordinate, and may carry an empty `commit` (branch head, as the Workflows tab writes it); a present `commit` must be a full SHA. Maintainer co-signed `1063` attestations from the Workflows **Attestations** tab are accepted when they reference exactly one authenticated run: a co-signed copy of a worker hash is shown as an attestation, a maintainer-only hash as its own artifact. Artifacts are selected from **one run**, not voted across historical filenames.
+- NIP-82 asset conformance before signing: Appendix C MIME types (inferred from the filename when CI declared `application/octet-stream`), Appendix A platform identifiers (inferred from filename tokens such as `darwin-arm64`, `linux_amd64`), platform/MIME consistency, mandatory `f` tags for native executables, and APK metadata. Generic archives and `.deb`/`.rpm` packages are refused; unclassified MIME types publish with a warning.
 - SHA-256 and optional size of an explicitly selected local file, up to 512 MiB. Creation requires a matching local copy for each selected artifact.
 
 **A metadata signature is not a native/APK signature check, a signed Git tag, a reproducible-build guarantee, or proof that software is safe.** Downloads are not automatically fetched, executed or hashed. See [security and trust policy](docs/security.md).
 
 Legacy releases without an exact application `a` link, or applications linked only by a repository URL/display name, are excluded rather than presented as trusted releases.
+
+Discovery always includes `wss://relay.zapstore.dev` and `wss://relay.budabit.club` (where the Workflows tab publishes every run and artifact) ahead of the repository's own relays.
 
 ## Develop and verify
 
@@ -55,9 +58,9 @@ The widget declares `nostr:sign`, `nostr:publish`, `nostr:query`, `nostr:subscri
 ## Create a release
 
 1. Sign in as a current repository owner/maintainer and wait for complete discovery.
-2. Choose an existing application (including its publisher) or create one under your key.
-3. Select a specific authenticated pipeline run. Verify local artifact copies, then select assets.
-4. Review identifier/version, platform and APK metadata. Asset identifier/version may legitimately differ from the release. APKs require a version code and certificate SHA-256 metadata from a trusted inspection tool; the widget does **not** validate the APK certificate itself.
+2. Choose an existing application (including its publisher) or create one under your key. New applications, and existing ones you own via **Update application metadata**, take the store-listing fields zapstore renders: summary, Markdown description, HTTPS icon and screenshot URLs (Blossom recommended), website, repository URL, SPDX license and tags. Platform (`f`) tags are derived from the selected assets.
+3. Select a specific authenticated workflow run. Its artifacts are the kind 1063 events signed by the run's delegated publisher key, plus maintainer attestations co-signed in the Workflows tab. Verify local artifact copies, then select assets.
+4. Review identifier/version, MIME type, platform and APK metadata. The MIME type and platforms are pre-filled from the filename per NIP-82 and editable; assets with conformance errors cannot be included. Asset identifier/version may legitimately differ from the release. APKs require a version code and certificate SHA-256 metadata from a trusted inspection tool; the widget does **not** validate the APK certificate itself. Desktop and CLI assets (`.dmg`, `.pkg`, `.msi`, `.AppImage`, `.flatpak`, statically linked ELF/Mach-O/PE executables, `.vsix`, `.crx`, `.xpi`, `.wasm`) follow the same `32267` → `30063` → `3063` shape as mobile apps; native executables must declare at least one `f` platform because their MIME type does not.
 5. Submit. All fixed metadata templates are signed and checked first, then saved locally, then published in application → assets → release order.
 
 Publishing is **not atomic**. On a partial/unknown outcome, return with the same account and use **Resume publication** to resend the saved event IDs without new signatures. Local acceptance markers are not treated as proof of relay persistence. Signing timeouts do not cancel a host signer prompt, but no events are published before all signatures are verified and the journal is saved.

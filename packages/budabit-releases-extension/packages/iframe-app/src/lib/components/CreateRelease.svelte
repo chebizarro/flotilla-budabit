@@ -2,10 +2,11 @@
   import type { WidgetBridge } from 'budabit-sdk';
   import type { RepoContext } from '../context.js';
   import type { PipelineArtifactData } from '../pipelines.js';
-  import type { SoftwareApplication } from '../types.js';
+  import type { ApplicationMetadata, SoftwareApplication } from '../types.js';
   import { CHANNELS } from '../types.js';
   import { loadPipelineArtifacts } from '../pipelines.js';
   import { appCoordinate } from '../trust.js';
+  import { assetIssues } from '../assets.js';
   import {
     loadJournal,
     discardJournal,
@@ -39,6 +40,12 @@
   let appChoice = $state('');
   let appId = $state('');
   let appName = $state('');
+  // Store-listing metadata (kind 32267): edited for a new application, or for an
+  // existing one the signing account owns when "Update application" is enabled.
+  let editApp = $state(false);
+  let appMeta = $state<ApplicationMetadata>({});
+  let imagesText = $state('');
+  let tagsText = $state('');
   let runId = $state('');
   let version = $state('');
   let channel = $state<string>('main');
@@ -54,7 +61,14 @@
   let recoveryRevision = $state<string | undefined>();
   let conflict = $state('');
   const app = $derived(existingApps.find((a) => appCoordinate(a) === appChoice));
+  const canEditApp = $derived(!!app && app.pubkey === repo.userPubkey);
+  const publishesApp = $derived(!app || (canEditApp && editApp));
   const artifacts = $derived(pipelineData?.artifactsByRun.get(runId) ?? []);
+  // NIP-82 conformance can change after selection (MIME/platform edits); block the
+  // form, not only the checkbox, so a stale selection never reaches the signer.
+  const selectionBlocked = $derived(
+    artifacts.some((a) => selectedIds.has(a.eventId) && assetIssues(a).errors.length > 0)
+  );
   const canSubmit = $derived(
     !loading &&
       !submitting &&
@@ -63,8 +77,37 @@
       !!pipelineData &&
       !!version.trim() &&
       selectedIds.size > 0 &&
+      !selectionBlocked &&
       !!(app?.appId || appId.trim())
   );
+  const lines = (text: string) =>
+    text
+      .split(/[\n,]/)
+      .map((v) => v.trim())
+      .filter(Boolean);
+  function startEditingApp() {
+    if (!app) return;
+    appName = app.name;
+    appMeta = {
+      summary: app.summary ?? '',
+      description: app.description,
+      iconUrl: app.iconUrl ?? '',
+      websiteUrl: app.websiteUrl ?? '',
+      repositoryUrl: app.repositoryUrl ?? '',
+      license: app.license ?? '',
+      platforms: [...app.platforms],
+    };
+    imagesText = app.imageUrls.join('\n');
+    tagsText = app.tags.join(', ');
+    editApp = true;
+  }
+  function applicationDraft(): ApplicationMetadata {
+    return {
+      ...appMeta,
+      imageUrls: lines(imagesText),
+      tags: lines(tagsText),
+    };
+  }
 
   $effect(() => {
     void retryLoad;
@@ -158,6 +201,8 @@
             appPubkey: app?.pubkey ?? repo.userPubkey,
             appName: appName.trim(),
             newApplication: !app,
+            updateApplication: !!app && canEditApp && editApp,
+            application: publishesApp ? applicationDraft() : undefined,
             version: version.trim(),
             channel,
             releaseNotes: notes.trim(),
@@ -244,7 +289,12 @@
       <fieldset disabled={submitting || loading}>
         <legend>Application and release</legend>
         <label
-          >Application <select bind:value={appChoice}>
+          >Application <select
+            bind:value={appChoice}
+            onchange={() => {
+              editApp = false;
+            }}
+          >
             <option value="">Create application under my key</option>
             {#each existingApps as existing (appCoordinate(existing))}<option
                 value={appCoordinate(existing)}
@@ -260,8 +310,43 @@
               placeholder="com.example.app"
             /></label
           >
+        {:else}<code>{appCoordinate(app)}</code>
+          {#if canEditApp && !editApp}
+            <button type="button" onclick={startEditingApp}>Update application metadata</button>
+          {:else if editApp}
+            <button type="button" onclick={() => (editApp = false)}>Keep current metadata</button>
+          {/if}{/if}
+        {#if publishesApp}
           <label>App name <input bind:value={appName} placeholder="Application name" /></label>
-        {:else}<code>{appCoordinate(app)}</code>{/if}
+          <label>Summary <input bind:value={appMeta.summary} placeholder="One-line tagline" /></label>
+          <label
+            >Description (Markdown) <textarea bind:value={appMeta.description} rows="4"
+            ></textarea></label
+          >
+          <label
+            >Icon URL (HTTPS, Blossom recommended) <input
+              bind:value={appMeta.iconUrl}
+              placeholder="https://blossom.example/…png"
+            /></label
+          >
+          <label
+            >Screenshot URLs (one per line) <textarea bind:value={imagesText} rows="2"
+            ></textarea></label
+          >
+          <label>Website <input bind:value={appMeta.websiteUrl} placeholder="https://…" /></label>
+          <label
+            >Repository URL (git clone) <input
+              bind:value={appMeta.repositoryUrl}
+              placeholder="https://…/repo.git"
+            /></label
+          >
+          <label>License (SPDX) <input bind:value={appMeta.license} placeholder="MIT" /></label>
+          <label>Tags (comma-separated) <input bind:value={tagsText} placeholder="nostr, cli" /></label>
+          <p>
+            Platform (<code>f</code>) tags on the application are derived from the selected assets.
+            This metadata is what stores such as zapstore display; it is signed with your key.
+          </p>
+        {/if}
         <label>Version <input bind:value={version} required placeholder="1.2.0" /></label>
         <label
           >Channel <select bind:value={channel}
@@ -283,9 +368,9 @@
           >
             <option value="">Choose a run</option>
             {#each pipelineData?.runs ?? [] as run (run.id)}<option value={run.id}
-                >{run.workflowName} · {run.branch} · {run.commitId.slice(0, 12)} · {new Date(
-                  run.createdAt * 1000
-                ).toLocaleString()}</option
+                >{run.workflowName} · {run.branch} · {run.commitId
+                  ? run.commitId.slice(0, 12)
+                  : 'branch head'} · {new Date(run.createdAt * 1000).toLocaleString()}</option
               >{/each}
           </select></label
         >
