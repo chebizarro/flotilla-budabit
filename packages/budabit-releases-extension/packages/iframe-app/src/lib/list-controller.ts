@@ -7,7 +7,7 @@ import {
   replacements,
   verifiedEvent,
 } from './trust.js';
-import { getRelays, parseApplication } from './releases.js';
+import { getRelays, parseApplication, requiredRelays } from './releases.js';
 import { queryAll } from './query.js';
 import type { SoftwareApplication } from './types.js';
 
@@ -15,7 +15,12 @@ export interface ListState {
   apps: SoftwareApplication[];
   events: NostrEvent[];
   loading: boolean;
+  /** A required relay did not complete: authority may be stale, publication is blocked. */
   partial: boolean;
+  /** Required relays that did not complete (named in the blocking notice). */
+  incompleteRelays: string[];
+  /** Best-effort relays that did not complete; informational only. */
+  degradedRelays: string[];
   error: string;
 }
 const CACHE_KEY = 'verified-releases-v2';
@@ -37,6 +42,8 @@ export function startReleaseList(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let emitTimer: ReturnType<typeof setTimeout> | undefined;
   let partial = false;
+  let incompleteRelays: string[] = [];
+  let degradedRelays: string[] = [];
   const apps = new Map<string, NostrEvent>(),
     releases = new Map<string, NostrEvent>();
   const liveIds = new Set<string>();
@@ -52,6 +59,8 @@ export function startReleaseList(
         .sort((a, b) => b.created_at - a.created_at),
       loading: !discovered,
       partial,
+      incompleteRelays,
+      degradedRelays,
       error,
     };
   }
@@ -172,11 +181,13 @@ export function startReleaseList(
           apply(item.event);
         }
       pending = [];
+      const required = requiredRelays(repo.repoRelays);
       const result = await queryAll(
         bridge,
         getRelays(repo.repoRelays),
         { kinds: [32267, 30063], authors: [...repo.maintainers] },
-        controller.signal
+        controller.signal,
+        { required }
       );
       if (aborted()) return;
       if (result.complete) {
@@ -186,7 +197,10 @@ export function startReleaseList(
       }
       for (const event of result.events) apply(event);
       liveIds.clear();
-      error = result.errors?.join('; ') ?? '';
+      incompleteRelays = result.incompleteRelays.filter((relay) => required.includes(relay));
+      degradedRelays = result.incompleteRelays.filter((relay) => !required.includes(relay));
+      // Only required-relay failures are errors; best-effort relays are reported by name.
+      error = result.complete ? '' : (result.errors?.join('; ') ?? '');
       partial ||= !result.complete;
       discovered = true;
       emit();

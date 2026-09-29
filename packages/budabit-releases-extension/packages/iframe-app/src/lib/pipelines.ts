@@ -1,7 +1,7 @@
 import type { NostrEvent, WidgetBridge } from 'budabit-sdk';
 import { HEX_KEY, type RepoContext } from './context.js';
 import type { Artifact, PipelineRun } from './types.js';
-import { queryEvents, getRelays, tagValue, tagValues } from './releases.js';
+import { queryEvents, getRelays, requiredRelays, tagValue, tagValues } from './releases.js';
 import { safeAssetUrl } from './binary.js';
 import { classifyArtifact } from './assets.js';
 
@@ -50,15 +50,21 @@ export async function loadPipelineArtifacts(
   repo: RepoContext
 ): Promise<PipelineArtifactData> {
   const relays = getRelays(repo.repoRelays);
+  const required = requiredRelays(repo.repoRelays);
   const runsByPublisher = new Map<string, PipelineRun>();
   const delegations = new Map<string, string>();
   const ambiguous = new Set<string>();
-  const events = await queryEvents(bridge, relays, {
-    kinds: [5401],
-    authors: [...repo.maintainers],
-    // Scan maintainer namespaces across ALL repositories. Filtering #a here
-    // conceals reused publisher keys and misattributes unlinked legacy artifacts.
-  });
+  const events = await queryEvents(
+    bridge,
+    relays,
+    {
+      kinds: [5401],
+      authors: [...repo.maintainers],
+      // Scan maintainer namespaces across ALL repositories. Filtering #a here
+      // conceals reused publisher keys and misattributes unlinked legacy artifacts.
+    },
+    required
+  );
   const coordinates = acceptedRunCoordinates(repo.repoAddress);
   for (const event of events) {
     const publisher = tagValue(event, 'publisher');
@@ -102,8 +108,8 @@ export async function loadPipelineArtifacts(
   if (!runs.length) return { runs, artifactsByRun };
   const runsById = new Map(runs.map((run) => [run.id, run]));
   const [workerEvents, maintainerEvents] = await Promise.all([
-    queryEvents(bridge, relays, { kinds: [1063], authors: [...runsByPublisher.keys()] }),
-    queryEvents(bridge, relays, { kinds: [1063], authors: [...repo.maintainers] }),
+    queryEvents(bridge, relays, { kinds: [1063], authors: [...runsByPublisher.keys()] }, required),
+    queryEvents(bridge, relays, { kinds: [1063], authors: [...repo.maintainers] }, required),
   ]);
   const seen = new Set<string>();
   // `${run id}:${sha256}` → artifact, so maintainer copies merge into worker artifacts.

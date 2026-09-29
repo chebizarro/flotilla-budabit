@@ -15,9 +15,10 @@ import type {
 } from './types.js';
 import { APP_KIND, RELEASE_KIND, ASSET_KIND } from './types.js';
 
+export const BUDABIT_RELAY = 'wss://relay.budabit.club';
 export const FALLBACK_RELAYS = [
   'wss://relay.zapstore.dev', // where zapstore-published apps/releases live
-  'wss://relay.budabit.club', // where the Workflows tab always publishes runs and artifacts
+  BUDABIT_RELAY, // where the Workflows tab always publishes runs and artifacts
   'wss://relay.sharegap.net',
   'wss://nos.lol',
 ];
@@ -36,16 +37,31 @@ export function getRelays(repoRelays: string[] | undefined): string[] {
   return normalizeRelays(merged).slice(0, MAX_QUERY_RELAYS);
 }
 
+/**
+ * Relays whose answers gate completeness: the repository's own relays (where
+ * maintainers publish application/release revisions and revocations), or the
+ * Budabit relay when the repository declares none. Zapstore and generic
+ * fallbacks are best-effort discovery aids; a timeout there must not disable
+ * publication, or a single flaky public relay blocks every release.
+ */
+export function requiredRelays(repoRelays: string[] | undefined): string[] {
+  const queried = getRelays(repoRelays);
+  const own = normalizeRelays(repoRelays ?? []).filter((relay) => queried.includes(relay));
+  return own.length ? own : [BUDABIT_RELAY];
+}
+
 export async function queryEvents(
   bridge: WidgetBridge,
   relays: string[],
-  filter: Record<string, unknown>
+  filter: Record<string, unknown>,
+  required?: string[]
 ): Promise<NostrEvent[]> {
-  const response = await queryAll(bridge, relays, filter);
+  const response = await queryAll(bridge, relays, filter, undefined, { required });
   if (!response.complete)
     throw new Error(
-      response.errors?.join('; ') ||
-        'Discovery is incomplete (relay timeout, pagination bound, or older host). Retry before publishing.'
+      `Discovery is incomplete on required relays (${response.incompleteRelays.join(', ')}): ${
+        response.errors?.join('; ') || 'relay timeout, pagination bound, or older host'
+      }. Retry before publishing.`
     );
   return response.events;
 }
@@ -186,7 +202,12 @@ export async function loadRepoApps(
   const authors = [...new Set([repo.repoPubkey, ...repo.maintainers].filter(Boolean))] as string[];
 
   // Query by authors so a replacement removing the repo link can revoke it.
-  const results = await queryEvents(bridge, relays, { kinds: [APP_KIND], authors });
+  const results = await queryEvents(
+    bridge,
+    relays,
+    { kinds: [APP_KIND], authors },
+    requiredRelays(repo.repoRelays)
+  );
   // A saved signed application is a candidate revision, never a substitute for
   // current discovery. In particular, reconcile revocations BEFORE authorization.
   return replacements([
@@ -243,10 +264,13 @@ export async function loadReleaseDetail(
   let assets: SoftwareAsset[] = [];
   let complete = true;
   if (assetEventIds.length > 0) {
-    const result = await queryAll(bridge, relays, {
-      kinds: [ASSET_KIND],
-      ids: assetEventIds,
-    });
+    const result = await queryAll(
+      bridge,
+      relays,
+      { kinds: [ASSET_KIND], ids: assetEventIds },
+      undefined,
+      { required: requiredRelays(repo.repoRelays) }
+    );
     complete = result.complete;
     assets = result.events.map(parseAsset).filter((a): a is SoftwareAsset => a !== null);
     // Preserve declaration order from the release event

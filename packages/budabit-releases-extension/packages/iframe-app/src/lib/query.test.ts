@@ -18,6 +18,42 @@ describe('bounded relay discovery', () => {
     expect(result.complete).toBe(false);
     expect(result.errors?.[0]).toContain('offline');
   });
+  it('gates completeness on required relays only and retries them once', async () => {
+    const event = signed();
+    const request = vi.fn(async (_: string, p: { relays: string[] }) =>
+      p.relays[0]?.includes('offline') ? { error: 'offline' } : { status: 'ok', complete: true, events: [event] }
+    );
+    const bridge = { request } as unknown as WidgetBridge;
+    // A best-effort relay timing out keeps discovery complete and is named, not retried.
+    let result = await queryAll(
+      bridge,
+      ['wss://good.example', 'wss://offline.example'],
+      { kinds: [32267] },
+      undefined,
+      { required: ['wss://good.example'] }
+    );
+    expect(result.complete).toBe(true);
+    expect(result.incompleteRelays).toEqual(['wss://offline.example']);
+    expect(result.events).toEqual([event]);
+    expect(request.mock.calls.filter(([, p]) => p.relays[0] === 'wss://offline.example')).toHaveLength(1);
+    // A required relay gets a second attempt and still blocks when it fails twice.
+    request.mockClear();
+    result = await queryAll(
+      bridge,
+      ['wss://good.example', 'wss://offline.example'],
+      { kinds: [32267] },
+      undefined,
+      { required: ['wss://offline.example'] }
+    );
+    expect(result.complete).toBe(false);
+    expect(result.incompleteRelays).toEqual(['wss://offline.example']);
+    expect(request.mock.calls.filter(([, p]) => p.relays[0] === 'wss://offline.example')).toHaveLength(2);
+    // Required relays that were not queried cannot be required; every queried relay is.
+    result = await queryAll(bridge, ['wss://offline.example'], { kinds: [32267] }, undefined, {
+      required: ['wss://elsewhere.example'],
+    });
+    expect(result.complete).toBe(false);
+  });
   it('uses inclusive per-relay cursors, deduplicates boundaries, and rejects out-of-filter events', async () => {
     const batch = Array.from({ length: 100 }, (_, index) =>
       signed({ created_at: 1000 - index, content: String(index) })
