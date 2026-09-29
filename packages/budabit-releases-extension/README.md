@@ -16,7 +16,7 @@ See [import provenance](IMPORT.md) and the [workspace guide](../../docs/developm
 
 **A metadata signature is not a native/APK signature check, a signed Git tag, a reproducible-build guarantee, or proof that software is safe.** Downloads are not automatically fetched, executed or hashed. See [security and trust policy](docs/security.md).
 
-Legacy releases without an exact application `a` link, or applications linked only by a repository URL/display name, are excluded rather than presented as trusted releases.
+Applications and releases are trusted by the signature of a current maintainer. Store-published applications (zapstore, `zsp`) carry no Budabit repository coordinate and are shown unless their `a` tag binds them to a different repository; a release names its application by `i`, and an `a` coordinate, when present, must agree. Repository URLs and display names never establish identity.
 
 Discovery and publication use the relays the repository announcement declares (NIP-34 `relays`), always behind `wss://relay.zapstore.dev` and `wss://relay.budabit.club` (where the Workflows tab publishes every run and artifact). The relay hints the host derives from the naddr are only used to read the announcement (kind `30617`): an unreachable hint must not block the release history. If the announcement cannot be read — for example on a host still running a manifest without kind `30617` — the hints stay in use and the widget says why.
 
