@@ -211,8 +211,8 @@
       {#if currentEvent.id !== selectedEvent.id}<p role="status">
           This release was replaced. Showing the current revision.
         </p>{/if}
-      {#if list.partial}<p role="alert">
-          Relay discovery is incomplete; current authority may be stale.
+      {#if list.stalled}<p role="alert">
+          No relay answered discovery; the current revision of this release cannot be confirmed.
         </p>{/if}
       {#key currentEvent.id}
         <ReleaseDetail
