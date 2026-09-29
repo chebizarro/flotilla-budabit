@@ -37,7 +37,7 @@
 <div class="release-list">
   <header>
     <h2>Releases</h2>
-    {#if isMaintainer}<button disabled={list.loading || list.partial} onclick={onCreateRelease}
+    {#if isMaintainer}<button disabled={list.loading || list.stalled} onclick={onCreateRelease}
         >New Release</button
       >{/if}
   </header>
@@ -45,10 +45,16 @@
     Only applications and releases signed by current repository maintainers are shown; a release
     must name an application they published.
   </p>
-  {#if list.partial || list.error}
+  {#if list.stalled}
     <div role="alert" class="notice">
-      {list.error || 'Relay results are incomplete. This is not the full release history.'}
-      Publication is disabled until discovery completes.
+      Relay results are incomplete on every relay{list.error ? `: ${list.error}` : '.'} Nothing is
+      known about the release history, so publication is disabled until at least one relay answers.
+      <button onclick={onRetry}>Retry discovery</button>
+    </div>
+  {:else if list.partial || list.error}
+    <div role="note" class="notice">
+      Some relays did not answer{list.error ? `: ${list.error}` : '.'} Releases known only to them are
+      not shown, and a new publication will not reach them.
       <button onclick={onRetry}>Retry discovery</button>
     </div>
   {/if}
@@ -94,7 +100,7 @@
         of {pages}
         <button disabled={current === pages} onclick={() => (page = current + 1)}>Next</button>
       </nav>{/if}
-  {:else if !list.loading && !list.partial}<p>
+  {:else if !list.loading && !list.stalled}<p>
       No authorized releases found for this repository.
     </p>{/if}
 </div>

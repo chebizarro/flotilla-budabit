@@ -15,10 +15,10 @@ import type {
 } from './types.js';
 import { APP_KIND, RELEASE_KIND, ASSET_KIND } from './types.js';
 
-// Every relay here must answer a REQ with EOSE: the host reports a relay that
-// never reaches EOSE as timed out, which marks discovery incomplete and disables
-// publication. General-purpose relays that stall instead of answering (nos.lol
-// did, for every kind) must not be listed.
+// Every relay here should answer a REQ with EOSE: the host reports a relay that
+// never reaches EOSE as timed out, which is surfaced on every load. General-
+// purpose relays that stall instead of answering (nos.lol did, for every kind)
+// must not be listed.
 export const FALLBACK_RELAYS = [
   'wss://relay.zapstore.dev', // where zapstore-published apps/releases live
   'wss://relay.budabit.club', // where the Workflows tab always publishes runs and artifacts
@@ -106,10 +106,14 @@ export async function queryEvents(
   filter: Record<string, unknown>
 ): Promise<NostrEvent[]> {
   const response = await queryAll(bridge, relays, filter);
-  if (!response.complete)
+  // Relays that answered are authoritative for what they hold; relays that did
+  // not are reported by the list. Only a discovery no relay completed is
+  // unusable: nothing is known, so nothing may be published over it.
+  if (response.completedRelays.length === 0)
     throw new Error(
-      response.errors?.join('; ') ||
-        'Discovery is incomplete (relay timeout, pagination bound, or older host). Retry before publishing.'
+      `Discovery is incomplete on every relay: ${
+        response.errors?.join('; ') || 'no relay answered (timeout, pagination bound, or older host)'
+      }`
     );
   return response.events;
 }

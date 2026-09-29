@@ -5,7 +5,12 @@ import { matchFilter, type Filter } from 'nostr-tools';
 
 export interface QueryResult {
   events: NostrEvent[];
+  /** Every queried relay reached EOSE within the page bound. */
   complete: boolean;
+  /** Relays whose bounded response completed; their view of history is fully known. */
+  completedRelays: string[];
+  /** Relays that timed out, failed, or overflowed the page bound. */
+  incompleteRelays: string[];
   errors?: string[];
 }
 export const QUERY_PAGE_SIZE = 100;
@@ -81,6 +86,8 @@ export async function queryAll(
   return {
     events: [...merged.values()],
     complete: results.every((r) => r.complete),
+    completedRelays: activeRelays.filter((_, i) => results[i]?.complete),
+    incompleteRelays: activeRelays.filter((_, i) => !results[i]?.complete),
     errors: results.flatMap((r) => r.errors ?? []),
   };
 }

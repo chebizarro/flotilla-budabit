@@ -15,7 +15,10 @@ export interface ListState {
   apps: SoftwareApplication[];
   events: NostrEvent[];
   loading: boolean;
+  /** Some relay did not complete, or the cache/page bound overflowed: history may be missing. */
   partial: boolean;
+  /** No relay completed the last discovery: nothing is known, publication is disabled. */
+  stalled: boolean;
   error: string;
 }
 const CACHE_KEY = 'verified-releases-v2';
@@ -37,6 +40,7 @@ export function startReleaseList(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let emitTimer: ReturnType<typeof setTimeout> | undefined;
   let partial = false;
+  let stalled = false;
   const apps = new Map<string, NostrEvent>(),
     releases = new Map<string, NostrEvent>();
   const liveIds = new Set<string>();
@@ -52,6 +56,7 @@ export function startReleaseList(
         .sort((a, b) => b.created_at - a.created_at),
       loading: !discovered,
       partial,
+      stalled,
       error,
     };
   }
@@ -188,6 +193,7 @@ export function startReleaseList(
       liveIds.clear();
       error = result.errors?.join('; ') ?? '';
       partial ||= !result.complete;
+      stalled = result.completedRelays.length === 0;
       discovered = true;
       emit();
       await saveCache();
@@ -196,6 +202,7 @@ export function startReleaseList(
       error = err instanceof Error ? err.message : String(err);
       discovered = true;
       partial = true;
+      stalled = true;
       emit();
     }
   })();
