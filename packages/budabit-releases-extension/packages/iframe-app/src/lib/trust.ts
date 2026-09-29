@@ -79,24 +79,54 @@ export const boundRepositories = (event: NostrEvent): string[] =>
     t[0] === 'a' && typeof t[1] === 'string' && t[1].startsWith('30617:') ? [t[1]] : []
   );
 
+/** `host/owner/name` of a git URL for comparison; scheme, `git@`, `.git`, trailing slashes and case are ignored. */
+export function repositoryKey(url: string): string | undefined {
+  const text = url.trim();
+  let host: string;
+  let path: string;
+  const ssh = /^(?:ssh:\/\/)?git@([a-z0-9.-]+)[:/](.+)$/i.exec(text);
+  if (ssh) {
+    host = ssh[1] ?? '';
+    path = ssh[2] ?? '';
+  } else {
+    try {
+      const parsed = new URL(text);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+      host = parsed.hostname;
+      path = parsed.pathname;
+    } catch {
+      return undefined;
+    }
+  }
+  const cleaned = path.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
+  return host && cleaned ? `${host}/${cleaned}`.toLowerCase() : undefined;
+}
+
 /**
- * The maintainer signature is the authority. Store-published applications
- * (zapstore, zsp) carry `repository`/`name` but no Budabit coordinate, so an
- * `a` link to this repository is a binding, not a requirement: an application
- * is shown unless it binds itself to a different repository. URL basenames and
- * display names never establish identity either way.
+ * Which of a maintainer's applications belong to this repository. An `a`
+ * binding to a repository announcement decides when present. Store-published
+ * applications (zapstore, zsp) carry no Budabit coordinate; they belong here
+ * when their `repository` URL is one of the URLs the announcement declares
+ * (`clone`/`web`). Basenames and display names never associate: a maintainer
+ * of several repositories would otherwise see every application everywhere.
  */
-export function authorizedApplication(event: NostrEvent, repo: RepoContext): boolean {
-  if (
-    event.kind !== 32267 ||
-    !verifiedEvent(event) ||
-    !repo.maintainers.includes(event.pubkey) ||
-    !tag(event, 'd') ||
-    !tag(event, 'name')
-  )
-    return false;
+export function applicationBelongsToRepo(event: NostrEvent, repo: RepoContext): boolean {
   const bound = boundRepositories(event);
-  return bound.length === 0 || bound.includes(repo.repoAddress);
+  if (bound.length) return bound.includes(repo.repoAddress);
+  const key = repositoryKey(tag(event, 'repository') ?? '');
+  return !!key && repo.repoUrls.some((url) => repositoryKey(url) === key);
+}
+
+/** The maintainer signature is the authority; `applicationBelongsToRepo` decides the repository. */
+export function authorizedApplication(event: NostrEvent, repo: RepoContext): boolean {
+  return (
+    event.kind === 32267 &&
+    !!verifiedEvent(event) &&
+    repo.maintainers.includes(event.pubkey) &&
+    !!tag(event, 'd') &&
+    !!tag(event, 'name') &&
+    applicationBelongsToRepo(event, repo)
+  );
 }
 
 export function authorizedRelease(
