@@ -15,11 +15,14 @@ import type {
 } from './types.js';
 import { APP_KIND, RELEASE_KIND, ASSET_KIND } from './types.js';
 
+// Every relay here must answer a REQ with EOSE: the host reports a relay that
+// never reaches EOSE as timed out, which marks discovery incomplete and disables
+// publication. General-purpose relays that stall instead of answering (nos.lol
+// did, for every kind) must not be listed.
 export const FALLBACK_RELAYS = [
   'wss://relay.zapstore.dev', // where zapstore-published apps/releases live
   'wss://relay.budabit.club', // where the Workflows tab always publishes runs and artifacts
-  'wss://relay.sharegap.net',
-  'wss://nos.lol',
+  'wss://relay.sharegap.net', // zapstore mirror
 ];
 
 /** Hosts cap extension subscriptions at 8 relays. */
