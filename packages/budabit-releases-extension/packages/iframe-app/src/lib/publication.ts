@@ -10,13 +10,18 @@ import {
   loadRepoApps,
   tagValues,
 } from './releases.js';
-import type { Artifact } from './types.js';
+import { unionPlatforms } from './assets.js';
+import type { ApplicationMetadata, Artifact } from './types.js';
 
 export interface ReleaseDraft {
   appId: string;
   appPubkey: string;
   appName?: string;
   newApplication: boolean;
+  /** Re-sign the existing kind 32267 (owned by the signing account) with `application` metadata. */
+  updateApplication?: boolean;
+  /** Store-listing metadata for a new or updated application (icon, summary, description…). */
+  application?: ApplicationMetadata;
   version: string;
   channel: string;
   releaseNotes: string;
@@ -104,9 +109,11 @@ export async function preparePublication(
   const frozen = structuredClone(JSON.parse(JSON.stringify(draft)) as ReleaseDraft);
   if (!frozen.artifacts.length || frozen.artifacts.length > 50)
     throw new Error('Select between 1 and 50 artifacts');
+  // A kind 32267 revision is only ever signed by its own publisher.
+  const publishesApplication = frozen.newApplication || !!frozen.updateApplication;
   if (
     !repo.maintainers.includes(frozen.appPubkey) ||
-    (frozen.newApplication && frozen.appPubkey !== repo.userPubkey)
+    (publishesApplication && frozen.appPubkey !== repo.userPubkey)
   )
     throw new Error('Unauthorized application publisher');
   if (
@@ -126,13 +133,19 @@ export async function preparePublication(
   }
   const relays = getRelays(repo.repoRelays);
   const templates: Record<string, unknown>[] = [];
-  if (frozen.newApplication)
+  if (publishesApplication)
     templates.push(
       buildApplicationEvent({
+        ...frozen.application,
         appId: frozen.appId,
         name: frozen.appName || frozen.appId,
         repoAddress: repo.repoAddress,
         repoRelay: relays[0] ?? '',
+        // Store listings filter by platform: declare every platform the assets restrict to.
+        platforms: unionPlatforms(
+          frozen.application?.platforms,
+          ...frozen.artifacts.map((a) => a.platforms)
+        ),
       })
     );
   templates.push(

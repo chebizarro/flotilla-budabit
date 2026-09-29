@@ -1,8 +1,11 @@
 <script lang="ts">
   import type { Artifact } from '../types.js';
+  import { PLATFORMS } from '../types.js';
   import { formatBytes, shortHash } from '../releases.js';
   import { verifyBinary } from '../binary.js';
+  import { assetIssues, NIP82_MIME_TYPES } from '../assets.js';
   import { onDestroy } from 'svelte';
+  const mimeOptions = Object.keys(NIP82_MIME_TYPES);
   let {
     artifacts,
     selectedIds,
@@ -45,16 +48,26 @@
 <p>
   Artifacts below come from one maintainer-authorized run. No independent-worker consensus is
   claimed. Verify a local copy before selecting it. This checks bytes, not native/APK signatures.
+  MIME type and platforms are inferred from the filename per NIP-82 and can be corrected here.
 </p>
 {#each artifacts as artifact (artifact.eventId)}
+  {@const issues = assetIssues(artifact)}
   <fieldset {disabled}>
     <legend>{artifact.filename}</legend>
     <p>
       <code title={artifact.sha256}>{shortHash(artifact.sha256)}</code> · {artifact.size ===
       undefined
         ? 'Size not declared'
-        : formatBytes(artifact.size)} · {artifact.mimeType}
+        : formatBytes(artifact.size)}
+      {#if artifact.attestedBy?.length}
+        · co-signed by {artifact.attestedBy.length} maintainer{artifact.attestedBy.length === 1
+          ? ''
+          : 's'}
+      {/if}
     </p>
+    <!-- Inline validation, not landmark roles: the form-level status/alert regions stay unique. -->
+    {#each issues.errors as issue}<p class="issue error" aria-live="polite">{issue}</p>{/each}
+    {#each issues.warnings as issue}<p class="issue warning" aria-live="polite">{issue}</p>{/each}
     <label
       >Verify local file <input
         type="file"
@@ -66,10 +79,21 @@
       ><input
         type="checkbox"
         checked={selectedIds.has(artifact.eventId)}
-        disabled={!verifiedIds.has(artifact.eventId) || disabled}
+        disabled={!verifiedIds.has(artifact.eventId) || disabled || issues.errors.length > 0}
         onchange={() => onToggle(artifact.eventId)}
       />
       Include {artifact.filename}</label
+    >
+    <label
+      >MIME type (NIP-82 Appendix C) <select
+        aria-label={`MIME type ${artifact.filename}`}
+        bind:value={artifact.mimeType}
+      >
+        {#if !mimeOptions.includes(artifact.mimeType)}<option value={artifact.mimeType}
+            >{artifact.mimeType} (not classified by NIP-82)</option
+          >{/if}
+        {#each mimeOptions as mime}<option value={mime}>{mime}</option>{/each}
+      </select></label
     >
     <label
       >Asset identifier <input
@@ -86,14 +110,14 @@
       /></label
     >
     <label
-      >Platforms (comma-separated) <input
-        value={(artifact.platforms ?? []).join(', ')}
-        oninput={(e) =>
-          (artifact.platforms = e.currentTarget.value
-            .split(',')
-            .map((v) => v.trim())
-            .filter(Boolean))}
-      /></label
+      >Platforms (NIP-82 Appendix A; none = every architecture of the implied platform) <select
+        multiple
+        size="5"
+        aria-label={`Platforms ${artifact.filename}`}
+        bind:value={artifact.platforms}
+      >
+        {#each PLATFORMS as platform}<option value={platform}>{platform}</option>{/each}
+      </select></label
     >
     {#if artifact.mimeType === 'application/vnd.android.package-archive'}
       <label
@@ -144,5 +168,19 @@
   p {
     font-size: 0.8rem;
     color: var(--ext-text-secondary);
+  }
+  select {
+    display: block;
+    max-width: 95%;
+    padding: 0.3rem;
+    color: var(--ext-text);
+    background: var(--ext-surface);
+    border: 1px solid var(--ext-border);
+  }
+  .issue.error {
+    color: var(--ext-danger-text);
+  }
+  .issue.warning {
+    color: var(--ext-warning-text);
   }
 </style>

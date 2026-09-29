@@ -97,6 +97,73 @@ describe('NIP-82 parsers, builders and display helpers', () => {
       buildAssetEvent({ appId: 'app', version: '1', artifact: { ...base(), mimeType: 'bad' } })
     ).toThrow('MIME');
   });
+  it('signs desktop and CLI assets only when they satisfy NIP-82 Appendix A/C', () => {
+    const cli = { ...base(), filename: 'tool-linux-x86_64', mimeType: 'application/x-executable' };
+    expect(() => buildAssetEvent({ appId: 'app', version: '1', artifact: cli })).toThrow('platform');
+    const tags = buildAssetEvent({
+      appId: 'app',
+      version: '1',
+      artifact: cli,
+      platforms: ['linux-x86_64', 'linux-x86_64'],
+    }).tags as string[][];
+    expect(tags.filter((t) => t[0] === 'f')).toEqual([['f', 'linux-x86_64']]);
+    expect(() =>
+      buildAssetEvent({
+        appId: 'app',
+        version: '1',
+        artifact: { ...base(), filename: 'release.tar.gz', mimeType: 'application/gzip' },
+      })
+    ).toThrow('archive');
+    expect(() =>
+      buildAssetEvent({
+        appId: 'app',
+        version: '1',
+        artifact: { ...base(), filename: 'app.dmg', mimeType: 'application/x-apple-diskimage', platforms: ['windows-x86_64'] },
+      })
+    ).toThrow('does not match');
+  });
+  it('publishes store-listing metadata on the application and validates its URLs', () => {
+    const tags = buildApplicationEvent({
+      appId: ' com.example.app ',
+      name: 'Example',
+      repoAddress: `30617:${testPubkey()}:repo`,
+      repoRelay: 'wss://relay.example',
+      summary: 'Short',
+      description: '# Long',
+      iconUrl: 'https://blossom.example/icon.png',
+      imageUrls: ['https://blossom.example/1.png', 'https://blossom.example/1.png'],
+      websiteUrl: 'https://example.com',
+      repositoryUrl: 'https://example.com/repo.git',
+      license: 'MIT',
+      tags: ['nostr', ' cli ', ''],
+      platforms: ['linux-x86_64', 'bogus', 'darwin-arm64'],
+    }).tags as string[][];
+    expect(tags).toEqual([
+      ['d', 'com.example.app'],
+      ['name', 'Example'],
+      ['a', `30617:${testPubkey()}:repo`, 'wss://relay.example'],
+      ['summary', 'Short'],
+      ['icon', 'https://blossom.example/icon.png'],
+      ['image', 'https://blossom.example/1.png'],
+      ['t', 'nostr'],
+      ['t', 'cli'],
+      ['url', 'https://example.com/'],
+      ['repository', 'https://example.com/repo.git'],
+      ['f', 'linux-x86_64'],
+      ['f', 'darwin-arm64'],
+      ['license', 'MIT'],
+    ]);
+    const minimal = { appId: 'app', name: 'App', repoAddress: 'a', repoRelay: '' };
+    expect(() => buildApplicationEvent({ ...minimal, iconUrl: 'http://x/i.png' })).toThrow('HTTPS');
+    expect(() => buildApplicationEvent({ ...minimal, name: ' ' })).toThrow('name');
+  });
+  it('always discovers on the zapstore and Budabit relays ahead of repository relays', () => {
+    expect(getRelays(['wss://repo.example']).slice(0, 3)).toEqual([
+      'wss://relay.zapstore.dev',
+      'wss://relay.budabit.club',
+      'wss://repo.example',
+    ]);
+  });
   it('builds application/release links and channel replacement coordinates', () => {
     const app = parseApplication(
       signed(
@@ -143,7 +210,8 @@ describe('NIP-82 parsers, builders and display helpers', () => {
   });
   it('formats honest labels and resolves only safe download URLs', () => {
     expect([0, 1024, 1024 * 1024].map(formatBytes)).toEqual(['0 B', '1.0 KB', '1.0 MB']);
-    expect(formatDate(100)).toContain('1970');
+    // Two days in: the local date is in 1970 for every UTC offset, unlike epoch+100s.
+    expect(formatDate(2 * 86400)).toContain('1970');
     expect(shortHash('a'.repeat(64))).toBe('a'.repeat(12) + '…');
     expect(platformLabel(['linux-x86_64', 'wasm32'])).toBe('linux (x86_64), wasm32');
     expect(getRelays(Array.from({ length: 20 }, (_, i) => `wss://relay${i}.example`))).toHaveLength(

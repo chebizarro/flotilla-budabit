@@ -75,6 +75,19 @@ export interface SoftwareApplication {
   createdAt: number;
 }
 
+/** Optional kind 32267 metadata a maintainer supplies when creating or updating an application. */
+export interface ApplicationMetadata {
+  summary?: string;
+  description?: string; // content (markdown)
+  iconUrl?: string;
+  imageUrls?: string[];
+  websiteUrl?: string;
+  repositoryUrl?: string;
+  license?: string;
+  tags?: string[];
+  platforms?: string[]; // f tags (NIP-82 Appendix A)
+}
+
 // ── NIP-82 kind 3063: Software Asset ─────────────────────────────────────────
 
 export interface SoftwareAsset {
@@ -145,6 +158,8 @@ export interface Artifact {
   minPlatformVersion?: string;
   targetPlatformVersion?: string;
   variant?: string;
+  /** Maintainers who co-signed this hash from the Workflows "Attestations" tab. */
+  attestedBy?: string[];
   // Enriched from pipeline run context
   pipelineRunId?: string;
   workflowName?: string;
@@ -158,7 +173,8 @@ export interface PipelineRun {
   id: string;
   workflowName: string;
   branch: string;
-  commitId: string;
+  /** Absent when the run was pinned to a branch head the submitter did not resolve. */
+  commitId?: string;
   createdAt: number;
   ephemeralPubkey: string; // publisher tag
   triggeredBy: string; // triggered-by tag
