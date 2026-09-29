@@ -7,7 +7,11 @@ export interface RepoContext {
   repoName: string;
   repoAddress: string;
   repoNaddr: string;
+  /** Relays discovery and publication use: the announcement's NIP-34 `relays` once read, else the host's hints. */
   repoRelays: string[];
+  /** Relays the host derived for the repository (naddr hints, community relays); only used to find the announcement. */
+  relayHints: string[];
+  relaySource: 'announcement' | 'host';
   maintainers: string[];
   userPubkey: string;
 }
@@ -79,12 +83,15 @@ export function normalizeContext(input: unknown, previousViewer = ''): RepoConte
   const maintainers = Array.isArray(value.maintainers)
     ? value.maintainers.filter((v): v is string => typeof v === 'string' && HEX_KEY.test(v))
     : [];
+  const hostRelays = normalizeRelays(value.repoRelays ?? value.relays);
   return {
     repoPubkey: pubkey,
     repoName: name,
     repoAddress: address,
     repoNaddr: encoded,
-    repoRelays: normalizeRelays(value.repoRelays ?? value.relays),
+    repoRelays: hostRelays,
+    relayHints: hostRelays,
+    relaySource: 'host',
     maintainers: [...new Set([pubkey, ...maintainers])],
     userPubkey: typeof viewer === 'string' && HEX_KEY.test(viewer) ? viewer : '',
   };

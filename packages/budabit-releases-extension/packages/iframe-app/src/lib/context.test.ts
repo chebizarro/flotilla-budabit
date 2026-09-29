@@ -19,7 +19,13 @@ describe('host context', () => {
         relays: repo.repoRelays,
       },
     });
-    expect(result).toEqual({ ...repo, repoNaddr: naddr });
+    // A host context is hints-only until the announcement is read.
+    expect(result).toEqual({
+      ...repo,
+      repoNaddr: naddr,
+      relayHints: repo.repoRelays,
+      relaySource: 'host',
+    });
   });
   it('accepts legacy/flat context and explicit account changes and clears', () => {
     const repo = testRepo();
