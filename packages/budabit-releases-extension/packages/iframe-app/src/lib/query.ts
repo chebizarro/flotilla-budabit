@@ -11,6 +11,17 @@ export interface QueryResult {
 export const QUERY_PAGE_SIZE = 100;
 const MAX_PAGES = 5;
 
+/** Name the relays the host reports as not having answered, so an incomplete result is actionable. */
+function hostOutcomes(response: Record<string, unknown>): string[] | undefined {
+  const list = (key: string) =>
+    Array.isArray(response[key]) ? response[key].filter((r): r is string => typeof r === 'string') : [];
+  const errors = [
+    ...list('timedOutRelays').map((r) => `${r}: no EOSE before the host timeout`),
+    ...list('failedRelays').map((r) => `${r}: connection failed or subscription closed`),
+  ];
+  return errors.length ? errors : undefined;
+}
+
 /** Per-relay inclusive cursors avoid skipping events at a shared second boundary. */
 export async function queryAll(
   bridge: WidgetBridge,
@@ -43,7 +54,7 @@ export async function queryAll(
             .filter((e): e is NostrEvent => !!e && matchFilter(requestFilter as Filter, e));
           for (const event of batch) events.set(event.id, event);
           if (response.status !== 'ok' || response.complete !== true)
-            return { events: [...events.values()], complete: false };
+            return { events: [...events.values()], complete: false, errors: hostOutcomes(response) };
           if (response.events.length < QUERY_PAGE_SIZE)
             return { events: [...events.values()], complete: true };
           if (!batch.length) return { events: [...events.values()], complete: false };
