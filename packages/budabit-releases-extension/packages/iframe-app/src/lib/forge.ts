@@ -78,8 +78,8 @@ export function parseForgeUrl(value: string, kind?: ForgeKind): ForgeRepo | unde
   let path = '';
   const ssh = /^(?:ssh:\/\/)?git@([a-z0-9.-]+)[:/](.+)$/i.exec(text);
   if (ssh) {
-    host = ssh[1]!.toLowerCase();
-    path = ssh[2]!;
+    host = (ssh[1] ?? '').toLowerCase();
+    path = ssh[2] ?? '';
   } else {
     try {
       const url = new URL(text);
@@ -96,7 +96,7 @@ export function parseForgeUrl(value: string, kind?: ForgeKind): ForgeRepo | unde
   const segments = (route >= 0 ? parts.slice(0, route) : parts).filter(Boolean);
   if (segments.length < 2 || !/^[a-z0-9.-]+$/i.test(host)) return undefined;
   const scoped = resolved === 'gitlab' ? segments : segments.slice(0, 2);
-  const name = scoped[scoped.length - 1]!.replace(/\.git$/i, '');
+  const name = (scoped[scoped.length - 1] ?? '').replace(/\.git$/i, '');
   const owner = scoped.slice(0, -1).join('/');
   if (!name || !owner || /[^a-z0-9._/-]/i.test(owner) || /[^a-z0-9._-]/i.test(name))
     return undefined;
@@ -119,8 +119,12 @@ async function fetchJson(
   signal?: AbortSignal
 ): Promise<unknown> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('Forge request timed out')), FETCH_TIMEOUT_MS);
-  const onAbort = () => controller.abort(signal?.reason);
+  const timer = setTimeout(() => {
+    controller.abort(new Error('Forge request timed out'));
+  }, FETCH_TIMEOUT_MS);
+  const onAbort = () => {
+    controller.abort(signal?.reason);
+  };
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
     const response = await fetchImpl(url, {

@@ -18,7 +18,7 @@
     type PublicationJournal,
   } from '../publication.js';
   import ArtifactSelector from './ArtifactSelector.svelte';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
 
   let {
     bridge,
@@ -37,9 +37,11 @@
     onCancel: () => void;
   } = $props();
   const controller = new AbortController();
-  const source: 'run' | 'forge' = importRelease ? 'forge' : 'run';
+  // The import is fixed for the life of this form; App mounts a fresh form per import.
+  const imported: ForgeImport | null = untrack(() => importRelease);
+  const source: 'run' | 'forge' = imported ? 'forge' : 'run';
   const forgeAssets = $state<Artifact[]>(
-    importRelease ? forgeArtifacts(importRelease.repo, importRelease.kind, importRelease.release) : []
+    imported ? forgeArtifacts(imported.repo, imported.kind, imported.release) : []
   );
   onDestroy(() => controller.abort());
   let pipelineData = $state<PipelineArtifactData | null>(null);
@@ -55,9 +57,9 @@
   let imagesText = $state('');
   let tagsText = $state('');
   let runId = $state('');
-  let version = $state(importRelease ? versionFromTag(importRelease.release.tag) : '');
-  let channel = $state<string>(importRelease?.release.prerelease ? 'beta' : 'main');
-  let notes = $state(importRelease?.release.notes ?? '');
+  let version = $state(imported ? versionFromTag(imported.release.tag) : '');
+  let channel = $state<string>(imported?.release.prerelease ? 'beta' : 'main');
+  let notes = $state(imported?.release.notes ?? '');
   let selectedIds = $state(new Set<string>());
   // A checksum the forge publishes counts as verified; the rest are hashed in the selector.
   let verifiedIds = $state(new Set(forgeAssets.filter((a) => a.sha256).map((a) => a.eventId)));
